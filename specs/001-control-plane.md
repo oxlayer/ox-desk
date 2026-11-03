@@ -1,12 +1,65 @@
 # 001 — Control plane (`logid`)
 
-Um processo, dois modos. No Ubuntu roda como **control plane**: decide,
-guarda estado e serve a API. No Windows roda como **agente**: executa e
-reporta.
-
 Implementado em Rust em [`logid/`](../logid/). O protótipo Python
 (`monitor.py`) foi substituído na fase 1 — ver
 [`000`](000-overview.md#linguagem-rust).
+
+## Simétrico: todo nó é par, nenhum é central
+
+**Decisão de 03/11, do usuário:** com o daemon rodando, *qualquer*
+máquina pode virar host; quem manda é onde a pessoa está sentada.
+
+A primeira versão desta spec dizia "no Ubuntu roda como control plane,
+no Windows como agente". Isso estava errado por dois motivos:
+
+1. **O hardware já impõe simetria.** Só quem detém o dispositivo pode
+   emitir `ChangeHost` ([`005`](005-input-switch.md#restrição-descoberta-só-quem-detém-o-device-pode-empurrá-lo)).
+   Um nó central que não tem o device não consegue mover nada — ele só
+   pode *pedir*.
+2. **São três máquinas**, não duas: Ubuntu, Windows e um MacBook no
+   canal 3. Eleger uma como central é arbitrário.
+
+### O modelo
+
+Todo nó roda o **mesmo** `logid`. Nenhum papel fixo. O estado que
+importa é derivado, não configurado:
+
+| Pergunta | Quem responde |
+|---|---|
+| quem detém os dispositivos? | cada nó lê o próprio receptor; exatamente um vê `online=true` |
+| quem é o host atual? | o detentor |
+| quem pode trocar? | **só o detentor** |
+
+Pedir foco é portanto um **encaminhamento**, não um comando:
+
+```
+eu (qualquer nó)  --pede-->  detentor atual  --ChangeHost-->  alvo
+```
+
+Se eu já sou o detentor, o encaminhamento é local. Se eu sou o alvo,
+estou pedindo que me entreguem. Se não sou nenhum dos dois, sou só o
+intermediário — e isso é legítimo: a GUI de qualquer máquina deve poder
+mover o foco entre as outras duas.
+
+### Transporte entre pares: SSH
+
+Continua SSH, por simetria e porque já funciona
+([`002`](002-ssh.md)): nenhuma porta nova, nenhuma auth nova, e o
+macOS já traz sshd. **Pendência:** o Ubuntu ainda não tem sshd — hoje
+só ele disca para fora. Para a simetria valer, `openssh-server` aqui
+entra no bootstrap.
+
+> Alternativa descartada: protocolo próprio na LAN com mTLS. Seria
+> reimplementar o que o SSH já entrega, e multiplicar superfície — ver
+> o critério em [`000`](000-overview.md#o-que-construímos-e-o-que-integramos).
+
+### O que deixa de existir
+
+- O conceito de "agente" como binário separado. O
+  [`agent/`](../agent/) atual é um passo intermediário, não o destino:
+  o alvo é **um binário por plataforma, mesmo papel**.
+- `[[hosts]]` com um nó marcado como local por ter `addr = 127.0.0.1`.
+  Cada nó sabe quem é por hostname; os outros são pares.
 
 ## API
 

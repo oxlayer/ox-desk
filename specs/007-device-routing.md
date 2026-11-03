@@ -43,6 +43,34 @@ Quirks pagos:
 3. **Checar pré-requisitos no startup** e expor na API: `avahi-daemon`
    ativo, `mdns4_minimal` no nsswitch, ACL do `hidraw`.
 
+## Terceiro par: MacBook no canal 3
+
+Lido do hardware (o nome vem do teclado, que tem `HOSTS INFO {1815}`):
+
+```
+solaar config 2 change-host
+  -> [ 1:ubuntu-host, 2:windows-host, 3:ASSET-TAG-0001 ]
+```
+
+O canal 3 e um **MacBook**. O nome `ASSET-TAG-0001` e etiqueta de
+patrimonio corporativo, nao o hostname que o mDNS vai anunciar — na
+hora de integrar, conferir o `.local` real dele.
+
+Ainda **nao** esta em `[[hosts]]`: um par sem bloco de host nao entra no
+roteamento, e e melhor assim ate ter o daemon rodando la. O que ele
+precisa, quando chegar a vez:
+
+| Peca | Situacao no macOS |
+|---|---|
+| sshd | ja vem no sistema, so habilitar em Ajustes |
+| mDNS | nativo (Bonjour) — `.local` funciona de fabrica |
+| HID++ | precisa de build do `logid` para arm64/x86_64 Darwin |
+| canal Easy-Switch | 3, ja pareado e confirmado |
+
+O modelo simetrico ([`001`](001-control-plane.md#simétrico-todo-nó-é-par-nenhum-é-central))
+foi desenhado justamente para isso: o terceiro par nao e caso especial,
+e so mais um no com o mesmo binario.
+
 ## Pendência fora do nosso alcance
 
 Reserva de DHCP no roteador para o MAC `00:00:5e:00:53:01`. mDNS

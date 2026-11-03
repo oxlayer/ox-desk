@@ -53,29 +53,27 @@ terceiro. "Próprio e seguro" sem escrever nada.
 
 ## Arquitetura
 
+Simétrica: **todo nó roda o mesmo daemon e nenhum é central.** Quem
+manda é a máquina onde a pessoa está. Ver
+[`001`](001-control-plane.md#simétrico-todo-nó-é-par-nenhum-é-central).
+
 ```
-        ┌─────────────────────────── ubuntu-host ───────────────────────────┐
-        │                                                                     │
-        │   Electron (GUI)  ──HTTP──▶  logid (control plane, :8787)           │
-        │                                   │                                 │
-        │                     ┌─────────────┼──────────────┐                  │
-        │                     ▼             ▼              ▼                  │
-        │               input-router    adapters       store (JSON/sqlite)    │
-        │                     │         ├─ ssh                                │
-        │                     │         ├─ sftp (file browser)                │
-        │                     │         ├─ clipboard                          │
-        │                     │         ├─ deskflow  (ctl)                    │
-        │                     │         ├─ rustdesk  (ctl)                    │
-        │                     │         └─ hidpp/solaar (Easy-Switch)         │
-        └─────────────────────┼───────────────────────────────────────────────┘
-                              │  LAN (mDNS + TLS mútuo)
-        ┌─────────────────────▼──────────── windows-host ───────────────────────┐
-        │   logid-agent  (mesmo binário, modo agente)                         │
-        └─────────────────────────────────────────────────────────────────────┘
+   ubuntu-host            windows-host              MacBook (canal 3)
+  ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
+  │ GUI          │        │ GUI          │        │ GUI          │
+  │  ↕           │        │  ↕           │        │  ↕           │
+  │ logid        │◀─SSH──▶│ logid        │◀─SSH──▶│ logid        │
+  │  ├ input     │        │  ├ input     │        │  ├ input     │
+  │  ├ hidpp     │        │  ├ hidpp     │        │  ├ hidpp     │
+  │  └ adapters  │        │  └ adapters  │        │  └ adapters  │
+  └──────┬───────┘        └──────┬───────┘        └──────┬───────┘
+         │ canal 1               │ canal 2               │ canal 3
+         └───────────── MX Anywhere 3 + MX Keys ──────────┘
+                    (exatamente um detentor por vez)
 ```
 
-Um binário só, dois modos. O control plane é quem decide; o agente
-executa no outro lado.
+Pedir foco é encaminhamento: quem pede fala com o **detentor atual**,
+porque só ele alcança o dispositivo por rádio.
 
 ## Linguagem: Rust
 
