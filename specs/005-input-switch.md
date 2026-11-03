@@ -223,6 +223,55 @@ hosts = { "ubuntu-host" = 1, "windows-host" = 2 }
 O mapa `hosts` é o que o Solaar não tem e o Flow guarda na nuvem.
 Aqui mora num TOML seu.
 
+## Validado ponta a ponta (03/11)
+
+Ciclo completo, nas duas direcoes, com hardware real:
+
+```
+# Windows -> Ubuntu, pelo agente via SSH
+logid-agent set-host 1 1            -> recusa: falta --confirm
+logid-agent set-host 1 1 --confirm  -> {"ok":true,"slot":1,"host":1}
+logid-agent set-host 2 1 --confirm  -> {"ok":true,"slot":2,"host":1}
+   Ubuntu:  slot 1 e 2 online=True
+   Windows: nenhum slot online
+
+# Ubuntu -> Windows, pelo logid
+POST /api/focus {"host":"windows-host","confirm":true}
+   executado: true
+   MX Anywhere 3:    slot 1 -> canal 2
+   MX Keys Keyboard: slot 2 -> canal 2
+   Ubuntu:  online=False
+   Windows: slot 1 e 2 ONLINE canal=2
+```
+
+**É o Logitech Flow, funcionando, sem nuvem e sem conta.** A peça que
+nenhum projeto aberto tinha.
+
+### `input-age` por SSH não serve — comprovado
+
+```
+$ ssh windows-host logid-agent input-age
+{"idle_ms":704577031,"ok":true}        # ~8,15 dias
+```
+
+8,15 dias é o **uptime** da máquina. A sessão do SSH nunca viu input,
+então `GetLastInputInfo` devolve o tempo desde o boot. Isso confirma por
+medida o isolamento de sessão descrito em
+[`002`](002-ssh.md#limite-estrutural-isolamento-de-sessão): o `guard`
+**não pode** ser disparado por SSH, tem que estar residente na sessão
+interativa (atalho em `shell:startup`).
+
+## Dois modos de trabalho, agora que a rota física existe
+
+| | Dispositivos em | Como troca | Preço |
+|---|---|---|---|
+| **A** (atual) | Windows | cursor na borda, via Deskflow | input do Ubuntu depende do Windows ligado |
+| **B** (novo) | Ubuntu | `POST /api/focus` | latência nativa, sem depender do Windows — mas falta o gatilho de borda |
+
+O modo B é o melhor para quem tem o Ubuntu como máquina principal, e
+depende só da detecção de borda pelo portal `InputCapture` para ficar
+indistinguível do Flow.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.
