@@ -514,6 +514,58 @@ ainda recebe números crus na linha de comando (`watch-edge left 1,2 1`),
 e a checagem de presença o faz tolerar divergência — mas o certo é ele
 ler `DEVICE NAME` (HID++ 0x0005) e casar por nome também. Fica em aberto.
 
+## O solaar é caro demais para o caminho quente — medido
+
+A troca **funciona**, mas levou **105 segundos** no teste real:
+
+```
+18:51:18  border: barreira desarmada; trocando...
+18:53:05  border: MX Anywhere 3: slot 1 saiu deste receptor (canal 2)
+18:53:05  border: MX Keys Keyboard: slot 2 saiu deste receptor (canal 2)
+```
+
+Causa medida:
+
+```
+solaar show  ->  5,9 s  /  15,3 s  (segunda medida sob contencao)
+solaar show 1 ->  5,5 s            (por dispositivo, nao ajuda)
+```
+
+E o `change_host` chama isso **4× por dispositivo** (uma antes, três de
+verificação), × 2 dispositivos, mais o `survey()` do `plan()` e o SSH
+para o agente. Daí os 105 s.
+
+Agrava: o **GUI do Solaar roda em paralelo** (`solaar --window=hide`),
+e dois donos do mesmo receptor é exatamente a contenção que a doc do
+OpenLogi descreve.
+
+### A saída: HID++ direto, como no Windows
+
+`hidapi` **funciona no Linux** (backend hidraw; precisa de
+`libudev-dev`). E a enumeração mostrou mais do que o esperado:
+
+```
+pid=c52b  /dev/hidraw0  usage_page=0xff00   <- o receptor
+pid=4090  /dev/hidraw2  usage_page=0xff00   <- MX Anywhere 3, no proprio
+pid=408a  /dev/hidraw3  usage_page=0xff00   <- MX Keys, no proprio
+```
+
+Cada dispositivo pareado tem **nó hidraw próprio** com coleções HID++.
+Consequências:
+
+1. Dá para falar direto com o dispositivo (`device_index` 0xFF) em vez
+   de indexar slot no receptor — o que **resolve a divergência de
+   numeração** entre máquinas.
+2. "Está online?" vira um ping HID++ de milissegundos, não um
+   `solaar show` de 6-15 s.
+3. O código do protocolo já existe em [`agent/src/hidpp.rs`](../agent/src/hidpp.rs)
+   e é agnóstico de plataforma: vira crate compartilhado.
+
+Isso era o plano desde o início ("a fronteira deste módulo foi desenhada
+para que uma implementação de HID++ 0x1814 sobre /dev/hidraw substitua o
+backend sem tocar em quem chama"). O custo medido do solaar tornou a
+migração obrigatória, não opcional.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.
