@@ -11,6 +11,7 @@ mod border;
 mod config;
 mod focus;
 mod hidpp;
+mod logs;
 mod probe;
 
 use config::Config;
@@ -255,6 +256,20 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         "/api/status" | "/api/hosts" => {
             let snap = cached(&snap_cfg, cache);
             match serde_json::to_string(&*snap) {
+                Ok(b) => ok_json(req, b),
+                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            }
+        }
+
+        "/api/logs" => {
+            // ?lines=N, limitado dentro de logs::tail.
+            let n = req
+                .url()
+                .split_once("lines=")
+                .and_then(|(_, v)| v.split('&').next())
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or_else(logs::default_lines);
+            match serde_json::to_string(&logs::tail(n)) {
                 Ok(b) => ok_json(req, b),
                 Err(e) => err_json(req, 500, &format!("serializar: {e}")),
             }
