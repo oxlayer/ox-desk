@@ -622,6 +622,75 @@ Dos 13,8 s, o pre-flight domina, e dentro dele o SSH ao agente. Com o
 agente migrado isso caiu para ~2 s, então a troca deve ficar perto de
 **9 s**. O resto é latência de SSH, não de HID++.
 
+## Teclado segue o mouse: reconciliador
+
+[`logid/src/follow.rs`](../logid/src/follow.rs). Um dispositivo é
+**líder** e os demais de `[[devices]]` seguem o canal dele, reavaliado a
+cada N segundos.
+
+```toml
+[input.follow]
+enabled = false              # desligado por padrão
+leader = "MX Anywhere 3"     # nome HID++
+interval_seconds = 5
+```
+
+Resolve o estado dividido na raiz, e — o que a borda não consegue —
+**funciona quando a troca foi manual, no botão Easy-Switch**. O `border`
+só vê travessia de cursor; o reconciliador vê o estado.
+
+### A assimetria do hardware manda no desenho
+
+Só quem detém o dispositivo pode empurrá-lo, então a ação depende de
+onde o seguidor está:
+
+| seguidor está | quem age |
+|---|---|
+| aqui | nós, por HID++ local |
+| num par | pedimos ao agente dele, por SSH |
+| em nenhum conhecido | nada — pode ser o MacBook, sem daemon |
+
+### Validado, no caminho difícil
+
+Testei a direção que passa pelo par, não a local:
+
+```
+# so o lider volta para o canal 1; o teclado fica no 2
+ssh windows-host logid-agent set-host 2 1 --confirm
+
+follow: MX Keys Wireless Keyboard: pedi a windows-host que o mandasse para o canal 1
+-> MX Anywhere 3              online=True canal=1
+-> MX Keys Wireless Keyboard  online=True canal=1
+```
+
+Agiu **uma vez** e sossegou — mais que isso seria loop.
+
+### Casar por nome, não por canal
+
+Primeira versão localizava o dispositivo no par comparando o **canal
+declarado**, e isso é ambíguo: mouse e teclado declaram o mesmo canal
+para o mesmo host. Corrigido fazendo o agente reportar o nome HID++
+(feature 0x0005) e casando por ele.
+
+A medição que fechou o argumento, no mesmo teste:
+
+```
+aqui:     slot 1 = MX Anywhere 3            slot 2 = MX Keys
+Windows:  slot 1 = MX Keys                  slot 2 = MX Anywhere 3
+```
+
+**Invertido.** Slot é por receptor e não coincide — já suspeitávamos, e
+agora está medido. Qualquer lógica baseada em número de slot entre
+máquinas está errada por construção.
+
+### Travas
+
+- **Desligado por padrão.** Um reconciliador que erra te deixa sem teclado.
+- **Nunca age sem saber onde o líder está.** Canal desconhecido = não mexe.
+- **Mesmo mutex das outras trocas** (`focus::switch_lock`): borda, API e
+  reconciliador nunca competem.
+- **8 s de espera depois de agir**, para não brigar consigo mesmo.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.

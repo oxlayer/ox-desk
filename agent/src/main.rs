@@ -68,13 +68,16 @@ fn survey(api: &HidApi) -> serde_json::Value {
     // Usa o caminho eficiente do crate: ping de 250 ms primeiro, e
     // host_info (mais caro) so para quem respondeu. Antes chamavamos
     // host_info nos 6 slots -- medido, 6,4 s por probe.
+    // Com nomes: o reconciliador do logid casa dispositivo por NOME, nao
+    // por canal -- canal e ambiguo quando mouse e teclado declaram o mesmo.
     let slots: Vec<_> = link
-        .devices(6, false)
+        .devices(6, true)
         .into_iter()
         .map(|d| {
             if d.online {
                 json!({
                     "slot": d.slot,
+                    "name": d.name,
                     "online": true,
                     "num_hosts": d.host.map(|h| h.num_hosts),
                     // Ja 1-based: o crate converte do protocolo.

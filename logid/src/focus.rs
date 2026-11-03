@@ -21,6 +21,15 @@ use std::sync::Mutex;
 /// troca por vez, e a elegibilidade e reavaliada dentro do lock.
 static SWITCH_LOCK: Mutex<()> = Mutex::new(());
 
+/// Compartilhado com o reconciliador ([`crate::follow`]): uma troca por vez,
+/// venha da borda, da API ou dele.
+pub fn switch_lock() -> std::sync::MutexGuard<'static, ()> {
+    match SWITCH_LOCK.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Route {
@@ -325,10 +334,7 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
 
     // Uma troca por vez. Reavaliamos a elegibilidade DEPOIS de pegar o
     // lock: quem esperou aqui pode ter perdido os dispositivos.
-    let _guard = match SWITCH_LOCK.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
+    let _guard = switch_lock();
 
     // Ponto sem volta.
     let mut results = Vec::new();

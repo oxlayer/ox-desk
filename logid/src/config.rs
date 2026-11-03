@@ -75,10 +75,42 @@ impl Default for BorderCfg {
     }
 }
 
+fn default_follow_interval() -> u64 {
+    5
+}
+
+/// Fazer os demais dispositivos seguirem o canal do lider.
+///
+/// Resolve o estado dividido na raiz: mouse e teclado em maquinas
+/// diferentes. E funciona inclusive quando a troca foi **manual**, no
+/// botao Easy-Switch -- que o `border` nao ve.
+///
+/// **Desligado por padrao**: mover dispositivo e irreversivel do lado de
+/// origem (spec 005), e um reconciliador que erra te deixa sem teclado.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FollowCfg {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Nome (HID++) do dispositivo que manda. Os outros de `[[devices]]`
+    /// seguem. Sem ele, nao arma.
+    #[serde(default)]
+    pub leader: Option<String>,
+    #[serde(default = "default_follow_interval")]
+    pub interval_seconds: u64,
+}
+
+impl Default for FollowCfg {
+    fn default() -> Self {
+        Self { enabled: false, leader: None, interval_seconds: default_follow_interval() }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InputCfg {
     #[serde(default)]
     pub border: BorderCfg,
+    #[serde(default)]
+    pub follow: FollowCfg,
 }
 
 fn default_port() -> u16 {

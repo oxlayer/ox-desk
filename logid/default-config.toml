@@ -93,3 +93,18 @@ name = "MX Keys Wireless Keyboard"
 enabled = false
 edge = "right"          # left | right | top | bottom
 target = "windows-host"
+
+# Fazer os demais dispositivos seguirem o canal do lider.
+#
+# Resolve o estado dividido na raiz -- mouse numa maquina, teclado em
+# outra -- e funciona inclusive quando a troca foi MANUAL, no botao
+# Easy-Switch, que a vigilancia de borda nao ve.
+#
+# DESLIGADO por padrao: mover dispositivo e irreversivel do lado de
+# origem, e um reconciliador que erra te deixa sem teclado. Ele nunca age
+# sem saber onde o lider esta.
+
+[input.follow]
+enabled = false
+leader = "MX Anywhere 3"     # nome HID++; confira com o bin `probe`
+interval_seconds = 5

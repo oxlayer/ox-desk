@@ -12,6 +12,10 @@ pub const DEFAULT_WIN_PATH: &str = r"%LOCALAPPDATA%\logid\logid-agent.exe";
 #[derive(Debug, Serialize)]
 pub struct Slot {
     pub slot: u8,
+    /// Nome HID++, quando o agente consegue ler. E por ele que o
+    /// reconciliador casa dispositivo: canal e ambiguo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub online: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub num_hosts: Option<u8>,
@@ -84,6 +88,7 @@ pub fn devices(ssh_alias: &str, exe: &str) -> AgentInfo {
             arr.iter()
                 .map(|s| Slot {
                     slot: s.get("slot").and_then(|x| x.as_u64()).unwrap_or(0) as u8,
+                    name: s.get("name").and_then(|x| x.as_str()).map(String::from),
                     online: s.get("online").and_then(|x| x.as_bool()).unwrap_or(false),
                     num_hosts: s.get("num_hosts").and_then(|x| x.as_u64()).map(|v| v as u8),
                     current_host: s.get("current_host").and_then(|x| x.as_u64()).map(|v| v as u8),
@@ -93,4 +98,36 @@ pub fn devices(ssh_alias: &str, exe: &str) -> AgentInfo {
         .unwrap_or_default();
 
     AgentInfo { reachable: true, slots, error: None }
+}
+
+/// Pede ao agente do par que mande um slot para outro canal.
+///
+/// Usado pelo reconciliador: quem detem o dispositivo e quem pode
+/// empurra-lo, e as vezes nao somos nos.
+pub fn set_host(ssh_alias: &str, exe: &str, slot: u8, host: u8) -> Result<(), String> {
+    let ps = format!(
+        "& \"{}\" set-host {slot} {host} --confirm",
+        exe.replace("%LOCALAPPDATA%", "$env:LOCALAPPDATA")
+    );
+    let out = Command::new("ssh")
+        .args([
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=4",
+            "-o", "LogLevel=ERROR",
+            ssh_alias, &ps,
+        ])
+        .output()
+        .map_err(|e| format!("ssh: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text
+        .lines()
+        .find(|l| l.trim_start().starts_with('{'))
+        .ok_or("agente nao respondeu JSON")?;
+    let v: serde_json::Value =
+        serde_json::from_str(line).map_err(|_| "JSON do agente ilegivel".to_string())?;
+    if v.get("ok").and_then(|b| b.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(v.get("error").and_then(|e| e.as_str()).unwrap_or("falhou").to_string())
+    }
 }
