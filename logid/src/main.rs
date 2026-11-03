@@ -6,6 +6,7 @@
 //! troca de canal HID++. E superficie de privilegio, nao um site.
 //! Ver ../specs/008-security.md.
 
+mod agent;
 mod config;
 mod focus;
 mod hidpp;

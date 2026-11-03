@@ -1,0 +1,18 @@
+[package]
+name = "logid-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Agente Windows do logid: HID++ 0x1814 e dead-man's switch"
+license = "MIT"
+
+[dependencies]
+# Integrar em vez de reimplementar: enumeracao e I/O de HID no Windows
+# (SetupAPI + HidD_*) sao ~300 linhas de FFI unsafe que esta crate ja
+# resolve e testa. Ver o criterio em ../specs/000-overview.md.
+hidapi = "2"
+serde_json = "1.0"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

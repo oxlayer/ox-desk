@@ -625,6 +625,43 @@ sudo udevadm trigger --subsystem-match=hidraw --action=add
 getfacl /dev/hidraw0 | grep user     # confirmar
 ```
 
+### O agente Windows
+
+[`agent/`](agent/) — Rust, cross-compilado daqui, **352 KB**, sem runtime:
+
+```bash
+cd agent
+cargo +stable build --release --target x86_64-pc-windows-gnu
+scp target/x86_64-pc-windows-gnu/release/logid-agent.exe \
+    windows-host:'C:/Users/user/AppData/Local/logid/logid-agent.exe'
+```
+
+Toolchain: `rustup target add x86_64-pc-windows-gnu` + apt
+`gcc-mingw-w64-x86-64`. O `.cargo/config.toml` do crate aponta o linker.
+
+É **CLI, não servidor**, invocada por SSH: zero porta nova, zero auth
+nova. O `logid` fala com ele pelo `ssh windows-host` que já existe.
+
+Lido do hardware por HID++ 0x1814/0x1815:
+
+```
+slot 1 (MX Anywhere 3):     3 canais, atual = 2
+slot 2 (MX Keys Keyboard):  3 canais, atual = 2
+```
+
+Ou seja **`windows-host` é o canal 2**, confirmado — não mais chute. O
+canal do `ubuntu-host` continua desconhecido e **fora da config de
+propósito**: mandar o dispositivo para canal errado o deixa inalcançável
+das duas máquinas. Para descobrir, aperte Easy-Switch até ele aparecer
+aqui e rode `solaar config <slot> change-host`.
+
+> ⚠️ No Windows o receptor expõe **uma coleção HID por tipo de report**
+> (usage 1 = curto `0x10`, 2 = longo `0x11`, 4 = muito longo). Escrever
+> o tamanho errado na coleção errada faz o write falhar com
+> `hidapi error:` vazio. O agente usa sempre o report longo na usage 2,
+> para escrever e ler na mesma coleção. No Linux um único `hidraw`
+> carrega todos os tipos — o problema não existe lá.
+
 ### Três estados por serviço
 
 Dois davam falso alarme — o SSH que não existe aqui de propósito e o

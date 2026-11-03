@@ -45,6 +45,10 @@ pub struct HostCfg {
     /// Alias do ~/.ssh/config, se der para buscar detalhe por SSH.
     #[serde(default)]
     pub ssh: Option<String>,
+    /// Caminho do logid-agent nesta maquina. Sem ele, nao ha dead-man's
+    /// switch -- e sem dead-man's switch a rota fisica e de ida so.
+    #[serde(default)]
+    pub agent: Option<String>,
 }
 
 fn default_port() -> u16 {

@@ -90,44 +90,65 @@ Isso torna a arquitetura obrigatoriamente **simétrica**: o control
 plane não executa a troca, ele **pede ao detentor atual** que execute.
 Quem está sem o device não tem como trazê-lo de volta pela rota física.
 
-### E isso cria um problema no Windows
+### O lado Windows: resolvido
 
-O Solaar é **Linux-only**. Para o Windows poder devolver o dispositivo,
-precisa de HID++ lá também. Opções, em ordem de preferência:
+O Solaar é Linux-only, então o Windows precisava de HID++ próprio.
+Implementado em [`agent/`](../agent/): Rust, cross-compilado do Ubuntu
+(`x86_64-pc-windows-gnu` + mingw do apt), **352 KB**, sem runtime.
 
-| Opção | Avaliação |
-|---|---|
-| **OpenLogi** (Rust, MIT/Apache, tem `.msi`) | já fala HID++ 0x2111/0x2201; checar se expõe 0x1814 e se dá para dirigir por CLI |
-| **Nossa implementação** sobre raw HID (hidapi) | 0x1814 ChangeHost é chamada de feature simples — é o pedaço onde Rust ou Go se pagam de verdade |
-| Options+ | fechado, sem API, briga pelo receptor. Descartado. |
-
-> ⚠️ Enquanto o lado Windows não emitir ChangeHost, a rota física é **só
-> de ida** (Ubuntu → Windows); a volta é pela rota LAN ou pelo botão
-> físico. Aceitável na fase 3, mas tem que estar explícito na GUI —
-> nunca deixar o usuário descobrir isso sem teclado.
-
-## Decisão
+É uma **CLI, não um servidor**, invocada por SSH. Reaproveita a chave
+que já existe: zero porta nova, zero auth nova, zero superfície de rede.
 
 ```
-POST /api/hosts/{id}/focus
+logid-agent devices                      # slots, nº de canais, canal atual
+logid-agent host-info <slot>
+logid-agent set-host <slot> <n> --confirm
+logid-agent input-age                    # ms desde o último input
+logid-agent guard <slot> <n> <segundos>  # dead-man's switch
+logid-agent raw <slot> <feature> <func>  # sondagem de protocolo
 ```
 
+HID++ via `hidapi` (integrar em vez de reimplementar: enumeração e I/O
+de HID no Windows são ~300 linhas de FFI unsafe já resolvidas lá).
+
+#### A pegadinha das coleções HID no Windows
+
+Primeira tentativa: write falhava com `hidapi error:` vazio. Causa:
+no Windows o receptor Logitech expõe **uma coleção HID por tipo de
+report** — usage 1 = curto (`0x10`, 7 bytes), usage 2 = longo (`0x11`,
+20 bytes), usage 4 = muito longo. Eu abria a primeira da lista (usage 2)
+e escrevia um report curto nela. Tamanho errado, write recusado.
+
+Solução: usar **sempre o report longo na coleção usage 2**, mesmo para
+funções que caberiam no curto. Assim escrita e leitura ficam na mesma
+coleção — a alternativa seria abrir duas e correlacionar entre elas.
+
+No Linux não existe esse problema: um único `hidraw` carrega todos os
+tipos de report.
+
+### Lido do hardware (03/11)
+
 ```
-alvo alcançável?  ──não──▶ recusa, explica (não deixa o usuário no escuro)
-       │ sim
-       ▼
-alvo tem receptor com NOSSO device pareado, em canal conhecido?
-       │ sim                              │ não
-       ▼                                  ▼
- rota FÍSICA                        rota LAN
- HID++ 0x1814 ChangeHost            garante deskflow-client no alvo
- nos dois devices (mouse+teclado)   servidor aponta para o alvo
-       │                                  │
-       └────────────┬─────────────────────┘
-                    ▼
-        confirma: o alvo reporta input chegando?
-        não em 3 s ──▶ ROLLBACK para o canal/rota anterior
+slot 1 (MX Anywhere 3):     3 canais, atual = 2
+slot 2 (MX Keys Keyboard):  3 canais, atual = 2
+0x1815 func 0:  13 04 03 01   -> numHosts=3, currentHost=1 (0-based)
+0x1815 func 1:  os três canais com status=1 (pareado)
 ```
+
+Então **`windows-host` é o canal 2**, confirmado, e os dispositivos
+conhecem três hosts — todos pareados.
+
+O canal do `ubuntu-host` **ainda não foi lido**, e não entra na config
+como chute: mandar o dispositivo para um canal errado o deixa
+inalcançável das duas máquinas. A descoberta sem risco é uma tecla:
+apertar Easy-Switch até o dispositivo aparecer aqui, e então
+`solaar config <slot> change-host` reporta o canal atual.
+
+> Tentei ler os nomes dos canais por `0x1815` func 2 e o layout não
+> rendeu (`02 80 00…`, sem ASCII). Abandonei: a função provável de
+> escrita fica ao lado da de leitura no mesmo feature, e sondar índice
+> de função às cegas podia **renomear** um host. Não valia o risco para
+> uma informação que uma tecla resolve.
 
 ### Não existe rollback deste lado
 
@@ -204,10 +225,13 @@ Aqui mora num TOML seu.
 
 ## Em aberto
 
-- Enumerar os canais de cada device (`solaar show` depois da ACL
-  resolvida) para preencher `hosts` sozinho.
+- Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.
+- Detecção de borda pelo portal `InputCapture` — API existe no GNOME 50
+  (backend declara e `CreateSession` é aceito), mas é D-Bus + libei, e a
+  v1 pode não bastar.
+- `guard` ainda não roda residente: precisa de atalho em `shell:startup`
+  para ficar na sessão interativa, já que `GetLastInputInfo` não vê input
+  de outra sessão.
 - Latência real da troca HID++ ponta a ponta — medir antes de prometer.
-- `InputCapture` v1 tem limitações que a v2 resolve (KDE 6.7.1+ tem v2,
-  GNOME 50 tem v1). Descobrir se v1 basta para só *detectar* borda.
-- E se o mouse estiver no canal da máquina desligada? Precisa de
-  caminho de recuperação que não dependa de input.
+- E se o mouse estiver no canal de uma máquina desligada? Só o botão
+  físico resolve, e a GUI tem que dizer isso.

@@ -6,6 +6,7 @@
 //! (depois do ChangeHost este receptor nao alcanca mais o dispositivo),
 //! entao o pre-flight substitui o rollback -- nao ha o que desfazer.
 
+use crate::agent;
 use crate::config::Config;
 use crate::hidpp;
 use crate::probe;
@@ -206,13 +207,49 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                 }
             }
 
-            // O bloqueio estrutural da fase 3: ver spec 005.
-            checks.push(Check::block(
-                "dead-man's switch no alvo",
-                "o agente do Windows ainda nao existe. Sem ele, ninguem \
-                 devolve o dispositivo se o alvo nao receber input -- e a \
-                 origem NAO pode desfazer. Rota fisica e de ida so.",
-            ));
+            // Dead-man's switch: quem devolve o dispositivo e quem passa a
+            // detê-lo, porque a origem NAO pode desfazer (spec 005).
+            match (&target.ssh, &target.agent) {
+                (Some(alias), Some(exe)) => {
+                    let info = agent::devices(alias, exe);
+                    if info.reachable {
+                        let online: Vec<String> = info
+                            .slots
+                            .iter()
+                            .filter(|s| s.online)
+                            .map(|s| {
+                                format!(
+                                    "slot {} (canal {}/{})",
+                                    s.slot,
+                                    s.current_host.unwrap_or(0),
+                                    s.num_hosts.unwrap_or(0)
+                                )
+                            })
+                            .collect();
+                        checks.push(Check::pass(
+                            "dead-man's switch no alvo",
+                            format!(
+                                "agente responde; dispositivos la: {}",
+                                if online.is_empty() { "nenhum online".into() } else { online.join(", ") }
+                            ),
+                        ));
+                    } else {
+                        checks.push(Check::block(
+                            "dead-man's switch no alvo",
+                            format!(
+                                "agente nao respondeu ({}). Sem ele ninguem devolve \
+                                 o dispositivo, e a origem nao pode desfazer.",
+                                info.error.unwrap_or_else(|| "motivo desconhecido".into())
+                            ),
+                        ));
+                    }
+                }
+                _ => checks.push(Check::block(
+                    "dead-man's switch no alvo",
+                    "host sem `ssh` e/ou `agent` na config: nao ha como pedir \
+                     ao alvo que devolva o dispositivo se nada chegar la.",
+                )),
+            }
         }
         Route::Lan => {
             let up = probe::tcp_probe(&target.addr, 24800).0;
