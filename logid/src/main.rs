@@ -7,6 +7,7 @@
 //! Ver ../specs/008-security.md.
 
 mod agent;
+mod border;
 mod config;
 mod focus;
 mod hidpp;
@@ -103,6 +104,9 @@ fn main() {
 
     let cfg = Arc::new(RwLock::new(cfg));
     let cache = Arc::new(Mutex::new(Cache { at: None, data: None }));
+
+    // Vigilancia de borda numa thread propria; falha nao derruba o daemon.
+    border::spawn(Arc::clone(&cfg));
 
     let server = Arc::new(server);
     let workers: Vec<_> = (0..4)

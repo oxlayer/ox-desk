@@ -73,3 +73,18 @@ name = "MX Keys Keyboard"
   [devices.hosts]
   "ubuntu-host" = 1
   "windows-host" = 2
+
+# Vigilancia de borda (modo B): atravessar a borda da tela manda os
+# dispositivos para o canal do host alvo, via HID++.
+#
+# DESLIGADA por padrao: dispara acao IRREVERSIVEL do lado de origem.
+# O pre-flight completo roda antes de cada troca, entao config ruim nao
+# te deixa sem teclado -- mas leia specs/005 antes de ligar.
+#
+# A deteccao usa org.gnome.Mutter.InputCapture direto. O portal
+# equivalente aceita CreateSession e nunca responde.
+
+[input.border]
+enabled = false
+edge = "right"          # left | right | top | bottom
+target = "windows-host"

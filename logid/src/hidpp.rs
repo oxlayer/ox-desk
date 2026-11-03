@@ -65,12 +65,14 @@ pub fn hidraw_access() -> bool {
 }
 
 fn run_solaar(args: &[&str]) -> Result<String, String> {
-    let mut cmd = Command::new("solaar");
-    cmd.args(args);
+    run_solaar_timeout(args, SOLAAR_TIMEOUT.as_secs())
+}
+
+fn run_solaar_timeout(args: &[&str], secs: u64) -> Result<String, String> {
     // Sem timeout nativo em std::process; o Solaar pode travar esperando
     // dispositivo. O wrapper `timeout` do coreutils resolve sem crate.
     let out = Command::new("timeout")
-        .arg(format!("{}", SOLAAR_TIMEOUT.as_secs()))
+        .arg(format!("{secs}"))
         .arg("solaar")
         .args(args)
         .output()
@@ -222,18 +224,58 @@ pub fn survey() -> Survey {
     }
 }
 
+/// Slots que o receptor ve ONLINE agora.
+fn online_slots() -> Vec<u8> {
+    survey()
+        .receivers
+        .iter()
+        .flat_map(|r| r.devices.iter())
+        .filter(|d| d.online)
+        .map(|d| d.slot)
+        .collect()
+}
+
 /// Manda o dispositivo do slot `slot` pular para o canal `host` (1-based).
 ///
 /// IRREVERSIVEL DESTE LADO. Ver spec 005: o comando viaja por radio ate o
 /// dispositivo; depois que ele troca de canal, este receptor nao o alcanca
 /// mais. Quem chama tem que ter feito o pre-flight ANTES.
+///
+/// **O exit code do solaar nao e fonte de verdade aqui.** Medido: numa troca
+/// bem-sucedida o dispositivo desaparece no meio do comando, o solaar trava
+/// ate o timeout e devolve erro VAZIO. A primeira versao disto reportou
+/// "FALHOU --" numa troca que funcionou. Entao verificamos pelo efeito: se o
+/// slot saiu deste receptor, trocou.
 pub fn change_host(slot: u8, host: u8) -> Result<String, String> {
     if host == 0 {
         return Err("canal e 1-based".into());
     }
+    let before = online_slots();
+    if !before.contains(&slot) {
+        return Err(format!(
+            "slot {slot} nao esta online neste receptor -- HID++ nao alcanca \
+             dispositivo em outro canal"
+        ));
+    }
+
     let slot_s = slot.to_string();
     let host_s = host.to_string();
-    run_solaar(&["config", &slot_s, "change-host", &host_s])
+    // Timeout curto de proposito: nao esperamos resposta util.
+    let _ = run_solaar_timeout(&["config", &slot_s, "change-host", &host_s], 8);
+
+    // Verificacao positiva, por efeito observavel.
+    for attempt in 1..=3 {
+        std::thread::sleep(Duration::from_millis(1200));
+        if !online_slots().contains(&slot) {
+            return Ok(format!(
+                "slot {slot} saiu deste receptor (canal {host}), confirmado na tentativa {attempt}"
+            ));
+        }
+    }
+    Err(format!(
+        "slot {slot} continua online aqui apos o comando -- a troca para o \
+         canal {host} nao aconteceu"
+    ))
 }
 
 #[cfg(test)]

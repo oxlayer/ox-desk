@@ -51,6 +51,36 @@ pub struct HostCfg {
     pub agent: Option<String>,
 }
 
+fn default_edge() -> String {
+    "right".into()
+}
+
+/// Vigilancia de borda. **Desligada por padrao** de proposito: ela dispara
+/// troca de canal, que e irreversivel do lado de origem (spec 005).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BorderCfg {
+    #[serde(default)]
+    pub enabled: bool,
+    /// left | right | top | bottom
+    #[serde(default = "default_edge")]
+    pub edge: String,
+    /// Host que recebe o foco ao atravessar. Sem ele, nao arma.
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+impl Default for BorderCfg {
+    fn default() -> Self {
+        Self { enabled: false, edge: default_edge(), target: None }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InputCfg {
+    #[serde(default)]
+    pub border: BorderCfg,
+}
+
 fn default_port() -> u16 {
     8787
 }
@@ -81,6 +111,8 @@ pub struct Config {
     pub hosts: Vec<HostCfg>,
     #[serde(default)]
     pub devices: Vec<DeviceCfg>,
+    #[serde(default)]
+    pub input: InputCfg,
 }
 
 pub const DEFAULT_TOML: &str = include_str!("../default-config.toml");

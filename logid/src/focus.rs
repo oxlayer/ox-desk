@@ -74,6 +74,12 @@ pub struct Outcome {
     pub plan: Plan,
     pub executed: bool,
     pub results: Vec<String>,
+    /// Alguns dispositivos trocaram e outros nao: mouse e teclado ficaram em
+    /// maquinas diferentes. **Nao ha rollback** para quem ja foi (spec 005),
+    /// entao isto e estado que exige acao humana -- botao Easy-Switch no
+    /// dispositivo que ficou, ou pedir ao detentor que o mande.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -285,7 +291,7 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
     let plan = plan(cfg, req);
 
     if !req.confirm {
-        return Outcome { plan, executed: false, results: vec![], error: None };
+        return Outcome { plan, executed: false, results: vec![], partial: false, error: None };
     }
     if !plan.ready {
         let n = plan.checks.iter().filter(|c| c.blocking && !c.ok).count();
@@ -293,6 +299,7 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
             plan,
             executed: false,
             results: vec![],
+            partial: false,
             error: Some(format!("{n} verificacao(oes) bloqueante(s) falhou(aram)")),
         };
     }
@@ -301,12 +308,15 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
             plan,
             executed: false,
             results: vec![],
+            partial: false,
             error: Some("so a rota fisica e executavel".into()),
         };
     }
 
     // Ponto sem volta.
     let mut results = Vec::new();
+    let mut moved = 0usize;
+    let mut stuck: Vec<String> = Vec::new();
     let survey = hidpp::survey();
     for dcfg in &cfg.devices {
         let Some(&chan) = dcfg.hosts.get(&req.host) else { continue };
@@ -319,9 +329,33 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
             continue;
         };
         match hidpp::change_host(d.slot, chan) {
-            Ok(_) => results.push(format!("{}: slot {} -> canal {}", d.name, d.slot, chan)),
-            Err(e) => results.push(format!("{}: FALHOU -- {e}", d.name)),
+            Ok(detail) => {
+                moved += 1;
+                results.push(format!("{}: {detail}", d.name));
+            }
+            Err(e) => {
+                stuck.push(d.name.clone());
+                results.push(format!("{}: FALHOU -- {e}", d.name));
+            }
         }
     }
-    Outcome { plan, executed: true, results, error: None }
+
+    // A troca nao e atomica: sao comandos independentes, segundos cada um.
+    // Se parte foi e parte ficou, isso tem que gritar.
+    let partial = moved > 0 && !stuck.is_empty();
+    let error = if partial {
+        Some(format!(
+            "ESTADO DIVIDIDO: {} trocaram, mas {} ficaram aqui ({}). Nao ha \
+             rollback para quem foi -- use o botao Easy-Switch no que ficou.",
+            moved,
+            stuck.len(),
+            stuck.join(", ")
+        ))
+    } else if moved == 0 && !stuck.is_empty() {
+        Some(format!("nenhum dispositivo trocou ({})", stuck.join(", ")))
+    } else {
+        None
+    };
+
+    Outcome { plan, executed: true, results, partial, error }
 }

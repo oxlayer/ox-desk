@@ -334,6 +334,69 @@ O modo B é o melhor para quem tem o Ubuntu como máquina principal, e
 depende só da detecção de borda pelo portal `InputCapture` para ficar
 indistinguível do Flow.
 
+## Implementado em Rust e medido (03/11)
+
+[`logid/src/border.rs`](../logid/src/border.rs), via crate `dbus`
+(libdbus), **não** zbus: medido, zbus levava a árvore de 5 para **189
+crates** arrastando runtime assíncrono para fazer seis chamadas D-Bus.
+Com `dbus 0.9.12` ficou em **40**, ao custo de `libdbus-1-dev` do apt.
+Descartado o `zbus 6.0.0` por ter 17 dias — major novo demais.
+
+```
+border: barreira 1 na borda right (2560, 0, 2560, 1440), eis=sim
+border: vigiando borda 'right' -> windows-host
+border: ACTIVATED barreira=1 activation=1 cursor=(2560.0, 555.18)
+```
+
+### Três bugs que só o teste ao vivo mostrou
+
+**1. O solaar reporta falha numa troca que funcionou.**
+
+```
+18:05:48  ACTIVATED
+18:06:23  border: MX Anywhere 3: FALHOU --      ← mensagem VAZIA, 35 s depois
+```
+
+Os dispositivos estavam no Windows, canal 2: **a troca tinha dado
+certo.** Numa troca bem-sucedida o dispositivo desaparece no meio do
+comando, o solaar trava até o timeout e devolve erro vazio. Eu já
+tratava esse caso no agente Rust (`"sem resposta é o caso ESPERADO"`) e
+esqueci no caminho via solaar.
+
+Correção: **o exit code do solaar não é fonte de verdade.** Verificamos
+pelo efeito observável — se o slot saiu deste receptor, trocou.
+
+**2. O handler bloqueava o loop do D-Bus por 35 s.**
+
+A troca roda em thread própria agora. Antes, nenhum sinal era processado
+durante ela.
+
+**3. Devolver o ponteiro na borda re-disparava a barreira em loop.**
+
+Chegamos a `activation=54` com o cursor parado em x=2560: cada `Release`
+o devolvia exatamente na barreira. O `Release` aceita `cursor_position`,
+então recuamos **24 px** para dentro. Depois disso, zero ativações
+espúrias.
+
+O cooldown subiu de 3 s para 10 s, porque a troca mais a verificação por
+efeito leva ~5 s e o segundo evento entrava antes do primeiro terminar.
+
+### A troca não é atômica
+
+Mouse e teclado são comandos independentes, segundos cada um. Observado:
+o mouse saiu e o teclado ficou por alguns segundos — **estado real e
+transitório**, não erro de leitura (suspeitei do parser e estava errado;
+a API e o `solaar show` concordaram no mesmo instante).
+
+O risco de verdade é o segundo falhar e o estado dividido ficar
+**permanente** — e não há rollback para quem já foi. Por isso
+`Outcome.partial` agora grita:
+
+```
+ESTADO DIVIDIDO: 1 trocaram, mas 1 ficaram aqui (MX Keys Keyboard).
+Nao ha rollback para quem foi -- use o botao Easy-Switch no que ficou.
+```
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.
