@@ -23,28 +23,90 @@ a rede caindo, e não depende de injeção de input por portal — o que
 Hoje as duas máquinas têm receptor Unifying, então a rota física é
 possível nos dois sentidos.
 
-## Detecção: tudo por portal, nada de hack
+## Detecção de borda: mutter direto, não o portal
 
-Os dois gatilhos têm API nativa no GNOME 50, e **verifiquei que o
-backend declara as duas**:
+Correção de uma afirmação errada minha. Esta spec dizia "tudo por
+portal, nada de hack", baseada em eu ter visto o
+`org.freedesktop.portal.InputCapture` **aceitar** `CreateSession`.
+Aceitar não é responder.
+
+### O portal aceita e nunca responde
 
 ```
-/usr/share/xdg-desktop-portal/portals/gnome.portal:
-  org.freedesktop.impl.portal.InputCapture      ← barreiras de ponteiro
-  org.freedesktop.impl.portal.GlobalShortcuts   ← atalho global
+CreateSession  -> devolve request path
+Response       -> NUNCA chega (rodada limpa, 75 s, confirmada)
+backend        -> 43 requests pendentes acumulados, nenhum resolvido
+no fechamento  -> "Object does not exist at .../session/icsess0"
 ```
 
-- **Borda** → `org.freedesktop.portal.InputCapture` (v1). `CreateSession`
-  foi aceito num teste direto por D-Bus; `SetPointerBarriers` + `Enable`
-  dão o evento de encostar na borda. É o mesmo portal que a doc do
-  Deskflow afirma que o GNOME não implementa — **afirmação desatualizada**.
-- **Atalho** → `org.freedesktop.portal.GlobalShortcuts`, que funciona
-  no Wayland sem gravar teclado.
+Não é falta de implementação: o `xdg-desktop-portal-gnome` tem
+`InputCaptureDialog` com switch de permissão, `AddBarrier`,
+`ClearBarriers`, `GetZones`, `ConnectToEIS`. O que ele não consegue é
+**exibir o diálogo de consentimento** —
+`Failed to associate portal window with parent window`. Uma CLI sem
+janela não tem o que passar em `parent_window`, e o pedido fica
+pendurado para sempre. O permission store confirma: há tabela para
+`remote-desktop` e `screencast`, **nenhuma** para `input-capture`.
 
-Usar o InputCapture só para *detectar* a borda e então disparar uma
-troca de canal HID++ é a sacada: a gente não precisa que ele seja bom
-em *capturar e encaminhar* input, só em avisar que o cursor chegou na
-borda.
+### `org.gnome.Mutter.InputCapture` funciona, e é síncrono
+
+O backend do portal é só um intermediário para um serviço do mutter que
+está no barramento, servido pelo gnome-shell, e atende chamada direta —
+sem Request/Response, sem diálogo:
+
+```
+org.gnome.Mutter.InputCapture
+  CreateSession(u capabilities) -> o session_path
+  SupportedCapabilities = 15
+
+org.gnome.Mutter.InputCapture.Session
+  GetZones()                     -> (u serial, a(uuii) zones)
+  AddBarrier(u serial, (iiii))   -> u id
+  ClearBarriers() / Enable() / Disable() / Close()
+  ConnectToEIS()                 -> h fd
+  Release(a{sv} options)
+  sinais: Activated(u barrier_id, u activation_id, (dd) cursor)
+          Deactivated(u activation_id), ZonesChanged, Disabled, Closed
+```
+
+### Validado com hardware (03/11)
+
+```
+CreateSession(2)   -> /org/gnome/Mutter/InputCapture/Session/u5
+GetZones()         -> serial=0, zones=[(2560, 1440, 0, 0)]
+AddBarrier(x=2560) -> id=1
+ConnectToEIS()     -> fd=8
+Enable()           -> ok
+
+*** ACTIVATED *** barreira=1 activation=1 cursor=(2560.0, 813.23)
+[Release] ponteiro devolvido
+[Deactivated] (1,)
+*** ACTIVATED *** barreira=1 activation=2 cursor=(2560.0, 813.23)
+[Release] ponteiro devolvido
+```
+
+**Dá para usar só a detecção** e devolver o ponteiro na hora, sem
+precisar capturar nem encaminhar input via libei. É o gatilho da rota
+física saindo de graça.
+
+### Três coisas que custaram tentativa
+
+**A barreira vai na FRONTEIRA da zona, não na última coluna dela.**
+Com `x = x + w - 1` (2559) o mutter recusa:
+`AccessDenied: Line overlaps with monitor region`. Tem que ser
+`x = x + w` (2560).
+
+**`ConnectToEIS` antes do `Enable`.** Não confirmei que seja
+obrigatório — entrou no teste para eliminar a hipótese e o evento
+chegou com ele presente. Fica como ordem conhecida-boa até alguém medir
+sem.
+
+**Movimento injetado vs. real.** O primeiro teste deu timeout com os
+dispositivos no canal do Windows: o ponteiro aqui era injetado pelo
+Deskflow via libei, e movimento injetado pode não atravessar barreira do
+compositor. O evento só veio com o dispositivo **no canal local**. Isso
+não é limitação — é exatamente o modo B, onde o device é local por
+definição.
 
 ## Pré-requisito: acesso ao hidraw
 
