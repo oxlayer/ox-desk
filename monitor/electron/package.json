@@ -1,0 +1,13 @@
+{
+  "name": "lan-monitor-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Painel das maquinas da LAN - casca nativa sobre o monitor.py",
+  "main": "main.js",
+  "scripts": {
+    "start": "env -u ELECTRON_RUN_AS_NODE electron ."
+  },
+  "devDependencies": {
+    "electron": "44.9.0"
+  }
+}

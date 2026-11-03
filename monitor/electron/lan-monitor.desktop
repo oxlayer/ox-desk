@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Maquinas
+Comment=Painel de status das maquinas da LAN
+Exec=/home/user/dev/logi/monitor/electron/run.sh
+Icon=/home/user/dev/logi/monitor/electron/icon.png
+Terminal=false
+Categories=Network;Monitor;
+StartupWMClass=lan-monitor-desktop

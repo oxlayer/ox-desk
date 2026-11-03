@@ -1,0 +1,21 @@
+[Unit]
+Description=Deskflow client — KVM over LAN, connects to the Windows server
+Documentation=https://github.com/deskflow/deskflow
+# Precisa da sessao grafica: o cliente injeta input via portal/libei no mutter.
+PartOf=graphical-session.target
+After=graphical-session.target
+# Nao desiste depois de N falhas: o servidor pode ficar dias desligado.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Le ~/.config/Deskflow/Deskflow.conf (remoteHost, computerName, layouts).
+ExecStart=/usr/bin/deskflow-core client
+# O cliente JA faz retry interno de conexao (~1s, adaptativo via
+# dynamicConnectionInterval). Restart aqui cobre crash do processo, nao
+# servidor offline.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

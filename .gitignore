@@ -1,0 +1,9 @@
+# Electron: 299 MB de Chromium, reinstalavel com npm ci
+monitor/electron/node_modules/
+
+# o .deb do Deskflow: 1.4 MB de binario, baixavel do GitHub Releases
+*.deb
+
+__pycache__/
+*.pyc
+*.log
