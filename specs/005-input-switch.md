@@ -421,9 +421,34 @@ Diferenças de projeto em relação ao lado GNOME:
 | permanência | não existe no mutter; usamos cooldown | `hold_ms`, default 250 ms |
 | recuo do ponteiro | necessário (`Release` com `cursor_position`) | desnecessário: o cursor para sozinho na borda |
 
-O `hold_ms` do lado Windows é melhor que o cooldown do lado Linux:
-exigir permanência evita a troca por raspão, em vez de só suprimir
-repetição depois do fato. Vale portar a ideia para o `border.rs`.
+### Permanência no lado Linux: densidade de ativações
+
+Portado, mas por outro mecanismo — o mutter **não tem** dwell, a barreira
+dispara no contato. Aproximamos pela **densidade de ativações**:
+
+| | |
+|---|---|
+| `HOLD_WINDOW` | 400 ms |
+| `HOLD_HITS` | 3 ativações na janela |
+
+A medição que virou mecanismo: com o cursor parado em x=2560 chegamos a
+`activation=54`, porque cada `Release` o devolvia na barreira. Esse
+re-disparo é exatamente o sinal de que a pessoa está **insistindo** na
+borda; um raspão de passagem gera uma ativação só.
+
+Então o `Release` passou a ser condicional:
+
+- **enquanto coleta** (hits < 3): devolve **sem** recuo, de propósito, para
+  que insistir continue re-disparando;
+- **ao decidir** (hits ≥ 3): devolve **recuado** 24 px, zera a contagem e
+  arma o cooldown de 10 s.
+
+O cooldown também vem antes da coleta: dentro dele nem contamos, só
+devolvemos recuado. Isso evita que a contagem suba durante os ~5 s da
+troca anterior.
+
+A inversão é o detalhe elegante: o churn que eu primeiro tratei como bug
+virou o sinal de intenção.
 
 ### Precisa da sessão interativa
 

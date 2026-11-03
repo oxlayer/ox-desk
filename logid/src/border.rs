@@ -35,6 +35,18 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// aceita `cursor_position`, entao recuamos.
 const PULLBACK: f64 = 24.0;
 
+/// Permanencia exigida na borda antes de trocar.
+///
+/// O mutter **nao tem** conceito de dwell: a barreira dispara no contato.
+/// Aproximamos pela DENSIDADE de ativacoes: encostar e insistir re-dispara
+/// varias vezes em sequencia (medimos `activation=54` com o cursor parado),
+/// enquanto um raspao de passagem gera uma so.
+///
+/// Enquanto coletamos, o `Release` vai SEM recuo -- de proposito: e o
+/// re-disparo que serve de sinal. So recuamos ao decidir.
+const HOLD_WINDOW: Duration = Duration::from_millis(400);
+const HOLD_HITS: usize = 3;
+
 /// Janela em que uma segunda travessia e ignorada. A acao disparada e
 /// IRREVERSIVEL; sem isto, um encostao duplo na borda viraria duas trocas.
 /// 10 s porque a troca + verificacao por efeito leva ~5 s: com 3 s o segundo
@@ -55,6 +67,45 @@ fn barrier_line(edge: &str, zone: (u32, u32, i32, i32)) -> Option<(i32, i32, i32
         "top" => Some((x, y, x + w, y)),
         "bottom" => Some((x, y + h, x + w, y + h)),
         _ => None,
+    }
+}
+
+/// Devolve o ponteiro ao usuario. `pullback` recua da borda; sem ele o
+/// cursor volta no mesmo ponto e a barreira re-dispara -- o que e desejado
+/// enquanto medimos permanencia.
+fn release(
+    sp: &dbus::blocking::Proxy<'_, &Connection>,
+    cursor: (f64, f64),
+    edge: &str,
+    pullback: bool,
+) {
+    let (cx, cy) = cursor;
+    let pos = if pullback {
+        match edge {
+            "right" => (cx - PULLBACK, cy),
+            "left" => (cx + PULLBACK, cy),
+            "bottom" => (cx, cy - PULLBACK),
+            "top" => (cx, cy + PULLBACK),
+            _ => (cx, cy),
+        }
+    } else {
+        (cx, cy)
+    };
+    let mut opts: std::collections::HashMap<&str, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>> =
+        std::collections::HashMap::new();
+    opts.insert(
+        "cursor_position",
+        dbus::arg::Variant(Box::new(pos) as Box<dyn dbus::arg::RefArg>),
+    );
+    if let Err(e) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Release", (opts,)) {
+        eprintln!("border: Release com cursor_position falhou ({e}); tentando sem");
+        let empty: std::collections::HashMap<
+            &str,
+            dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>,
+        > = std::collections::HashMap::new();
+        if let Err(e2) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Release", (empty,)) {
+            eprintln!("border: Release falhou: {e2}");
+        }
     }
 }
 
@@ -141,6 +192,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         };
 
         let last = Arc::new(RwLock::new(None::<Instant>));
+        let hits = Arc::new(RwLock::new(Vec::<Instant>::new()));
         let rule = {
             let mut r = MatchRule::new_signal(IFACE_SESSION, "Activated");
             r.path = Some(sess.path.clone());
@@ -152,6 +204,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         let edge2 = sess.edge.clone();
         let target2 = target.clone();
         let last2 = Arc::clone(&last);
+        let hits2 = Arc::clone(&hits);
 
         let res = sess.conn.add_match(
             rule,
@@ -160,45 +213,41 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                     "border: ACTIVATED barreira={barrier_id} activation={activation_id} cursor={cursor:?}"
                 );
 
-                // Devolve o ponteiro IMEDIATAMENTE, e RECUADO da borda --
-                // devolver no mesmo ponto re-dispara a barreira em loop.
-                let (cx, cy) = cursor;
-                let back = match edge2.as_str() {
-                    "right" => (cx - PULLBACK, cy),
-                    "left" => (cx + PULLBACK, cy),
-                    "bottom" => (cx, cy - PULLBACK),
-                    "top" => (cx, cy + PULLBACK),
-                    _ => (cx, cy),
-                };
                 let sp = conn.with_proxy(DEST, path2.clone(), TIMEOUT);
-                let mut opts: std::collections::HashMap<
-                    &str,
-                    dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>,
-                > = std::collections::HashMap::new();
-                opts.insert(
-                    "cursor_position",
-                    dbus::arg::Variant(Box::new((back.0, back.1)) as Box<dyn dbus::arg::RefArg>),
-                );
-                if let Err(e) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Release", (opts,)) {
-                    eprintln!("border: Release com cursor_position falhou ({e}); tentando sem");
-                    let empty: std::collections::HashMap<
-                        &str,
-                        dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>,
-                    > = std::collections::HashMap::new();
-                    if let Err(e2) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Release", (empty,)) {
-                        eprintln!("border: Release falhou: {e2}");
-                    }
-                }
 
-                // Cooldown: a acao abaixo e irreversivel.
-                let skip = last2
+                // Cooldown primeiro: se estamos dentro dele, devolve recuado
+                // e cai fora -- nem coleta permanencia.
+                let in_cooldown = last2
                     .read()
                     .ok()
                     .and_then(|g| *g)
                     .is_some_and(|t| t.elapsed() < COOLDOWN);
-                if skip {
+                if in_cooldown {
+                    release(&sp, cursor, &edge2, true);
                     println!("border: em cooldown, ignorando");
                     return true;
+                }
+
+                // Permanencia: conta ativacoes dentro da janela.
+                let hits = {
+                    let Ok(mut v) = hits2.write() else { return true };
+                    let now = Instant::now();
+                    v.retain(|t: &Instant| now.duration_since(*t) < HOLD_WINDOW);
+                    v.push(now);
+                    v.len()
+                };
+                if hits < HOLD_HITS {
+                    // Ainda coletando: devolve SEM recuo para que insistir na
+                    // borda continue re-disparando.
+                    release(&sp, cursor, &edge2, false);
+                    println!("border: permanencia {hits}/{HOLD_HITS}, aguardando");
+                    return true;
+                }
+
+                // Decidido: recua o ponteiro, zera a contagem, arma cooldown.
+                release(&sp, cursor, &edge2, true);
+                if let Ok(mut v) = hits2.write() {
+                    v.clear();
                 }
                 if let Ok(mut g) = last2.write() {
                     *g = Some(Instant::now());
