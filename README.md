@@ -537,6 +537,8 @@ recusa e sai com código 1.
 | `GET /api/status` | estado das máquinas (~2 s; o SSH domina) |
 | `GET /api/config` | config efetiva |
 | `PATCH /api/config` | alterar; valida, grava, e só então aplica |
+| `GET /api/devices` | inventário HID++ (receptor, slots, online/offline) |
+| `POST /api/focus` | passar o foco de input — **dry-run por padrão** |
 | `GET /` | o painel |
 
 O `/healthz` existe por um erro real: o health check do Electron batia
@@ -557,6 +559,71 @@ nao-e-json                   -> 400  JSON invalido
 Grava em disco **antes** de aplicar em memória: se o disco recusar,
 nada muda. E a página passa a servir o novo `refresh_seconds` sem
 reiniciar o daemon.
+
+### `POST /api/focus` — a peça que não existe em mais nada
+
+Passa o foco de input para outra máquina, escolhendo entre a rota
+**física** (HID++ 0x1814 manda o dispositivo pular de canal
+Easy-Switch) e a rota **LAN** (Deskflow). Ver
+[`specs/005`](specs/005-input-switch.md).
+
+**Dry-run por padrão.** Sem `"confirm": true` só devolve o plano, porque
+a rota física é **irreversível do lado de origem**: depois do
+`ChangeHost` este receptor não alcança mais o dispositivo.
+
+```bash
+curl -X POST -d '{"host":"windows-host"}' localhost:8787/api/focus
+```
+
+Hoje o plano devolve três bloqueios reais, e é isso que ele deve fazer:
+
+```
+[ok   ] host                     windows-host (windows-host.local)
+[ok   ] alcance                  windows-host.local responde
+[ok   ] hidraw                   ACL de uaccess presente
+[BLOQ ] posse do dispositivo     'MX Anywhere 3' está offline aqui
+[BLOQ ] posse do dispositivo     'MX Keys Keyboard' está offline aqui
+[BLOQ ] dead-man's switch        o agente do Windows ainda não existe
+```
+
+Com `"confirm": true` e bloqueios pendentes, responde **409** e não
+executa. A rota LAN é honesta sobre o próprio limite: o Deskflow troca
+de tela por movimento do cursor ou hotkey **no servidor**, não por
+comando externo — não há como forçar foco pela LAN daqui.
+
+E o plano traz `recovery` junto, para a GUI mostrar **antes** da troca:
+botão Easy-Switch no dispositivo, teclado USB, SSH de outra máquina.
+
+### Inventário HID++
+
+`GET /api/devices` lê via Solaar e reporta o que importa:
+
+```json
+{ "hidraw_access": true,
+  "receivers": [{ "name": "Unifying Receiver", "usb_id": "046d:C52B",
+    "devices": [ {"slot": 1, "name": "MX Anywhere 3", "online": false},
+                 {"slot": 2, "name": "MX Keys Keyboard", "online": false} ]}]}
+```
+
+`online: false` significa que o dispositivo está em **outro** canal — e
+enquanto estiver, nenhum comando HID++ o alcança. Essa é a restrição que
+define a arquitetura.
+
+> O backend é o Solaar (parse de `solaar show`). Fragilidade conhecida e
+> temporária: a fronteira do módulo foi desenhada para HID++ 0x1814
+> direto sobre `/dev/hidraw` substituir sem tocar em quem chama.
+
+#### A pegadinha do `uaccess`
+
+Se `hidraw_access` vier `false`, a causa provável é temporal: a regra do
+Solaar concede acesso por `TAG+="uaccess"`, e ela **só aplica ACL a nós
+criados depois dela**. Aqui os `hidraw` nasceram 11:37 e o Solaar entrou
+13:22 — resultado, `solaar show` morria em `No supported device found`.
+
+```bash
+sudo udevadm trigger --subsystem-match=hidraw --action=add
+getfacl /dev/hidraw0 | grep user     # confirmar
+```
 
 ### Três estados por serviço
 

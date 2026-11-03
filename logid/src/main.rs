@@ -7,9 +7,12 @@
 //! Ver ../specs/008-security.md.
 
 mod config;
+mod focus;
+mod hidpp;
 mod probe;
 
 use config::Config;
+use std::io::Read;
 use probe::Snapshot;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -188,12 +191,48 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     ok_json(req, body);
 }
 
+/// POST /api/focus -- passa o foco de input para outra maquina.
+///
+/// **Dry-run por padrao.** Sem `"confirm": true` devolve apenas o plano,
+/// porque a rota fisica e irreversivel do lado de origem: depois do
+/// ChangeHost este receptor nao alcanca mais o dispositivo. Ver
+/// ../specs/005-input-switch.md.
+fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let fr: focus::FocusRequest = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(e) => return err_json(req, 400, &format!("JSON invalido: {e}")),
+    };
+    let snap = match cfg.read() {
+        Ok(g) => g.clone(),
+        Err(_) => return err_json(req, 500, "estado da config corrompido"),
+    };
+    let outcome = focus::execute(&snap, &fr);
+    let code = if outcome.error.is_some() { 409 } else { 200 };
+    match serde_json::to_string(&outcome) {
+        Ok(b) => respond(
+            req,
+            Response::from_string(b)
+                .with_status_code(code)
+                .with_header(json_header())
+                .with_header(nostore()),
+        ),
+        Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+    }
+}
+
 fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
     let method = req.method().as_str().to_string();
 
     if path == "/api/config" && method == "PATCH" {
         return patch_config(req, cfg, cache);
+    }
+    if path == "/api/focus" && method == "POST" {
+        return post_focus(req, cfg);
     }
 
     // Snapshot curto da config para as rotas de leitura: nao segurar o
@@ -215,6 +254,11 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 Err(e) => err_json(req, 500, &format!("serializar: {e}")),
             }
         }
+
+        "/api/devices" => match serde_json::to_string(&hidpp::survey()) {
+            Ok(b) => ok_json(req, b),
+            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+        },
 
         "/api/config" => match serde_json::to_string(&snap_cfg) {
             Ok(b) => ok_json(req, b),

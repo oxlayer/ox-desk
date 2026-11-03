@@ -129,24 +129,48 @@ alvo tem receptor com NOSSO device pareado, em canal conhecido?
         não em 3 s ──▶ ROLLBACK para o canal/rota anterior
 ```
 
-### Rollback não é opcional
+### Não existe rollback deste lado
 
-Trocar de canal **tira seu teclado e mouse da máquina atual**. Se o
-alvo não confirmar, você fica sem input nos dois lados — o pior modo
-de falha possível deste projeto. Portanto:
+Correção de um erro de desenho meu: a primeira versão desta spec dizia
+"se o alvo não confirmar, voltar ao canal anterior". **Isso é
+impossível.**
 
-1. Antes de trocar, gravar canal e rota atuais.
-2. Trocar.
-3. O **agente do alvo** confirma que viu input (ele tem sessão
-   gráfica; nós não podemos verificar de fora — ver
-   [`002`](002-ssh.md#limite-estrutural-isolamento-de-sessão)).
-4. Sem confirmação em 3 s, voltar ao canal anterior.
-5. Se o rollback também falhar, gritar: notificação, log, e a GUI em
-   vermelho com a instrução manual (apertar o botão Easy-Switch).
+O `ChangeHost` viaja por rádio até o dispositivo. Depois que ele troca
+de canal, este receptor **não o alcança mais** — comprovado por
+`solaar config 1` falhando com `no online device found` justamente
+porque o device está no canal do Windows. Então a troca é
+**irreversível do lado de origem**, e não há ponto de retorno: no
+instante seguinte ao comando, estamos cegos e sem input.
 
-Isso é a mesma regra de "disparo é destrutivo" do outro repo: a ação é
-irreversível na prática se você perder o input, então preview e
-rollback são obrigatórios, não desejáveis.
+Duas consequências de projeto:
+
+**1. O pre-flight substitui o rollback.** Toda verificação acontece
+*antes* do ato irreversível, porque depois não há o que fazer. Por isso
+`POST /api/focus` é **dry-run por padrão** e só executa com
+`"confirm": true` — mesmo princípio da regra de disparo destrutivo do
+outro repo: a ação é irreversível, então preview é obrigatório.
+
+**2. O dead-man's switch mora no ALVO.** Quem pode devolver o
+dispositivo é quem passa a detê-lo. O agente do alvo deve:
+
+- esperar input por N segundos depois de receber o device;
+- se nada chegar, emitir `ChangeHost` de volta por conta própria.
+
+Isso inverte a responsabilidade: a origem não tenta se salvar, o
+destino a resgata. É também a razão mais forte para existir um agente
+no Windows em vez de só SSH — e enquanto ele não existir, a rota física
+é **de ida só**, e a volta é pelo botão físico do dispositivo.
+
+### Recuperação sem input
+
+Se os dois lados falharem, o usuário está sem teclado e sem mouse. Os
+caminhos que sobram, em ordem:
+
+1. botão Easy-Switch no próprio dispositivo (físico, sempre funciona);
+2. um teclado USB qualquer;
+3. SSH de outra máquina para `ubuntu-host`.
+
+A GUI tem que mostrar o item 1 **antes** de qualquer troca, não depois.
 
 ## Config
 

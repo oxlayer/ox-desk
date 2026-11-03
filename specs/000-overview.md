@@ -114,9 +114,9 @@ do outro lado.
 | Fase | Entrega | Estado |
 |---|---|---|
 | **0** | Setup manual funcionando, documentado | ✅ feito — ver [README](../README.md) |
-| **1** | `logid` servindo status + config read-only na GUI | painel já existe; falta a parte de config |
+| **1** | `logid` servindo status + config editável | ✅ feito — Rust, `PATCH /api/config` validado |
 | **2** | SSH + bootstrap automático das duas máquinas | [`002`](002-ssh.md) |
-| **3** | Roteamento de input: LAN × receptor físico | [`005`](005-input-switch.md) — **o núcleo** |
+| **3** | Roteamento de input: LAN × receptor físico | 🚧 `GET /api/devices` e `POST /api/focus` (dry-run) prontos; falta detecção de borda e o agente Windows |
 | **4** | Clipboard e file browser | [`003`](003-files.md), [`004`](004-clipboard.md) |
 | **5** | Compartilhar tela (integração) | [`006`](006-screen-share.md) |
 

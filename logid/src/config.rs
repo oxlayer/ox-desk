@@ -4,6 +4,7 @@
 //! escolheu, runtime e o que foi descoberto. Aqui so vive config.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// Como interpretar uma porta fechada. Tres estados porque dois davam
@@ -53,6 +54,19 @@ fn default_refresh() -> u64 {
     10
 }
 
+/// Dispositivo Logitech e em que canal Easy-Switch ele vive em cada host.
+///
+/// Este mapa e exatamente o que o Solaar nao tem e o que o Logitech Flow
+/// guarda na nuvem. Aqui mora num TOML seu.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceCfg {
+    /// Nome como o Solaar reporta (ex.: "MX Anywhere 3").
+    pub name: String,
+    /// host -> canal (1-based).
+    #[serde(default)]
+    pub hosts: BTreeMap<String, u8>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_port")]
@@ -61,6 +75,8 @@ pub struct Config {
     pub refresh_seconds: u64,
     #[serde(default)]
     pub hosts: Vec<HostCfg>,
+    #[serde(default)]
+    pub devices: Vec<DeviceCfg>,
 }
 
 pub const DEFAULT_TOML: &str = include_str!("../default-config.toml");

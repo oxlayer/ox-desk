@@ -47,3 +47,21 @@ ssh = "windows-host"
   label = "RDP"
   port = 3389
   expect = "any"           # disponivel no Pro, desligado por escolha
+
+# Canal Easy-Switch de cada dispositivo em cada host. E o mapa que o
+# Solaar nao tem e que o Flow guarda na nuvem. Ver specs/005.
+#
+# Confira os canais reais antes de confiar: com o dispositivo NESTA
+# maquina, `solaar show` lista os hosts conhecidos por ele.
+
+[[devices]]
+name = "MX Anywhere 3"
+  [devices.hosts]
+  "ubuntu-host" = 1
+  "windows-host" = 2
+
+[[devices]]
+name = "MX Keys Keyboard"
+  [devices.hosts]
+  "ubuntu-host" = 1
+  "windows-host" = 2
