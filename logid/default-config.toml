@@ -51,6 +51,11 @@ agent = "%LOCALAPPDATA%\\logid\\logid-agent.exe"
 
 # Canal Easy-Switch de cada dispositivo em cada host.
 #
+# ATENCAO ao nome: tem de ser o que o HID++ reporta (feature 0x0005), nao
+# o que o solaar mostrava. Medido: o solaar dizia "MX Keys Keyboard", o
+# dispositivo se chama "MX Keys Wireless Keyboard". Confira com
+#   cargo run --release --bin probe   (no crate hidpp/)
+#
 # LIDO DO HARDWARE em 03/11, nao chutado. Fonte:
 #   solaar config 2 change-host
 #   -> possible values: [ 1:ubuntu-host, 2:windows-host, 3:ASSET-TAG-0001 ]
@@ -69,7 +74,7 @@ name = "MX Anywhere 3"
   "windows-host" = 2
 
 [[devices]]
-name = "MX Keys Keyboard"
+name = "MX Keys Wireless Keyboard"
   [devices.hosts]
   "ubuntu-host" = 1
   "windows-host" = 2

@@ -1,0 +1,11 @@
+[package]
+name = "hidpp"
+version = "0.1.0"
+edition = "2021"
+description = "HID++ 2.0 sobre HID cru: inventario e troca de canal Easy-Switch"
+license = "MIT"
+
+[dependencies]
+# Enumeracao e I/O de HID em Linux (hidraw) e Windows (SetupAPI + HidD_*).
+# Integrar em vez de reimplementar ~300 linhas de FFI por plataforma.
+hidapi = "2"

@@ -9,10 +9,9 @@
 //! A excecao e o `guard`, que precisa ficar residente -- e na sessao
 //! interativa, porque GetLastInputInfo nao ve input de outra sessao.
 
-mod hidpp;
 mod input;
 
-use hidapi::HidApi;
+use hidpp::hidapi::HidApi;
 use serde_json::json;
 use std::process::ExitCode;
 
@@ -51,35 +50,42 @@ fn usage() -> ExitCode {
 
 /// Varre os slots 1..6 colhendo host info de quem responder.
 fn survey(api: &HidApi) -> serde_json::Value {
-    let interfaces: Vec<_> = hidpp::list(api)
+    let interfaces: Vec<_> = hidpp::endpoints(api)
         .into_iter()
-        .map(|(path, pid, usage, iface)| {
+        .map(|(path, pid, usage_page, usage)| {
             json!({ "path": path, "product_id": format!("{pid:04x}"),
-                    "usage": usage, "interface": iface })
+                    "usage_page": format!("{usage_page:#06x}"), "usage": usage })
         })
         .collect();
 
-    let link = match hidpp::Link::open(api, None) {
+    let link = match hidpp::Receiver::open(api) {
         Ok(l) => l,
         Err(e) => {
             return json!({ "ok": false, "error": e, "interfaces": interfaces });
         }
     };
 
-    let mut slots = Vec::new();
-    for slot in 1u8..=6 {
-        match link.host_info(slot) {
-            Ok(hi) => slots.push(json!({
-                "slot": slot,
-                "online": true,
-                "num_hosts": hi.num_hosts,
-                // O protocolo e 0-based; expomos 1-based para casar com o
-                // que o Solaar e a config usam.
-                "current_host": hi.current + 1,
-            })),
-            Err(e) => slots.push(json!({ "slot": slot, "online": false, "detail": e })),
-        }
-    }
+    // Usa o caminho eficiente do crate: ping de 250 ms primeiro, e
+    // host_info (mais caro) so para quem respondeu. Antes chamavamos
+    // host_info nos 6 slots -- medido, 6,4 s por probe.
+    let slots: Vec<_> = link
+        .devices(6, false)
+        .into_iter()
+        .map(|d| {
+            if d.online {
+                json!({
+                    "slot": d.slot,
+                    "online": true,
+                    "num_hosts": d.host.map(|h| h.num_hosts),
+                    // Ja 1-based: o crate converte do protocolo.
+                    "current_host": d.host.map(|h| h.current),
+                    "ping_ms": d.reply_ms,
+                })
+            } else {
+                json!({ "slot": d.slot, "online": false })
+            }
+        })
+        .collect();
     json!({ "ok": true, "interfaces": interfaces, "slots": slots })
 }
 
@@ -114,11 +120,11 @@ fn main() -> ExitCode {
                 return fail("uso: raw <slot> <feature hex> <func> [p0 p1 p2]");
             };
             let p = |i: usize| args.get(i).and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
-            let link = match hidpp::Link::open(&api, None) {
+            let link = match hidpp::Receiver::open(&api) {
                 Ok(l) => l,
                 Err(e) => return fail(e),
             };
-            match link.raw(slot, feat, func, [p(4), p(5), p(6)]) {
+            match link.raw(slot, feat, func, &[p(4), p(5), p(6)]) {
                 Ok(r) => out(json!({ "ok": true,
                     "hex": r.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "),
                     "ascii": r.iter().map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' }).collect::<String>(),
@@ -131,14 +137,14 @@ fn main() -> ExitCode {
             let Some(slot) = args.get(1).and_then(|s| s.parse::<u8>().ok()) else {
                 return fail("uso: host-info <slot 1..6>");
             };
-            let link = match hidpp::Link::open(&api, None) {
+            let link = match hidpp::Receiver::open(&api) {
                 Ok(l) => l,
                 Err(e) => return fail(e),
             };
             match link.host_info(slot) {
                 Ok(hi) => out(json!({ "ok": true, "slot": slot,
                                       "num_hosts": hi.num_hosts,
-                                      "current_host": hi.current + 1 })),
+                                      "current_host": hi.current })),
                 Err(e) => fail(e),
             }
         }
@@ -158,11 +164,11 @@ fn main() -> ExitCode {
                 return fail("falta --confirm: esta acao e irreversivel \
                              (o dispositivo sai deste receptor)");
             }
-            let link = match hidpp::Link::open(&api, None) {
+            let link = match hidpp::Receiver::open(&api) {
                 Ok(l) => l,
                 Err(e) => return fail(e),
             };
-            match link.set_host(slot, host - 1) {
+            match link.set_host(slot, host) {
                 Ok(()) => out(json!({ "ok": true, "slot": slot, "host": host })),
                 Err(e) => fail(e),
             }
@@ -217,7 +223,7 @@ fn main() -> ExitCode {
                 }
                 touching_since = None;
 
-                let link = match hidpp::Link::open(&api, None) {
+                let link = match hidpp::Receiver::open(&api) {
                     Ok(l) => l,
                     Err(e) => {
                         eprintln!("watch-edge: sem HID++ agora ({e})");
@@ -255,7 +261,7 @@ fn main() -> ExitCode {
                 }
 
                 for slot in &presentes {
-                    match link.set_host(*slot, host - 1) {
+                    match link.set_host(*slot, host) {
                         Ok(()) => println!(
                             "{}",
                             json!({ "ok": true, "event": "switched",
@@ -296,11 +302,11 @@ fn main() -> ExitCode {
                     }
                     Ok(idle) => {
                         if started.elapsed().as_millis() as u64 >= budget_ms {
-                            let link = match hidpp::Link::open(&api, None) {
+                            let link = match hidpp::Receiver::open(&api) {
                                 Ok(l) => l,
                                 Err(e) => return fail(format!("resgate falhou ao abrir: {e}")),
                             };
-                            return match link.set_host(slot, host - 1) {
+                            return match link.set_host(slot, host) {
                                 Ok(()) => out(json!({ "ok": true, "action": "reverted",
                                                       "to_host": host, "idle_ms": idle })),
                                 Err(e) => fail(format!("resgate falhou: {e}")),

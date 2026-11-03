@@ -337,3 +337,35 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Zona de 2560x1440 na origem, como a desta maquina.
+    const Z: (u32, u32, i32, i32) = (2560, 1440, 0, 0);
+
+    #[test]
+    fn barreira_fica_na_fronteira_nao_dentro() {
+        // x+w, nao x+w-1: com 2559 o mutter recusa com
+        // "AccessDenied: Line overlaps with monitor region".
+        assert_eq!(barrier_line("right", Z), Some((2560, 0, 2560, 1440)));
+        assert_eq!(barrier_line("left", Z), Some((0, 0, 0, 1440)));
+        assert_eq!(barrier_line("top", Z), Some((0, 0, 2560, 0)));
+        assert_eq!(barrier_line("bottom", Z), Some((0, 1440, 2560, 1440)));
+    }
+
+    #[test]
+    fn barreira_respeita_offset_da_zona() {
+        // Monitor secundario comecando em x=2560.
+        let z = (1920, 1080, 2560, 0);
+        assert_eq!(barrier_line("right", z), Some((4480, 0, 4480, 1080)));
+        assert_eq!(barrier_line("left", z), Some((2560, 0, 2560, 1080)));
+    }
+
+    #[test]
+    fn borda_invalida_e_recusada() {
+        assert_eq!(barrier_line("diagonal", Z), None);
+        assert_eq!(barrier_line("", Z), None);
+    }
+}

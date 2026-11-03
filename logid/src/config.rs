@@ -150,3 +150,70 @@ impl Config {
         std::fs::write(&p, text).map_err(|e| format!("gravar {p:?}: {e}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expect_default_e_up() {
+        // Importa: um servico sem `expect` declarado tem de alarmar se cair.
+        assert_eq!(Expect::default(), Expect::Up);
+    }
+
+    #[test]
+    fn toml_minimo_parseia_e_aplica_defaults() {
+        let t = r#"
+            [[hosts]]
+            name = "a"
+            addr = "a.local"
+              [[hosts.services]]
+              label = "SSH"
+              port = 22
+        "#;
+        let c: Config = toml::from_str(t).expect("deveria parsear");
+        assert_eq!(c.port, 8787, "porta default");
+        assert_eq!(c.refresh_seconds, 10);
+        assert_eq!(c.hosts.len(), 1);
+        assert_eq!(c.hosts[0].services[0].expect, Expect::Up);
+        assert!(c.devices.is_empty());
+        assert!(!c.input.border.enabled, "borda desligada por default");
+    }
+
+    #[test]
+    fn expect_down_e_any_desserializam() {
+        let t = r#"
+            [[hosts]]
+            name = "a"
+            addr = "a.local"
+              [[hosts.services]]
+              label = "srv"
+              port = 24800
+              expect = "down"
+              [[hosts.services]]
+              label = "rdp"
+              port = 3389
+              expect = "any"
+        "#;
+        let c: Config = toml::from_str(t).unwrap();
+        assert_eq!(c.hosts[0].services[0].expect, Expect::Down);
+        assert_eq!(c.hosts[0].services[1].expect, Expect::Any);
+    }
+
+    #[test]
+    fn mapa_de_canais_por_nome_de_dispositivo() {
+        let t = r#"
+            [[hosts]]
+            name = "a"
+            addr = "a.local"
+            [[devices]]
+            name = "MX Anywhere 3"
+              [devices.hosts]
+              "a" = 1
+              "b" = 2
+        "#;
+        let c: Config = toml::from_str(t).unwrap();
+        assert_eq!(c.devices[0].hosts.get("a"), Some(&1));
+        assert_eq!(c.devices[0].hosts.get("b"), Some(&2));
+    }
+}

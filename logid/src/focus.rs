@@ -11,6 +11,15 @@ use crate::config::Config;
 use crate::hidpp;
 use crate::probe;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
+
+/// Serializa trocas de canal.
+///
+/// Existe porque medimos a corrida: a vigilancia de borda e a API podem
+/// disparar ao mesmo tempo, e a segunda chegava com os dispositivos ja
+/// levados pela primeira -- "executed: true" com zero resultados. Uma
+/// troca por vez, e a elegibilidade e reavaliada dentro do lock.
+static SWITCH_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -196,8 +205,9 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                             format!("'{}' online no slot {}", d.name, d.slot),
                         ));
                         actions.push(format!(
-                            "solaar config {} change-host {}  ({} -> canal {} em {})",
-                            d.slot, chan, d.name, chan, req.host
+                            "HID++ 0x1814 setCurrentHost: slot {} -> canal {} \
+                             ({} em {})",
+                            d.slot, chan, d.name, req.host
                         ));
                     }
                 }
@@ -313,6 +323,13 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
         };
     }
 
+    // Uma troca por vez. Reavaliamos a elegibilidade DEPOIS de pegar o
+    // lock: quem esperou aqui pode ter perdido os dispositivos.
+    let _guard = match SWITCH_LOCK.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+
     // Ponto sem volta.
     let mut results = Vec::new();
     let mut moved = 0usize;
@@ -353,6 +370,15 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
         ))
     } else if moved == 0 && !stuck.is_empty() {
         Some(format!("nenhum dispositivo trocou ({})", stuck.join(", ")))
+    } else if moved == 0 {
+        // Aconteceu de verdade: o pre-flight passou e, nos segundos ate a
+        // execucao, uma travessia de borda concorrente ja levou tudo.
+        // "executed: true" com results vazio e pior que um erro claro.
+        Some(
+            "nenhum dispositivo elegivel no momento da execucao -- outra \
+             troca (borda?) pode ter levado todos antes"
+                .into(),
+        )
     } else {
         None
     };

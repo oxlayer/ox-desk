@@ -566,6 +566,62 @@ para que uma implementação de HID++ 0x1814 sobre /dev/hidraw substitua o
 backend sem tocar em quem chama"). O custo medido do solaar tornou a
 migração obrigatória, não opcional.
 
+## Migrado para HID++ direto — medido antes e depois
+
+O `solaar` saiu do caminho quente. O protocolo virou crate compartilhado
+em [`hidpp/`](../hidpp/), usado pelo `logid` **e** pelo `agent` — uma
+cópia só, testada contra hardware nos dois sistemas.
+
+| | antes (solaar) | depois (HID++) |
+|---|---|---|
+| troca de canal, ponta a ponta | **105 s** | **13,8 s** |
+| confirmação de que o device saiu | até 4× `solaar show` | ping de **300 ms** |
+| `/api/devices` | 6-15 s | **1,5 s** |
+| probe do agente por SSH | 6,4 s | **2,06 s** |
+| ping de presença | — | **22 a 81 ms** |
+
+### O que o HID++ deu de brinde
+
+**Nome lido do dispositivo** (feature 0x0005), não do solaar. E os nomes
+**divergem**: o solaar dizia `MX Keys Keyboard`, o dispositivo se chama
+`MX Keys Wireless Keyboard`. A config precisou ser corrigida — confira
+com `cargo run --release --bin probe` no crate.
+
+**Latência por dispositivo** exposta na API (`ping_ms`), que não existia.
+
+**Canal atual** de cada um, sem custo extra.
+
+### Três defeitos que a velocidade nova revelou
+
+**1. Dispositivo offline desaparecia da API.** O HID++ não lê o nome de
+quem não responde, então a lista ficava vazia e a GUI em branco —
+regressão frente ao solaar, que listava offline com nome. Resolvido com
+cache de slot→nome persistido em `~/.local/state/logi/slots.json`:
+runtime descartável, não config.
+
+**2. `executed: true` com zero resultados.** Com a troca tão mais
+rápida, a vigilância de borda passou a ganhar a corrida contra a API: o
+pre-flight passava e, nos segundos até a execução, outra travessia já
+tinha levado tudo. Agora as trocas são **serializadas** por mutex
+global, e a elegibilidade é reavaliada **dentro** do lock.
+
+**3. O texto do plano ainda citava `solaar config`.** Passou a dizer o
+que de fato faz: `HID++ 0x1814 setCurrentHost`.
+
+### Os testes trocaram de assunto
+
+Os 5 testes antigos cobriam o parser da saída do `solaar`, que deixou de
+existir. Em vez de aceitar a queda para zero, escrevi **7** sobre as
+funções puras que sobraram: `barrier_line` nas quatro bordas, com offset
+de monitor secundário e borda inválida; e o parsing de config —
+`Expect` default, `down`/`any`, e o mapa de canais por nome.
+
+### O gargalo que sobrou
+
+Dos 13,8 s, o pre-flight domina, e dentro dele o SSH ao agente. Com o
+agente migrado isso caiu para ~2 s, então a troca deve ficar perto de
+**9 s**. O resto é latência de SSH, não de HID++.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.
