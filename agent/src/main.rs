@@ -37,6 +37,10 @@ fn usage() -> ExitCode {
                                IRREVERSIVEL: o dispositivo sai deste
                                receptor e nao responde mais aqui.
   input-age                    ms desde o ultimo input nesta sessao
+  watch-edge <edge> <slots> <host> [hold_ms]
+                               vigia a borda e manda os dispositivos para
+                               <host> ao encostar. Ex: watch-edge left 1,2 1
+                               Roda na sessao interativa.
   guard <slot> <host> <segundos>
                                dead-man's switch: se nao houver input em
                                <segundos>, devolve o dispositivo para
@@ -161,6 +165,86 @@ fn main() -> ExitCode {
             match link.set_host(slot, host - 1) {
                 Ok(()) => out(json!({ "ok": true, "slot": slot, "host": host })),
                 Err(e) => fail(e),
+            }
+        }
+
+        "watch-edge" => {
+            let edge = args.get(1).cloned().unwrap_or_default();
+            let slots: Vec<u8> = args
+                .get(2)
+                .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+                .unwrap_or_default();
+            let host = args.get(3).and_then(|s| s.parse::<u8>().ok());
+            let hold_ms: u64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(250);
+            let (Some(host), false) = (host, slots.is_empty()) else {
+                return fail("uso: watch-edge <edge> <slot,slot> <host 1-based> [hold_ms]");
+            };
+            if host == 0 {
+                return fail("host e 1-based");
+            }
+            if !matches!(edge.as_str(), "left" | "right" | "top" | "bottom") {
+                return fail("edge: left | right | top | bottom");
+            }
+
+            let (vx, vy, vw, vh) = input::virtual_screen();
+            eprintln!(
+                "watch-edge: borda '{edge}', area virtual ({vx},{vy} {vw}x{vh}), \
+                 slots {slots:?} -> host {host}, hold {hold_ms}ms"
+            );
+
+            let mut touching_since: Option<std::time::Instant> = None;
+            let mut cooldown_until: Option<std::time::Instant> = None;
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(30));
+
+                if let Some(t) = cooldown_until {
+                    if std::time::Instant::now() < t {
+                        continue;
+                    }
+                    cooldown_until = None;
+                }
+
+                let Some(p) = input::cursor() else { continue };
+                if !input::at_edge(&edge, p) {
+                    touching_since = None;
+                    continue;
+                }
+
+                // Exige permanencia: evita troca por raspao na borda.
+                let since = *touching_since.get_or_insert_with(std::time::Instant::now);
+                if (since.elapsed().as_millis() as u64) < hold_ms {
+                    continue;
+                }
+                touching_since = None;
+
+                let link = match hidpp::Link::open(&api, None) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        eprintln!("watch-edge: sem HID++ agora ({e})");
+                        cooldown_until =
+                            Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                        continue;
+                    }
+                };
+                for slot in &slots {
+                    match link.set_host(*slot, host - 1) {
+                        Ok(()) => println!(
+                            "{}",
+                            json!({ "ok": true, "event": "switched",
+                                    "slot": slot, "host": host,
+                                    "cursor": [p.x, p.y] })
+                        ),
+                        Err(e) => println!(
+                            "{}",
+                            json!({ "ok": false, "event": "switch_failed",
+                                    "slot": slot, "error": e })
+                        ),
+                    }
+                }
+                // Os dispositivos acabaram de sair: nao ha input aqui para
+                // disparar de novo, mas se voltarem queremos vigiar outra vez.
+                cooldown_until =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
             }
         }
 

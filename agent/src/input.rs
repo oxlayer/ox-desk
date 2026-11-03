@@ -40,3 +40,59 @@ pub fn idle_ms() -> Result<u64, String> {
     // correta mesmo na virada.
     Ok((now as u32).wrapping_sub(lii.dw_time) as u64)
 }
+
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn GetCursorPos(p: *mut Point) -> i32;
+    fn GetSystemMetrics(index: i32) -> i32;
+}
+
+// Area virtual: cobre multi-monitor, ao contrario de SM_CXSCREEN que so
+// reporta o monitor primario.
+const SM_XVIRTUALSCREEN: i32 = 76;
+const SM_YVIRTUALSCREEN: i32 = 77;
+const SM_CXVIRTUALSCREEN: i32 = 78;
+const SM_CYVIRTUALSCREEN: i32 = 79;
+
+pub fn cursor() -> Option<Point> {
+    let mut p = Point::default();
+    if unsafe { GetCursorPos(&mut p) } == 0 {
+        return None;
+    }
+    Some(p)
+}
+
+/// (x, y, largura, altura) da area virtual.
+pub fn virtual_screen() -> (i32, i32, i32, i32) {
+    unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    }
+}
+
+/// O cursor esta encostado na borda `edge`?
+///
+/// No Windows nao precisamos de portal nem de barreira do compositor: ler
+/// GetCursorPos resolve, e e por isso que este lado e mais simples que o do
+/// GNOME. Tolerancia de 1 px porque o cursor para na ultima coluna valida.
+pub fn at_edge(edge: &str, p: Point) -> bool {
+    let (x, y, w, h) = virtual_screen();
+    match edge {
+        "left" => p.x <= x,
+        "right" => p.x >= x + w - 1,
+        "top" => p.y <= y,
+        "bottom" => p.y >= y + h - 1,
+        _ => false,
+    }
+}

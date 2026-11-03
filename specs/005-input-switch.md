@@ -397,6 +397,46 @@ ESTADO DIVIDIDO: 1 trocaram, mas 1 ficaram aqui (MX Keys Keyboard).
 Nao ha rollback para quem foi -- use o botao Easy-Switch no que ficou.
 ```
 
+## O par simétrico: `watch-edge` no Windows
+
+[`agent/`](../agent/) ganhou `watch-edge`, que fecha o ciclo do modo B:
+
+```
+logid-agent watch-edge left 1,2 1 [hold_ms]
+```
+
+Vigia a borda e, ao encostar, manda os slots para o canal do alvo.
+
+**No Windows isso é muito mais simples que no Linux**: não há portal,
+não há barreira de compositor, não há diálogo de consentimento. Ler
+`GetCursorPos` e `GetSystemMetrics` resolve. Usamos a área **virtual**
+(`SM_XVIRTUALSCREEN` e família) em vez de `SM_CXSCREEN`, que só reporta
+o monitor primário.
+
+Diferenças de projeto em relação ao lado GNOME:
+
+| | Linux (`border.rs`) | Windows (`watch-edge`) |
+|---|---|---|
+| detecção | barreira do compositor via D-Bus | polling de `GetCursorPos` a 30 ms |
+| permanência | não existe no mutter; usamos cooldown | `hold_ms`, default 250 ms |
+| recuo do ponteiro | necessário (`Release` com `cursor_position`) | desnecessário: o cursor para sozinho na borda |
+
+O `hold_ms` do lado Windows é melhor que o cooldown do lado Linux:
+exigir permanência evita a troca por raspão, em vez de só suprimir
+repetição depois do fato. Vale portar a ideia para o `border.rs`.
+
+### Precisa da sessão interativa
+
+Medido: rodando por SSH, o agente reporta
+`area virtual (0,0 1024x768)` — a tela falsa da sessão não-interativa,
+não o monitor real. Mesmo isolamento que já invalidou `input-age` por
+SSH. Por isso o atalho vai em `shell:startup`, com
+`WindowStyle = 7` (minimizado), e **não** como serviço:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows-autostart.ps1 -WatchEdge
+```
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.

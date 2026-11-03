@@ -9,7 +9,12 @@
 # Flags:
 #   -Remove   apaga o atalho em vez de criar
 
-param([switch]$Remove)
+param(
+  [switch]$Remove,
+  # Cria tambem o atalho do logid-agent watch-edge: encostar na borda
+  # ESQUERDA devolve mouse e teclado para o canal do Ubuntu.
+  [switch]$WatchEdge
+)
 
 $ErrorActionPreference = 'Stop'
 $startup = [Environment]::GetFolderPath('Startup')
@@ -57,6 +62,26 @@ if (Test-Path $lnk) {
   Write-Host "  ok: $lnk"
 } else {
   Write-Host '  FALHOU: atalho nao foi criado'; exit 1
+}
+
+if ($WatchEdge) {
+  Write-Host '==> atalho do watch-edge (borda esquerda -> Ubuntu)'
+  $agent = Join-Path $env:LOCALAPPDATA 'logid\logid-agent.exe'
+  if (Test-Path $agent) {
+    $wl = Join-Path $startup 'logid-watch-edge.lnk'
+    $s2 = $ws.CreateShortcut($wl)
+    $s2.TargetPath = $agent
+    $s2.Arguments = 'watch-edge left 1,2 1'
+    $s2.WorkingDirectory = Split-Path $agent
+    $s2.Description = 'logid: borda esquerda devolve teclado/mouse ao Ubuntu'
+    $s2.WindowStyle = 7       # minimizado; nao e servico de proposito
+    $s2.Save()
+    Write-Host "  ok: $wl"
+    Write-Host '  TEM que rodar na sessao interativa: GetCursorPos e'
+    Write-Host '  GetSystemMetrics nao veem a sessao do usuario de fora dela.'
+  } else {
+    Write-Host "  logid-agent.exe nao encontrado em $agent"
+  }
 }
 
 Write-Host ''
