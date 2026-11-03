@@ -18,7 +18,8 @@ libnss-mdns:         0.15.1-5
 ```
 
 `getent hosts windows-host.local` → `192.168.1.42`, estável. Todas as
-configs usam o nome: `Deskflow.conf`, `~/.ssh/config`, `hosts.json`.
+configs usam o nome: `Deskflow.conf`, `~/.ssh/config` e
+`~/.config/logi/config.toml`.
 
 Quirks pagos:
 

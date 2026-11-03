@@ -517,68 +517,81 @@ não de um projeto de fim de semana — e o RustDesk é open source e
 **self-hostável** (`hbbs`/`hbbr`), o que já atende "próprio e seguro"
 sem escrever nada. Em LAN você nem precisa de relay: conexão direta.
 
-## Painel de status das máquinas
+## `logid` — o control plane (Rust)
 
-Em [`monitor/`](monitor/). Python **stdlib apenas** — sem pip, sem
-Electron:
-
-```bash
-python3 monitor/monitor.py          # http://127.0.0.1:8787
-curl -s localhost:8787/api/status   # mesmo dado em JSON
-```
-
-Sobe no login com:
+Em [`logid/`](logid/). Binário de 929 KB, sem runtime.
 
 ```bash
-cp monitor/monitor.service ~/.config/systemd/user/lan-monitor.service
-systemctl --user daemon-reload
-systemctl --user enable --now lan-monitor.service
+cargo build --release          # dentro de logid/
+install -m755 target/release/logid ~/.local/bin/logid
+systemctl --user enable --now logid.service
 ```
 
-Adicionar uma terceira máquina é **uma entrada em
-[`monitor/hosts.json`](monitor/hosts.json)**, sem tocar em código.
+Config em `~/.config/logi/config.toml`, gravada no primeiro boot se não
+existir. **Config inválida não vira default silencioso**: o daemon
+recusa e sai com código 1.
 
-Três estados por serviço, de propósito — dois davam falso alarme:
+| Rota | O quê |
+|---|---|
+| `GET /healthz` | vivo? **0,19 ms** — não toca em rede |
+| `GET /api/status` | estado das máquinas (~2 s; o SSH domina) |
+| `GET /api/config` | config efetiva |
+| `PATCH /api/config` | alterar; valida, grava, e só então aplica |
+| `GET /` | o painel |
 
-| `expect` | Significado | Exemplo |
-|---|---|---|
-| `up` (default) | tem que estar no ar; vermelho se cair | SSH do Windows |
-| `down` | tem que estar fechado | porta 24800 **aqui** (esta máquina é cliente, não servidor) |
-| `any` | informativo, nunca alarma | RDP do Windows, disponível mas desligado por escolha |
+O `/healthz` existe por um erro real: o health check do Electron batia
+no `/api/status` com 800 ms de timeout, e esse endpoint leva 2 s porque
+abre SSH para buscar uptime e RAM. Falhava sempre em cache frio.
 
-Para hosts com `"ssh"`, ele também traz uptime e RAM pelo próprio
-SSH — por isso o painel escuta **só em 127.0.0.1**: ele lê portas e
-executa SSH, não deve ficar exposto na rede.
+### PATCH valida de verdade
 
-### App de desktop (Electron)
+```
+{"campo_que_nao_existe":1}   -> 400  campo desconhecido: ...
+{"refresh_seconds":"texto"}  -> 422  invalid type: string
+{"port":0}                   -> 422  port invalida
+{"hosts":[]}                 -> 422  precisa de ao menos um host
+nao-e-json                   -> 400  JSON invalido
+[1,2,3]                      -> 400  esperado um objeto JSON
+```
 
-Em [`monitor/electron/`](monitor/electron/):
+Grava em disco **antes** de aplicar em memória: se o disco recusar,
+nada muda. E a página passa a servir o novo `refresh_seconds` sem
+reiniciar o daemon.
+
+### Três estados por serviço
+
+Dois davam falso alarme — o SSH que não existe aqui de propósito e o
+RDP do Windows desligado por escolha:
+
+| `expect` | Significado |
+|---|---|
+| `up` (default) | tem que estar no ar; vermelho se cair |
+| `down` | tem que estar fechada (a 24800 **aqui**: esta máquina é cliente) |
+| `any` | informativo, nunca alarma |
+
+Adicionar uma terceira máquina é um bloco `[[hosts]]` no TOML.
+
+### GUI (Electron)
+
+Em [`gui/`](gui/):
 
 ```bash
-cd monitor/electron && npm install && npm start
+cd gui && npm install && ./run.sh
 ```
 
-Janela nativa, ícone de bandeja (mostrar/esconder, recarregar, abrir no
-navegador, sair), instância única, e fechar esconde em vez de matar.
+Janela nativa, bandeja, instância única, fechar esconde. **Não duplica
+lógica**: o `logid` serve a UI e a GUI embrulha. Se o
+`logid.service` está no ar ela reaproveita; se a porta está livre, sobe
+um filho — e só então o mata ao sair.
 
-A casca **não duplica lógica**: o Python coleta e serve a UI, o Electron
-só embrulha. Se o `lan-monitor.service` já está no ar, ele reaproveita;
-se não há ninguém na porta, sobe um `monitor.py` filho — e aí sim o mata
-ao sair. O backend do systemd nunca é morto pelo app.
+Electron fixado em **44.9.0**. Não chute versão: eu assumi 38.x e a
+linha atual é 45.x. Confira com `npm view electron time --json` e
+prefira uma com ≥ 2 semanas.
 
-`nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, e
-link externo vai para o navegador em vez de abrir dentro do app.
-
-Electron fixado em **44.9.0** (17/10/2026). Não chute versão aqui: eu
-havia assumido 38.x e a linha atual é 45.x — confira com
-`npm view electron time --json` e prefira uma com ≥ 2 semanas.
-
-> O custo é real: ~200 MB de Chromium para uma página de status, e a
-> coleta precisa de um processo local de todo modo. A página em
-> `localhost:8787` entrega o mesmo conteúdo em qualquer navegador,
-> inclusive do celular (mudando o bind, ciente do aviso acima). O app
-> existe porque uma janela com bandeja é mais confortável no dia a dia —
-> não porque era necessário.
+> ⚠️ O host de extensões do VS Code exporta `ELECTRON_RUN_AS_NODE=1`, e
+> com ela o binário do Electron roda como Node puro e **nada abre** —
+> foi por isso que `electron --version` devolveu a versão do Node.
+> `run.sh` e `npm start` limpam a variável.
 
 ## O IP muda — e isso quebrou tudo uma vez
 
@@ -590,7 +603,7 @@ O estrago:
 |---|---|---|
 | Deskflow | `remoteHost=192.168.1.43` | **KVM morto**, log em loop de `No route to host` |
 | SSH | `HostName 192.168.1.43` | `No route to host` |
-| `hosts.json` | `"addr": "192.168.1.43"` | host marcado offline |
+| painel | `addr = "192.168.1.43"` | host marcado offline |
 | GSConnect | descoberta por broadcast | **sobreviveu** — reconectou sozinho em `.102` |
 
 A lição está na última linha: o que descobre por nome/broadcast se
@@ -608,7 +621,8 @@ libnss-mdns:         0.15.1-5
 ```
 
 Então todas as configs passaram a usar **`windows-host.local`**:
-`Deskflow.conf`, `~/.ssh/config` e `monitor/hosts.json`. Deskflow
+`Deskflow.conf`, `~/.ssh/config` e `~/.config/logi/config.toml`.
+Deskflow
 reconectou (`ESTAB → 192.168.1.42:24800`) sem nenhum IP escrito.
 
 > ⚠️ **A lista separada por vírgula do Deskflow não funciona**, apesar

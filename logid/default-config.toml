@@ -1,0 +1,49 @@
+# Config do logid. Editavel a mao -- o daemon revalida ao ler.
+#
+# REGRA: nunca escrever IP aqui. Ver specs/007-device-routing.md --
+# o IP do Windows ja mudou uma vez e quebrou tudo que estava fixado.
+
+port = 8787
+refresh_seconds = 10
+
+[[hosts]]
+name = "ubuntu-host"
+addr = "127.0.0.1"
+role = "Ubuntu 26.04 - este PC"
+units = ["deskflow-client.service", "gnome-remote-desktop.service"]
+
+  [[hosts.services]]
+  label = "RDP (GNOME)"
+  port = 3389
+
+  [[hosts.services]]
+  label = "KDE Connect"
+  port = 1716
+
+  [[hosts.services]]
+  label = "Deskflow srv"
+  port = 24800
+  expect = "down"          # esta maquina e cliente, nao servidor
+
+[[hosts]]
+name = "windows-host"
+addr = "windows-host.local"  # mDNS, nunca IP
+role = "Windows 10 Pro"
+ssh = "windows-host"
+
+  [[hosts.services]]
+  label = "SSH"
+  port = 22
+
+  [[hosts.services]]
+  label = "Deskflow srv"
+  port = 24800
+
+  [[hosts.services]]
+  label = "KDE Connect"
+  port = 1716
+
+  [[hosts.services]]
+  label = "RDP"
+  port = 3389
+  expect = "any"           # disponivel no Pro, desligado por escolha

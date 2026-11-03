@@ -8,7 +8,8 @@ Linux**, e mais do que isso.
 |---|---|
 | [`README.md`](README.md) | **Runbook operacional** — o que está instalado, o que testei e falhou, e o porquê de cada escolha. Leia antes de mexer em qualquer coisa. |
 | [`specs/`](specs/) | **Especificações** do sistema que queremos construir. Começa em [`specs/000-overview.md`](specs/000-overview.md). |
-| [`monitor/`](monitor/) | Painel de status já funcionando (Python stdlib + casca Electron). |
+| [`logid/`](logid/) | **O control plane**, em Rust. Serve a API e o painel. |
+| [`gui/`](gui/) | Casca Electron: janela e bandeja sobre o `logid`. Não contém lógica. |
 | `install.sh`, `status.sh`, `windows-*.ps1` | Scripts idempotentes de setup e diagnóstico. |
 
 ## As duas máquinas

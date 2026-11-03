@@ -6,12 +6,23 @@ const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
 
-const CFG = JSON.parse(
-  fs.readFileSync(path.join(__dirname, '..', 'hosts.json'), 'utf8')
-);
-const PORT = CFG.port || 8787;
+// A porta vem da config do logid (TOML). Regex em vez de parser: e uma
+// linha escalar num arquivo que nos mesmos geramos.
+function readPort() {
+  const cfg = path.join(
+    process.env.XDG_CONFIG_HOME || path.join(process.env.HOME, '.config'),
+    'logi', 'config.toml'
+  );
+  try {
+    const m = fs.readFileSync(cfg, 'utf8').match(/^\s*port\s*=\s*(\d+)/m);
+    if (m) return parseInt(m[1], 10);
+  } catch { /* sem config ainda: o logid grava o default no primeiro boot */ }
+  return 8787;
+}
+
+const PORT = readPort();
 const URL = `http://127.0.0.1:${PORT}/`;
-const PY = path.join(__dirname, '..', 'monitor.py');
+const LOGID = path.join(process.env.HOME, '.local', 'bin', 'logid');
 
 let win = null;
 let tray = null;
@@ -32,10 +43,11 @@ function ping(timeout = 800) {
 }
 
 async function ensureBackend() {
-  // O systemd (lan-monitor.service) normalmente ja o tem no ar. So subimos
-  // um filho se nao houver ninguem respondendo -- e so entao o matamos no fim.
+  // O systemd (logid.service) normalmente ja o tem no ar. So subimos um
+  // filho se nao houver ninguem respondendo -- e so entao o matamos no fim.
   if (await ping()) return 'ja rodando';
-  child = spawn('python3', [PY], { stdio: 'ignore', detached: false });
+  const bin = fs.existsSync(LOGID) ? LOGID : 'logid';
+  child = spawn(bin, [], { stdio: 'ignore', detached: false });
   let died = false;
   child.on('exit', () => { died = true; child = null; });
   for (let i = 0; i < 25; i++) {
@@ -94,7 +106,7 @@ function toggle() {
 function createTray() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
   tray = new Tray(img.resize({ width: 22, height: 22 }));
-  tray.setToolTip('Maquinas - painel da LAN');
+  tray.setToolTip('logid - painel da LAN');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Mostrar / esconder', click: toggle },
     { label: 'Recarregar', click: () => win && win.reload() },

@@ -1,0 +1,19 @@
+[package]
+name = "logid"
+version = "0.1.0"
+edition = "2021"
+description = "Control plane da infra pessoal de duas maquinas na LAN"
+license = "MIT"
+
+[dependencies]
+# Servidor HTTP bloqueante e minimo -- nao precisamos de async para um
+# daemon local com dois clientes.
+tiny_http = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

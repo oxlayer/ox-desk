@@ -4,8 +4,9 @@ Um processo, dois modos. No Ubuntu roda como **control plane**: decide,
 guarda estado e serve a API. No Windows roda como **agente**: executa e
 reporta.
 
-Evolução de [`monitor/monitor.py`](../monitor/monitor.py), que já é
-metade disso — stdlib puro, sem pip, `/api/status` + HTML.
+Implementado em Rust em [`logid/`](../logid/). O protótipo Python
+(`monitor.py`) foi substituído na fase 1 — ver
+[`000`](000-overview.md#linguagem-rust).
 
 ## API
 
@@ -58,7 +59,7 @@ testável.
 
 ## GUI
 
-A casca Electron em [`monitor/electron/`](../monitor/electron/) já faz
+A casca Electron em [`gui/`](../gui/) já faz
 janela, bandeja, instância única e reaproveita o backend do systemd.
 Ela **não duplica lógica**: toda regra vive no `logid`.
 

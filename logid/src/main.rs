@@ -1,0 +1,236 @@
+//! logid -- control plane da infra de duas maquinas na LAN.
+//!
+//! Spec: ../specs/001-control-plane.md
+//!
+//! Escuta SO em 127.0.0.1: le portas, executa SSH e (em breve) dispara
+//! troca de canal HID++. E superficie de privilegio, nao um site.
+//! Ver ../specs/008-security.md.
+
+mod config;
+mod probe;
+
+use config::Config;
+use probe::Snapshot;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+use tiny_http::{Header, Request, Response, Server};
+
+const PAGE: &str = include_str!("../static/index.html");
+
+/// Cache do snapshot. Existe porque /api/status faz rede e SSH -- medido
+/// em 2.09 s na versao Python, contra 0.6 ms do /healthz. Reusar e o que
+/// mantem a GUI fluida.
+struct Cache {
+    at: Option<Instant>,
+    data: Option<Arc<Snapshot>>,
+}
+
+fn json_header() -> Header {
+    Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap()
+}
+fn html_header() -> Header {
+    Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap()
+}
+fn nostore() -> Header {
+    Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap()
+}
+
+/// Responder nunca deve derrubar a thread: cliente que desiste no meio
+/// (health check com timeout curto, aba fechada) virava BrokenPipeError
+/// no journal na versao Python. Aqui o erro e so ignorado.
+fn respond(req: Request, resp: Response<std::io::Cursor<Vec<u8>>>) {
+    let _ = req.respond(resp);
+}
+
+fn ok_json(req: Request, body: String) {
+    respond(
+        req,
+        Response::from_string(body).with_header(json_header()).with_header(nostore()),
+    );
+}
+
+fn err_json(req: Request, code: u16, msg: &str) {
+    let body = serde_json::json!({ "error": msg }).to_string();
+    respond(
+        req,
+        Response::from_string(body)
+            .with_status_code(code)
+            .with_header(json_header())
+            .with_header(nostore()),
+    );
+}
+
+fn cached(cfg: &Config, cache: &Mutex<Cache>) -> Arc<Snapshot> {
+    let ttl = Duration::from_secs(cfg.refresh_seconds.saturating_sub(2).max(2));
+    if let Ok(c) = cache.lock() {
+        if let (Some(at), Some(data)) = (c.at, c.data.as_ref()) {
+            if at.elapsed() < ttl {
+                return Arc::clone(data);
+            }
+        }
+    }
+    let fresh = Arc::new(probe::snapshot(cfg));
+    if let Ok(mut c) = cache.lock() {
+        c.at = Some(Instant::now());
+        c.data = Some(Arc::clone(&fresh));
+    }
+    fresh
+}
+
+fn main() {
+    let cfg = match Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            // Falhar barulhento: config invalida nao vira default silencioso.
+            eprintln!("logid: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let addr = format!("127.0.0.1:{}", cfg.port);
+    let server = match Server::http(&addr) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("logid: nao consegui escutar em {addr}: {e}");
+            std::process::exit(1);
+        }
+    };
+    println!("logid em http://{addr}  (config: {})", Config::path().display());
+
+    let cfg = Arc::new(RwLock::new(cfg));
+    let cache = Arc::new(Mutex::new(Cache { at: None, data: None }));
+
+    let server = Arc::new(server);
+    let workers: Vec<_> = (0..4)
+        .map(|_| {
+            let server = Arc::clone(&server);
+            let cfg = Arc::clone(&cfg);
+            let cache = Arc::clone(&cache);
+            std::thread::spawn(move || {
+                for req in server.incoming_requests() {
+                    handle(req, &cfg, &cache);
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        let _ = w.join();
+    }
+}
+
+fn invalidate(cache: &Mutex<Cache>) {
+    if let Ok(mut c) = cache.lock() {
+        c.at = None;
+        c.data = None;
+    }
+}
+
+/// PATCH /api/config -- merge raso no topo, valida, grava, invalida cache.
+///
+/// Merge raso de proposito: substituir `hosts` inteiro e explicito e
+/// previsivel. Merge profundo em lista de hosts seria adivinhacao.
+fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let incoming: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(e) => return err_json(req, 400, &format!("JSON invalido: {e}")),
+    };
+    let serde_json::Value::Object(patch) = incoming else {
+        return err_json(req, 400, "esperado um objeto JSON");
+    };
+
+    let merged = {
+        let guard = match cfg.read() {
+            Ok(g) => g,
+            Err(_) => return err_json(req, 500, "estado da config corrompido"),
+        };
+        let mut base = match serde_json::to_value(&*guard) {
+            Ok(serde_json::Value::Object(m)) => m,
+            _ => return err_json(req, 500, "config atual nao serializa"),
+        };
+        for (k, v) in patch {
+            if !base.contains_key(&k) {
+                return err_json(req, 400, &format!("campo desconhecido: {k}"));
+            }
+            base.insert(k, v);
+        }
+        serde_json::Value::Object(base)
+    };
+
+    let next: Config = match serde_json::from_value(merged) {
+        Ok(c) => c,
+        Err(e) => return err_json(req, 422, &format!("config resultante invalida: {e}")),
+    };
+    if next.port == 0 {
+        return err_json(req, 422, "port invalida");
+    }
+    if next.hosts.is_empty() {
+        return err_json(req, 422, "precisa de ao menos um host");
+    }
+    // Grava antes de aplicar: se o disco recusar, nada muda em memoria.
+    if let Err(e) = next.save() {
+        return err_json(req, 500, &e);
+    }
+
+    let body = match serde_json::to_string(&next) {
+        Ok(b) => b,
+        Err(e) => return err_json(req, 500, &format!("serializar: {e}")),
+    };
+    match cfg.write() {
+        Ok(mut g) => *g = next,
+        Err(_) => return err_json(req, 500, "nao consegui aplicar"),
+    }
+    invalidate(cache);
+    ok_json(req, body);
+}
+
+fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
+    let path = req.url().split('?').next().unwrap_or("").to_string();
+    let method = req.method().as_str().to_string();
+
+    if path == "/api/config" && method == "PATCH" {
+        return patch_config(req, cfg, cache);
+    }
+
+    // Snapshot curto da config para as rotas de leitura: nao segurar o
+    // lock durante rede nem durante o respond.
+    let snap_cfg = match cfg.read() {
+        Ok(g) => g.clone(),
+        Err(_) => return err_json(req, 500, "estado da config corrompido"),
+    };
+
+    match path.as_str() {
+        // Barato de proposito: NAO toca em rede. O health check do Electron
+        // batia no /api/status com 800 ms de timeout e falhava sempre.
+        "/healthz" => ok_json(req, r#"{"ok":true}"#.into()),
+
+        "/api/status" | "/api/hosts" => {
+            let snap = cached(&snap_cfg, cache);
+            match serde_json::to_string(&*snap) {
+                Ok(b) => ok_json(req, b),
+                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            }
+        }
+
+        "/api/config" => match serde_json::to_string(&snap_cfg) {
+            Ok(b) => ok_json(req, b),
+            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+        },
+
+        "/" | "/index.html" => {
+            // Renderizado por requisicao: se refresh_seconds mudar por
+            // PATCH, a pagina reflete sem reiniciar o daemon.
+            let page = PAGE.replace("__REFRESH__", &snap_cfg.refresh_seconds.to_string());
+            respond(
+                req,
+                Response::from_string(page).with_header(html_header()).with_header(nostore()),
+            )
+        }
+
+        _ => err_json(req, 404, "nao encontrado"),
+    }
+}

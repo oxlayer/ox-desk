@@ -77,22 +77,37 @@ terceiro. "Próprio e seguro" sem escrever nada.
 Um binário só, dois modos. O control plane é quem decide; o agente
 executa no outro lado.
 
-## Linguagem
+## Linguagem: Rust
 
-**Python para o control plane.** Já temos [`monitor/monitor.py`](../monitor/monitor.py)
-funcionando com stdlib puro, sem pip — e control plane é I/O, não CPU.
-Reescrever em Go ou Rust agora seria trocar código que funciona por
-código novo sem ganho mensurável.
+O control plane é **Rust** ([`logid/`](../logid/)), decisão tomada em
+03/11 e já implementada na fase 1.
 
-**Rust entra quando houver motivo medido**, e só no pedaço que o pedir:
+O protótipo era Python stdlib, e funcionava. A migração aconteceu antes
+de a complexidade crescer — que é o momento barato de fazer isso, não
+depois. O que se ganhou, medido:
 
-- o caminho quente de injeção de input, se latência virar problema
-  (hoje o Deskflow cobre isso);
-- o agente Windows, se distribuir um binário único ficar mais simples
-  que carregar Python para lá.
+| | Python | Rust |
+|---|---|---|
+| `/healthz` | 0,6 ms | **0,19 ms** |
+| binário | — | 929 KB, sem runtime |
+| config inválida | erro em runtime, na requisição | **recusada no boot**, com exit 1 |
+| campo desconhecido no PATCH | precisaria de validação manual | recusado pelo tipo, 400 |
 
-Escolher Rust antes de ter o número é otimização prematura — e a
-camada mais valiosa (a decisão LAN × físico) não é limitada por CPU.
+O ganho real não é latência (I/O domina: `/api/status` leva 2 s nas
+duas versões, por causa do SSH). É o **tipo como contrato**: `Expect`
+é enum, não string; `Config` não desserializa se o TOML estiver errado;
+e o compilador recusa o caso não tratado. Num daemon que vai disparar
+troca de canal HID++ e pode te deixar sem teclado
+([`005`](005-input-switch.md#rollback-não-é-opcional)), isso vale mais
+que microssegundos.
+
+Dependências, deliberadamente poucas: `tiny_http` (bloqueante — dois
+clientes não justificam async), `serde`, `serde_json`, `toml`. Sem
+crate de data: `date +%z` resolve o offset local.
+
+O **agente Windows** também será Rust, pelo mesmo motivo pelo qual o
+HID++ 0x1814 vai ser nosso: binário único, sem runtime para instalar
+do outro lado.
 
 ## Fases
 
