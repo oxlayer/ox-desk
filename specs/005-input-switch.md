@@ -462,6 +462,58 @@ SSH. Por isso o atalho vai em `shell:startup`, com
 powershell -ExecutionPolicy Bypass -File windows-autostart.ps1 -WatchEdge
 ```
 
+## O recuo do ponteiro não existe: o mutter ignora
+
+Medido em teste real, e isso derrubou o desenho anterior:
+
+```
+300+ ativacoes, todas com cursor=(2560.0, ...)   <- x NUNCA mudou
+690 linhas de "em cooldown, ignorando"
+```
+
+O `Release` **aceita** `cursor_position` e **não move o ponteiro**. Com o
+cursor encostado na borda, cada Release o devolvia ali e a barreira
+re-disparava — 300 vezes num segundo, inundando o journal.
+
+### A estratégia que funciona: desarmar a barreira
+
+Em vez de mover o ponteiro, `Disable()` na decisão e `Enable()` quando o
+cooldown vence. Sem barreira não há evento, independente de onde o
+ponteiro esteja.
+
+O `Enable` do rearme roda no **loop principal**, não na thread da troca:
+a sessão pertence àquela conexão D-Bus, e outra conexão não a controla.
+O estado compartilhado é um `reenable_at: Option<Instant>`.
+
+> Isto também simplificou o `release()`: sem opções, sem fallback. A
+> função inteira virou três linhas.
+
+## `watch-edge` confundia ausência com falha
+
+Reportado pelo uso real:
+
+```
+sem resposta para feature 0x00 func 0x00 ... switch_failed
+```
+
+Encostar na borda do Windows com os dispositivos **em outra máquina**
+fazia o agente tentar `set_host` e falhar no `feature_index` — que é
+ausência, não falha. Agora ele checa presença antes:
+
+- nenhum slot presente → log claro e cooldown de 10 s, sem tentar;
+- parte presente → envia só esses e **avisa do estado dividido**.
+
+### Slot é por receptor, e não coincide entre máquinas
+
+Descoberto ao reunir os dispositivos: o Windows tinha o **slot 1 online**
+e o slot 2 vazio, enquanto aqui os dois existem. `set-host 2` de lá
+falhou por isso, não por bug.
+
+A config do `logid` já resolve por **nome** de dispositivo. O agente
+ainda recebe números crus na linha de comando (`watch-edge left 1,2 1`),
+e a checagem de presença o faz tolerar divergência — mas o certo é ele
+ler `DEVICE NAME` (HID++ 0x0005) e casar por nome também. Fica em aberto.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.

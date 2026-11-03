@@ -33,7 +33,15 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// Medido: devolver na propria borda re-dispara a barreira imediatamente --
 /// chegamos a `activation=40` com o cursor parado em x=2560. O Release
 /// aceita `cursor_position`, entao recuamos.
-const PULLBACK: f64 = 24.0;
+/// MEDIDO E DESCARTADO: o mutter aceita `cursor_position` no `Release` e
+/// **ignora**. Em 300+ ativacoes o cursor permaneceu exatamente em
+/// x=2560.0, e geramos 690 linhas de "em cooldown". Recuar o ponteiro nao
+/// e uma opcao disponivel.
+///
+/// A estrategia que funciona e DESARMAR a barreira (`Disable`) durante o
+/// cooldown e rearmar depois -- sem barreira nao ha evento, independente de
+/// onde o ponteiro esteja.
+const _PULLBACK_NAO_FUNCIONA: () = ();
 
 /// Permanencia exigida na borda antes de trocar.
 ///
@@ -70,42 +78,16 @@ fn barrier_line(edge: &str, zone: (u32, u32, i32, i32)) -> Option<(i32, i32, i32
     }
 }
 
-/// Devolve o ponteiro ao usuario. `pullback` recua da borda; sem ele o
-/// cursor volta no mesmo ponto e a barreira re-dispara -- o que e desejado
-/// enquanto medimos permanencia.
-fn release(
-    sp: &dbus::blocking::Proxy<'_, &Connection>,
-    cursor: (f64, f64),
-    edge: &str,
-    pullback: bool,
-) {
-    let (cx, cy) = cursor;
-    let pos = if pullback {
-        match edge {
-            "right" => (cx - PULLBACK, cy),
-            "left" => (cx + PULLBACK, cy),
-            "bottom" => (cx, cy - PULLBACK),
-            "top" => (cx, cy + PULLBACK),
-            _ => (cx, cy),
-        }
-    } else {
-        (cx, cy)
-    };
-    let mut opts: std::collections::HashMap<&str, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>> =
+/// Devolve o ponteiro ao usuario.
+///
+/// Sem `cursor_position`: o mutter ignora essa opcao (medido). O ponteiro
+/// volta onde estava, e e por isso que o controle de churn tem de ser o
+/// `Disable` da barreira, nao o recuo do cursor.
+fn release(sp: &dbus::blocking::Proxy<'_, &Connection>) {
+    let empty: std::collections::HashMap<&str, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>> =
         std::collections::HashMap::new();
-    opts.insert(
-        "cursor_position",
-        dbus::arg::Variant(Box::new(pos) as Box<dyn dbus::arg::RefArg>),
-    );
-    if let Err(e) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Release", (opts,)) {
-        eprintln!("border: Release com cursor_position falhou ({e}); tentando sem");
-        let empty: std::collections::HashMap<
-            &str,
-            dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>,
-        > = std::collections::HashMap::new();
-        if let Err(e2) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Release", (empty,)) {
-            eprintln!("border: Release falhou: {e2}");
-        }
+    if let Err(e) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Release", (empty,)) {
+        eprintln!("border: Release falhou: {e}");
     }
 }
 
@@ -193,6 +175,9 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
 
         let last = Arc::new(RwLock::new(None::<Instant>));
         let hits = Arc::new(RwLock::new(Vec::<Instant>::new()));
+        // Quando rearmar a barreira. O loop principal e quem chama Enable:
+        // a sessao pertence a ESTA conexao D-Bus, outra nao a controla.
+        let reenable = Arc::new(RwLock::new(None::<Instant>));
         let rule = {
             let mut r = MatchRule::new_signal(IFACE_SESSION, "Activated");
             r.path = Some(sess.path.clone());
@@ -205,6 +190,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         let target2 = target.clone();
         let last2 = Arc::clone(&last);
         let hits2 = Arc::clone(&hits);
+        let reenable2 = Arc::clone(&reenable);
 
         let res = sess.conn.add_match(
             rule,
@@ -214,21 +200,14 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                 );
 
                 let sp = conn.with_proxy(DEST, path2.clone(), TIMEOUT);
+                release(&sp);
 
-                // Cooldown primeiro: se estamos dentro dele, devolve recuado
-                // e cai fora -- nem coleta permanencia.
-                let in_cooldown = last2
-                    .read()
-                    .ok()
-                    .and_then(|g| *g)
-                    .is_some_and(|t| t.elapsed() < COOLDOWN);
-                if in_cooldown {
-                    release(&sp, cursor, &edge2, true);
-                    println!("border: em cooldown, ignorando");
+                // Guarda: com a barreira desarmada nao deveria chegar evento.
+                if last2.read().ok().and_then(|g| *g).is_some_and(|t| t.elapsed() < COOLDOWN) {
                     return true;
                 }
 
-                // Permanencia: conta ativacoes dentro da janela.
+                // Permanencia por densidade de ativacoes.
                 let hits = {
                     let Ok(mut v) = hits2.write() else { return true };
                     let now = Instant::now();
@@ -237,21 +216,26 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                     v.len()
                 };
                 if hits < HOLD_HITS {
-                    // Ainda coletando: devolve SEM recuo para que insistir na
-                    // borda continue re-disparando.
-                    release(&sp, cursor, &edge2, false);
                     println!("border: permanencia {hits}/{HOLD_HITS}, aguardando");
                     return true;
                 }
 
-                // Decidido: recua o ponteiro, zera a contagem, arma cooldown.
-                release(&sp, cursor, &edge2, true);
+                // Decidido. DESARMA a barreira: e o unico jeito de parar o
+                // churn, ja que o mutter ignora o recuo do cursor.
+                if let Err(e) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Disable", ()) {
+                    eprintln!("border: Disable falhou: {e}");
+                }
                 if let Ok(mut v) = hits2.write() {
                     v.clear();
                 }
+                let now = Instant::now();
                 if let Ok(mut g) = last2.write() {
-                    *g = Some(Instant::now());
+                    *g = Some(now);
                 }
+                if let Ok(mut g) = reenable2.write() {
+                    *g = Some(now + COOLDOWN);
+                }
+                println!("border: barreira desarmada; trocando e rearmando em {}s", COOLDOWN.as_secs());
 
                 // A troca leva segundos (solaar + verificacao por efeito).
                 // Rodar aqui bloqueava o loop do D-Bus: medido, 35 s sem
@@ -330,6 +314,21 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                 return;
             }
             ticks += 1;
+
+            // Rearma a barreira quando o cooldown vence. Tem de ser aqui:
+            // a sessao pertence a esta conexao.
+            let due = reenable.read().ok().and_then(|g| *g).is_some_and(|t| Instant::now() >= t);
+            if due {
+                let sp = sess.conn.with_proxy(DEST, sess.path.clone(), TIMEOUT);
+                match sp.method_call::<(), _, _, _>(IFACE_SESSION, "Enable", ()) {
+                    Ok(()) => println!("border: barreira rearmada"),
+                    Err(e) => eprintln!("border: Enable no rearme falhou: {e}"),
+                }
+                if let Ok(mut g) = reenable.write() {
+                    *g = None;
+                }
+            }
+
             // Prova de vida a cada ~60 s: sem isto, silencio no journal e
             // ambiguo entre "nada aconteceu" e "a thread morreu".
             if ticks % 120 == 0 {

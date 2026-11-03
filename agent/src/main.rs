@@ -226,7 +226,35 @@ fn main() -> ExitCode {
                         continue;
                     }
                 };
-                for slot in &slots {
+
+                // Presenca ANTES de tentar. Sem isto, encostar na borda com
+                // os dispositivos em outra maquina reportava
+                // "sem resposta para feature 0x00 func 0x00 ... switch_failed"
+                // -- que e ausencia, nao falha. Tambem cobre numeracao de
+                // slot divergente: slot e por receptor e nao coincide entre
+                // maquinas.
+                let presentes: Vec<u8> = slots
+                    .iter()
+                    .copied()
+                    .filter(|s| link.host_info(*s).is_ok())
+                    .collect();
+                if presentes.is_empty() {
+                    eprintln!(
+                        "watch-edge: nenhum dos slots {slots:?} esta neste receptor \
+                         -- nada a enviar (os dispositivos estao em outra maquina)"
+                    );
+                    cooldown_until =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
+                    continue;
+                }
+                if presentes.len() < slots.len() {
+                    eprintln!(
+                        "watch-edge: so {presentes:?} de {slots:?} estao aqui -- \
+                         enviando esses; os outros ficam onde estao (ESTADO DIVIDIDO)"
+                    );
+                }
+
+                for slot in &presentes {
                     match link.set_host(*slot, host - 1) {
                         Ok(()) => println!(
                             "{}",
