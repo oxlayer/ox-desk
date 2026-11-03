@@ -1,46 +1,69 @@
 #!/usr/bin/env bash
-# Flow-equivalent setup for Ubuntu 26.04 / GNOME 50 (Wayland)
-# Run: sudo bash install.sh
+# Setup do logid no Ubuntu 26.04 / GNOME (Wayland).
+#
+# NAO precisa de root: o logid roda como servico de usuario e fala HID++
+# direto. O unico passo privilegiado e a ACL do /dev/hidraw, e ele avisa
+# se faltar.
 set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive
-
-[[ $EUID -eq 0 ]] || { echo "run with sudo: sudo bash install.sh"; exit 1; }
 cd "$(dirname "$0")"
 
-DEB=deskflow_1.27.0_amd64.deb
-[[ -f $DEB ]] || { echo "missing $DEB — re-download from GitHub releases v1.27.0"; exit 1; }
+say() { printf '\n==> %s\n' "$1"; }
 
-echo "==> deskflow 1.27.0 (same version as the Windows .msi)"
-apt-get install -y "./$DEB"
+say "dependencias de build"
+missing=()
+command -v cargo >/dev/null || missing+=(cargo rustc)
+pkg-config --exists libudev 2>/dev/null || missing+=(libudev-dev)
+pkg-config --exists dbus-1 2>/dev/null || missing+=(libdbus-1-dev)
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "faltam: ${missing[*]}"
+  echo "  sudo apt-get install -y ${missing[*]}"
+  exit 1
+fi
+echo "ok: cargo, libudev, libdbus"
 
-echo "==> solaar (battery + Easy-Switch channel control for MX Anywhere 3 / MX Keys)"
-apt-get install -y solaar
+say "compilando o logid"
+( cd logid && cargo build --release )
 
-echo "==> clipboard + file transfer between the two machines (Flow's other half)"
-apt-get install -y gnome-shell-extension-gsconnect
+say "instalando o binario em ~/.local/bin"
+install -D -m 755 logid/target/release/logid "$HOME/.local/bin/logid"
+"$HOME/.local/bin/logid" --version 2>/dev/null || true
 
-echo "==> autostart: servico systemd de usuario para o cliente"
-# Instalado no HOME do usuario que chamou o sudo, nao no root.
-TARGET_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
-install -o "${SUDO_USER:-$USER}" -g "${SUDO_USER:-$USER}" -D -m 644 \
-  deskflow-client.service "$TARGET_HOME/.config/systemd/user/deskflow-client.service"
-sudo -u "${SUDO_USER:-$USER}" XDG_RUNTIME_DIR="/run/user/$(id -u "${SUDO_USER:-$USER}")" \
-  systemctl --user daemon-reload || true
-sudo -u "${SUDO_USER:-$USER}" XDG_RUNTIME_DIR="/run/user/$(id -u "${SUDO_USER:-$USER}")" \
-  systemctl --user enable deskflow-client.service || true
+say "servico de usuario"
+install -D -m 644 logid/logid.service "$HOME/.config/systemd/user/logid.service"
+systemctl --user daemon-reload
+systemctl --user enable --now logid.service
+systemctl --user --no-pager status logid.service | head -4
 
-echo "==> firewall"
-# Ubuntu as deskflow CLIENT only dials out; the rule below is for the
-# optional reversed topology (Ubuntu as server).
-ufw allow 24800/tcp comment 'deskflow (only needed if Ubuntu is the server)'
-# GSConnect / KDE Connect pairing + transfers
-ufw allow 1716:1764/tcp comment 'gsconnect'
-ufw allow 1716:1764/udp comment 'gsconnect'
-ufw reload
+say "acesso ao /dev/hidraw"
+# A regra do Solaar concede por TAG+="uaccess", mas SO a nos criados
+# depois dela. Se os seus nasceram antes, isto resolve.
+if getfacl /dev/hidraw0 2>/dev/null | grep -q "^user:$USER:"; then
+  echo "ok: ACL presente"
+else
+  echo "FALTA. Rode:"
+  echo "  sudo udevadm trigger --subsystem-match=hidraw --action=add"
+fi
 
-echo
-echo "done. installed:"
-deskflow --version 2>/dev/null || dpkg -s deskflow | awk '/^Version/{print "deskflow " $2}'
-echo
-echo "next: log out and back in once (GSConnect is a shell extension), then"
-echo "follow README.md starting at 'Windows side'."
+say "clipboard e arquivos (opcional)"
+if ! dpkg -s gnome-shell-extension-gsconnect >/dev/null 2>&1; then
+  echo "  sudo apt-get install -y gnome-shell-extension-gsconnect"
+else
+  gnome-extensions enable gsconnect@andyholmes.github.io 2>/dev/null \
+    && echo "ok: GSConnect habilitado" || echo "ok: GSConnect ja habilitado"
+fi
+
+cat <<'TXT'
+
+pronto. a seguir:
+
+  1. confira os NOMES dos dispositivos (o HID++ nao usa os do Solaar):
+       cd hidpp && cargo run --release --bin probe
+  2. ajuste ~/.config/logi/config.toml -- em especial [[devices]] e os
+     canais Easy-Switch de cada host
+  3. painel em http://127.0.0.1:8787  (GUI nativa: cd gui && ./run.sh)
+  4. diagnostico: bash status.sh
+
+a vigilancia de borda e o "seguir o lider" vem DESLIGADOS. leia
+specs/005-input-switch.md antes de ligar: mover dispositivo e
+irreversivel do lado de origem.
+TXT

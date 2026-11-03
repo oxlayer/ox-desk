@@ -112,6 +112,7 @@ do outro lado.
 | Fase | Entrega | Estado |
 |---|---|---|
 | **0** | Setup manual funcionando, documentado | ✅ feito — ver [README](../README.md) |
+| **—** | Deskflow e Solaar **removidos** dos dois lados | ✅ a troca é física; nenhum dos dois é mais necessário |
 | **1** | `logid` servindo status + config editável | ✅ feito — Rust, `PATCH /api/config` validado |
 | **2** | SSH + bootstrap automático das duas máquinas | [`002`](002-ssh.md) |
 | **3** | Roteamento de input: LAN × receptor físico | 🚧 `GET /api/devices` e `POST /api/focus` (dry-run) prontos; falta detecção de borda e o agente Windows |

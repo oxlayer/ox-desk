@@ -15,6 +15,26 @@ use hidpp::hidapi::HidApi;
 use serde_json::json;
 use std::process::ExitCode;
 
+/// Log em arquivo para os modos residentes.
+///
+/// Lancado por atalho do Startup, stdout e stderr vao para o nada -- e
+/// foi exatamente por isso que passei a diagnosticar o lado Windows no
+/// escuro. O lado Linux tem journal; este e o equivalente.
+fn logline(msg: &str) {
+    use std::io::Write;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let line = format!("{ts} {msg}\n");
+    eprint!("{line}");
+    let Some(dir) = std::env::var_os("LOCALAPPDATA") else { return };
+    let path = std::path::Path::new(&dir).join("logid").join("watch-edge.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
 fn out(v: serde_json::Value) -> ExitCode {
     println!("{v}");
     ExitCode::SUCCESS
@@ -196,10 +216,10 @@ fn main() -> ExitCode {
             }
 
             let (vx, vy, vw, vh) = input::virtual_screen();
-            eprintln!(
-                "watch-edge: borda '{edge}', area virtual ({vx},{vy} {vw}x{vh}), \
-                 slots {slots:?} -> host {host}, hold {hold_ms}ms"
-            );
+            logline(&format!(
+                "watch-edge START borda='{edge}' area=({vx},{vy} {vw}x{vh}) \
+                 slots={slots:?} -> host {host} hold={hold_ms}ms"
+            ));
 
             let mut touching_since: Option<std::time::Instant> = None;
             let mut cooldown_until: Option<std::time::Instant> = None;
@@ -229,7 +249,7 @@ fn main() -> ExitCode {
                 let link = match hidpp::Receiver::open(&api) {
                     Ok(l) => l,
                     Err(e) => {
-                        eprintln!("watch-edge: sem HID++ agora ({e})");
+                        logline(&format!("sem HID++ agora: {e}"));
                         cooldown_until =
                             Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
                         continue;
@@ -248,34 +268,30 @@ fn main() -> ExitCode {
                     .filter(|s| link.host_info(*s).is_ok())
                     .collect();
                 if presentes.is_empty() {
-                    eprintln!(
-                        "watch-edge: nenhum dos slots {slots:?} esta neste receptor \
-                         -- nada a enviar (os dispositivos estao em outra maquina)"
-                    );
+                    logline(&format!(
+                        "BORDA TOCADA em ({},{}) mas nenhum dos slots {slots:?} esta \
+                         neste receptor -- nada a enviar",
+                        p.x, p.y
+                    ));
                     cooldown_until =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
                     continue;
                 }
                 if presentes.len() < slots.len() {
-                    eprintln!(
-                        "watch-edge: so {presentes:?} de {slots:?} estao aqui -- \
-                         enviando esses; os outros ficam onde estao (ESTADO DIVIDIDO)"
-                    );
+                    logline(&format!(
+                        "so {presentes:?} de {slots:?} estao aqui -- enviando esses; \
+                         os outros ficam onde estao (ESTADO DIVIDIDO)"
+                    ));
                 }
 
+                logline(&format!(
+                    "BORDA TOCADA em ({},{}) -- enviando {presentes:?} para o host {host}",
+                    p.x, p.y
+                ));
                 for slot in &presentes {
                     match link.set_host(*slot, host) {
-                        Ok(()) => println!(
-                            "{}",
-                            json!({ "ok": true, "event": "switched",
-                                    "slot": slot, "host": host,
-                                    "cursor": [p.x, p.y] })
-                        ),
-                        Err(e) => println!(
-                            "{}",
-                            json!({ "ok": false, "event": "switch_failed",
-                                    "slot": slot, "error": e })
-                        ),
+                        Ok(()) => logline(&format!("slot {slot} -> host {host} enviado")),
+                        Err(e) => logline(&format!("slot {slot} FALHOU: {e}")),
                     }
                 }
                 // Os dispositivos acabaram de sair: nao ha input aqui para

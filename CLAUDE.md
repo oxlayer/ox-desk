@@ -10,6 +10,8 @@ Linux**, e mais do que isso.
 | [`specs/`](specs/) | **Especificações** do sistema que queremos construir. Começa em [`specs/000-overview.md`](specs/000-overview.md). |
 | [`logid/`](logid/) | **O control plane**, em Rust. Serve a API e o painel. |
 | [`gui/`](gui/) | Casca Electron: janela e bandeja sobre o `logid`. Não contém lógica. |
+| [`hidpp/`](hidpp/) | Crate compartilhado: HID++ 2.0 sobre HID cru, usado pelos dois lados. |
+| [`agent/`](agent/) | O lado Windows: CLI invocada por SSH, mais `watch-edge` residente. |
 | `install.sh`, `status.sh`, `windows-*.ps1` | Scripts idempotentes de setup e diagnóstico. |
 
 ## As duas máquinas
@@ -20,6 +22,11 @@ Linux**, e mais do que isso.
 | SO | Ubuntu 26.04, GNOME 50.1, **Wayland** | Windows 10 Pro |
 | usuário | `user` | `user` |
 | acesso | — | SSH por chave (`ssh windows-host`) |
+
+**O Deskflow e o Solaar saíram.** A troca de máquina é física (HID++
+0x1814) e a detecção de borda é nossa (mutter no Linux, `GetCursorPos`
+no Windows). O Solaar competia pelo mesmo receptor — está desligado do
+autostart. Qualquer coisa que reintroduza um deles precisa justificar.
 
 **Nunca escreva IP em config.** O IP do Windows já mudou uma vez e
 quebrou Deskflow, SSH e o painel de uma vez. Use `windows-host.local`
