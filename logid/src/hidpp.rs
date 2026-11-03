@@ -103,8 +103,14 @@ fn parse_show(text: &str) -> Vec<Receiver> {
         let trimmed = raw.trim();
         let indent = raw.len() - raw.trim_start().len();
 
-        // "  1: MX Anywhere 3" -> novo dispositivo
-        let is_device_header = indent >= 2
+        // "  1: MX Anywhere 3" -> novo dispositivo.
+        //
+        // Indentacao EXATA de 2. Com dispositivo online o `solaar show`
+        // tambem imprime features (9 espacos), firmware (17) e botoes, todos
+        // no formato "N: texto" -- aceitar `indent >= 2` fazia o parser
+        // engolir tudo isso como se fossem dispositivos. Bug real, que so
+        // aparecia com device online.
+        let is_device_header = indent == 2
             && trimmed
                 .split_once(':')
                 .is_some_and(|(k, _)| k.len() <= 2 && k.chars().all(|c| c.is_ascii_digit()));
@@ -284,6 +290,50 @@ Unifying Receiver
         let rs = parse_show(SAMPLE);
         assert_eq!(rs[0].devices[0].hidraw.as_deref(), Some("/dev/hidraw2"));
         assert_eq!(rs[0].hidraw.as_deref(), Some("/dev/hidraw0"));
+    }
+
+    /// Saida real com dispositivo ONLINE: features, firmware e botoes
+    /// aparecem como "N: texto" indentados. So os de indentacao 2 sao
+    /// dispositivos.
+    const SAMPLE_ONLINE: &str = "solaar version 1.1.19-1
+
+Unifying Receiver
+  Device path  : /dev/hidraw0
+  Has 2 paired device(s) out of a maximum of 6.
+
+  1: MX Anywhere 3
+     Device path  : /dev/hidraw2
+     WPID         : 4090
+     Kind         : mouse
+     Firmware: 
+                 1: BL1 13.00.B0014
+                 0: MPM 24.00.B0014
+     Supports 32 HID++ 2.0 features:
+         0: ROOT                   {0000} V0
+        10: CHANGE HOST            {1814} V1
+     Has 7 reprogrammable keys:
+         0: Left Button               , default: Left Click
+         5: Smart Shift               , default: Smart Shift
+
+  2: MX Keys Keyboard
+     WPID         : 408A
+     Kind         : keyboard
+     Supports 33 HID++ 2.0 features:
+         9: CHANGE HOST            {1814} V1
+        10: HOSTS INFO             {1815} V1
+";
+
+    #[test]
+    fn ignores_features_firmware_and_buttons() {
+        let rs = parse_show(SAMPLE_ONLINE);
+        assert_eq!(rs.len(), 1);
+        let d = &rs[0].devices;
+        assert_eq!(d.len(), 2, "exatamente dois dispositivos, nao as features");
+        assert_eq!(d[0].name, "MX Anywhere 3");
+        assert_eq!(d[0].kind, "mouse");
+        assert_eq!(d[1].name, "MX Keys Keyboard");
+        assert_eq!(d[1].kind, "keyboard");
+        assert!(d.iter().all(|x| x.online), "ambos online neste exemplo");
     }
 
     #[test]

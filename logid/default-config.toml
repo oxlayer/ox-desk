@@ -49,28 +49,27 @@ agent = "%LOCALAPPDATA%\\logid\\logid-agent.exe"
   port = 3389
   expect = "any"           # disponivel no Pro, desligado por escolha
 
-# Canal Easy-Switch de cada dispositivo em cada host. E o mapa que o
-# Solaar nao tem e que o Flow guarda na nuvem. Ver specs/005.
+# Canal Easy-Switch de cada dispositivo em cada host.
 #
-# NAO CHUTE. Cada maquina descobre o PROPRIO canal quando detem o
-# dispositivo, lendo HID++ 0x1814 getHostInfo (ou 0x1815 func 0):
+# LIDO DO HARDWARE em 03/11, nao chutado. Fonte:
+#   solaar config 2 change-host
+#   -> possible values: [ 1:ubuntu-host, 2:windows-host, 3:ASSET-TAG-0001 ]
 #
-#   Windows:  logid-agent devices          -> current_host
-#   Ubuntu:   solaar config <slot> change-host   (so com device online)
+# Existe um terceiro host pareado (ASSET-TAG-0001) que nao esta nesta
+# config porque nao esta em [[hosts]]. Para incluir, basta adicionar o
+# bloco de host e a linha de canal.
 #
-# Lido do hardware em 03/11: os dispositivos suportam 3 canais, os tres
-# pareados, e "windows-host" e o canal 2. O canal do ubuntu-host ainda
-# NAO foi lido -- fica de fora ate ser, porque mandar o dispositivo para
-# um canal errado o deixa inalcancavel das duas maquinas.
+# Os nomes de canal ficam no TECLADO: ele tem HOSTS INFO {1815}, o mouse
+# nao. Ler 0x1815 do mouse devolve lixo -- e a feature nao existe nele.
 
 [[devices]]
 name = "MX Anywhere 3"
   [devices.hosts]
-  "windows-host" = 2          # confirmado por HID++
-  # "ubuntu-host" = ?     # descobrir com o device nesta maquina
+  "ubuntu-host" = 1
+  "windows-host" = 2
 
 [[devices]]
 name = "MX Keys Keyboard"
   [devices.hosts]
-  "windows-host" = 2          # confirmado por HID++
-  # "ubuntu-host" = ?
+  "ubuntu-host" = 1
+  "windows-host" = 2
