@@ -44,6 +44,29 @@ está olhando.** O log do host diz: sessão com `input conectado` e sem
 nenhum `conectado:` de vídeo significa KVM sem visualizador — ou seja,
 a pessoa está diante do monitor físico.
 
+## O que o Parsec faz (e o que não funciona)
+
+O Parsec documenta exatamente este problema. A solução deles é um
+**driver de mouse USB virtual** próprio — um mouse que não se move,
+só existe para o Windows voltar a desenhar o ponteiro. Não é genérico:
+depende do driver deles.
+
+Revelador: a documentação deles diz que o Parsec *"reproduz o cursor
+escondido fielmente"*, ou seja, o cliente não vê ponteiro nenhum. Nossa
+seta sintética faz mais que isso no visualizador.
+
+**Mouse Keys não resolve** — o Parsec sugere, e medimos que não
+funciona nesta máquina (Windows 10):
+
+```
+Flags no registro: 63      (MouseKeys LIGADO)
+GetCursorInfo:     flags=0 hCursor=0
+```
+
+Também não existe chamada de API que resolva: as funções que deveriam
+mostrar o cursor (`ShowCursor`) não têm efeito sem um mouse presente.
+Por isso todo mundo cai em hardware ou driver.
+
 ## Correção de verdade: dar um mouse ao Windows
 
 Qualquer dispositivo HID apontador faz o Windows voltar a desenhar o

@@ -427,6 +427,17 @@ impl Tela {
                 {
                     let f = forma;
                     let alt = if f.tipo == TipoForma::Mono { f.h / 2 } else { f.h };
+                    // Descontar o hotspot aqui esta CERTO porque a
+                    // posicao vem do `GetCursorPos`, que devolve o
+                    // ponto quente (a pontinha da seta).
+                    //
+                    // Nao vale para a posicao do DXGI: a documentacao
+                    // do `DXGI_OUTDUPL_POINTER_SHAPE_INFO` diz que o
+                    // app deve por o canto superior esquerdo em
+                    // `PointerPosition.Position` e **nao** usar o
+                    // hotspot ali. Quem trocar a fonte da posicao tem
+                    // de tirar estas duas linhas junto, senao o cursor
+                    // desenha deslocado pelo tamanho do hotspot.
                     let x = self.ponteiro.0 - f.hot.0;
                     let y = self.ponteiro.1 - f.hot.1;
                     if let Some((rx, ry, rw, rh)) = recorte(w, h, f.w, alt, x, y) {
