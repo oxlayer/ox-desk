@@ -5,7 +5,6 @@
 
 use crate::config::{HostCfg, HostOs};
 use serde::Serialize;
-use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Slot {
@@ -75,7 +74,7 @@ pub fn devices(h: &HostCfg) -> AgentInfo {
     args.extend(crate::probe::ssh_addr_opts(&h.addr));
     args.push(ssh_alias.clone());
     args.push(ps);
-    let out = Command::new("ssh").args(&args).output();
+    let out = crate::sys::child("ssh").args(&args).output();
 
     let Ok(out) = out else {
         return AgentInfo {
@@ -149,7 +148,7 @@ pub fn set_host(h: &HostCfg, slot: u8, host: u8) -> Result<(), String> {
     args.extend(crate::probe::ssh_addr_opts(&h.addr));
     args.push(ssh_alias.clone());
     args.push(ps);
-    let out = Command::new("ssh").args(&args).output().map_err(|e| format!("ssh: {e}"))?;
+    let out = crate::sys::child("ssh").args(&args).output().map_err(|e| format!("ssh: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text
         .lines()

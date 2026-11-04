@@ -390,17 +390,25 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
     if req.as_reader().read_to_string(&mut body).is_err() {
         return err_json(req, 400, "corpo ilegivel");
     }
-    let host = serde_json::from_str::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|v| v.get("host").and_then(|h| h.as_str()).map(String::from));
-    let Some(host) = host else {
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let Some(host) = v.get("host").and_then(|h| h.as_str()).map(String::from) else {
         return err_json(req, 400, "informe {\"host\": \"<nome>\"}");
+    };
+    // Omitir uma opcao vale o default: controlar sim, som e microfone
+    // nao. Ligar audio sem pedir e o tipo de surpresa que assusta numa
+    // reuniao.
+    let d = screen::Opts::default();
+    let flag = |k: &str, padrao: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(padrao);
+    let opts = screen::Opts {
+        control: flag("control", d.control),
+        audio: flag("audio", d.audio),
+        mic: flag("mic", d.mic),
     };
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "config travada"),
     };
-    match screen::launch(&snap, &host) {
+    match screen::launch(&snap, &host, opts) {
         Ok(linha) => {
             ok_json(req, serde_json::json!({ "ok": true, "command": linha }).to_string())
         }

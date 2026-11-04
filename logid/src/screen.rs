@@ -29,7 +29,36 @@
 use crate::config::Config;
 use serde::Serialize;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+
+/// O que a pessoa pediu na UI, no estilo do Parsec.
+#[derive(Debug, Clone, Copy)]
+pub struct Opts {
+    /// Entrar com teclado e mouse. `false` = so olhar.
+    pub control: bool,
+    /// Trazer o som da outra maquina.
+    pub audio: bool,
+    /// Mandar o microfone daqui para la.
+    pub mic: bool,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        // Controlar e o caso comum; som e microfone nao, porque ligar
+        // audio sem pedir e o tipo de surpresa que assusta numa reuniao.
+        Opts { control: true, audio: false, mic: false }
+    }
+}
+
+/// O que o cliente escolhido consegue honrar. A UI usa isto para
+/// desabilitar o que nao adianta marcar, com o motivo do lado.
+#[derive(Debug, Serialize, Default)]
+pub struct Caps {
+    pub audio: bool,
+    pub mic: bool,
+    /// Consegue entrar SEM teclado e mouse.
+    pub view_only: bool,
+}
 
 #[derive(Debug, Serialize)]
 pub struct Plan {
@@ -47,6 +76,8 @@ pub struct Plan {
     /// Linha de comando que seria executada -- para a UI poder mostrar.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<Vec<String>>,
+    /// O que este cliente sabe fazer.
+    pub caps: Caps,
     /// Pronto para clicar.
     pub ready: bool,
     /// Por que nao esta pronto.
@@ -93,7 +124,7 @@ fn render(args: &[&str], host: &str, port: u16, user: Option<&str>) -> Vec<Strin
         .collect()
 }
 
-fn plan_for(cfg: &Config, name: &str) -> Option<Plan> {
+fn plan_for(cfg: &Config, name: &str, opts: Opts) -> Option<Plan> {
     let h = cfg.hosts.iter().find(|x| x.name == name)?;
     let sc = h.screen.as_ref()?;
     // A propria maquina nao se controla por tela remota -- e a tela que
@@ -106,19 +137,40 @@ fn plan_for(cfg: &Config, name: &str) -> Option<Plan> {
 
     let mut client = None;
     let mut command = None;
-    for (prog, args) in crate::sys::screen_clients(&sc.kind) {
-        if let Some(found) = find_program(prog) {
-            let mut cmd = vec![found.to_string_lossy().into_owned()];
-            cmd.extend(render(&args, &h.addr, sc.port, user));
-            client = Some(prog.to_string());
-            command = Some(cmd);
-            break;
+    let mut caps = Caps::default();
+    for spec in crate::sys::screen_clients(&sc.kind) {
+        let Some(found) = find_program(spec.prog) else { continue };
+        let mut args: Vec<&str> = spec.args.to_vec();
+        if opts.audio {
+            if let Some(extra) = spec.audio {
+                args.extend_from_slice(extra);
+            }
         }
+        if opts.mic {
+            if let Some(extra) = spec.mic {
+                args.extend_from_slice(extra);
+            }
+        }
+        if !opts.control {
+            if let Some(extra) = spec.view_only {
+                args.extend_from_slice(extra);
+            }
+        }
+        let mut cmd = vec![found.to_string_lossy().into_owned()];
+        cmd.extend(render(&args, &h.addr, sc.port, user));
+        caps = Caps {
+            audio: spec.audio.is_some(),
+            mic: spec.mic.is_some(),
+            view_only: spec.view_only.is_some(),
+        };
+        client = Some(spec.prog.to_string());
+        command = Some(cmd);
+        break;
     }
 
     let blocker = if client.is_none() {
         let tentados: Vec<&str> =
-            crate::sys::screen_clients(&sc.kind).into_iter().map(|(p, _)| p).collect();
+            crate::sys::screen_clients(&sc.kind).into_iter().map(|c| c.prog).collect();
         Some(if tentados.is_empty() {
             format!("protocolo '{}' nao tem cliente conhecido aqui", sc.kind)
         } else {
@@ -142,6 +194,7 @@ fn plan_for(cfg: &Config, name: &str) -> Option<Plan> {
         ready: blocker.is_none(),
         client,
         command,
+        caps,
         blocker,
     })
 }
@@ -157,7 +210,7 @@ pub fn plans(cfg: &Config) -> Vec<Plan> {
             .iter()
             .map(|h| {
                 let name = h.name.clone();
-                s.spawn(move || plan_for(cfg, &name))
+                s.spawn(move || plan_for(cfg, &name, Opts::default()))
             })
             .collect();
         hs.into_iter().filter_map(|j| j.join().ok().flatten()).collect()
@@ -165,8 +218,8 @@ pub fn plans(cfg: &Config) -> Vec<Plan> {
 }
 
 /// Lanca o cliente. Devolve o que foi executado, para o log e para a UI.
-pub fn launch(cfg: &Config, host: &str) -> Result<String, String> {
-    let plan = plan_for(cfg, host)
+pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
+    let plan = plan_for(cfg, host, opts)
         .ok_or_else(|| format!("host '{host}' nao tem `[hosts.screen]` na config"))?;
     if let Some(b) = &plan.blocker {
         return Err(b.clone());
@@ -177,7 +230,7 @@ pub fn launch(cfg: &Config, host: &str) -> Result<String, String> {
     // `spawn` e nao `output`: o cliente de tela e interativo e vive
     // minutos ou horas. Esperar por ele travaria a thread do servidor.
     // stdio ignorado para o filho nao herdar o nosso e manter pipe aberto.
-    Command::new(prog)
+    crate::sys::child(prog)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -186,7 +239,13 @@ pub fn launch(cfg: &Config, host: &str) -> Result<String, String> {
         .map_err(|e| format!("nao consegui executar {prog}: {e}"))?;
 
     let linha = cmd.join(" ");
-    say!("screen: abrindo {host} ({}) -- {linha}", plan.kind);
+    let modo = format!(
+        "{}{}{}",
+        if opts.control { "controle" } else { "so olhar" },
+        if opts.audio { " +som" } else { "" },
+        if opts.mic { " +microfone" } else { "" }
+    );
+    say!("screen: abrindo {host} ({}, {modo}) -- {linha}", plan.kind);
     Ok(linha)
 }
 

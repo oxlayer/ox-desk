@@ -6,7 +6,6 @@
 use crate::config::{Config, Expect, HostCfg, HostOs};
 use serde::Serialize;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 const TCP_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -55,18 +54,34 @@ pub struct Snapshot {
     pub hosts: Vec<HostState>,
 }
 
-/// Resolve nome -> SocketAddr, com o fallback que a plataforma precisar.
+/// Todos os enderecos de um nome, sem link-local, IPv4 na frente.
 ///
-/// O caminho padrao e `to_socket_addrs`. Quando ele desiste, `sys` decide
-/// o que fazer -- no Linux ha um buraco real de mDNS a tapar, no Windows
-/// nao ha. Ver `sys::resolve_fallback`.
-fn resolve(addr: &str, port: u16) -> Option<SocketAddr> {
-    if let Ok(mut it) = (addr, port).to_socket_addrs() {
-        if let Some(sa) = it.next() {
-            return Some(sa);
+/// Devolve LISTA porque um nome pode ter familias que nao se comportam
+/// igual. Medido: visto do Mac, `windows-host.local` resolve em IPv4 **e**
+/// IPv6, o IPv4 conecta na 3389 e o IPv6 da timeout -- porque a regra de
+/// firewall do Windows estava escrita como `192.168.1.0/24`, que e IPv4.
+/// Pegando so o primeiro endereco, o painel do Mac dizia "RDP fechado"
+/// sobre um servico que estava aberto.
+///
+/// Link-local sai por ser inutil sem o escopo certo (ver `resolve_for_ssh`).
+fn resolve_all(addr: &str, port: u16) -> Vec<SocketAddr> {
+    fn link_local(a: &SocketAddr) -> bool {
+        match a {
+            SocketAddr::V4(v) => v.ip().octets()[..2] == [169, 254],
+            SocketAddr::V6(v) => v.ip().segments()[0] & 0xffc0 == 0xfe80,
         }
     }
-    crate::sys::resolve_fallback(addr, port)
+    let mut all: Vec<SocketAddr> =
+        (addr, port).to_socket_addrs().map(|it| it.collect()).unwrap_or_default();
+    if all.is_empty() {
+        all = crate::sys::resolve_fallback(addr, port).into_iter().collect();
+    }
+    all.retain(|a| !link_local(a));
+    // IPv4 primeiro: nesta LAN e o caminho que sempre funciona, e tentar
+    // o que funciona antes economiza o timeout do que nao funciona.
+    all.sort_by_key(|a| !a.is_ipv4());
+    all.truncate(3);
+    all
 }
 
 /// Opcoes de ssh/sftp que contornam o resolvedor do PROPRIO ssh.
@@ -92,7 +107,7 @@ fn resolve(addr: &str, port: u16) -> Option<SocketAddr> {
 /// desconhecido.
 pub fn ssh_addr_opts(addr: &str) -> Vec<String> {
     // Porta 22 so para a resolucao; nao conectamos aqui.
-    let Some(sa) = resolve_pref_v4(addr, 22) else { return Vec::new() };
+    let Some(sa) = resolve_for_ssh(addr, 22) else { return Vec::new() };
     vec![
         "-o".into(),
         format!("HostName={}", sa.ip()),
@@ -101,34 +116,33 @@ pub fn ssh_addr_opts(addr: &str) -> Vec<String> {
     ]
 }
 
-/// Resolve preferindo IPv4.
+/// Endereco para entregar ao `ssh`: o primeiro de `resolve_all`.
 ///
-/// O mDNS desta LAN responde IPv6 primeiro, e um literal IPv6 em
-/// `HostName=` funciona mas complica log e known_hosts sem ganho nenhum
-/// aqui -- as tres maquinas estao no mesmo /24.
-fn resolve_pref_v4(addr: &str, port: u16) -> Option<SocketAddr> {
-    if let Ok(it) = (addr, port).to_socket_addrs() {
-        let all: Vec<SocketAddr> = it.collect();
-        if let Some(v4) = all.iter().find(|a| a.is_ipv4()) {
-            return Some(*v4);
-        }
-        if let Some(first) = all.first() {
-            return Some(*first);
-        }
-    }
-    crate::sys::resolve_fallback(addr, port)
+/// O link-local foi o que fez o SFTP para o Mac morrer com "Connection
+/// closed": visto do Windows, `mac-host.local` resolve **so em
+/// IPv6**, e o primeiro endereco e `fe80::...%11`, que sem o escopo
+/// correto nao leva a lugar nenhum. `None` significa deixar o `ssh`
+/// tentar sozinho -- melhor que entregar endereco que nao conecta.
+fn resolve_for_ssh(addr: &str, port: u16) -> Option<SocketAddr> {
+    resolve_all(addr, port).into_iter().next()
 }
 
-/// (aberta, latencia_ms)
+/// (aberta, latencia_ms) -- tenta cada endereco ate um conectar.
 pub fn tcp_probe(addr: &str, port: u16) -> (bool, Option<f64>) {
-    let Some(sa) = resolve(addr, port) else {
+    let alvos = resolve_all(addr, port);
+    if alvos.is_empty() {
         return (false, None);
-    };
-    let t0 = Instant::now();
-    match TcpStream::connect_timeout(&sa, TCP_TIMEOUT) {
-        Ok(_) => (true, Some(t0.elapsed().as_secs_f64() * 1000.0)),
-        Err(_) => (false, None),
     }
+    // Divide o orcamento: com tres enderecos mortos, um timeout cheio por
+    // endereco seria 4,5 s num unico servico do snapshot.
+    let por_alvo = TCP_TIMEOUT / alvos.len() as u32;
+    for sa in &alvos {
+        let t0 = Instant::now();
+        if TcpStream::connect_timeout(sa, por_alvo).is_ok() {
+            return (true, Some(t0.elapsed().as_secs_f64() * 1000.0));
+        }
+    }
+    (false, None)
 }
 
 /// Uptime e RAM do par por SSH. Silencioso em qualquer falha: detalhe e
@@ -162,7 +176,12 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
         // paginas livres saem do vm_stat (free + inactive, que e o que de
         // fato esta disponivel).
         HostOs::Macos => concat!(
-            "b=$(sysctl -n kern.boottime | sed -n 's/.*sec = \\([0-9]*\\).*/\\1/p'); ",
+            // ANCORADO no inicio. A saida e
+            //   `{ sec = 1793736815, usec = 137720 } Tue Nov  3 ...`
+            // e um `.*sec = ` guloso casa ate o `usec = `, capturando
+            // 137720 -- o uptime virava 56 anos, numero grande o
+            // suficiente para parecer bug de unidade e nao de parse.
+            "b=$(sysctl -n kern.boottime | sed -n 's/^{ sec = \\([0-9]*\\).*/\\1/p'); ",
             "up=$(( ( $(date +%s) - b ) / 60 )); ",
             "ps=$(sysctl -n hw.pagesize); ",
             "fr=$(vm_stat | awk -v p=$ps '/Pages free/{f=$3} /Pages inactive/{i=$3} ",
@@ -174,16 +193,23 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
     })
 }
 
-pub fn ssh_detail(alias: &str, os: HostOs) -> Detail {
-    let Some(cmd) = detail_cmd(os) else { return Detail::default() };
-    let out = Command::new("ssh")
-        .args([
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=3",
-            "-o", "LogLevel=ERROR",
-            alias, cmd,
-        ])
-        .output();
+pub fn ssh_detail(h: &HostCfg) -> Detail {
+    let (Some(alias), Some(cmd)) = (h.ssh.as_deref(), detail_cmd(h.os())) else {
+        return Detail::default();
+    };
+    // O MESMO contorno de resolucao do `agent.rs` e do `files.rs`. Faltava
+    // aqui, e o sintoma era discreto: o card do par vinha sem uptime nem
+    // RAM, visto do Windows, e detalhe ausente parece "o host nao
+    // respondeu" em vez de "o ssh nao resolveu o nome".
+    let mut args: Vec<String> = vec![
+        "-o".into(), "BatchMode=yes".into(),
+        "-o".into(), "ConnectTimeout=3".into(),
+        "-o".into(), "LogLevel=ERROR".into(),
+    ];
+    args.extend(ssh_addr_opts(&h.addr));
+    args.push(alias.to_string());
+    args.push(cmd.to_string());
+    let out = crate::sys::child("ssh").args(&args).output();
     let Ok(out) = out else { return Detail::default() };
     let text = String::from_utf8_lossy(&out.stdout);
     let Some(line) = text.lines().filter(|l| l.contains('|')).next_back() else {
@@ -244,7 +270,7 @@ fn check_host(h: &HostCfg) -> HostState {
             .collect()
     };
     let detail = match (&h.ssh, online) {
-        (Some(alias), true) => ssh_detail(alias, h.os()),
+        (Some(_), true) => ssh_detail(h),
         _ => Detail::default(),
     };
 
@@ -265,4 +291,36 @@ pub fn snapshot(cfg: &Config) -> Snapshot {
         handles.into_iter().filter_map(|x| x.join().ok()).collect()
     });
     Snapshot { generated: crate::sys::hhmmss(), hosts }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+
+    /// Reimplementa o criterio do filtro para fixa-lo em teste -- a
+    /// funcao real depende de resolucao de nome, que nao cabe em teste
+    /// unitario.
+    fn link_local(a: &SocketAddr) -> bool {
+        match a {
+            SocketAddr::V4(v) => v.ip().octets()[..2] == [169, 254],
+            SocketAddr::V6(v) => v.ip().segments()[0] & 0xffc0 == 0xfe80,
+        }
+    }
+
+    #[test]
+    fn link_local_e_descartavel() {
+        let v6_ll = SocketAddr::V6(SocketAddrV6::new(
+            "fe80::cb7:7431:1bea:d882".parse::<Ipv6Addr>().unwrap(), 22, 0, 11));
+        let v6_glob = SocketAddr::V6(SocketAddrV6::new(
+            "2804:394:8b44:fe00:d1:763f:38e:9eb6".parse::<Ipv6Addr>().unwrap(), 22, 0, 0));
+        let v4_ll = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(169, 254, 3, 7), 22));
+        let v4 = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 168, 1, 147), 22));
+
+        // O endereco que quebrou o SFTP para o Mac.
+        assert!(link_local(&v6_ll), "fe80::/10 e link-local");
+        assert!(link_local(&v4_ll), "169.254/16 e link-local");
+        assert!(!link_local(&v6_glob), "IPv6 global serve -- medido com o Mac");
+        assert!(!link_local(&v4));
+    }
 }

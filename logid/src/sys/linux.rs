@@ -2,6 +2,7 @@
 
 use crate::config::Config;
 use crate::logs::Raw;
+pub use super::unix::*;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
@@ -33,28 +34,6 @@ pub fn unit_state(unit: &str) -> String {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "unknown".into())
-}
-
-/// Hora local HH:MM:SS, sem puxar uma crate de data so para isso.
-pub fn hhmmss() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0) as i64;
-    let t = (secs + offset_secs()).rem_euclid(86_400);
-    format!("{:02}:{:02}:{:02}", t / 3600, (t % 3600) / 60, t % 60)
-}
-
-fn offset_secs() -> i64 {
-    let Ok(out) = Command::new("date").arg("+%z").output() else { return 0 };
-    let z = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if z.len() < 5 {
-        return 0;
-    }
-    let sign = if z.starts_with('-') { -1 } else { 1 };
-    let h: i64 = z[1..3].parse().unwrap_or(0);
-    let m: i64 = z[3..5].parse().unwrap_or(0);
-    sign * (h * 3600 + m * 60)
 }
 
 /// Aqui o journal timbra e persiste; o daemon so escreve em stdout.
@@ -111,42 +90,74 @@ pub fn device_access() -> bool {
     false
 }
 
-/// Onde mora a config: `$XDG_CONFIG_HOME/logi` ou `~/.config/logi`.
-pub fn config_dir() -> std::path::PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            std::path::PathBuf::from(home).join(".config")
-        });
-    base.join("logi")
-}
-
-/// Ponto de partida do navegador de arquivos.
-pub fn home_dir() -> std::path::PathBuf {
-    std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| "/".into())
-}
-
 /// Clientes de tela conhecidos, em ordem de preferencia.
 ///
-/// `gnome-connections` vem primeiro porque fala **RDP e VNC**: um app
-/// cobre o Windows e o Mac, em vez de dois clientes com duas UIs.
-pub fn screen_clients(kind: &str) -> Vec<(&'static str, Vec<&'static str>)> {
+/// O `xfreerdp3` vem ANTES do `gnome-connections` porque e o unico que
+/// expoe som e microfone por linha de comando -- e sao justamente as
+/// opcoes que a UI oferece. O gnome-connections continua na lista como
+/// queda: ele fala RDP e VNC e ja vem instalado, so nao deixa escolher
+/// nada.
+pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
+    use super::ClientSpec;
     match kind {
+        // `/dynamic-resolution` faz o host remoto acompanhar a janela; sem
+        // isso a sessao nasce com a resolucao do servidor e fica com
+        // barras. `+clipboard` e o que faz copiar e colar entre as duas
+        // maquinas funcionar dentro da sessao.
         "rdp" => vec![
-            ("gnome-connections", vec!["rdp://{user_at}{host}:{port}"]),
-            // `/dynamic-resolution` faz o host remoto acompanhar a janela;
-            // sem isso a sessao nasce com a resolucao do servidor e fica
-            // com barras. `+clipboard` e o que faz copiar e colar entre as
-            // duas maquinas funcionar na sessao de tela.
-            ("xfreerdp3", vec!["/v:{host}:{port}", "{u_flag}", "+clipboard", "/dynamic-resolution"]),
-            ("xfreerdp", vec!["/v:{host}:{port}", "{u_flag}", "+clipboard", "/dynamic-resolution"]),
-            ("remmina", vec!["-c", "rdp://{user_at}{host}:{port}"]),
+            ClientSpec {
+                prog: "xfreerdp3",
+                args: &["/v:{host}:{port}", "{u_flag}", "+clipboard", "/dynamic-resolution"],
+                audio: Some(&["/sound"]),
+                mic: Some(&["/microphone"]),
+                view_only: None,
+            },
+            ClientSpec {
+                prog: "xfreerdp",
+                args: &["/v:{host}:{port}", "{u_flag}", "+clipboard", "/dynamic-resolution"],
+                audio: Some(&["/sound"]),
+                mic: Some(&["/microphone"]),
+                view_only: None,
+            },
+            ClientSpec {
+                prog: "gnome-connections",
+                args: &["rdp://{user_at}{host}:{port}"],
+                audio: None,
+                mic: None,
+                view_only: None,
+            },
+            ClientSpec {
+                prog: "remmina",
+                args: &["-c", "rdp://{user_at}{host}:{port}"],
+                audio: None,
+                mic: None,
+                view_only: None,
+            },
         ],
         "vnc" => vec![
-            ("gnome-connections", vec!["vnc://{host}:{port}"]),
-            ("remmina", vec!["-c", "vnc://{host}:{port}"]),
-            ("vncviewer", vec!["{host}:{port}"]),
+            // O vncviewer vem primeiro por causa do `-ViewOnly`: e o unico
+            // jeito, deste lado, de entrar sem teclado e mouse.
+            ClientSpec {
+                prog: "vncviewer",
+                args: &["{host}:{port}"],
+                audio: None,
+                mic: None,
+                view_only: Some(&["-ViewOnly"]),
+            },
+            ClientSpec {
+                prog: "gnome-connections",
+                args: &["vnc://{host}:{port}"],
+                audio: None,
+                mic: None,
+                view_only: None,
+            },
+            ClientSpec {
+                prog: "remmina",
+                args: &["-c", "vnc://{host}:{port}"],
+                audio: None,
+                mic: None,
+                view_only: None,
+            },
         ],
         _ => vec![],
     }

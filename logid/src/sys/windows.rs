@@ -5,7 +5,6 @@ use crate::logs::Raw;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, RwLock};
 
 /// O resolver do Windows ja fala mDNS desde o 10, entao nao existe o
@@ -36,7 +35,7 @@ pub fn unit_state(unit: &str) -> String {
 
 /// `None` = nao existe servico com esse nome (ERROR_SERVICE_DOES_NOT_EXIST).
 fn service_state(name: &str) -> Option<String> {
-    let out = Command::new("sc").args(["query", name]).output().ok()?;
+    let out = child("sc").args(["query", name]).output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() {
         return None;
@@ -72,7 +71,7 @@ fn process_running(name: &str) -> bool {
     } else {
         format!("{name}.exe")
     };
-    let out = Command::new("tasklist")
+    let out = child("tasklist")
         .args(["/FO", "CSV", "/NH", "/FI", &format!("IMAGENAME eq {exe}")])
         .output();
     let Ok(out) = out else { return false };
@@ -200,14 +199,35 @@ pub fn home_dir() -> PathBuf {
 
 /// Clientes de tela conhecidos, em ordem de preferencia.
 ///
-/// RDP ja vem no Windows (`mstsc`). VNC nao vem nenhum, e e o que falta
-/// para alcancar o Mac: precisa instalar um viewer.
-pub fn screen_clients(kind: &str) -> Vec<(&'static str, Vec<&'static str>)> {
+/// RDP ja vem no Windows (`mstsc`), mas ele nao aceita som nem microfone
+/// por linha de comando -- isso exige gerar um arquivo `.rdp`, o que nao
+/// vale a complexidade por enquanto. VNC nao vem nenhum: e o que falta
+/// para alcancar o Mac daqui.
+pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
+    use super::ClientSpec;
     match kind {
-        "rdp" => vec![("mstsc.exe", vec!["/v:{host}:{port}"])],
+        "rdp" => vec![ClientSpec {
+            prog: "mstsc.exe",
+            args: &["/v:{host}:{port}"],
+            audio: None,
+            mic: None,
+            view_only: None,
+        }],
         "vnc" => vec![
-            ("vncviewer.exe", vec!["{host}:{port}"]),
-            ("tvnviewer.exe", vec!["{host}::{port}"]),
+            ClientSpec {
+                prog: "vncviewer.exe",
+                args: &["{host}:{port}"],
+                audio: None,
+                mic: None,
+                view_only: Some(&["-ViewOnly"]),
+            },
+            ClientSpec {
+                prog: "tvnviewer.exe",
+                args: &["{host}::{port}"],
+                audio: None,
+                mic: None,
+                view_only: Some(&["-viewonly"]),
+            },
         ],
         _ => vec![],
     }
@@ -225,4 +245,25 @@ pub fn screen_client_dirs() -> Vec<PathBuf> {
         }
     }
     v
+}
+
+/// Cria processo sem alocar console.
+///
+/// O daemon e subsistema `windows` (sem console proprio, para nao abrir
+/// janela preta a cada login). A consequencia e que **cada** filho de
+/// console que ele cria ganha um console NOVO -- e o refresher de pares
+/// chama `ssh` a cada 6 s, o que virava uma janela de cmd piscando sem
+/// parar na tela do usuario. Reclamado, e com razao: parece coisa
+/// quebrada.
+///
+/// `CREATE_NO_WINDOW` resolve na origem. Nao atrapalha o que de fato tem
+/// interface: em app grafico (o `mstsc`, por exemplo) a flag so impede o
+/// console, nao as janelas dele.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+pub fn child(prog: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut c = std::process::Command::new(prog);
+    c.creation_flags(CREATE_NO_WINDOW);
+    c
 }

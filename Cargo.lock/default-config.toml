@@ -1,0 +1,108 @@
+# Config do logid. Editavel a mao -- o daemon revalida ao ler.
+#
+# REGRA: nunca escrever IP aqui. Ver specs/007-device-routing.md --
+# o IP do Windows ja mudou uma vez e quebrou tudo que estava fixado.
+
+port = 8787
+refresh_seconds = 10
+
+[[hosts]]
+name = "ubuntu-host"
+addr = "127.0.0.1"
+role = "Ubuntu 26.04 - este PC"
+units = ["logid.service", "gnome-remote-desktop.service"]
+
+  [[hosts.services]]
+  label = "RDP (GNOME)"
+  port = 3389
+
+  [[hosts.services]]
+  label = "KDE Connect"
+  port = 1716
+
+
+[[hosts]]
+name = "windows-host"
+addr = "windows-host.local"  # mDNS, nunca IP
+role = "Windows 10 Pro"
+ssh = "windows-host"
+agent = "%LOCALAPPDATA%\\logid\\logid-agent.exe"
+
+  [[hosts.services]]
+  label = "SSH"
+  port = 22
+
+
+  [[hosts.services]]
+  label = "KDE Connect"
+  port = 1716
+
+  [[hosts.services]]
+  label = "RDP"
+  port = 3389
+  expect = "any"           # disponivel no Pro, desligado por escolha
+
+# Canal Easy-Switch de cada dispositivo em cada host.
+#
+# ATENCAO ao nome: tem de ser o que o HID++ reporta (feature 0x0005), nao
+# o que o solaar mostrava. Medido: o solaar dizia "MX Keys Keyboard", o
+# dispositivo se chama "MX Keys Wireless Keyboard". Confira com
+#   cargo run --release --bin probe   (no crate hidpp/)
+#
+# LIDO DO HARDWARE em 03/11, nao chutado. Fonte:
+#   solaar config 2 change-host
+#   -> possible values: [ 1:ubuntu-host, 2:windows-host, 3:ASSET-TAG-0001 ]
+#
+# Existe um terceiro host pareado (ASSET-TAG-0001) que nao esta nesta
+# config porque nao esta em [[hosts]]. Para incluir, basta adicionar o
+# bloco de host e a linha de canal.
+#
+# Os nomes de canal ficam no TECLADO: ele tem HOSTS INFO {1815}, o mouse
+# nao. Ler 0x1815 do mouse devolve lixo -- e a feature nao existe nele.
+
+[[devices]]
+name = "MX Anywhere 3"
+  [devices.hosts]
+  "ubuntu-host" = 1
+  "windows-host" = 2
+
+[[devices]]
+name = "MX Keys Wireless Keyboard"
+  [devices.hosts]
+  "ubuntu-host" = 1
+  "windows-host" = 2
+
+# Vigilancia de borda (modo B): atravessar a borda da tela manda os
+# dispositivos para o canal do host alvo, via HID++.
+#
+# DESLIGADA por padrao: dispara acao IRREVERSIVEL do lado de origem.
+# O pre-flight completo roda antes de cada troca, entao config ruim nao
+# te deixa sem teclado -- mas leia specs/005 antes de ligar.
+#
+# A deteccao usa org.gnome.Mutter.InputCapture direto. O portal
+# equivalente aceita CreateSession e nunca responde.
+
+[input.border]
+enabled = false
+edge = "right"          # left | right | top | bottom
+target = "windows-host"
+
+# Fazer os demais dispositivos seguirem o canal do lider.
+#
+# Resolve o estado dividido na raiz -- mouse numa maquina, teclado em
+# outra -- e funciona inclusive quando a troca foi MANUAL, no botao
+# Easy-Switch, que a vigilancia de borda nao ve.
+#
+# DESLIGADO por padrao: mover dispositivo e irreversivel do lado de
+# origem, e um reconciliador que erra te deixa sem teclado. Ele nunca age
+# sem saber onde o lider esta.
+
+[input.follow]
+enabled = false
+leader = "MX Anywhere 3"     # nome HID++; confira com o bin `probe`
+interval_seconds = 5
+
+# Permanencia na borda antes de trocar. hold_hits = 1 troca no primeiro
+# toque (mais imediato, mais chance de troca por raspao).
+# hold_hits = 2
+# hold_window_ms = 300

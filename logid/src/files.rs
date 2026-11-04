@@ -29,7 +29,7 @@
 use crate::config::Config;
 use serde::Serialize;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Teto de entradas por listagem. Uma pasta com 50 mil arquivos nao
 /// ajuda ninguem na tela e enche o JSON.
@@ -221,7 +221,7 @@ fn sftp_batch(alias: &str, addr: &str, script: &str) -> Result<String, String> {
     // Ver `probe::ssh_addr_opts`.
     args.extend(crate::probe::ssh_addr_opts(addr));
     args.push(alias.to_string());
-    let mut child = Command::new("sftp")
+    let mut child = crate::sys::child("sftp")
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

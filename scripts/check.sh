@@ -15,7 +15,16 @@ run() {
   local titulo="$1"; shift
   printf '  %-46s' "$titulo"
   if out=$("$@" 2>&1); then
-    echo "ok"
+    # Aviso nao derruba o build, e por isso passa batido. Mostrar aqui e
+    # o que faz um aviso novo ser notado no dia em que aparece.
+    local avisos
+    avisos=$(printf '%s\n' "$out" | grep -c '^warning:')
+    if [ "$avisos" -gt 0 ]; then
+      echo "ok ($avisos aviso(s))"
+      printf '%s\n' "$out" | grep '^warning:' | sed 's/^/      /' | head -8
+    else
+      echo "ok"
+    fi
   else
     echo "FALHOU"
     echo "$out" | grep -E '^(error|warning)' -A4 | head -20 | sed 's/^/      /'
