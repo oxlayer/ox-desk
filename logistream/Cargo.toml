@@ -61,6 +61,41 @@ winit-keys = ["dep:winit"]
 name = "logistream"
 path = "src/lib.rs"
 
+# Nomes com prefixo: estes binarios vao para `~/.local/bin`, onde `host`
+# e `view` sozinhos seriam nomes genericos demais para conviver com o
+# resto do sistema.
+[[bin]]
+name = "logistream-host"
+path = "src/bin/host.rs"
+
+[[bin]]
+name = "logistream-view"
+path = "src/bin/view.rs"
+
+[[bin]]
+name = "logistream-probe-nvenc"
+path = "src/bin/nvenc-probe.rs"
+
+[[bin]]
+name = "logistream-probe-capture"
+path = "src/bin/capture-probe.rs"
+
+[[bin]]
+name = "logistream-probe-input"
+path = "src/bin/input-probe.rs"
+
+[[bin]]
+name = "logistream-record"
+path = "src/bin/v1-record.rs"
+
+[[bin]]
+name = "logistream-sink"
+path = "src/bin/sink.rs"
+
+[[bin]]
+name = "logistream-input-send"
+path = "src/bin/input-send.rs"
+
 [dev-dependencies]
 # `#[tokio::test]` precisa do runtime completo no teste.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }

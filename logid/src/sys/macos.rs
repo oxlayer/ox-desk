@@ -176,10 +176,30 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
             view_only: None,
             file: Some("full address:s:{host}:{port}\\n{user_line}screen mode id:i:2\\nredirectclipboard:i:1\\naudiomode:i:{audiomode}\\naudiocapturemode:i:{audiocapture}\\n"),
         }],
+        // O NOSSO. Mesmo binario em qualquer plataforma, e o unico
+        // que fala o protocolo do `logistream` -- H.264 por QUIC com
+        // input de volta. Ver specs/010.
+        "logistream" => vec![ClientSpec {
+            prog: "logistream-view",
+            args: &["{host}:{port}"],
+            // Ainda nao tem audio nem modo so-leitura; quando tiver,
+            // muda aqui e a UI acende sozinha.
+            audio: None,
+            mic: None,
+            view_only: None,
+            file: None,
+        }],
         _ => vec![],
     }
 }
 
 pub fn screen_client_dirs() -> Vec<PathBuf> {
-    vec![PathBuf::from("/usr/bin"), PathBuf::from("/Applications")]
+    vec![
+        // Os NOSSOS binarios. O daemon roda sob launchd com PATH minimo
+        // e nao herda o do shell; sem isto o `logistream-view` parece
+        // nao instalado quando esta.
+        home_dir().join(".local").join("bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/Applications"),
+    ]
 }

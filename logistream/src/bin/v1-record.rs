@@ -20,7 +20,7 @@ use dbus::blocking::Connection;
 use dbus::message::MatchRule;
 use dbus::Path;
 use moq_nvenc::sys::nvEncodeAPI::{
-    NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_P4_GUID, NV_ENC_TUNING_INFO,
+    NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID, NV_ENC_PARAMS_RC_MODE, NV_ENC_PRESET_P4_GUID, NV_ENC_TUNING_INFO,
 };
 use moq_nvenc::{EncodePictureParams, Encoder, EncoderInitParams};
 use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
@@ -149,10 +149,39 @@ fn main() -> anyhow::Result<()> {
                 let preset = enc
                     .get_preset_config(NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_P4_GUID, tuning)
                     .map_err(|e| anyhow::anyhow!("preset: {e}"))?;
-                let mut cfg = preset.presetCfg;
-                // Sem isto o cliente que entra no meio nao tem cabecalho
-                // para comecar a desenhar. Ver specs/010.
-                unsafe { cfg.encodeCodecConfig.h264Config.set_repeatSPSPPS(1) };
+        let mut cfg = preset.presetCfg;
+        // Sem isto, o cliente que entra no meio da transmissao -- o caso
+        // normal -- nao tem cabecalho para comecar a desenhar.
+        unsafe { cfg.encodeCodecConfig.h264Config.set_repeatSPSPPS(1) };
+
+        // --- qualidade -------------------------------------------------------
+        //
+        // O preset sozinho escolhia ~2 Mbps a 1440p, e o usuario viu o
+        // resultado: "a imagem esta meio bugada, sem muita qualidade". Numa
+        // LAN isso e banda sobrando na mesa -- o Parsec usa 20-50 Mbps.
+        let pixels = (w as u64) * (h as u64);
+        // ~8 Mbps em 1080p, ~15 em 1440p, ~34 em 4K. Escala com a area em
+        // vez de ser numero fixo, porque 1440p e 4K nao cabem no mesmo teto.
+        let alvo = (pixels * 60 / 1000).clamp(8_000_000, 60_000_000) as u32;
+        cfg.rcParams.rateControlMode = NV_ENC_PARAMS_RC_MODE::NV_ENC_PARAMS_RC_VBR;
+        cfg.rcParams.averageBitRate = alvo;
+        // Teto com folga: tela parada gasta quase nada, e quando a imagem
+        // muda inteira (rolar uma pagina) e exatamente a hora de gastar.
+        cfg.rcParams.maxBitRate = alvo * 2;
+        // VBV de um quadro: buffer grande deixa o encoder "dever" bits e
+        // entregar quadro atrasado, que e o oposto do que tela remota quer.
+        cfg.rcParams.vbvBufferSize = alvo / 60;
+
+        // --- recuperacao de erro ---------------------------------------------
+        //
+        // So havia IDR no quadro zero. Perdeu um quadro, o erro NUNCA
+        // cicatrizava -- ficava sujando a imagem para sempre. Um IDR a cada
+        // 2s limita o estrago a 2s.
+        cfg.gopLength = 120;
+        // Sem quadros B: eles melhoram compressao a custo de atrasar a
+        // saida, e aqui latencia vale mais que bitrate.
+        cfg.frameIntervalP = 1;
+                cfg.encodeCodecConfig.h264Config.idrPeriod = 120;
                 let mut params = EncoderInitParams::new(NV_ENC_CODEC_H264_GUID, w, h);
                 params
                     .preset_guid(NV_ENC_PRESET_P4_GUID)

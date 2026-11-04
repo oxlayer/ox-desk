@@ -166,11 +166,29 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 file: None,
             },
         ],
+        // O NOSSO. Mesmo binario em qualquer plataforma, e o unico
+        // que fala o protocolo do `logistream` -- H.264 por QUIC com
+        // input de volta. Ver specs/010.
+        "logistream" => vec![ClientSpec {
+            prog: "logistream-view",
+            args: &["{host}:{port}"],
+            // Ainda nao tem audio nem modo so-leitura; quando tiver,
+            // muda aqui e a UI acende sozinha.
+            audio: None,
+            mic: None,
+            view_only: None,
+            file: None,
+        }],
         _ => vec![],
     }
 }
 
-/// Onde procurar clientes fora do PATH. No Linux o PATH basta.
+/// Onde procurar clientes fora do PATH.
+///
+/// `~/.local/bin` entra porque e onde os NOSSOS binarios ficam, e o
+/// daemon roda com PATH minimo -- sob systemd ou launchd ele nao herda
+/// o PATH do shell, e procurar so no PATH faria o `logistream-view`
+/// parecer nao instalado quando esta.
 pub fn screen_client_dirs() -> Vec<std::path::PathBuf> {
-    vec![]
+    vec![home_dir().join(".local").join("bin")]
 }

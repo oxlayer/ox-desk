@@ -64,8 +64,18 @@ mod mac {
         // para nunca encherem isto.
         let (tx_in, rx_in) = tokio::sync::mpsc::channel::<Evento>(256);
 
+        // O tamanho da JANELA, compartilhado com quem escala.
+        //
+        // Eu dimensionava a superficie pelo tamanho do QUADRO: numa
+        // janela de 1280x720 mostrando um stream de 2560x1440, o buffer
+        // nao casa com a janela e o resultado e indefinido -- foi o que
+        // o usuario viu como "imagem bugada". Quem redimensiona agora e
+        // o `swscale`, que ja estava no caminho de qualquer forma.
+        let tam: Arc<Mutex<(u32, u32)>> = Arc::new(Mutex::new((1280, 720)));
+        let tam_rede = Arc::clone(&tam);
+
         std::thread::spawn(move || {
-            if let Err(e) = receber(&alvo, slot_rede, rx_in) {
+            if let Err(e) = receber(&alvo, slot_rede, rx_in, tam_rede) {
                 eprintln!("rede: {e}");
                 std::process::exit(1);
             }
@@ -84,6 +94,7 @@ mod mac {
             t0: Instant::now(),
             tx_in,
             tam_janela: (1280.0, 720.0),
+            tam,
         };
         ev.run_app(&mut app)?;
         Ok(())
@@ -100,6 +111,8 @@ mod mac {
         /// Tamanho atual da janela, para converter a posicao do cursor
         /// no espaco do stream.
         tam_janela: (f64, f64),
+        /// Mesmo tamanho, em pixels fisicos, para a thread que escala.
+        tam: Arc<Mutex<(u32, u32)>>,
     }
 
     impl ApplicationHandler for App {
@@ -120,6 +133,9 @@ mod mac {
                 WindowEvent::RedrawRequested => self.desenhar(),
                 WindowEvent::Resized(t) => {
                     self.tam_janela = (t.width as f64, t.height as f64);
+                    if let Ok(mut g) = self.tam.lock() {
+                        *g = (t.width.max(1), t.height.max(1));
+                    }
                 }
                 WindowEvent::CursorMoved { position, .. } => {
                     // A janela pode estar menor que a tela remota, entao
@@ -202,11 +218,19 @@ mod mac {
             else {
                 return;
             };
+            // Primeiro garante que a thread de escala conhece o tamanho
+            // atual: na primeira pintura ainda nao houve `Resized`.
+            let fisico = janela.inner_size();
+            if let Ok(mut g) = self.tam.lock() {
+                *g = (fisico.width.max(1), fisico.height.max(1));
+            }
             let s = match self.slot.lock() {
                 Ok(s) => s,
                 Err(_) => return,
             };
-            if s.w == 0 || s.h == 0 {
+            // O quadro so serve se tiver o tamanho da janela AGORA; se a
+            // janela mudou de tamanho, o proximo quadro ja vem certo.
+            if s.w == 0 || s.h == 0 || s.w != fisico.width || s.h != fisico.height {
                 return;
             }
             let (Some(w), Some(h)) = (NonZeroU32::new(s.w), NonZeroU32::new(s.h)) else {
@@ -239,6 +263,7 @@ mod mac {
         alvo: &str,
         slot: Arc<Mutex<Slot>>,
         mut rx_in: tokio::sync::mpsc::Receiver<Evento>,
+        tam: Arc<Mutex<(u32, u32)>>,
     ) -> anyhow::Result<()> {
         ffmpeg_next::init()?;
 
@@ -275,6 +300,7 @@ mod mac {
 
         let mut r = Reassembler::default();
         let mut escalador: Option<ffmpeg_next::software::scaling::Context> = None;
+        let mut escala_de_para = (0u32, 0u32, 0u32, 0u32);
         let mut quadros = 0u64;
 
         loop {
@@ -294,24 +320,25 @@ mod mac {
             let mut quadro = ffmpeg_next::frame::Video::empty();
             while dec.receive_frame(&mut quadro).is_ok() {
                 let (w, h) = (quadro.width(), quadro.height());
-                // O escalador e caro de criar; so refaz se o formato
-                // mudou. Ele tambem faz a conversao de cor, que e o
-                // trabalho de CPU que o VideoToolbox vai eliminar depois.
-                let precisa = escalador
-                    .as_ref()
-                    .map(|s| s.input().width != w || s.input().height != h)
-                    .unwrap_or(true);
-                if precisa {
+                // Destino = tamanho da JANELA. O `swscale` ja estava no
+                // caminho fazendo conversao de cor; redimensionar junto
+                // nao custa outra passada sobre os pixels.
+                let (jw, jh) = tam.lock().map(|g| *g).unwrap_or((w, h));
+                let (jw, jh) = (jw.max(1), jh.max(1));
+                // Recriar o escalador e caro; so quando de fato mudou.
+                let agora = (w, h, jw, jh);
+                if escalador.is_none() || escala_de_para != agora {
                     escalador = ffmpeg_next::software::scaling::Context::get(
                         quadro.format(),
                         w,
                         h,
                         ffmpeg_next::format::Pixel::BGRA,
-                        w,
-                        h,
+                        jw,
+                        jh,
                         ffmpeg_next::software::scaling::Flags::BILINEAR,
                     )
                     .ok();
+                    escala_de_para = agora;
                 }
                 let Some(sc) = escalador.as_mut() else { continue };
                 let mut rgba = ffmpeg_next::frame::Video::empty();
@@ -323,6 +350,7 @@ mod mac {
                 // que o softbuffer espera (o byte alto e ignorado).
                 let linha = rgba.stride(0);
                 let dados = rgba.data(0);
+                let (w, h) = (jw, jh);
                 let mut saida = vec![0u32; (w * h) as usize];
                 for y in 0..h as usize {
                     let ini = y * linha;

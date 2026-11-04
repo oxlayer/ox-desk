@@ -46,6 +46,14 @@ passo "ubuntu: instalar e reiniciar"
 if out=$(install -m755 logid/target/release/logid ~/.local/bin/logid 2>&1 &&
          systemctl --user restart logid.service 2>&1); then ok; else erro "$out"; fi
 
+passo "ubuntu: host de tela (logistream)"
+# O host roda nesta maquina quando alguem pede a tela dela; o cliente
+# tambem fica instalado para o caso de ela virar quem assiste.
+if out=$(cargo build --release --manifest-path logistream/Cargo.toml 2>&1 &&
+         install -m755 logistream/target/release/logistream-host ~/.local/bin/ 2>&1 &&
+         install -m755 logistream/target/release/logistream-view ~/.local/bin/ 2>&1 &&
+         mkdir -p ~/.local/state 2>&1); then ok; else erro "$out"; fi
+
 # ---------- windows ----------
 passo "windows: compilar"
 if out=$(cargo build --release --target x86_64-pc-windows-gnu --manifest-path logid/Cargo.toml 2>&1); then ok; else erro "$out"; fi
@@ -96,8 +104,13 @@ else
              launchctl kickstart -k gui/\$(id -u)/ai.logi.logid" 2>&1); then ok; else erro "$out"; fi
 
   passo "mac: cliente de tela (logistream)"
-  if out=$(timeout 420 ssh -n -o BatchMode=yes mac \
-            "cd ~/logi/logistream && ~/.cargo/bin/cargo build --release --bin sink 2>&1 | tail -3" 2>&1); then ok; else erro "$out"; fi
+  # PKG_CONFIG_PATH do brew: o `ffmpeg-next` so acha o libavcodec por
+  # ele, e o SSH nao carrega o perfil do shell.
+  if out=$(timeout 600 ssh -n -o BatchMode=yes mac \
+            "cd ~/logi/logistream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig &&
+             ~/.cargo/bin/cargo build --release --bin logistream-view 2>&1 | tail -3 &&
+             mkdir -p ~/.local/bin ~/.local/state &&
+             install -m755 target/release/logistream-view ~/.local/bin/" 2>&1); then ok; else erro "$out"; fi
 fi
 
 # ---------- conferencia ----------

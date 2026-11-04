@@ -28,7 +28,7 @@ use dbus::Path;
 use logistream::input::{Evento, Leitor};
 use logistream::net::{self, SliceHeader};
 use moq_nvenc::sys::nvEncodeAPI::{
-    NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_P4_GUID, NV_ENC_TUNING_INFO,
+    NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID, NV_ENC_PARAMS_RC_MODE, NV_ENC_PRESET_P4_GUID, NV_ENC_TUNING_INFO,
 };
 use moq_nvenc::{EncodePictureParams, Encoder, EncoderInitParams};
 use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
@@ -47,6 +47,8 @@ const RD_SESSION: &str = "org.gnome.Mutter.RemoteDesktop.Session";
 const T: Duration = Duration::from_secs(10);
 /// Dois quadros de folga. Mais que isso seria fila de coisa velha.
 const CAPACIDADE: usize = 2;
+/// Quanto esperar por outro cliente antes de encerrar.
+const OCIOSO_S: u64 = 20;
 
 struct Codificado {
     dados: Vec<u8>,
@@ -328,6 +330,44 @@ fn montar_nvenc(
     // Sem isto, o cliente que entra no meio da transmissao -- o caso
     // normal -- nao tem cabecalho para comecar a desenhar.
     unsafe { cfg.encodeCodecConfig.h264Config.set_repeatSPSPPS(1) };
+
+    // --- qualidade -------------------------------------------------------
+    //
+    // O preset sozinho escolhia ~2 Mbps a 1440p, e o usuario viu o
+    // resultado: "a imagem esta meio bugada, sem muita qualidade". Numa
+    // LAN isso e banda sobrando na mesa -- o Parsec usa 20-50 Mbps.
+    let pixels = (w as u64) * (h as u64);
+    // ~8 Mbps em 1080p, ~15 em 1440p, ~34 em 4K. Escala com a area em
+    // vez de ser numero fixo, porque 1440p e 4K nao cabem no mesmo teto.
+    let alvo = (pixels * 60 / 1000).clamp(8_000_000, 60_000_000) as u32;
+    cfg.rcParams.rateControlMode = NV_ENC_PARAMS_RC_MODE::NV_ENC_PARAMS_RC_VBR;
+    cfg.rcParams.averageBitRate = alvo;
+    // Teto com folga: tela parada gasta quase nada, e quando a imagem
+    // muda inteira (rolar uma pagina) e exatamente a hora de gastar.
+    cfg.rcParams.maxBitRate = alvo * 2;
+    // VBV de um quadro: buffer grande deixa o encoder "dever" bits e
+    // entregar quadro atrasado, que e o oposto do que tela remota quer.
+    cfg.rcParams.vbvBufferSize = alvo / 60;
+
+    // --- recuperacao de erro ---------------------------------------------
+    //
+    // So havia IDR no quadro zero. Perdeu um quadro, o erro NUNCA
+    // cicatrizava -- ficava sujando a imagem para sempre. Um IDR a cada
+    // 2s limita o estrago a 2s.
+    // Piso de qualidade: `maxQP` limita o PIOR quadro. Sem ele, numa
+    // cena que muda inteira (rolar uma pagina) o encoder joga a
+    // qualidade no chao para caber no bitrate, e e justamente ali que a
+    // pessoa esta olhando. 28 ainda e conservador para texto.
+    cfg.rcParams.set_enableMaxQP(1);
+    cfg.rcParams.maxQP.qpIntra = 28;
+    cfg.rcParams.maxQP.qpInterP = 30;
+    cfg.rcParams.maxQP.qpInterB = 32;
+    cfg.gopLength = 120;
+    // Sem quadros B: eles melhoram compressao a custo de atrasar a
+    // saida, e aqui latencia vale mais que bitrate.
+    cfg.frameIntervalP = 1;
+    // Escrever em campo de uniao e seguro; so ler exige `unsafe`.
+    cfg.encodeCodecConfig.h264Config.idrPeriod = 120;
     let mut params = EncoderInitParams::new(NV_ENC_CODEC_H264_GUID, w, h);
     params
         .preset_guid(NV_ENC_PRESET_P4_GUID)
@@ -501,6 +541,37 @@ fn servir(
             }
             entrada.abort();
             println!("  cliente saiu");
+
+            // Sem ninguem assistindo, capturar e codificar so queima GPU
+            // na maquina de outra pessoa. O host sobe sob demanda (o
+            // daemon o acorda por SSH quando alguem clica), entao sair e
+            // barato -- e e o unico jeito de ele nao virar processo
+            // esquecido rodando a 80 fps a noite inteira.
+            //
+            // A janela de espera existe para reconexao: cair o wifi por
+            // dois segundos nao deveria exigir voltar ao painel.
+            println!("  aguardando {OCIOSO_S}s por outro cliente antes de sair");
+            let volta = tokio::time::timeout(
+                Duration::from_secs(OCIOSO_S),
+                ep.accept(),
+            )
+            .await;
+            if volta.is_ok() {
+                // Reconectou dentro da janela. Nao da para devolver a
+                // conexao ao laco de fora sem duplicar a logica, entao
+                // saimos e o daemon religa no proximo clique -- custa um
+                // clique, nao uma sessao travada.
+                println!("  alguem voltou, mas a conexao nao volta para o laco; encerrando");
+            } else {
+                println!("  ninguem voltou; encerrando");
+            }
+            // `exit` e nao `break`: sair deste laco encerraria so a
+            // thread de rede, e o laco do PipeWire na thread principal
+            // seguiria capturando para sempre -- exatamente o processo
+            // esquecido que esta saida existe para evitar. Nao ha estado
+            // a salvar: o Mutter solta as sessoes quando o par sai do
+            // barramento.
+            std::process::exit(0);
         }
         Ok::<(), anyhow::Error>(())
     })

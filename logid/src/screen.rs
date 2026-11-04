@@ -153,7 +153,15 @@ fn plan_for(cfg: &Config, name: &str, opts: Opts) -> Option<Plan> {
     if h.is_local() {
         return None;
     }
-    let (reachable, ms) = crate::probe::tcp_probe(&h.addr, sc.port);
+    // O nosso protocolo e QUIC, ou seja **UDP**: um probe TCP diria
+    // "fechado" para sempre e o botao nunca acenderia. E o host dele
+    // sobe sob demanda, entao nem estar no ar e pre-requisito -- o que
+    // importa e haver canal SSH para levanta-lo.
+    let (reachable, ms) = if sc.kind == "logistream" {
+        (h.ssh.is_some(), None)
+    } else {
+        crate::probe::tcp_probe(&h.addr, sc.port)
+    };
     let user = sc.user.as_deref();
 
     let mut client = None;
@@ -207,10 +215,17 @@ fn plan_for(cfg: &Config, name: &str, opts: Opts) -> Option<Plan> {
             format!("sem cliente {} instalado aqui (procurei: {})", sc.kind, tentados.join(", "))
         })
     } else if !reachable {
-        Some(format!(
-            "{}:{} nao respondeu -- a tela do host esta desligada ou bloqueada",
-            h.addr, sc.port
-        ))
+        Some(if sc.kind == "logistream" {
+            format!(
+                "'{}' nao tem `ssh` na config: sem ele nao ha como levantar o host de tela la",
+                h.name
+            )
+        } else {
+            format!(
+                "{}:{} nao respondeu -- a tela do host esta desligada ou bloqueada",
+                h.addr, sc.port
+            )
+        })
     } else {
         None
     };
@@ -254,6 +269,17 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
     if let Some(b) = &plan.blocker {
         return Err(b.clone());
     }
+    // O host de tela sobe sob demanda, antes de o cliente tentar
+    // conectar. Capturar e codificar sem ninguem assistindo so gastaria
+    // GPU na maquina do outro.
+    if plan.kind == "logistream" {
+        if let Some(h) = cfg.hosts.iter().find(|x| x.name == host) {
+            if let Err(e) = acordar_host(h, plan.port) {
+                return Err(format!("nao consegui levantar o host de tela: {e}"));
+            }
+        }
+    }
+
     let cmd = plan.command.ok_or("sem comando")?;
     let (prog, args) = cmd.split_first().ok_or("comando vazio")?;
 
@@ -277,6 +303,43 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
     );
     say!("screen: abrindo {host} ({}, {modo}) -- {linha}", plan.kind);
     Ok(linha)
+}
+
+/// Garante que o `logistream-host` esta rodando na outra maquina.
+///
+/// Idempotente de proposito: o botao pode ser clicado duas vezes, e uma
+/// segunda instancia competiria pelo mesmo receptor de tela e pela mesma
+/// porta. O `pgrep` resolve antes de tentar.
+///
+/// `setsid` solta o processo da sessao SSH -- sem isso ele morreria
+/// junto com o comando que o criou, que e a mesma armadilha do Windows
+/// matando a arvore ao desconectar (specs/001).
+fn acordar_host(h: &crate::config::HostCfg, porta: u16) -> Result<(), String> {
+    // `pgrep` antes: o botao pode ser clicado duas vezes, e uma segunda
+    // instancia competiria pela mesma porta e pela mesma captura.
+    //
+    // `setsid` solta o processo da sessao SSH. Sem isso ele morre junto
+    // com o comando que o criou -- a mesma armadilha do Windows matando
+    // a arvore ao desconectar (specs/001).
+    let cmd = format!(
+        concat!(
+            r#"pgrep -x logistream-host >/dev/null 2>&1 || "#,
+            r#"(setsid nohup "$HOME/.local/bin/logistream-host" {} "#,
+            r#">"$HOME/.local/state/logistream-host.log" 2>&1 &); "#,
+            r#"sleep 1; pgrep -x logistream-host >/dev/null && echo vivo || echo morto"#
+        ),
+        porta
+    );
+    let saida = crate::remote::run(h, &cmd, 10)?;
+    if saida.contains("vivo") {
+        say!("screen: host de tela de pe em {}", h.name);
+        Ok(())
+    } else {
+        Err(format!(
+            "o processo nao subiu em {} (veja ~/.local/state/logistream-host.log la)",
+            h.name
+        ))
+    }
 }
 
 #[cfg(test)]

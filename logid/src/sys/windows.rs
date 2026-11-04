@@ -235,6 +235,19 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 file: None,
             },
         ],
+        // O NOSSO. Mesmo binario em qualquer plataforma, e o unico
+        // que fala o protocolo do `logistream` -- H.264 por QUIC com
+        // input de volta. Ver specs/010.
+        "logistream" => vec![ClientSpec {
+            prog: "logistream-view.exe",
+            args: &["{host}:{port}"],
+            // Ainda nao tem audio nem modo so-leitura; quando tiver,
+            // muda aqui e a UI acende sozinha.
+            audio: None,
+            mic: None,
+            view_only: None,
+            file: None,
+        }],
         _ => vec![],
     }
 }
@@ -243,6 +256,10 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
 /// onde o RealVNC e o TightVNC caem por padrao.
 pub fn screen_client_dirs() -> Vec<PathBuf> {
     let mut v = Vec::new();
+    // Onde os NOSSOS binarios ficam, ao lado do daemon.
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        v.push(PathBuf::from(local).join("logid"));
+    }
     for key in ["ProgramFiles", "ProgramFiles(x86)"] {
         if let Ok(base) = std::env::var(key) {
             v.push(PathBuf::from(&base).join("RealVNC").join("VNC Viewer"));
