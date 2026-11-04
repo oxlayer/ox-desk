@@ -302,14 +302,20 @@ else
              install -m755 target/release/logid ~/.local/bin/logid &&
              launchctl kickstart -k gui/\$(id -u)/ai.logi.logid" 2>&1); then ok; else erro "$out"; fi
 
-  passo "mac: cliente de tela (logistream)"
+  passo "mac: tela (logistream, cliente e host)"
   # PKG_CONFIG_PATH do brew: o `ffmpeg-next` so acha o libavcodec por
   # ele, e o SSH nao carrega o perfil do shell.
-  if out=$(timeout 600 ssh -n -o BatchMode=yes mac \
+  #
+  # O HOST estava faltando aqui. So o cliente era compilado, entao a
+  # maquina podia assistir as outras e nunca ser assistida -- e o
+  # painel caia no VNC por nao haver alternativa instalada. O sintoma
+  # chegou como "testei mas chamou vnc, nao deveria ser nativo?".
+  if out=$(timeout 900 ssh -n -o BatchMode=yes mac \
             "cd ~/logi/logistream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig &&
-             ~/.cargo/bin/cargo build --release --bin logistream-view 2>&1 | tail -3 &&
+             ~/.cargo/bin/cargo build --release --bin logistream-view --bin logistream-host 2>&1 | tail -3 &&
              mkdir -p ~/.local/bin ~/.local/state &&
-             install -m755 target/release/logistream-view ~/.local/bin/" 2>&1); then ok; else erro "$out"; fi
+             install -m755 target/release/logistream-view ~/.local/bin/ &&
+             install -m755 target/release/logistream-host ~/.local/bin/" 2>&1); then ok; else erro "$out"; fi
 fi
 
 # ---------- conferencia ----------

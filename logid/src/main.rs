@@ -459,7 +459,6 @@ fn post_remap(mut req: Request) {
 /// exatamente o tipo de coisa que quebra escape -- aspas, barras,
 /// quebras de linha, bytes estranhos.
 fn post_clipboard(mut req: Request) {
-    use std::io::Read;
     let mut texto = String::new();
     if req.as_reader().read_to_string(&mut texto).is_err() {
         return err_json(req, 400, "corpo ilegivel");

@@ -97,8 +97,8 @@ pub fn empurrar(cfg: &crate::config::Config, texto: &str) {
         let t = texto.to_string();
         std::thread::spawn(move || {
             use std::io::Write;
-            use std::process::{Command, Stdio};
-            let filho = Command::new("ssh")
+            use std::process::Stdio;
+            let filho = crate::sys::child("ssh")
                 .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=6", &destino])
                 .arg(&comando)
                 .stdin(Stdio::piped())
@@ -301,21 +301,29 @@ pub fn definir_local(canal: &std::sync::mpsc::Sender<String>, texto: &str) -> Re
 
 #[cfg(not(target_os = "linux"))]
 pub fn definir_local(_canal: &(), texto: &str) -> Result<(), String> {
+    #[cfg(not(windows))]
     use std::io::Write;
-    use std::process::{Command, Stdio};
+    #[cfg(not(windows))]
+    use std::process::Stdio;
     if !registrar(texto) {
         return Ok(()); // ja e esse; escrever de novo so geraria eco
     }
-    let prog = if cfg!(windows) { "clip" } else { "pbcopy" };
-    let mut f = Command::new(prog)
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("{prog}: {e}"))?;
-    if let Some(mut e) = f.stdin.take() {
-        e.write_all(texto.as_bytes()).map_err(|e| format!("{prog}: {e}"))?;
+    #[cfg(windows)]
+    {
+        return winput::clipboard_escrever(texto);
     }
-    f.wait().map_err(|e| format!("{prog}: {e}"))?;
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        let mut f = crate::sys::child("pbcopy")
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("pbcopy: {e}"))?;
+        if let Some(mut e) = f.stdin.take() {
+            e.write_all(texto.as_bytes()).map_err(|e| format!("pbcopy: {e}"))?;
+        }
+        f.wait().map_err(|e| format!("pbcopy: {e}"))?;
+        Ok(())
+    }
 }
 
 /// Vigia o clipboard por amostragem. Windows e macOS.
@@ -331,24 +339,38 @@ pub fn definir_local(_canal: &(), texto: &str) -> Result<(), String> {
 /// avisa na hora.
 #[cfg(not(target_os = "linux"))]
 pub fn vigiar(cfg: std::sync::Arc<std::sync::RwLock<crate::config::Config>>) {
-    use std::process::Command;
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));
-        let saida = if cfg!(windows) {
-            Command::new("powershell")
-                .args(["-NoProfile", "-Command", "Get-Clipboard -Raw"])
-                .output()
-        } else {
-            Command::new("pbpaste").output()
+        // `crate::sys::child`, NUNCA `Command::new` direto.
+        //
+        // No Windows aquele helper poe `CREATE_NO_WINDOW`; sem ele cada
+        // amostragem abre uma janela de console visivel. Com 2 s de
+        // intervalo isso virou "o windows ta abrindo um powershell a
+        // cada 5s" na tela do usuario -- um processo invisivel que
+        // pisca 30 vezes por minuto.
+        // Windows le por Win32 direto (`winput::clipboard_ler`), sem
+        // processo nenhum. macOS ainda usa `pbpaste`: um binario
+        // pequeno que nao abre janela, e escrever NSPasteboard por FFI
+        // exigiria objc dentro de um daemon que nao tem runtime objc.
+        let texto = {
+            #[cfg(windows)]
+            {
+                match winput::clipboard_ler() {
+                    Ok(Some(t)) => t,
+                    Ok(None) => continue,
+                    Err(_) => continue,
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let Ok(o) = crate::sys::child("pbpaste").output() else { continue };
+                if !o.status.success() {
+                    continue;
+                }
+                String::from_utf8_lossy(&o.stdout).to_string()
+            }
         };
-        let Ok(o) = saida else { continue };
-        if !o.status.success() {
-            continue;
-        }
-        // O Get-Clipboard do PowerShell acrescenta CRLF no fim; sem
-        // aparar, cada leitura pareceria texto novo e a maquina
-        // empurraria o mesmo conteudo para sempre.
-        let texto = String::from_utf8_lossy(&o.stdout).trim_end_matches(['\r', '\n']).to_string();
+        let texto = texto.trim_end_matches(['\r', '\n']).to_string();
         if texto.is_empty() || texto.len() > LIMITE {
             continue;
         }

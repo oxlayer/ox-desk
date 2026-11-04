@@ -160,3 +160,120 @@ pub fn claim_single_instance(name: &str) -> bool {
     }
     unsafe { GetLastError() != ERROR_ALREADY_EXISTS }
 }
+
+// --- clipboard -------------------------------------------------------
+//
+// Existe para o `logid` nao precisar chamar `powershell -Command
+// Get-Clipboard` a cada amostragem. Aquilo funcionava, mas spawnar um
+// PowerShell a cada 2 s custa ~200 ms de CPU por leitura -- e, se quem
+// chama esquecer `CREATE_NO_WINDOW`, abre uma janela de console
+// visivel a cada volta. Foi o que aconteceu: "o windows ta abrindo um
+// powershell a cada 5s".
+//
+// Texto Unicode apenas (CF_UNICODETEXT). Arquivos sao CF_HDROP e ficam
+// para quando o clipboard de arquivos existir.
+
+const CF_UNICODETEXT: u32 = 13;
+const GMEM_MOVEABLE: u32 = 0x0002;
+
+#[link(name = "user32")]
+extern "system" {
+    fn OpenClipboard(h: isize) -> i32;
+    fn CloseClipboard() -> i32;
+    fn EmptyClipboard() -> i32;
+    fn GetClipboardData(format: u32) -> isize;
+    fn SetClipboardData(format: u32, mem: isize) -> isize;
+    fn IsClipboardFormatAvailable(format: u32) -> i32;
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GlobalAlloc(flags: u32, bytes: usize) -> isize;
+    fn GlobalLock(mem: isize) -> *mut u16;
+    fn GlobalUnlock(mem: isize) -> i32;
+    fn GlobalFree(mem: isize) -> isize;
+}
+
+/// Abre o clipboard, roda `f`, e fecha mesmo se `f` falhar.
+///
+/// Fechar e obrigatorio: o clipboard e um recurso GLOBAL, e deixa-lo
+/// aberto trava o Ctrl+C e o Ctrl+V de todos os programas da sessao
+/// ate o processo morrer. Por isso nao ha caminho de saida que pule o
+/// `CloseClipboard`.
+fn com_clipboard<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    // O clipboard pode estar tomado por outro programa por alguns ms.
+    // Cinco tentativas com 20 ms cobrem o caso normal sem travar o
+    // chamador quando alguem o segura de verdade.
+    let mut aberto = false;
+    for _ in 0..5 {
+        if unsafe { OpenClipboard(0) } != 0 {
+            aberto = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    if !aberto {
+        return Err("o clipboard esta ocupado por outro programa".into());
+    }
+    let r = f();
+    unsafe { CloseClipboard() };
+    r
+}
+
+/// Texto do clipboard, ou `None` se nao houver texto nele.
+pub fn clipboard_ler() -> Result<Option<String>, String> {
+    if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
+        return Ok(None);
+    }
+    com_clipboard(|| {
+        let mem = unsafe { GetClipboardData(CF_UNICODETEXT) };
+        if mem == 0 {
+            return Ok(None);
+        }
+        let p = unsafe { GlobalLock(mem) };
+        if p.is_null() {
+            return Err("GlobalLock falhou na leitura".into());
+        }
+        // UTF-16 terminado em zero. Andar ate o terminador e o unico
+        // jeito: o tamanho do bloco e arredondado e pode sobrar lixo.
+        let mut n = 0usize;
+        while unsafe { *p.add(n) } != 0 {
+            n += 1;
+        }
+        let s = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(p, n) });
+        unsafe { GlobalUnlock(mem) };
+        Ok(Some(s))
+    })
+}
+
+/// Poe texto no clipboard.
+pub fn clipboard_escrever(texto: &str) -> Result<(), String> {
+    let mut u: Vec<u16> = texto.encode_utf16().collect();
+    u.push(0);
+    let bytes = u.len() * 2;
+
+    com_clipboard(|| {
+        let mem = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) };
+        if mem == 0 {
+            return Err("GlobalAlloc falhou".into());
+        }
+        let p = unsafe { GlobalLock(mem) };
+        if p.is_null() {
+            unsafe { GlobalFree(mem) };
+            return Err("GlobalLock falhou na escrita".into());
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(u.as_ptr(), p, u.len());
+            GlobalUnlock(mem);
+        }
+        unsafe { EmptyClipboard() };
+        // Depois do SetClipboardData o bloco pertence ao SISTEMA --
+        // liberar aqui seria use-after-free no proximo Ctrl+V. So
+        // liberamos quando o Set FALHA e a posse nao mudou de mao.
+        if unsafe { SetClipboardData(CF_UNICODETEXT, mem) } == 0 {
+            unsafe { GlobalFree(mem) };
+            return Err("SetClipboardData falhou".into());
+        }
+        Ok(())
+    })
+}

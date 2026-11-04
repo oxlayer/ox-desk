@@ -314,7 +314,9 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
 ///
 /// - **Unix**: `setsid nohup` solta o processo da sessao SSH. Sem isso
 ///   ele morre junto com o comando que o criou -- a mesma armadilha do
-///   Windows matando a arvore ao desconectar (specs/001).
+///   Windows matando a arvore ao desconectar (specs/001). O `setsid` e
+///   condicional porque **o macOS nao o tem**: la a linha inteira
+///   morria em "command not found" antes de chegar ao nohup.
 /// - **Windows**: tarefa agendada com `/it`, e **nao** lancamento direto.
 ///   O SSH cai na sessao 0, e la o Desktop Duplication nao existe e o
 ///   `SendInput` nao chega a desktop nenhum: o processo subiria, nao
@@ -338,7 +340,15 @@ pub(crate) fn acordar_host(h: &crate::config::HostCfg, porta: u16) -> Result<(),
         format!(
             concat!(
                 r#"pgrep -x logistream-host >/dev/null 2>&1 || "#,
-                r#"(setsid nohup "$HOME/.local/bin/logistream-host" {} "#,
+                // `setsid` quando existe, `nohup` sozinho quando nao.
+                //
+                // O macOS NAO tem setsid, e a linha inteira morria com
+                // "command not found" -- sem nunca chegar ao nohup. Em
+                // Linux o setsid continua valendo: ele tira o processo
+                // da sessao do SSH, e sem isso ele cai junto quando a
+                // conexao fecha.
+                r#"(S=; command -v setsid >/dev/null 2>&1 && S=setsid; "#,
+                r#"$S nohup "$HOME/.local/bin/logistream-host" {} "#,
                 r#">"$HOME/.local/state/logistream-host.log" 2>&1 &); "#,
                 r#"sleep 1; pgrep -x logistream-host >/dev/null && echo vivo || echo morto"#
             ),
