@@ -13,6 +13,7 @@ mod focus;
 mod follow;
 mod hidpp;
 mod logs;
+mod peers;
 mod probe;
 
 use config::Config;
@@ -111,6 +112,8 @@ fn main() {
     border::spawn(Arc::clone(&cfg));
     // Reconciliador do "seguir o lider", em thread propria.
     follow::spawn(Arc::clone(&cfg));
+    // Mantem o estado dos pares fresco, para o caminho quente nao esperar SSH.
+    peers::spawn(Arc::clone(&cfg));
 
     let server = Arc::new(server);
     let workers: Vec<_> = (0..4)

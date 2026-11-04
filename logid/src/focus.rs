@@ -6,7 +6,8 @@
 //! (depois do ChangeHost este receptor nao alcanca mais o dispositivo),
 //! entao o pre-flight substitui o rollback -- nao ha o que desfazer.
 
-use crate::agent;
+use crate::agent::{self, AgentInfo};
+use crate::peers;
 use crate::config::Config;
 use crate::hidpp;
 use crate::probe;
@@ -49,6 +50,12 @@ pub struct FocusRequest {
     /// Sem isto, so devolve o plano. Nunca executa por acidente.
     #[serde(default)]
     pub confirm: bool,
+    /// Usa o estado do par vindo do cache em vez de sondar por SSH.
+    ///
+    /// Tira ~2,2 s do caminho. A checagem passa a declarar a idade do
+    /// dado, em vez de fingir frescor. E o modo que a borda usa.
+    #[serde(default)]
+    pub fast: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -85,6 +92,10 @@ pub struct Plan {
     pub actions: Vec<String>,
     /// Como recuperar se der errado -- mostrar ANTES, nao depois.
     pub recovery: Vec<String>,
+    /// (nome, slot aqui, canal alvo) ja resolvidos pela varredura do
+    /// plano. Nao vai para o JSON: e detalhe interno.
+    #[serde(skip)]
+    resolved: Resolved,
 }
 
 #[derive(Debug, Serialize)]
@@ -106,6 +117,12 @@ fn is_local(h: &crate::config::HostCfg) -> bool {
     h.addr == "127.0.0.1" || h.addr == "localhost" || h.addr == "::1"
 }
 
+/// O que o plano resolveu: (nome, slot aqui, canal alvo).
+///
+/// Guardado para o `execute` NAO refazer a varredura: ela custava ~1,6 s
+/// e ja tinha sido paga aqui.
+type Resolved = Vec<(String, u8, u8)>;
+
 pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
     let mut checks = Vec::new();
     let mut actions = Vec::new();
@@ -125,6 +142,7 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
             checks,
             actions,
             recovery,
+            resolved: Vec::new(),
         };
     };
 
@@ -138,6 +156,7 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
             checks,
             actions,
             recovery,
+            resolved: Vec::new(),
         };
     }
     checks.push(Check::pass("host", format!("{} ({})", target.name, target.addr)));
@@ -160,6 +179,7 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
         .map(|h| h.name.clone())
         .unwrap_or_default();
 
+    let mut resolved: Resolved = Vec::new();
     let want = req.route.unwrap_or(Route::Physical);
     let route = match want {
         Route::Lan => Route::Lan,
@@ -168,7 +188,33 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
 
     match route {
         Route::Physical => {
-            let survey = hidpp::survey();
+            // Varredura local e probe do agente em PARALELO: eram 1,6 s e
+            // 2,7 s em sequencia, e nao dependem um do outro.
+            // No modo rapido NAO sondamos o par: lemos o cache que o
+            // refresher mantem. No modo normal, sondamos em paralelo com a
+            // varredura local -- elas nao dependem uma da outra.
+            let (survey, agent_info, age_ms) = if req.fast {
+                let c = peers::cached(&req.host);
+                (
+                    hidpp::survey_opts(false),
+                    c.as_ref().map(|(i, _)| AgentInfo {
+                        reachable: i.reachable,
+                        slots: i.slots.clone(),
+                        error: i.error.clone(),
+                    }),
+                    c.map(|(_, age)| age),
+                )
+            } else {
+                let r = std::thread::scope(|sc| {
+                    let h = sc.spawn(|| match (&target.ssh, &target.agent) {
+                        (Some(alias), Some(exe)) => Some(agent::devices(alias, exe)),
+                        _ => None,
+                    });
+                    let survey = hidpp::survey_opts(false);
+                    (survey, h.join().ok().flatten())
+                });
+                (r.0, r.1, None)
+            };
             if survey.hidraw_access {
                 checks.push(Check::pass("hidraw", "ACL de uaccess presente"));
             } else {
@@ -218,6 +264,7 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                              ({} em {})",
                             d.slot, chan, d.name, req.host
                         ));
+                        resolved.push((d.name.clone(), d.slot, chan));
                     }
                 }
                 if !local_name.is_empty() && !dcfg.hosts.contains_key(&local_name) {
@@ -234,9 +281,8 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
 
             // Dead-man's switch: quem devolve o dispositivo e quem passa a
             // detê-lo, porque a origem NAO pode desfazer (spec 005).
-            match (&target.ssh, &target.agent) {
-                (Some(alias), Some(exe)) => {
-                    let info = agent::devices(alias, exe);
+            match (&target.ssh, &target.agent, agent_info) {
+                (Some(_), Some(_), Some(info)) => {
                     if info.reachable {
                         let online: Vec<String> = info
                             .slots
@@ -251,10 +297,14 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                                 )
                             })
                             .collect();
+                        let idade = match age_ms {
+                            Some(ms) => format!(" (cache de {ms}ms atras)"),
+                            None => String::new(),
+                        };
                         checks.push(Check::pass(
                             "dead-man's switch no alvo",
                             format!(
-                                "agente responde; dispositivos la: {}",
+                                "agente responde{idade}; dispositivos la: {}",
                                 if online.is_empty() { "nenhum online".into() } else { online.join(", ") }
                             ),
                         ));
@@ -269,6 +319,11 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                         ));
                     }
                 }
+                _ if req.fast => checks.push(Check::block(
+                    "dead-man's switch no alvo",
+                    "modo rapido sem estado do par em cache -- o refresher \
+                     ainda nao leu, ou o host nao tem `ssh`/`agent`",
+                )),
                 _ => checks.push(Check::block(
                     "dead-man's switch no alvo",
                     "host sem `ssh` e/ou `agent` na config: nao ha como pedir \
@@ -303,6 +358,7 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
         checks,
         actions,
         recovery,
+        resolved,
     }
 }
 
@@ -336,29 +392,23 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
     // lock: quem esperou aqui pode ter perdido os dispositivos.
     let _guard = switch_lock();
 
-    // Ponto sem volta.
+    // Ponto sem volta. Reaproveitamos o que o plano resolveu em vez de
+    // varrer de novo -- a varredura custa ~1,6 s e ja foi paga.
     let mut results = Vec::new();
     let mut moved = 0usize;
     let mut stuck: Vec<String> = Vec::new();
-    let survey = hidpp::survey();
-    for dcfg in &cfg.devices {
-        let Some(&chan) = dcfg.hosts.get(&req.host) else { continue };
-        let Some(d) = survey
-            .receivers
-            .iter()
-            .flat_map(|r| r.devices.iter())
-            .find(|d| d.name == dcfg.name && d.online)
-        else {
-            continue;
-        };
-        match hidpp::change_host(d.slot, chan) {
+    for (name, slot, chan) in plan.resolved.clone() {
+        let d = (name, slot);
+        let (name, slot) = (d.0.as_str(), d.1);
+        let _ = name;
+        match hidpp::change_host(slot, chan) {
             Ok(detail) => {
                 moved += 1;
-                results.push(format!("{}: {detail}", d.name));
+                results.push(format!("{name}: {detail}"));
             }
             Err(e) => {
-                stuck.push(d.name.clone());
-                results.push(format!("{}: FALHOU -- {e}", d.name));
+                stuck.push(name.to_string());
+                results.push(format!("{name}: FALHOU -- {e}"));
             }
         }
     }

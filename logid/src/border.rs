@@ -250,6 +250,9 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                         host: target3,
                         route: None,
                         confirm: true,
+                        // Travessia de borda nao espera SSH: le o cache de
+                        // pares. Era ~2,2 s dos 3,9 s de uma troca.
+                        fast: true,
                     };
                     let outcome = focus::execute(&snap, &req);
                     if outcome.executed {

@@ -90,9 +90,18 @@ fn remembered(slot: u8) -> Option<String> {
 
 /// Quantos slots do receptor varrer.
 const MAX_SLOTS: u8 = 6;
+/// De quantas em quantas varreduras fazemos a completa.
+///
+/// Varrer os 6 slots custa ~1 s so em timeout dos vazios. Com o cache
+/// sabemos quais existem, e varremos so esses -- mas de vez em quando
+/// precisamos olhar tudo, senao um dispositivo pareado depois nunca
+/// apareceria.
+const FULL_SCAN_EVERY: u32 = 10;
+static SCANS: Mutex<u32> = Mutex::new(0);
 /// Tentativas de confirmar que o dispositivo saiu, apos o ChangeHost.
-const LEAVE_CHECKS: u8 = 6;
-const LEAVE_WAIT: Duration = Duration::from_millis(300);
+const LEAVE_CHECKS: u8 = 8;
+/// O dispositivo sai quase instantaneamente; 300 ms era espera morta.
+const LEAVE_WAIT: Duration = Duration::from_millis(120);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Device {
@@ -113,6 +122,16 @@ pub struct Device {
     pub current_host: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub num_hosts: Option<u8>,
+    /// Porcentagem, quando o dispositivo reporta.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_percent: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_level: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub charging: bool,
+    /// Qual feature respondeu (0x1004 ou 0x1000), para diagnostico.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -166,7 +185,14 @@ fn no_access() -> Survey {
     }
 }
 
+/// Varredura completa, com nome e bateria.
 pub fn survey() -> Survey {
+    survey_opts(true)
+}
+
+/// `with_battery = false` para o caminho quente: a bateria custa duas
+/// idas e voltas por dispositivo e nao influencia decisao de troca.
+pub fn survey_opts(with_battery: bool) -> Survey {
     if !hidraw_access() {
         return no_access();
     }
@@ -198,7 +224,39 @@ pub fn survey() -> Survey {
     // o teclado apareceu offline numa leitura e online na seguinte, estavel
     // em 26 ms. Retry so para slot com nome conhecido (ou seja, pareado):
     // slot vazio continua falhando rapido.
-    let mut raw = rx.devices(MAX_SLOTS, true);
+    // Nomes NAO sao relidos quando ja estao em cache: eram ~1,1 s dos
+    // 1,6 s de uma varredura, gastos para descobrir o que ja sabiamos.
+    let known: Vec<u8> = (1..=MAX_SLOTS).filter(|s| remembered(*s).is_some()).collect();
+    let n = {
+        let mut g = SCANS.lock().unwrap_or_else(|e| e.into_inner());
+        *g = g.wrapping_add(1);
+        *g
+    };
+    let full = known.is_empty() || n % FULL_SCAN_EVERY == 0;
+    let slots: Vec<u8> = if full { (1..=MAX_SLOTS).collect() } else { known };
+    let need_names = slots.iter().any(|s| remembered(*s).is_none());
+
+    let mut raw: Vec<hidpp::Device> = slots
+        .iter()
+        .map(|&slot| match rx.ping(slot) {
+            Ok(ms) => hidpp::Device {
+                slot,
+                name: if need_names { rx.device_name(slot).ok() } else { None },
+                online: true,
+                reply_ms: Some((ms * 10.0).round() / 10.0),
+                host: rx.host_info(slot).ok(),
+                battery: if with_battery { rx.battery(slot) } else { None },
+            },
+            Err(_) => hidpp::Device {
+                slot,
+                name: None,
+                online: false,
+                reply_ms: None,
+                host: None,
+                battery: None,
+            },
+        })
+        .collect();
     for d in raw.iter_mut() {
         if d.online || remembered(d.slot).is_none() {
             continue;
@@ -207,8 +265,10 @@ pub fn survey() -> Survey {
         if let Ok(ms) = rx.ping(d.slot) {
             d.online = true;
             d.reply_ms = Some((ms * 10.0).round() / 10.0);
-            d.name = rx.device_name(d.slot).ok();
             d.host = rx.host_info(d.slot).ok();
+            if d.name.is_none() {
+                d.name = rx.device_name(d.slot).ok();
+            }
         }
     }
 
@@ -225,6 +285,10 @@ pub fn survey() -> Survey {
         })
         .map(|(d, name)| Device {
             slot: d.slot,
+            battery_percent: d.battery.as_ref().and_then(|b| b.percent),
+            battery_level: d.battery.as_ref().and_then(|b| b.level).map(String::from),
+            charging: d.battery.as_ref().is_some_and(|b| b.charging),
+            battery_source: d.battery.as_ref().map(|b| b.source.to_string()),
             name,
             kind: String::new(),
             wpid: String::new(),

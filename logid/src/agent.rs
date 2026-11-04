@@ -9,7 +9,7 @@ use std::process::Command;
 /// Caminho default do agente no Windows.
 pub const DEFAULT_WIN_PATH: &str = r"%LOCALAPPDATA%\logid\logid-agent.exe";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Slot {
     pub slot: u8,
     /// Nome HID++, quando o agente consegue ler. E por ele que o
@@ -24,7 +24,7 @@ pub struct Slot {
     pub current_host: Option<u8>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AgentInfo {
     pub reachable: bool,
     pub slots: Vec<Slot>,

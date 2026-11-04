@@ -691,6 +691,71 @@ máquinas está errada por construção.
   reconciliador nunca competem.
 - **8 s de espera depois de agir**, para não brigar consigo mesmo.
 
+## Velocidade: 105 s → 1,3 s, em quatro passos medidos
+
+| | troca ponta a ponta |
+|---|---|
+| solaar | **105 s** |
+| HID++ direto | 13,8 s |
+| + paralelismo e cache de nomes | 3,9 s |
+| + modo rápido (cache de pares) | **1,32 s** |
+
+Cada passo saiu de uma medição, não de intuição:
+
+**1. Paralelizar o que não depende.** A varredura local (1,6 s) e o probe
+do agente por SSH (2,7 s) rodavam em sequência no `plan()`. Juntas em
+`thread::scope`: 2,2 s em vez de 4,3 s.
+
+**2. Não reler o que já se sabe.** O `survey` lia o nome de cada
+dispositivo por HID++ a cada chamada — ~1,1 s dos 1,6 s gastos para
+descobrir o que o cache já tinha.
+
+**3. Varrer só os slots conhecidos.** Os 6 slots custavam ~1 s só em
+timeout dos 4 vazios. Com o cache, varremos 2 — e uma varredura completa
+a cada 10, senão um dispositivo pareado depois nunca apareceria.
+`/api/devices`: 1,63 s → **0,36 s**.
+
+**4. Não esperar SSH no caminho quente** (ideia do usuário). O probe do
+agente era ~2,2 s dos 3,9 s. Um refresher em background
+([`peers.rs`](../logid/src/peers.rs)) mantém o estado dos pares a cada
+6 s, e `"fast": true` lê o cache:
+
+```
+dry-run normal  2,193 s
+dry-run rapido  0,197 s     <- 11x
+troca rapida    1,32 s
+```
+
+A checagem **declara a idade** do dado em vez de fingir frescor:
+`agente responde (cache de 7220ms atras)`. A vigilância de borda usa o
+modo rápido; a API sem `fast` continua sondando de verdade.
+
+**5. `LEAVE_WAIT` de 300 ms para 120 ms.** O dispositivo sai quase
+instantaneamente — a confirmação chega na primeira tentativa.
+
+## Bateria por HID++, e um achado
+
+Dois features, porque dispositivos da mesma família usam diferentes —
+medido: o MX Anywhere 3 expõe **0x1004** (porcentagem) e o MX Keys
+**0x1000** (faixa). Tentamos o primeiro e caímos para o segundo.
+
+Bytes crus, para o parser não ser suposição:
+
+```
+slot 1  0x1004 getStatus   -> 05 01 00      (5%, nivel 1)
+slot 2  0x1000 getLevel    -> 05 00 00      (5%, descarregando)
+slot 2  0x1000 getCapability -> 04 04 c0 06 0a   (critico = 0x0a = 10%)
+```
+
+Validado contra fonte independente: o `upower`, que lê pelo driver
+`hid-logitech-hidpp` do kernel, reporta **o mesmo** — 5%,
+`warning-level: critical`. Os dois dispositivos estão quase sem carga, e
+isso explica o "ping perdido" que eu havia atribuído a economia de
+energia: um dispositivo a 5% demora a responder.
+
+A bateria **não** entra no caminho quente (`survey_opts(false)`): custa
+duas idas e voltas por dispositivo e não influencia decisão de troca.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.

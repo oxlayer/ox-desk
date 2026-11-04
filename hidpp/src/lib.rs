@@ -53,6 +53,10 @@ const SW_ID: u8 = 0x0A;
 pub const FEATURE_ROOT: u16 = 0x0000;
 pub const FEATURE_DEVICE_NAME: u16 = 0x0005;
 pub const FEATURE_CHANGE_HOST: u16 = 0x1814;
+/// Bateria moderna, em porcentagem. O MX Anywhere 3 tem esta.
+pub const FEATURE_UNIFIED_BATTERY: u16 = 0x1004;
+/// Bateria antiga, em faixas. O MX Keys tem esta -- por isso as duas.
+pub const FEATURE_BATTERY_STATUS: u16 = 0x1000;
 
 const REPLY_TIMEOUT: Duration = Duration::from_millis(700);
 /// Timeout do ping de presenca. Medido: dispositivo presente responde em
@@ -68,6 +72,20 @@ pub struct HostInfo {
     pub current: u8,
 }
 
+/// Bateria. Os dois features reportam de formas diferentes, e
+/// dispositivos da mesma familia usam features diferentes -- medido: o
+/// MX Anywhere 3 expoe 0x1004 (porcentagem) e o MX Keys 0x1000 (faixa).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Battery {
+    /// Porcentagem, quando o dispositivo reporta (feature 0x1004).
+    pub percent: Option<u8>,
+    /// Faixa textual, quando so ha 0x1000: full | good | low | critical.
+    pub level: Option<&'static str>,
+    pub charging: bool,
+    /// Qual feature respondeu, para o diagnostico nao virar adivinhacao.
+    pub source: &'static str,
+}
+
 #[derive(Debug, Clone)]
 pub struct Device {
     /// Slot no receptor, 1..6.
@@ -79,6 +97,7 @@ pub struct Device {
     #[allow(dead_code)]
     pub reply_ms: Option<f64>,
     pub host: Option<HostInfo>,
+    pub battery: Option<Battery>,
 }
 
 pub struct Receiver {
@@ -249,6 +268,50 @@ impl Receiver {
         }
     }
 
+    /// Bateria, tentando 0x1004 (porcentagem) e caindo para 0x1000 (faixa).
+    pub fn battery(&self, slot: u8) -> Option<Battery> {
+        // 0x1004 UNIFIED_BATTERY, func 1 = getStatus
+        if let Ok(fi) = self.feature_index(slot, FEATURE_UNIFIED_BATTERY) {
+            if let Ok((r, _)) = self.request(slot, fi, 0x01, &[0, 0, 0]) {
+                if r.len() >= 3 {
+                    // r[0] = stateOfCharge (%), r[2] = chargingStatus
+                    return Some(Battery {
+                        percent: Some(r[0]),
+                        level: None,
+                        charging: r[2] != 0,
+                        source: "0x1004",
+                    });
+                }
+            }
+        }
+        // 0x1000 BATTERY_STATUS, func 0 = getBatteryLevelStatus
+        let fi = self.feature_index(slot, FEATURE_BATTERY_STATUS).ok()?;
+        let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0]).ok()?;
+        if r.len() < 3 {
+            return None;
+        }
+        // r[0] = nivel de descarga (%, ou 0 se so faixa), r[2] = status
+        let level = match r[1] {
+            // bitfield de "proximo nivel"; usamos o status como faixa
+            _ => match r[2] {
+                0 => "descarregando",
+                1 => "recarregando",
+                2 => "quase cheia",
+                3 => "cheia",
+                4 => "lenta",
+                5 => "invalida",
+                6 => "erro",
+                _ => "desconhecida",
+            },
+        };
+        Some(Battery {
+            percent: if r[0] > 0 { Some(r[0]) } else { None },
+            level: Some(level),
+            charging: matches!(r[2], 1 | 2),
+            source: "0x1000",
+        })
+    }
+
     /// CHANGE_HOST.setCurrentHost. `host` e 1-based.
     ///
     /// IRREVERSIVEL: o dispositivo sai deste receptor e nao responde mais
@@ -266,8 +329,13 @@ impl Receiver {
         }
     }
 
-    /// Varre os slots 1..=max, com nome e canal de quem responder.
-    pub fn devices(&self, max: u8, with_names: bool) -> Vec<Device> {
+    /// Varre os slots 1..=max.
+    ///
+    /// `with_names` e `with_battery` sao opcionais porque **custam ida e
+    /// volta**: o nome sao ~2 requisicoes e a bateria mais 2. Com o nome
+    /// em cache do lado de quem chama, pedir de novo e desperdicio puro --
+    /// era 1,1 s dos 1,6 s de uma varredura.
+    pub fn devices(&self, max: u8, with_names: bool, with_battery: bool) -> Vec<Device> {
         (1..=max)
             .map(|slot| match self.ping(slot) {
                 Ok(ms) => Device {
@@ -276,6 +344,7 @@ impl Receiver {
                     online: true,
                     reply_ms: Some((ms * 10.0).round() / 10.0),
                     host: self.host_info(slot).ok(),
+                    battery: if with_battery { self.battery(slot) } else { None },
                 },
                 Err(_) => Device {
                     slot,
@@ -283,6 +352,7 @@ impl Receiver {
                     online: false,
                     reply_ms: None,
                     host: None,
+                    battery: None,
                 },
             })
             .collect()

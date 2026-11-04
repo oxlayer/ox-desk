@@ -15,14 +15,20 @@ fn main() {
     println!("\nreceptor: {} (pid {:04x})", r.path, r.product_id);
 
     let t0 = Instant::now();
-    let devs = r.devices(6, true);
+    let devs = r.devices(6, true, true);
     let total = t0.elapsed().as_secs_f64() * 1000.0;
 
     for d in &devs {
         if d.online {
             let h = d.host.map(|h| format!("canal {}/{}", h.current, h.num_hosts))
                           .unwrap_or_else(|| "canal ?".into());
-            println!("  slot {}: ONLINE  {:?}  {h}  ping {:?}ms",
+            let bat = d.battery.as_ref().map(|b| {
+                let p = b.percent.map(|v| format!("{v}%")).unwrap_or_default();
+                let l = b.level.unwrap_or("");
+                format!("bateria {p} {l} ({}){}", b.source,
+                        if b.charging { " carregando" } else { "" })
+            }).unwrap_or_else(|| "bateria ?".into());
+            println!("  slot {}: ONLINE  {:?}  {h}  ping {:?}ms  {bat}",
                      d.slot, d.name.as_deref().unwrap_or("?"), d.reply_ms);
         }
     }
