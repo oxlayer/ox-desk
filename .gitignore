@@ -11,3 +11,8 @@ __pycache__/
 # Rust
 logid/target/
 agent/target/
+
+# Chaves de assinatura ficam em ~/.config/logi/signing, nunca aqui.
+*.pem
+*.pfx
+*.cer

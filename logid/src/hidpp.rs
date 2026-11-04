@@ -340,24 +340,54 @@ pub fn survey_cached_or_fresh(max_age: Duration) -> Survey {
 /// Nenhum dos dois lados estava errado isoladamente. O que faltava era
 /// **carencia**: depois de os dispositivos chegarem, a borda daqui
 /// precisa de um tempo calada para a pessoa sair da beirada.
-static ARRIVED_AT: Mutex<Option<Instant>> = Mutex::new(None);
-static WAS_PRESENT: Mutex<bool> = Mutex::new(false);
+struct Presence {
+    here: bool,
+    /// Varreduras seguidas sem ver ninguem.
+    misses: u8,
+    arrived: Option<Instant>,
+}
 
-/// Ha quanto tempo os dispositivos chegaram aqui, em ms. `None` = nao
-/// houve chegada registrada (ou eles nunca sairam).
+static PRESENCE: Mutex<Presence> = Mutex::new(Presence { here: false, misses: 0, arrived: None });
+
+/// Quantas varreduras vazias seguidas valem "foram embora".
+///
+/// Uma so nao vale: o `survey` faz UM ping por slot, sem retry, e
+/// dispositivo em economia de energia perde ping. Sem histerese o log
+/// enche de CHEGARAM/SAIRAM em segundos -- e foi exatamente o que o log
+/// do usuario mostrou -- e a borda ficaria piscando entre armada e
+/// desarmada.
+const MISSES_PARA_SUMIR: u8 = 2;
+
+/// Os dispositivos estao NESTA maquina?
+pub fn devices_here() -> bool {
+    PRESENCE.lock().map(|p| p.here).unwrap_or(false)
+}
+
+/// Ha quanto tempo chegaram aqui, em ms. `None` = nenhuma chegada vista.
 pub fn arrived_ms_ago() -> Option<u64> {
-    ARRIVED_AT.lock().ok()?.map(|t| t.elapsed().as_millis() as u64)
+    PRESENCE.lock().ok()?.arrived.map(|t| t.elapsed().as_millis() as u64)
 }
 
 fn note_presence(survey: &Survey) {
-    let present = survey.receivers.iter().any(|r| r.devices.iter().any(|d| d.online));
-    let Ok(mut antes) = WAS_PRESENT.lock() else { return };
-    if present && !*antes {
-        if let Ok(mut g) = ARRIVED_AT.lock() {
-            *g = Some(Instant::now());
+    let visto = survey.receivers.iter().any(|r| r.devices.iter().any(|d| d.online));
+    let Ok(mut p) = PRESENCE.lock() else { return };
+    if visto {
+        p.misses = 0;
+        if !p.here {
+            p.here = true;
+            p.arrived = Some(Instant::now());
+            // Transicao registrada: a borda arma e desarma por esta
+            // leitura, entao quando ela discordar do que o painel mostra
+            // o log tem de permitir ver de onde veio a discordancia.
+            say!("presenca: dispositivos CHEGARAM a esta maquina");
+        }
+    } else {
+        p.misses = p.misses.saturating_add(1);
+        if p.here && p.misses >= MISSES_PARA_SUMIR {
+            p.here = false;
+            say!("presenca: dispositivos SAIRAM desta maquina");
         }
     }
-    *antes = present;
 }
 
 pub fn spawn_refresher() {

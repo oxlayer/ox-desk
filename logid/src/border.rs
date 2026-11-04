@@ -209,6 +209,11 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         // Quando rearmar a barreira. O loop principal e quem chama Enable:
         // a sessao pertence a ESTA conexao D-Bus, outra nao a controla.
         let reenable = Arc::new(RwLock::new(None::<Instant>));
+        // Compartilhada: quem DESABILITA ao disparar e o handler, e o laco
+        // e quem reabilita. Sem isto o laco achava que a barreira ainda
+        // estava armada e tentava desabilitar de novo a cada tick --
+        // `Disable falhou: Session not enabled`, duas vezes por segundo.
+        let armada = Arc::new(RwLock::new(true));
         let rule = {
             let mut r = MatchRule::new_signal(IFACE_SESSION, "Activated");
             r.path = Some(sess.path.clone());
@@ -221,6 +226,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         let last2 = Arc::clone(&last);
         let hits2 = Arc::clone(&hits);
         let reenable2 = Arc::clone(&reenable);
+        let armada2 = Arc::clone(&armada);
 
         let res = sess.conn.add_match(
             rule,
@@ -261,8 +267,13 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
 
                 // Decidido. DESARMA a barreira: e o unico jeito de parar o
                 // churn, ja que o mutter ignora o recuo do cursor.
-                if let Err(e) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Disable", ()) {
-                    gripe!("border: Disable falhou: {e}");
+                match sp.method_call::<(), _, _, _>(IFACE_SESSION, "Disable", ()) {
+                    Ok(()) => {
+                        if let Ok(mut g) = armada2.write() {
+                            *g = false;
+                        }
+                    }
+                    Err(e) => gripe!("border: Disable falhou: {e}"),
                 }
                 if let Ok(mut v) = hits2.write() {
                     v.clear();
@@ -368,24 +379,72 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             }
             ticks += 1;
 
-            // Rearma a barreira quando o cooldown vence. Tem de ser aqui:
-            // a sessao pertence a esta conexao.
-            let due = reenable.read().ok().and_then(|g| *g).is_some_and(|t| Instant::now() >= t);
-            if due {
+            // Armada ou nao -- decidido aqui, porque a sessao pertence a
+            // esta conexao D-Bus.
+            //
+            // A regra e: uma borda so faz sentido na maquina que ESTA com
+            // os dispositivos. Antes isto rearmava cegamente 10 s depois
+            // de cada disparo, e o estrago foi grande: o mutter nao recua
+            // o cursor, entao ele fica parado em x=2560 depois da troca,
+            // e cada rearme disparava sozinho sobre o cursor encostado.
+            // Isso empurrava de novo (as vezes so um dos dois, rachando o
+            // estado e acordando o reconciliador) e queimava o cooldown --
+            // e com a barreira desabilitada nesses 10 s, bater na borda de
+            // proposito nao fazia nada. O usuario descreveu os dois
+            // sintomas: "volta sozinho" e "trava e nao vai nem com reza".
+            let cooldown_venceu = reenable
+                .read()
+                .ok()
+                .and_then(|g| *g)
+                .is_none_or(|t| Instant::now() >= t);
+            let recem_chegou =
+                crate::hidpp::arrived_ms_ago().is_some_and(|ms| ms < GRACE);
+            let quer_armada =
+                cooldown_venceu && !recem_chegou && crate::hidpp::devices_here();
+
+            let esta_armada = armada.read().map(|g| *g).unwrap_or(false);
+            if quer_armada != esta_armada {
                 let sp = sess.conn.with_proxy(DEST, sess.path.clone(), TIMEOUT);
-                match sp.method_call::<(), _, _, _>(IFACE_SESSION, "Enable", ()) {
-                    Ok(()) => say!("border: barreira rearmada"),
-                    Err(e) => gripe!("border: Enable no rearme falhou: {e}"),
-                }
-                if let Ok(mut g) = reenable.write() {
-                    *g = None;
+                let metodo = if quer_armada { "Enable" } else { "Disable" };
+                match sp.method_call::<(), _, _, _>(IFACE_SESSION, metodo, ()) {
+                    Ok(()) => {
+                        if let Ok(mut g) = armada.write() {
+                            *g = quer_armada;
+                        }
+                        if quer_armada {
+                            say!("border: armada -- os dispositivos estao aqui");
+                            if let Ok(mut g) = reenable.write() {
+                                *g = None;
+                            }
+                        } else {
+                            say!("border: desarmada -- os dispositivos nao estao aqui");
+                        }
+                    }
+                    Err(e) => {
+                        // O compositor e a verdade: se ele diz que ja
+                        // esta no estado pedido, anotamos e paramos de
+                        // insistir -- era isso que enchia o journal.
+                        let texto = e.to_string();
+                        if texto.contains("not enabled") || texto.contains("already") {
+                            if let Ok(mut g) = armada.write() {
+                                *g = quer_armada;
+                            }
+                        } else {
+                            gripe!("border: {metodo} falhou: {e}");
+                        }
+                    }
                 }
             }
 
             // Prova de vida a cada ~60 s: sem isto, silencio no journal e
             // ambiguo entre "nada aconteceu" e "a thread morreu".
             if ticks % 120 == 0 {
-                say!("border: vivo, {} min vigiando {} borda(s)", ticks / 120, edges.len());
+                say!(
+                    "border: vivo, {} min vigiando {} borda(s), {}",
+                    ticks / 120,
+                    edges.len(),
+                    if esta_armada { "armada" } else { "desarmada (dispositivos fora)" }
+                );
             }
         }
     });

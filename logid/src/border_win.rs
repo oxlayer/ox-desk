@@ -117,6 +117,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
     // Ja comeca encostado? Entao nao conta como chegada. Sem isto, um
     // cursor estacionado na borda dispara no primeiro tick depois do
     // boot. Por borda, porque sao varias.
+    let mut armada = true;
     let mut was_at: Vec<bool> = edges
         .iter()
         .map(|(e, _)| winput::cursor().map(|p| winput::at_edge(e, p)).unwrap_or(false))
@@ -141,16 +142,30 @@ fn run(cfg: Arc<RwLock<Config>>) {
             guard.tick(&cfg);
         }
 
-        // Carencia pos-chegada: calado enquanto a pessoa ainda esta
-        // saindo da beirada por onde acabou de entrar.
-        if let Some(ms) = crate::hidpp::arrived_ms_ago() {
-            if ms < GRACE {
-                // Zera a chegada nas bordas: quando a carencia vencer, o
-                // cursor tera de SAIR e voltar, mesmo que ja esteja ali.
-                was_at.iter_mut().for_each(|v| *v = true);
-                touching = None;
-                continue;
+        // Uma borda so faz sentido na maquina que ESTA com os
+        // dispositivos, e so depois de a pessoa ter tido tempo de sair da
+        // beirada por onde entrou. Fora disso ela nao e neutra: dispara,
+        // tenta trocar o que nao detem e enche o log -- e no Linux ainda
+        // queimava o cooldown, deixando a borda morta justo quando o
+        // usuario batia nela de proposito.
+        let recem_chegou = crate::hidpp::arrived_ms_ago().is_some_and(|ms| ms < GRACE);
+        if recem_chegou || !crate::hidpp::devices_here() {
+            if armada {
+                armada = false;
+                say!(
+                    "border: desarmada -- {}",
+                    if recem_chegou { "acabaram de chegar" } else { "nao estao aqui" }
+                );
             }
+            // Zera a chegada nas bordas: quando rearmar, o cursor tera de
+            // SAIR e voltar, mesmo que ja esteja encostado.
+            was_at.iter_mut().for_each(|v| *v = true);
+            touching = None;
+            continue;
+        }
+        if !armada {
+            armada = true;
+            say!("border: armada -- os dispositivos estao aqui");
         }
 
         let Some(p) = winput::cursor() else { continue };

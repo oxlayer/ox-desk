@@ -57,3 +57,77 @@ Perder teclado e mouse nas duas máquinas (ver
 [`005`](005-input-switch.md#rollback-não-é-opcional)) te deixa sem como
 intervir numa máquina destravada. Rollback automático não é conveniência:
 é controle de acesso.
+
+---
+
+## O Defender apagou o daemon, e estava sendo razoável (04/11)
+
+`Trojan:Win32/Bearfoos.A!ml` — **quarentena e remoção** do
+`logid.exe`, mais a exclusão da tarefa agendada e das chaves
+`TaskCache` correspondentes. No meio de uma sessão de testes, o que
+explicou de quebra o "trava e não vai nem com reza": não havia daemon.
+
+### Por que ele implicou
+
+O sufixo **`!ml`** é detecção por modelo, não assinatura — nenhum
+malware conhecido casou. O que casou foi o **perfil**, e é justo:
+
+| o que o daemon faz | como um modelo lê isso |
+|---|---|
+| executável novo, sem assinatura, sem reputação | binário recém-plantado |
+| cria tarefa agendada que roda no login | persistência |
+| executa `ssh`, `taskkill`, `tasklist`, `sc` | execução remota de comandos |
+| lê dispositivo HID em modo bruto | captura de entrada |
+| sobe servidor HTTP local | canal de controle |
+
+Cada item foi pedido. Juntos, desenham a silhueta de um RAT. A
+detecção listou o **arquivo e a tarefa juntos** — foi o conjunto.
+
+### A saída escolhida: assinar, não excluir
+
+O usuário preferiu assinar a abrir exceção no antivírus. Exclusão
+resolveria em um comando, mas desliga inspeção de um caminho — e a
+inspeção é exatamente o que protege contra alguém escrevendo ali.
+
+**Assinar no Windows não funcionou**: a proteção em tempo real removeu o
+`.exe` no instante da escrita, duas vezes, antes de haver chance de
+assinar. É uma corrida que não se ganha do lado de lá.
+
+Então o binário passa a chegar **já assinado**, por
+[`scripts/sign-windows.sh`](../scripts/sign-windows.sh):
+
+- par gerado **aqui** com openssl (`~/.config/logi/signing`, `600`, fora
+  do repo). A chave privada nunca sai desta máquina — melhor que exportar
+  a chave privada de um certificado criado no Windows.
+- `osslsigncode` (instalado por linuxbrew, sem sudo) assina com SHA-256 e
+  carimbo de tempo da DigiCert, então a assinatura sobrevive ao
+  vencimento do certificado.
+- só o certificado **público** vai para o Windows, importado em
+  `LocalMachine\Root` e `LocalMachine\TrustedPublisher`. Vale naquela
+  máquina e em mais nenhuma.
+
+Resultado conferido pelo próprio Windows:
+
+```
+assinatura: [Valid] Assinatura verificada.
+assinante:  O=infra pessoal, CN=logi (assinatura local)
+carimbo:    CN=DigiCert SHA256 RSA4096 Timestamp Responder 2026 1
+```
+
+O arquivo sobreviveu à escrita, a tarefa foi recriada e o daemon subiu.
+
+> **Todo build para Windows passa pelo script.** Mandar um `.exe` cru
+> para lá não é só arriscado — já foi apagado duas vezes, e a segunda
+> levou a tarefa agendada junto.
+
+### Se voltar a acontecer
+
+Assinatura própria não garante nada contra heurística de comportamento:
+o modelo pesa o que o programa faz, e o que ele faz não mudou. Se
+reaparecer, as saídas são, em ordem de menor dano:
+
+1. exclusão do **caminho exato do arquivo** (não da pasta) mais o
+   processo — escopo de um arquivo;
+2. envio a Microsoft como falso positivo (demora dias, mas conserta para
+   todo mundo);
+3. exclusão da pasta — maior escopo, último recurso.
