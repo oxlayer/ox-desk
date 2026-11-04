@@ -96,6 +96,10 @@ name = "logistream-host"
 path = "src/bin/host.rs"
 
 [[bin]]
+name = "logistream-kvm"
+path = "src/bin/kvm.rs"
+
+[[bin]]
 name = "logistream-view"
 path = "src/bin/view.rs"
 

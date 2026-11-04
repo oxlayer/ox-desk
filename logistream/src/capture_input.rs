@@ -340,3 +340,57 @@ mod testes {
         assert!(traduzir(&[]).is_empty());
     }
 }
+
+// --- socorro ---------------------------------------------------------
+
+/// `KEY_LEFTCTRL` e `KEY_RIGHTCTRL` do evdev.
+pub const KEY_LEFTCTRL: u32 = 29;
+pub const KEY_RIGHTCTRL: u32 = 97;
+
+/// Os dois Ctrl juntos: solta tudo e volta para a maquina local.
+///
+/// Precisa existir um caminho de volta que **nao dependa da rede**.
+/// Agarrado, o teclado nao existe para o desktop local -- se o alvo
+/// cair, sem isto a pessoa fica sem teclado na propria maquina e a
+/// unica saida e o mouse (que tambem esta agarrado) ou outra maquina.
+///
+/// Os dois Ctrl porque nenhum programa usa a combinacao e nenhum texto a
+/// produz: nao da para disparar sem querer digitando. E o mesmo gesto
+/// que switch KVM de hardware usa, pelo mesmo motivo.
+pub fn e_socorro(pressionadas: &std::collections::HashSet<u32>) -> bool {
+    pressionadas.contains(&KEY_LEFTCTRL) && pressionadas.contains(&KEY_RIGHTCTRL)
+}
+
+#[cfg(test)]
+mod testes_socorro {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn conj(v: &[u32]) -> HashSet<u32> {
+        v.iter().copied().collect()
+    }
+
+    #[test]
+    fn os_dois_ctrl_pedem_socorro() {
+        assert!(e_socorro(&conj(&[KEY_LEFTCTRL, KEY_RIGHTCTRL])));
+    }
+
+    #[test]
+    fn um_ctrl_so_nao_pede() {
+        assert!(!e_socorro(&conj(&[KEY_LEFTCTRL])));
+        assert!(!e_socorro(&conj(&[KEY_RIGHTCTRL])));
+    }
+
+    #[test]
+    fn ctrl_c_nao_pede() {
+        // 46 = KEY_C. Atalho comum nao pode soltar o KVM.
+        assert!(!e_socorro(&conj(&[KEY_LEFTCTRL, 46])));
+    }
+
+    #[test]
+    fn os_dois_ctrl_com_mais_teclas_ainda_pedem() {
+        // A pessoa em panico aperta tudo. Exigir exclusividade faria o
+        // socorro falhar exatamente quando ele e preciso.
+        assert!(e_socorro(&conj(&[KEY_LEFTCTRL, KEY_RIGHTCTRL, 42, 56])));
+    }
+}
