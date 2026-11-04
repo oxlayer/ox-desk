@@ -25,6 +25,19 @@ export LOGI_BUILD_N
 echo "== build #$LOGI_BUILD_N $BUILD =="
 
 falhas=0
+
+# Um passo "ok" tem de significar que nada deu errado -- nem o nosso
+# `ERRO` explicito, nem o shell reclamando.
+#
+# Quebrei o passo do host de tela com uma crase dentro de heredoc
+# expandido (o bash executou `r` como comando) e o passo disse **ok**: o
+# erro saiu em stderr, fora da variavel que o teste lia. Passo que nao
+# captura stderr nao consegue falhar, e passo que nao consegue falhar nao
+# e verificacao -- e decoracao.
+ruim() {
+  printf '%s' "$1" | grep -qE 'ERRO|command not found|No such file|unbound variable|cannot'
+}
+
 passo() { printf '  %-44s' "$1"; }
 ok()    { echo "ok"; }
 erro()  { echo "FALHOU"; echo "$1" | tail -6 | sed 's/^/      /'; falhas=$((falhas+1)); }
@@ -67,7 +80,7 @@ if out=$(cp "$EXE" "$ASSINADO" && bash scripts/sign-windows.sh "$ASSINADO" 2>&1)
 
 passo "windows: enviar e trocar"
 if out=$(timeout 120 scp -q "$ASSINADO" 'windows-host:C:/Users/user/AppData/Local/logid/logid.new.exe' 2>&1); then
-  out=$(cat <<'PS1' | psrun
+  out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'logid'
 $novo = Join-Path $dst 'logid.new.exe'
 if (-not (Test-Path $novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
@@ -75,12 +88,25 @@ $v = Get-AuthenticodeSignature $novo
 if ($v.Status -ne 'Valid') { Write-Output ("ERRO: assinatura " + $v.Status); exit 1 }
 Get-Process -Name logid -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 600
-Move-Item -Force $novo (Join-Path $dst 'logid.exe')
+# Tamanho ANTES de mover, comparado DEPOIS. Em PowerShell, nao
+# passado pelo bash: assinatura valida nao garante que o arquivo ficou
+# (o Defender reverteu a gravacao do agente em silencio por uma hora
+# enquanto este script dizia "ok"), e trazer o numero de fora exigiria
+# heredoc expandido -- que foi como eu quebrei este mesmo passo.
+$esperado = (Get-Item $novo).Length
+Copy-Item -Force $novo (Join-Path $dst 'logid.exe')
+Remove-Item -Force $novo
+Start-Sleep -Milliseconds 500
+$tem = (Get-Item (Join-Path $dst 'logid.exe')).Length
+if ($tem -ne $esperado) {
+  Write-Output ('ERRO: gravou mas tem ' + $tem + ' bytes, esperado ' + $esperado + ' -- antivirus revertendo? confira a exclusao de ' + $dst)
+  exit 1
+}
 schtasks /run /tn 'logid' | Out-Null
 exit 0
 PS1
 )
-  if echo "$out" | grep -q ERRO; then erro "$out"; else ok; fi
+  if ruim "$out"; then erro "$out"; else ok; fi
 else erro "$out"; fi
 rm -f "$ASSINADO"
 
@@ -109,34 +135,32 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   if out=$(cp "$AG" "$AGSIG" && bash scripts/sign-windows.sh "$AGSIG" 2>&1 &&
            timeout 120 scp -q "$AGSIG" \
              'windows-host:C:/Users/user/AppData/Local/logid/logid-agent.new.exe' 2>&1); then
-    # O tamanho esperado viaja no comando: e assim que o passo deixa de
-    # poder dizer "ok" sem ter trocado nada.
-    #
-    # Ele disse "ok" enquanto o Windows seguia com a versao de uma hora
-    # antes -- o Defender revertia a gravacao em silencio e o `Move-Item`
-    # nao reclamava. Um passo de deploy que nao confere o resultado
-    # mente, e mentiu.
-    TAM=$(stat -c%s "$AGSIG")
-    out=$(cat <<PS1 | psrun
-\$dst = Join-Path \$env:LOCALAPPDATA 'logid'
-\$novo = Join-Path \$dst 'logid-agent.new.exe'
-\$alvo = Join-Path \$dst 'logid-agent.exe'
-if (-not (Test-Path \$novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
-\$v = Get-AuthenticodeSignature \$novo
-if (\$v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + \$v.Status); exit 1 }
+    out=$({ cat <<'PS1' | psrun; } 2>&1
+$dst = Join-Path $env:LOCALAPPDATA 'logid'
+$novo = Join-Path $dst 'logid-agent.new.exe'
+$alvo = Join-Path $dst 'logid-agent.exe'
+if (-not (Test-Path $novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $novo
+if ($v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + $v.Status); exit 1 }
 # O agente e invocado e morre; nao ha processo residente para parar.
-Copy-Item -Force \$novo \$alvo
-Remove-Item -Force \$novo
+# Tamanho ANTES de mover, comparado DEPOIS. Em PowerShell, nao
+# passado pelo bash: assinatura valida nao garante que o arquivo ficou
+# (o Defender reverteu a gravacao do agente em silencio por uma hora
+# enquanto este script dizia "ok"), e trazer o numero de fora exigiria
+# heredoc expandido -- que foi como eu quebrei este mesmo passo.
+$esperado = (Get-Item $novo).Length
+Copy-Item -Force $novo $alvo
+Remove-Item -Force $novo
 Start-Sleep -Milliseconds 500
-\$tem = (Get-Item \$alvo).Length
-if (\$tem -ne $TAM) {
-  Write-Output ('ERRO: gravou mas o arquivo tem ' + \$tem + ' bytes, esperado $TAM -- antivirus revertendo? confira a exclusao de ' + \$dst)
+$tem = (Get-Item $alvo).Length
+if ($tem -ne $esperado) {
+  Write-Output ('ERRO: gravou mas tem ' + $tem + ' bytes, esperado ' + $esperado + ' -- antivirus revertendo? confira a exclusao de ' + $dst)
   exit 1
 }
 exit 0
 PS1
 )
-    if echo "$out" | grep -q ERRO; then erro "$out"; else ok; fi
+    if ruim "$out"; then erro "$out"; else ok; fi
   else erro "$out"; fi
   rm -f "$AGSIG"
 else erro "$out"; fi
@@ -154,7 +178,7 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   if out=$(cp "$VW" "$VWSIG" && bash scripts/sign-windows.sh "$VWSIG" 2>&1 &&
            timeout 180 scp -q "$VWSIG" \
              'windows-host:C:/Users/user/AppData/Local/logid/logistream-view.new.exe' 2>&1); then
-    out=$(cat <<'PS1' | psrun
+    out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'logid'
 $novo = Join-Path $dst 'logistream-view.new.exe'
 if (-not (Test-Path $novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
@@ -163,11 +187,24 @@ if ($v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + $v.Status); exi
 # Pode estar aberto: quem assiste fecha a janela quando quiser.
 Get-Process -Name logistream-view -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 400
-Move-Item -Force $novo (Join-Path $dst 'logistream-view.exe')
+# Tamanho ANTES de mover, comparado DEPOIS. Em PowerShell, nao
+# passado pelo bash: assinatura valida nao garante que o arquivo ficou
+# (o Defender reverteu a gravacao do agente em silencio por uma hora
+# enquanto este script dizia "ok"), e trazer o numero de fora exigiria
+# heredoc expandido -- que foi como eu quebrei este mesmo passo.
+$esperado = (Get-Item $novo).Length
+Copy-Item -Force $novo (Join-Path $dst 'logistream-view.exe')
+Remove-Item -Force $novo
+Start-Sleep -Milliseconds 500
+$tem = (Get-Item (Join-Path $dst 'logistream-view.exe')).Length
+if ($tem -ne $esperado) {
+  Write-Output ('ERRO: gravou mas tem ' + $tem + ' bytes, esperado ' + $esperado + ' -- antivirus revertendo? confira a exclusao de ' + $dst)
+  exit 1
+}
 exit 0
 PS1
 )
-    if echo "$out" | grep -q ERRO; then erro "$out"; else ok; fi
+    if ruim "$out"; then erro "$out"; else ok; fi
   else erro "$out"; fi
   rm -f "$VWSIG"
 else erro "$out"; fi
@@ -187,7 +224,7 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   if out=$(cp "$HOSTEXE" "$HOSTSIG" && bash scripts/sign-windows.sh "$HOSTSIG" 2>&1 &&
            timeout 180 scp -q "$HOSTSIG" \
              'windows-host:C:/Users/user/AppData/Local/logid/logistream-host.new.exe' 2>&1); then
-    out=$(cat <<'PS1' | psrun
+    out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'logid'
 $novo = Join-Path $dst 'logistream-host.new.exe'
 $alvo = Join-Path $dst 'logistream-host.exe'
@@ -196,7 +233,20 @@ $v = Get-AuthenticodeSignature $novo
 if ($v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + $v.Status); exit 1 }
 Get-Process -Name logistream-host -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 400
-Move-Item -Force $novo $alvo
+# Tamanho ANTES de mover, comparado DEPOIS. Em PowerShell, nao
+# passado pelo bash: assinatura valida nao garante que o arquivo ficou
+# (o Defender reverteu a gravacao do agente em silencio por uma hora
+# enquanto este script dizia "ok"), e trazer o numero de fora exigiria
+# heredoc expandido -- que foi como eu quebrei este mesmo passo.
+$esperado = (Get-Item $novo).Length
+Copy-Item -Force $novo $alvo
+Remove-Item -Force $novo
+Start-Sleep -Milliseconds 500
+$tem = (Get-Item $alvo).Length
+if ($tem -ne $esperado) {
+  Write-Output ('ERRO: gravou mas tem ' + $tem + ' bytes, esperado ' + $esperado + ' -- antivirus revertendo? confira a exclusao de ' + $dst)
+  exit 1
+}
 # Envelope .cmd: a tarefa agendada nao e um shell, entao redirecionar a
 # saida exige um. Um arquivo resolve sem aninhar aspas -- e aninhar
 # aspas nesta ponte ja quebrou tres vezes (specs/002).
@@ -218,7 +268,7 @@ if ($LASTEXITCODE -ne 0) { Write-Output ('ERRO: schtasks ' + $r); exit 1 }
 exit 0
 PS1
 )
-    if echo "$out" | grep -q ERRO; then erro "$out"; else ok; fi
+    if ruim "$out"; then erro "$out"; else ok; fi
   else erro "$out"; fi
   rm -f "$HOSTSIG"
 else erro "$out"; fi
