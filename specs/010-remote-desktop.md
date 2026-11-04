@@ -88,6 +88,7 @@ não pode significar reescrever o pipeline.
 | v | entrega | a incógnita que ela mata |
 |---|---|---|
 | **v1** | Ubuntu → tela capturada, codificada em NVENC, gravada em arquivo | captura no Wayland e NVENC funcionam mesmo |
+| | ✅ **NVENC provado** (ver abaixo) · ⬜ captura pendente | |
 | **v2** | v1 por QUIC até o Mac, decodificada e exibida | transporte e decodificação |
 | **v3** | input do Mac de volta (libei no Ubuntu) | o laço fecha: dá para usar |
 | **v4** | FEC, controle de taxa, Windows como host (DXGI) | qualidade e a segunda plataforma |
@@ -115,3 +116,53 @@ uma capacidade que teríamos de reconstruir (driver de display virtual é
 coisa séria, assinada, em kernel). A decisão fica para quando a v4
 estiver de pé e dê para medir se faz falta — não para a hora da
 arrumação.
+
+## v1, metade feita: o NVENC está provado (04/11)
+
+`cargo run --bin nvenc-probe` codifica quadros **sintéticos** — captura é
+outro problema, e misturar os dois faria o fracasso de um parecer o do
+outro.
+
+```
+NVENC carregado (dlopen de libnvidia-encode)
+120 quadros 1920x1080 em 0.77s = 155 fps
+por quadro: p50 3.56ms  p95 3.83ms
+39.3 Mbps a 60fps
+```
+
+E o `ffprobe` lê o arquivo: `h264`, perfil `High`, `1920x1080`,
+`yuv420p`, **120 quadros** — os mesmos que entraram.
+
+Três coisas que isso resolve:
+
+1. **Sem SDK e sem sudo.** A crate `moq-nvenc` faz `dlopen` da
+   `libnvidia-encode`, que já veio com o driver. Nada a instalar, e numa
+   máquina sem GPU NVIDIA a falha é ao *abrir*, não ao compilar — que é o
+   comportamento certo para um binário que roda em três máquinas.
+2. **3,56 ms por quadro** deixa espaço de sobra num orçamento de 16 ms
+   (60 fps). O gargalo não vai ser a codificação.
+3. **39 Mbps é o pior caso**: o gradiente sintético muda cada pixel a
+   cada quadro, de propósito. Tela de verdade — texto parado, janelas
+   paradas — comprime uma ordem de grandeza melhor.
+
+### Um erro que o teste pegou e que teria mordido em produção
+
+A primeira versão escreveu um arquivo que o `ffprobe` recusou:
+`non-existing PPS 0 referenced`. O NVENC não repete SPS/PPS por padrão.
+
+Num arquivo isso é chato; **numa transmissão é fatal**, porque o caso
+normal da tela remota é o cliente entrar no meio — e sem os cabeçalhos
+ele não tem como começar a desenhar nada. A config agora liga
+`repeatSPSPPS`, que os reenvia em cada IDR.
+
+Já que havia config explícita, entrou junto o `NV_ENC_TUNING_INFO_LOW_LATENCY`:
+tela remota vive de latência, não de bitrate bonito.
+
+### O que falta na v1: captura
+
+A captura no Wayland precisa de `libpipewire-0.3-dev`, que **não está
+instalada** e não existe no linuxbrew — é o primeiro `sudo apt` que este
+projeto vai pedir.
+
+Alternativa sem sudo: começar pelo **Windows como host** (DXGI Desktop
+Duplication não precisa de biblioteca extra). Fica a escolher.

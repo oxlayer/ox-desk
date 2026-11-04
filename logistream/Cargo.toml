@@ -18,6 +18,15 @@ bytes = "1"
 reed-solomon-erasure = "6"
 anyhow = "1"
 
+# NVENC por CARREGAMENTO EM RUNTIME: nao precisa dos headers do SDK da
+# NVIDIA no build, so da `libnvidia-encode.so.1`, que ja vem com o
+# driver. Se a maquina nao tiver GPU NVIDIA, falha ao abrir e nao ao
+# compilar -- que e o comportamento certo para um binario que roda em
+# tres maquinas diferentes.
+moq-nvenc = "0.1.2"
+# Contexto CUDA para alimentar o NVENC. Tambem carregado em runtime.
+cudarc = { version = "0.19", default-features = false, features = ["driver", "dynamic-loading", "cuda-version-from-build-system"] }
+
 [lib]
 name = "logistream"
 path = "src/lib.rs"
