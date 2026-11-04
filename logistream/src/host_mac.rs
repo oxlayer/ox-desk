@@ -295,36 +295,63 @@ fn servir(
         let ep = crate::net::servidor(([0, 0, 0, 0], porta).into())?;
         println!("  escutando em 0.0.0.0:{porta}");
 
+        // Porta de input, ao lado da de video.
+        //
+        // Faltava aqui: o host do Windows e o do Linux ja tinham, e o
+        // do Mac nao -- entao o KVM nao achava onde mandar e dava
+        // timeout. Sem ela, assistir e controlar disputam a vaga unica
+        // de cliente de video.
+        let porta_input = porta + 1;
+        let ep_in = crate::net::servidor(([0, 0, 0, 0], porta_input).into())?;
+        println!("  input em 0.0.0.0:{porta_input}");
+        {
+            let sinais_in = Arc::clone(&sinais);
+            tokio::spawn(async move {
+                serve::atender_input(&ep_in, Arc::clone(&sinais_in), |conexao| {
+                    let conexao = conexao.clone();
+                    tokio::spawn(async move { receber_input(conexao).await })
+                })
+                .await;
+            });
+        }
+
         serve::atender(&ep, &mut rx, &sinais, |conexao| {
             let conexao = conexao.clone();
-            // Canal por conexao: a thread morre quando o cliente sai, e
-            // um `Teclado` novo comeca com a posicao real do ponteiro.
-            let teclado = crate::input_mac::thread();
-            tokio::spawn(async move {
-                let Ok(mut recv) = conexao.accept_uni().await else { return };
-                let mut leitor = crate::input::Leitor::default();
-                let mut buf = vec![0u8; 4096];
-                let mut n = 0u64;
-                while let Ok(Some(lidos)) = recv.read(&mut buf).await {
-                    leitor.alimentar(&buf[..lidos]);
-                    while let Some(e) = leitor.proximo() {
-                        if teclado.send(e).is_err() {
-                            return; // a thread de injecao saiu
-                        }
-                        n += 1;
-                        // Os primeiros, um a um: "nao deu erro" e prova
-                        // fraca de que o input chegou -- e no macOS e
-                        // prova NENHUMA, porque sem Acessibilidade o
-                        // CGEventPost devolve sucesso e descarta.
-                        if n <= 8 {
-                            println!("  input #{n}: {e:?}");
-                        } else if n % 500 == 0 {
-                            println!("  {n} eventos de input aplicados");
-                        }
-                    }
-                }
-            })
+            tokio::spawn(async move { receber_input(conexao).await })
         })
         .await
     })
+}
+
+/// Le o stream de input de uma conexao e injeta ate ela fechar.
+///
+/// Um so para as duas portas: o visualizador manda input pela conexao
+/// de video, o KVM manda pela porta de input, e os dois merecem o
+/// mesmo tratamento.
+async fn receber_input(conexao: quinn::Connection) {
+    let Ok(mut recv) = conexao.accept_uni().await else { return };
+    // Canal por conexao: a thread morre quando o cliente sai, e um
+    // `Teclado` novo comeca com a posicao real do ponteiro.
+    let teclado = crate::input_mac::thread();
+    let mut leitor = crate::input::Leitor::default();
+    let mut buf = vec![0u8; 4096];
+    let mut n = 0u64;
+    while let Ok(Some(lidos)) = recv.read(&mut buf).await {
+        leitor.alimentar(&buf[..lidos]);
+        while let Some(e) = leitor.proximo() {
+            if teclado.send(e).is_err() {
+                return; // a thread de injecao saiu
+            }
+            n += 1;
+            // Os primeiros, um a um: "nao deu erro" e prova fraca de
+            // que o input chegou -- e no macOS e prova NENHUMA, porque
+            // sem Acessibilidade o CGEventPost devolve sucesso e
+            // descarta.
+            if n <= 8 {
+                println!("  input #{n}: {e:?}");
+            } else if n % 500 == 0 {
+                println!("  {n} eventos de input aplicados");
+            }
+        }
+    }
 }

@@ -83,6 +83,32 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // `--segurar <evdev>`: aperta a tecla, espera, e solta.
+    //
+    // Existe porque o Caps Lock NAO serve de teste no macOS: o sistema
+    // o trata na camada HID e um evento sintetico nao o alterna, mesmo
+    // chegando e sendo traduzido. Com uma tecla comum da para olhar o
+    // estado dela enquanto esta apertada, que e medida de verdade.
+    if let Some(i) = std::env::args().position(|a| a == "--segurar") {
+        let codigo: u32 = std::env::args()
+            .nth(i + 1)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30); // 30 = A
+        let mut buf = BytesMut::new();
+        buf.clear();
+        Evento::Tecla { keycode: codigo, apertado: true }.escrever(&mut buf);
+        envio.write_all(&buf).await?;
+        println!("  tecla {codigo} APERTADA; segurando 4s");
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+        buf.clear();
+        Evento::Tecla { keycode: codigo, apertado: false }.escrever(&mut buf);
+        envio.write_all(&buf).await?;
+        envio.finish()?;
+        println!("  tecla {codigo} solta");
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        return Ok(());
+    }
+
     if rajada > 0 {
         // Movimento so, sem tecla nem botao: muda o cursor da maquina
         // alvo e nada mais. Um circulo pequeno para o cursor nao parar
