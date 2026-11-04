@@ -10,7 +10,11 @@ Mac como host, que ainda não produz quadro.
 | Windows | Ubuntu | PipeWire via Mutter ScreenCast | NVENC | NVDEC |
 | Mac | Windows | DXGI | NVENC | ffmpeg (`swscale`) |
 | Mac | Ubuntu | PipeWire | NVENC | ffmpeg |
-| qualquer | Mac | avfoundation | VideoToolbox | — **não funciona ainda** |
+| Ubuntu/Windows | Mac | avfoundation | VideoToolbox | NVDEC / ffmpeg |
+
+O host do Mac sobe por **LaunchAgent**, não por SSH: a captura depende
+de permissão TCC concedida a quem lançou, e por SSH o AVFoundation
+trava em vez de falhar ([[../.claude/rules/sessao-grafica]]).
 
 O Mac decodifica por ffmpeg porque não tem NVDEC. Isso deixou de ser
 detalhe quando virou **grupo de controle**: o caminho do Mac usava

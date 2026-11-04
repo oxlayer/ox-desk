@@ -20,7 +20,8 @@ remota própria, e o controle de tudo num painel só.
 3. [PowerShell remoto: sempre `-EncodedCommand` a partir de arquivo](.claude/rules/powershell-remoto.md)
 4. [`E_ACCESSDENIED` no DXGI: quatro causas, e a mais comum é o protetor de tela](.claude/rules/tela-bloqueada-windows.md)
 5. [Windows sem mouse não tem cursor, e desenhar no stream não ajuda quem olha o monitor](.claude/rules/cursor-sem-mouse.md)
-6. [Mandar não é ter chegado; número que ninguém imprime ninguém confere](.claude/rules/verificar-o-que-chegou.md)
+6. [O que depende da sessão gráfica não nasce por SSH](.claude/rules/sessao-grafica.md)
+7. [Mandar não é ter chegado; número que ninguém imprime ninguém confere](.claude/rules/verificar-o-que-chegou.md)
 
 ## Skills (procedimentos)
 
