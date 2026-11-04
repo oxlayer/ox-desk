@@ -33,6 +33,7 @@ mod files;
 mod focus;
 mod follow;
 mod hidpp;
+mod clip;
 mod kvm;
 mod logs;
 mod peers;
@@ -128,6 +129,13 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
     match args.first().map(String::as_str) {
         None => None,
         Some("serve") => None,
+        // Recebe o clipboard de outra maquina, por SSH. Entrega ao
+        // daemon local -- ver `clip::cli_set` para o porque de nao
+        // escrever direto.
+        Some("clip-set") => {
+            let porta = Config::load().map(|c| c.port).unwrap_or(8787);
+            Some(crate::clip::cli_set(porta))
+        }
         Some("-h") | Some("--help") | Some("help") => {
             // stderr: stdout e reservado para o JSON do protocolo.
             eprintln!(
@@ -135,6 +143,9 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
 
   (sem comando)  sobe o daemon e serve a API em 127.0.0.1
   serve          idem, explicito
+
+  clip-set       le o stdin e poe no clipboard desta maquina
+                 (usado pelos pares por SSH)
 
   devices        inventario dos slots deste receptor (JSON)
   host-info <slot>
@@ -220,6 +231,16 @@ fn main() -> std::process::ExitCode {
     hidpp::spawn_refresher();
     // Nenhum KVM orfao segurando teclado de ninguem.
     kvm::limpar_orfaos();
+
+    // Clipboard compartilhado. No Linux uma thread com sessao D-Bus
+    // propria observa e publica; nos outros, amostragem.
+    #[cfg(target_os = "linux")]
+    {
+        let canal = clip::linux::spawn(Arc::clone(&cfg));
+        clip::guardar_canal(canal);
+    }
+    #[cfg(not(target_os = "linux"))]
+    clip::vigiar(Arc::clone(&cfg));
     // Bandeja nativa. Nao e fatal se nao subir: sem extensao de
     // AppIndicator (ou sem bandeja nenhuma) o icone nao aparece e o
     // daemon segue servindo painel e API. Derrubar o logid porque nao
@@ -428,6 +449,27 @@ fn post_remap(mut req: Request) {
     match hidpp::remap(b.slot, cid, to) {
         Ok(detail) => ok_json(req, serde_json::json!({ "ok": true, "detail": detail }).to_string()),
         Err(e) => err_json(req, 409, &e),
+    }
+}
+
+/// POST /api/clipboard -- texto cru no corpo, vai para o clipboard local.
+///
+/// Sem JSON de proposito: o corpo E o texto. Embrulhar clipboard em
+/// JSON obrigaria a escapar o que a pessoa copiou, e clipboard carrega
+/// exatamente o tipo de coisa que quebra escape -- aspas, barras,
+/// quebras de linha, bytes estranhos.
+fn post_clipboard(mut req: Request) {
+    use std::io::Read;
+    let mut texto = String::new();
+    if req.as_reader().read_to_string(&mut texto).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    if texto.len() > clip::LIMITE {
+        return err_json(req, 413, "texto acima do limite");
+    }
+    match clip::aplicar_local(&texto) {
+        Ok(()) => ok_json(req, "{\"ok\":true}".into()),
+        Err(e) => err_json(req, 500, &e),
     }
 }
 
@@ -664,6 +706,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 
     if path == "/api/config" && method == "PATCH" {
         return patch_config(req, cfg, cache);
+    }
+    if path == "/api/clipboard" && method == "POST" {
+        return post_clipboard(req);
     }
     if path == "/api/screen" && method == "POST" {
         return post_screen(req, cfg);
