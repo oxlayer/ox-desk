@@ -15,8 +15,13 @@ role = "Ubuntu 26.04 - este PC"
 # gnome-shell, e nao aquele daemon.
 units = ["logid.service"]
 
-
-
+  # Sem NENHUM servico o host fica "off" para sempre: o painel decide
+  # online por `services.iter().any(up)`. Quando o KDE Connect saiu,
+  # este card ficou vazio e a maquina em que o painel roda apareceu
+  # desligada.
+  [[hosts.services]]
+  label = "SSH"
+  port = 22
 
 [[hosts]]
 name = "windows-host"

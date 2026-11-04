@@ -322,7 +322,16 @@ fn check_host(h: &HostCfg, cfg: &Config) -> HostState {
         v
     });
 
-    let online = services.iter().any(|s| s.up);
+    // A maquina local esta online por construcao: este codigo esta
+    // rodando NELA. Sem esta linha, um host sem nenhum servico listado
+    // aparece "off" para sempre, porque a unica evidencia de vida era
+    // "alguma porta respondeu". Foi o que aconteceu quando o KDE
+    // Connect saiu da config: o card do Ubuntu ficou sem servicos e a
+    // propria maquina que serve o painel apareceu desligada.
+    //
+    // Para host REMOTO sem servicos a resposta continua sendo "off", e
+    // esta certa: nao temos evidencia nenhuma de que ele existe.
+    let online = h.is_local() || services.iter().any(|s| s.up);
     // Units SO da maquina local. `unit_state` consulta o gerenciador
     // daqui: fazer isso por um host remoto devolveria o estado da maquina
     // errada com cara de verdade. Hoje nenhuma config remota lista units,
