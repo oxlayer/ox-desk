@@ -117,12 +117,12 @@ fn remember(slot: u8, name: &str, bat: Option<(Option<u8>, Option<String>)>) {
             dirty = true;
         }
         if let Some((pct, lvl)) = bat {
-            if e.battery_percent != pct || e.battery_status != lvl {
-                dirty = true;
-            }
             e.battery_percent = pct;
             e.battery_status = lvl;
             e.battery_at = Some(now_secs());
+            // Grava mesmo se o valor nao mudou: o que mudou e o
+            // `battery_at`, e e ele que a GUI usa para dizer "70%
+            // idade=0s" em vez de apresentar memoria como leitura.
             dirty = true;
         }
         dirty
@@ -216,21 +216,14 @@ pub struct Survey {
     pub error: Option<String>,
 }
 
-/// Checa se conseguimos abrir algum /dev/hidraw.
+/// Temos acesso ao hardware HID?
 ///
-/// A regra do Solaar concede por `TAG+="uaccess"`, que vira ACL para o
-/// usuario logado. Pegadinha paga: se os nos nasceram ANTES de a regra
-/// existir, nenhuma ACL foi aplicada e so `udevadm trigger` resolve.
+/// O nome ficou por compatibilidade com o JSON que a GUI le, mas a
+/// pergunta e respondida pela plataforma: ACL de `uaccess` em
+/// `/dev/hidraw` no Linux, abrir o receptor no Windows. Ver
+/// `sys::device_access`.
 pub fn hidraw_access() -> bool {
-    let Ok(entries) = std::fs::read_dir("/dev") else { return false };
-    for e in entries.flatten() {
-        let name = e.file_name();
-        let Some(n) = name.to_str() else { continue };
-        if n.starts_with("hidraw") && std::fs::File::open(e.path()).is_ok() {
-            return true;
-        }
-    }
-    false
+    crate::sys::device_access()
 }
 
 /// Ping com retry.
@@ -520,14 +513,14 @@ pub fn verify_left(slot: u8, host: u8) {
         for i in 1..=LEAVE_CHECKS {
             std::thread::sleep(LEAVE_WAIT);
             if !rx.present(slot, 1) {
-                println!(
+                say!(
                     "verificacao: slot {slot} saiu (canal {host}) em {}ms",
                     i as u32 * LEAVE_WAIT.as_millis() as u32
                 );
                 return;
             }
         }
-        eprintln!("verificacao: slot {slot} AINDA responde -- a troca para o canal {host} nao pegou");
+        gripe!("verificacao: slot {slot} AINDA responde -- a troca para o canal {host} nao pegou");
     });
 }
 

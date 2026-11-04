@@ -6,8 +6,16 @@
 //! troca de canal HID++. E superficie de privilegio, nao um site.
 //! Ver ../specs/008-security.md.
 
+// Primeiro de todos: macro_rules tem escopo TEXTUAL, entao `say!` e
+// `gripe!` so existem para os modulos declarados depois deste.
+#[macro_use]
+mod say;
+
 mod agent;
+#[cfg(target_os = "linux")]
 mod border;
+#[cfg(windows)]
+mod border_win;
 mod config;
 mod focus;
 mod follow;
@@ -15,9 +23,9 @@ mod hidpp;
 mod logs;
 mod peers;
 mod probe;
+mod sys;
 
 use config::Config;
-use std::io::Read;
 use probe::Snapshot;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -90,7 +98,7 @@ fn main() {
         Ok(c) => c,
         Err(e) => {
             // Falhar barulhento: config invalida nao vira default silencioso.
-            eprintln!("logid: {e}");
+            gripe!("logid: {e}");
             std::process::exit(1);
         }
     };
@@ -99,17 +107,17 @@ fn main() {
     let server = match Server::http(&addr) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("logid: nao consegui escutar em {addr}: {e}");
+            gripe!("logid: nao consegui escutar em {addr}: {e}");
             std::process::exit(1);
         }
     };
-    println!("logid em http://{addr}  (config: {})", Config::path().display());
+    say!("logid em http://{addr}  (config: {})", Config::path().display());
 
     let cfg = Arc::new(RwLock::new(cfg));
     let cache = Arc::new(Mutex::new(Cache { at: None, data: None }));
 
     // Vigilancia de borda numa thread propria; falha nao derruba o daemon.
-    border::spawn(Arc::clone(&cfg));
+    sys::spawn_border(Arc::clone(&cfg));
     // Reconciliador do "seguir o lider", em thread propria.
     follow::spawn(Arc::clone(&cfg));
     // Mantem o estado dos pares fresco, para o caminho quente nao esperar SSH.

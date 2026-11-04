@@ -6,9 +6,6 @@
 use serde::Serialize;
 use std::process::Command;
 
-/// Caminho default do agente no Windows.
-pub const DEFAULT_WIN_PATH: &str = r"%LOCALAPPDATA%\logid\logid-agent.exe";
-
 #[derive(Debug, Clone, Serialize)]
 pub struct Slot {
     pub slot: u8,

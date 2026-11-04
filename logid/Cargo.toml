@@ -12,8 +12,18 @@ tiny_http = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
-dbus = "0.9.12"
 hidpp = { version = "0.1.0", path = "../hidpp" }
+
+# D-Bus so existe do lado Linux: a deteccao de borda fala com o
+# org.gnome.Mutter.InputCapture. No Windows `GetCursorPos` responde
+# direto, entao nem a dependencia precisa existir la.
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = "0.9.12"
+
+# Win32 compartilhado com o logid-agent: sessao, instancia unica, cursor
+# e idade do input.
+[target.'cfg(windows)'.dependencies]
+winput = { version = "0.1.0", path = "../winput" }
 
 [profile.release]
 opt-level = "s"

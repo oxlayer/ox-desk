@@ -1,3 +1,11 @@
+#![cfg(windows)]
+//! Win32 que o `logid` e o `logid-agent` compartilham.
+//!
+//! Estava dentro do agente como `input.rs`. Virou crate quando o daemon
+//! passou a rodar no Windows tambem: duas copias de FFI `unsafe` que
+//! precisam concordar sobre sessao e instancia unica e exatamente o tipo
+//! de duplicacao que silencia um bug em um dos lados.
+//!
 //! Idade do ultimo input na sessao interativa do Windows.
 //!
 //! E o sinal do dead-man's switch (spec 005): depois de receber o

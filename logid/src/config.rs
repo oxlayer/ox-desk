@@ -49,6 +49,26 @@ pub struct HostCfg {
     /// switch -- e sem dead-man's switch a rota fisica e de ida so.
     #[serde(default)]
     pub agent: Option<String>,
+    /// Esta entrada e a maquina onde o daemon roda?
+    ///
+    /// Era implicito -- `addr = "127.0.0.1"` e um texto livre em `role`
+    /// dizendo "este PC". Passou a importar quando o daemon foi rodar no
+    /// Windows: o dead-man's switch precisa saber para onde devolver o
+    /// dispositivo, e "o host que nao sou eu" exige saber quem eu sou.
+    ///
+    /// Opcional: sem a chave, vale a heuristica do endereco de loopback,
+    /// para as configs que ja existem continuarem valendo.
+    #[serde(default)]
+    pub local: Option<bool>,
+}
+
+impl HostCfg {
+    pub fn is_local(&self) -> bool {
+        if let Some(v) = self.local {
+            return v;
+        }
+        matches!(self.addr.as_str(), "127.0.0.1" | "::1" | "localhost")
+    }
 }
 
 fn default_edge() -> String {
@@ -172,14 +192,22 @@ pub struct Config {
 pub const DEFAULT_TOML: &str = include_str!("../default-config.toml");
 
 impl Config {
+    /// O primeiro host que nao e esta maquina.
+    ///
+    /// Quem usa e o dead-man's switch da borda do Windows, que precisa
+    /// saber para onde devolver o dispositivo. No Linux ninguem chama:
+    /// la o guard mora no alvo (o `logid-agent`), nao na origem.
+    ///
+    /// Com dois hosts e o par, sem ambiguidade. Com mais de dois, a
+    /// escolha passa a ter de ser explicita e quem chama tem de dizer
+    /// qual -- por isso devolve o primeiro em vez de adivinhar peso.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn peer_host(&self) -> Option<&HostCfg> {
+        self.hosts.iter().find(|h| !h.is_local())
+    }
+
     pub fn path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-                PathBuf::from(home).join(".config")
-            });
-        base.join("logi").join("config.toml")
+        crate::sys::config_dir().join("config.toml")
     }
 
     /// Le do disco; na primeira execucao grava o default e usa ele.
@@ -190,7 +218,7 @@ impl Config {
                 std::fs::create_dir_all(dir).map_err(|e| format!("criar {dir:?}: {e}"))?;
             }
             std::fs::write(&p, DEFAULT_TOML).map_err(|e| format!("gravar {p:?}: {e}"))?;
-            eprintln!("config inicial gravada em {}", p.display());
+            gripe!("config inicial gravada em {}", p.display());
         }
         let raw = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
         toml::from_str(&raw).map_err(|e| format!("TOML invalido em {}: {e}", p.display()))
@@ -252,6 +280,46 @@ mod tests {
         let c: Config = toml::from_str(t).unwrap();
         assert_eq!(c.hosts[0].services[0].expect, Expect::Down);
         assert_eq!(c.hosts[0].services[1].expect, Expect::Any);
+    }
+
+    #[test]
+    fn quem_sou_eu_por_loopback_ou_por_flag() {
+        // Heuristica: configs que ja existem nao tem a chave `local`.
+        let c: Config = toml::from_str(
+            r#"
+            [[hosts]]
+            name = "aqui"
+            addr = "127.0.0.1"
+            [[hosts]]
+            name = "la"
+            addr = "la.local"
+            "#,
+        )
+        .unwrap();
+        assert!(c.hosts[0].is_local());
+        assert!(!c.hosts[1].is_local());
+        assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("la"));
+
+        // Flag explicita vence o endereco -- e o caso do Windows, onde a
+        // entrada local pode nao usar loopback. Uma segunda leitura
+        // divergente deste criterio ja existiu em `follow.rs` e foi
+        // removida; este teste e o que impede ela de voltar.
+        let c: Config = toml::from_str(
+            r#"
+            [[hosts]]
+            name = "aqui"
+            addr = "windows-host.local"
+            local = true
+            [[hosts]]
+            name = "la"
+            addr = "127.0.0.1"
+            local = false
+            "#,
+        )
+        .unwrap();
+        assert!(c.hosts[0].is_local(), "flag explicita tem de vencer o endereco");
+        assert!(!c.hosts[1].is_local(), "local = false vence o loopback");
+        assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("la"));
     }
 
     #[test]

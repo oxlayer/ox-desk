@@ -9,7 +9,7 @@
 //! A excecao e o `guard`, que precisa ficar residente -- e na sessao
 //! interativa, porque GetLastInputInfo nao ve input de outra sessao.
 
-mod input;
+use winput as input;
 
 use hidpp::hidapi::HidApi;
 use serde_json::json;

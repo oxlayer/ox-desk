@@ -61,6 +61,97 @@ entra no bootstrap.
 - `[[hosts]]` com um nó marcado como local por ter `addr = 127.0.0.1`.
   Cada nó sabe quem é por hostname; os outros são pares.
 
+## O mesmo binário nos dois SOs
+
+Esta spec afirmava "todo nó roda o **mesmo** `logid`" desde 03/11. Era
+aspiração: o daemon compilava só no Linux. O Windows tinha o
+`logid-agent`, um CLI de um disparo, sem API, sem bandeja, sem janela — e
+a GUI do Ubuntu alcançava a outra máquina por SSH, chamando o CLI na mão.
+
+O usuário notou pelo buraco que isso deixa: *"por que não tem a GUI e
+atalho na taskbar no Windows, só aqui no Ubuntu?"*. A resposta é que a
+**troca** ficou simétrica (o `watch-edge` deu a borda ao Windows) mas o
+**control plane** não. Quem estivesse sentado no Windows não tinha painel.
+
+### O que de fato amarrava ao Linux
+
+Medido antes de decidir, módulo por módulo. Dos nove, **seis são
+portáveis como estão** (`agent`, `config`, `focus`, `follow`, `hidpp`,
+`peers`). Cinco pontos amarravam:
+
+| ponto | Linux | Windows |
+|---|---|---|
+| fallback de DNS | `getent hosts` | nada — o resolver já fala mDNS |
+| estado de `units` | `systemctl --user is-active` | serviço, senão processo |
+| hora local | `date +%z` + aritmética | `GetLocalTime` |
+| origem dos logs | `journalctl --user -u` | arquivo em `%LOCALAPPDATA%` |
+| acesso ao HID | ACL de `uaccess` em `/dev/hidraw` | abrir o receptor |
+| detecção de borda | barreira do `Mutter.InputCapture` | `GetCursorPos` |
+| diretório de config | `~/.config/logi` | `%APPDATA%\logi` |
+
+Daí [`logid/src/sys/`](../logid/src/sys/): um lugar para o que divergir,
+em vez de um segundo daemon no `agent/` duplicando os outros seis
+módulos. A alternativa — crescer o agente até virar daemon — custaria
+duas cópias de `focus`, `follow` e `peers` que precisariam concordar.
+
+### A permanência na borda se expressa diferente nas duas pontas
+
+Não é inconsistência, é o sinal disponível. O mutter entrega eventos
+discretos, então no Linux a permanência é **densidade**: `hold_hits`
+ativações dentro de `hold_window_ms`. No Windows medimos contato
+**contínuo**, que é o que o polling a 30 ms de fato vê. A tradução:
+`hold_hits <= 1` troca no primeiro toque, acima disso exige ficar na
+borda por `hold_window_ms`.
+
+### O `watch-edge` virou thread, e reivindica o mesmo mutex
+
+Com o daemon no Windows, o processo separado do `watch-edge` deixa de
+fazer sentido — e passa a ser *perigoso*: dois donos do mesmo receptor
+HID++ é exatamente o que a trava de instância única existe para impedir
+(já aconteceu, três `watch-edge` simultâneos triplicando o tráfego de
+rádio).
+
+Por isso [`border_win.rs`](../logid/src/border_win.rs) reivindica o
+**mesmo nome de mutex** do `watch-edge`, `logid-agent-watch-edge`. Não é
+coincidência: é o que garante que o atalho antigo e o daemon novo nunca
+pollem juntos, mesmo que alguém esqueça de remover o atalho do
+`shell:startup`.
+
+A thread da borda também é a única que desiste fora da sessão do console
+— `GetCursorPos` e `GetLastInputInfo` são por sessão, e na sessão 0 (o
+caso de lançar por SSH) ela leria um desktop falso de 1024x768 e um idle
+igual ao uptime. O resto do daemon funciona lá; só a borda não.
+
+### Quem sou eu passou a precisar de resposta
+
+Era implícito — `addr = "127.0.0.1"` e um texto livre em `role` dizendo
+"este PC". O dead-man's switch do Windows precisa saber para onde
+devolver o dispositivo, e "o host que não sou eu" exige saber quem eu
+sou. Daí `local` em `[[hosts]]`, opcional, com a heurística de loopback
+como fallback para as configs que já existem.
+
+Ao escrever isso apareceu uma segunda leitura do mesmo critério: o
+`follow.rs` tinha a **própria** cópia de `is_local`, que ignorava a flag
+nova. Num Windows com `local = true` e endereço não-loopback, o `follow`
+e a borda discordariam sobre qual máquina é "eu". A cópia foi removida e
+`quem_sou_eu_por_loopback_ou_por_flag` é o teste que impede ela de
+voltar.
+
+### O que a simetria ainda exige
+
+`focus::plan` **bloqueia** a troca quando o alvo não tem `ssh` + `agent`,
+porque sem alguém do outro lado capaz de devolver o dispositivo a origem
+não pode desfazer ([`005`](005-input-switch.md)). O `watch-edge`
+escapava disso por não passar pelo `focus`.
+
+Então para o Windows virar origem de verdade faltam duas peças, e
+nenhuma delas é afrouxar o check:
+
+1. O `logid` ganhar os subcomandos de CLI que o `agent` tem (`devices`,
+   `host-info`, `set-host`), para o Ubuntu ser sondável do mesmo jeito.
+2. `sshd` no Ubuntu — hoje `inactive`, nada escutando na 22 — e uma
+   chave do Windows para cá.
+
 ## API
 
 Prefixo `/api`. JSON em tudo. Sempre em `127.0.0.1` (ver

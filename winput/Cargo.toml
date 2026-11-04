@@ -1,0 +1,9 @@
+[package]
+name = "winput"
+version = "0.1.0"
+edition = "2021"
+description = "Win32: idade do input, cursor, area virtual, sessao e instancia unica"
+license = "MIT"
+
+# Crate inteira e `#![cfg(windows)]`: no Linux compila vazia em vez de
+# falhar, para quem declarar a dependencia sem gate nao quebrar o build.

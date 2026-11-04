@@ -12,6 +12,7 @@ license = "MIT"
 hidapi = "2"
 hidpp = { version = "0.1.0", path = "../hidpp" }
 serde_json = "1.0"
+winput = { version = "0.1.0", path = "../winput" }
 
 [profile.release]
 opt-level = "s"

@@ -90,15 +90,13 @@ fn release(sp: &dbus::blocking::Proxy<'_, &Connection>) {
     let empty: std::collections::HashMap<&str, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>> =
         std::collections::HashMap::new();
     if let Err(e) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Release", (empty,)) {
-        eprintln!("border: Release falhou: {e}");
+        gripe!("border: Release falhou: {e}");
     }
 }
 
 struct Session {
     conn: Connection,
     path: Path<'static>,
-    /// Borda vigiada, para saber para que lado recuar o ponteiro.
-    edge: String,
     /// Mantido vivo de proposito: fechar o fd pode derrubar a sessao.
     /// Ainda NAO foi medido se o Enable funciona sem ele -- entrou no
     /// prototipo para eliminar hipotese e ficou como ordem conhecida-boa.
@@ -134,7 +132,7 @@ fn open(edge: &str) -> Result<Session, String> {
     ) {
         Ok((fd,)) => Some(fd),
         Err(e) => {
-            eprintln!("border: ConnectToEIS falhou, seguindo sem ele: {e}");
+            gripe!("border: ConnectToEIS falhou, seguindo sem ele: {e}");
             None
         }
     };
@@ -142,11 +140,11 @@ fn open(edge: &str) -> Result<Session, String> {
     sp.method_call::<(), _, _, _>(IFACE_SESSION, "Enable", ())
         .map_err(|e| format!("Enable: {e}"))?;
 
-    println!(
+    say!(
         "border: barreira {bid} na borda {edge} {line:?}, zona {zone:?}, eis={}",
         if eis.is_some() { "sim" } else { "nao" }
     );
-    Ok(Session { conn, path, edge: edge.to_string(), _eis: eis })
+    Ok(Session { conn, path, _eis: eis })
 }
 
 /// Sobe a vigilancia de borda numa thread. Erro aqui nao derruba o daemon:
@@ -168,7 +166,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             match &b.target {
                 Some(t) => (b.edge.clone(), t.clone(), hits, win),
                 None => {
-                    eprintln!("border: habilitado sem `target`; nada a fazer");
+                    gripe!("border: habilitado sem `target`; nada a fazer");
                     return;
                 }
             }
@@ -177,7 +175,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         let sess = match open(&edge) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("border: desligado -- {e}");
+                gripe!("border: desligado -- {e}");
                 return;
             }
         };
@@ -195,7 +193,6 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
 
         let cfg2 = Arc::clone(&cfg);
         let path2 = sess.path.clone();
-        let edge2 = sess.edge.clone();
         let target2 = target.clone();
         let last2 = Arc::clone(&last);
         let hits2 = Arc::clone(&hits);
@@ -204,7 +201,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         let res = sess.conn.add_match(
             rule,
             move |(barrier_id, activation_id, cursor): (u32, u32, (f64, f64)), conn, _msg| {
-                println!(
+                say!(
                     "border: ACTIVATED barreira={barrier_id} activation={activation_id} cursor={cursor:?}"
                 );
 
@@ -225,14 +222,14 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                     v.len()
                 };
                 if hits < hold_hits {
-                    println!("border: permanencia {hits}/{hold_hits}, aguardando");
+                    say!("border: permanencia {hits}/{hold_hits}, aguardando");
                     return true;
                 }
 
                 // Decidido. DESARMA a barreira: e o unico jeito de parar o
                 // churn, ja que o mutter ignora o recuo do cursor.
                 if let Err(e) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Disable", ()) {
-                    eprintln!("border: Disable falhou: {e}");
+                    gripe!("border: Disable falhou: {e}");
                 }
                 if let Ok(mut v) = hits2.write() {
                     v.clear();
@@ -244,7 +241,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                 if let Ok(mut g) = reenable2.write() {
                     *g = Some(now + COOLDOWN);
                 }
-                println!("border: barreira desarmada; trocando e rearmando em {}s", COOLDOWN.as_secs());
+                say!("border: barreira desarmada; trocando e rearmando em {}s", COOLDOWN.as_secs());
 
                 // A troca leva segundos (solaar + verificacao por efeito).
                 // Rodar aqui bloqueava o loop do D-Bus: medido, 35 s sem
@@ -266,7 +263,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                     let outcome = focus::execute(&snap, &req);
                     if outcome.executed {
                         for r in &outcome.results {
-                            println!("border: {r}");
+                            say!("border: {r}");
                         }
                     } else {
                         let bloqueios: Vec<&str> = outcome
@@ -276,7 +273,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                             .filter(|c| c.blocking && !c.ok)
                             .map(|c| c.name.as_str())
                             .collect();
-                        println!(
+                        say!(
                             "border: NAO trocou -- {} (bloqueios: {})",
                             outcome.error.unwrap_or_else(|| "plano nao pronto".into()),
                             bloqueios.join(", ")
@@ -287,7 +284,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             },
         );
         if let Err(e) = res {
-            eprintln!("border: add_match falhou: {e}");
+            gripe!("border: add_match falhou: {e}");
             return;
         }
 
@@ -299,7 +296,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             .conn
             .add_match_no_cb(&format!("type='signal',interface='{IFACE_SESSION}'"))
         {
-            eprintln!("border: match de diagnostico falhou: {e}");
+            gripe!("border: match de diagnostico falhou: {e}");
         }
         sess.conn.start_receive(
             MatchRule::new(),
@@ -308,7 +305,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                     .interface()
                     .is_some_and(|i| i.contains("InputCapture"))
                 {
-                    println!(
+                    say!(
                         "border[sinal] {}.{}",
                         msg.interface().map(|i| i.to_string()).unwrap_or_default(),
                         msg.member().map(|m| m.to_string()).unwrap_or_default()
@@ -318,7 +315,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             }),
         );
 
-        println!(
+        say!(
             "border: vigiando borda '{edge}' -> {target} \
              (permanencia {hold_hits} em {}ms)",
             hold_window.as_millis()
@@ -326,7 +323,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         let mut ticks: u64 = 0;
         loop {
             if let Err(e) = sess.conn.process(Duration::from_millis(500)) {
-                eprintln!("border: loop do barramento morreu: {e}");
+                gripe!("border: loop do barramento morreu: {e}");
                 return;
             }
             ticks += 1;
@@ -337,8 +334,8 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             if due {
                 let sp = sess.conn.with_proxy(DEST, sess.path.clone(), TIMEOUT);
                 match sp.method_call::<(), _, _, _>(IFACE_SESSION, "Enable", ()) {
-                    Ok(()) => println!("border: barreira rearmada"),
-                    Err(e) => eprintln!("border: Enable no rearme falhou: {e}"),
+                    Ok(()) => say!("border: barreira rearmada"),
+                    Err(e) => gripe!("border: Enable no rearme falhou: {e}"),
                 }
                 if let Ok(mut g) = reenable.write() {
                     *g = None;
@@ -348,7 +345,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             // Prova de vida a cada ~60 s: sem isto, silencio no journal e
             // ambiguo entre "nada aconteceu" e "a thread morreu".
             if ticks % 120 == 0 {
-                println!("border: vivo, {} min vigiando '{}'", ticks / 120, edge);
+                say!("border: vivo, {} min vigiando '{}'", ticks / 120, edge);
             }
         }
     });

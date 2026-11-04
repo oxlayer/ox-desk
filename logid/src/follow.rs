@@ -16,7 +16,7 @@
 //! | em nenhum dos dois | nada a fazer (canal desconhecido, ex. MacBook) |
 
 use crate::agent;
-use crate::config::{Config, HostCfg};
+use crate::config::Config;
 use crate::focus;
 use crate::hidpp;
 use std::sync::{Arc, RwLock};
@@ -24,21 +24,6 @@ use std::time::Duration;
 
 /// Espera depois de agir, para nao brigar com a borda nem consigo mesmo.
 const AFTER_ACTION: Duration = Duration::from_secs(8);
-
-fn is_local(h: &HostCfg) -> bool {
-    h.addr == "127.0.0.1" || h.addr == "localhost" || h.addr == "::1"
-}
-
-/// Nosso canal, pelo mapa da config. Preferimos isto a ler do hardware:
-/// funciona mesmo com todos os dispositivos ausentes.
-fn my_channel(cfg: &Config) -> Option<(String, u8)> {
-    let me = cfg.hosts.iter().find(|h| is_local(h))?;
-    let ch = cfg
-        .devices
-        .iter()
-        .find_map(|d| d.hosts.get(&me.name).copied())?;
-    Some((me.name.clone(), ch))
-}
 
 struct Seen {
     /// slot local, se estiver aqui
@@ -78,7 +63,7 @@ fn locate(cfg: &Config) -> std::collections::BTreeMap<String, Seen> {
     // Pares, por SSH. O agente reporta slot e canal, mas NAO o nome --
     // por isso casamos por canal, nao por nome: se o par ve um dispositivo
     // no canal dele, e aquele que esta la.
-    for h in cfg.hosts.iter().filter(|h| !is_local(h)) {
+    for h in cfg.hosts.iter().filter(|h| !h.is_local()) {
         let (Some(alias), Some(exe)) = (&h.ssh, &h.agent) else { continue };
         let info = agent::devices(alias, exe);
         if !info.reachable {
@@ -160,10 +145,10 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             return;
         }
         if leader.is_none() {
-            eprintln!("follow: habilitado sem `leader`; nada a fazer");
+            gripe!("follow: habilitado sem `leader`; nada a fazer");
             return;
         }
-        println!(
+        say!(
             "follow: reconciliando a cada {interval}s; lider = {}",
             leader.unwrap_or_default()
         );
@@ -181,7 +166,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             };
             if !acted.is_empty() {
                 for a in &acted {
-                    println!("follow: {a}");
+                    say!("follow: {a}");
                 }
                 std::thread::sleep(AFTER_ACTION);
             }
