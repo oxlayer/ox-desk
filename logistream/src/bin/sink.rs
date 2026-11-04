@@ -8,7 +8,13 @@
 //! em loopback. Entre maquinas o numero vira o desvio dos relogios mais
 //! a rede, e e dito assim em vez de apresentado como verdade.
 //!
-//!   cargo run --release --bin sink -- <host:porta> [segundos]
+//! Com `--rajada N` ele tambem manda N movimentos de mouse pela MESMA
+//! conexao, como o visualizador faz. Isso importa: o host serve um
+//! cliente por vez, entao medir input e video por conexoes separadas nao
+//! reproduz nada -- a segunda fica na fila. Foi assim que a primeira
+//! tentativa de medir "o video para quando eu digito" mediu nada.
+//!
+//!   cargo run --release --bin sink -- <host:porta> [segundos] [--rajada N]
 
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -40,6 +46,31 @@ async fn main() -> anyhow::Result<()> {
     println!("  conectando em {destino}");
     let conexao = ep.connect(destino, "logistream")?.await?;
     println!("  conectado");
+
+    // Rajada de input pela MESMA conexao, antes de comecar a medir.
+    let rajada: usize = a
+        .iter()
+        .position(|x| x == "--rajada")
+        .and_then(|i| a.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if rajada > 0 {
+        use bytes::BytesMut;
+        use logistream::input::Evento;
+        let mut envio = conexao.open_uni().await?;
+        let mut buf = BytesMut::new();
+        for i in 0..rajada {
+            let ang = (i as f64) * 0.1;
+            let e = Evento::Mouse {
+                x: 1300.0 + 60.0 * ang.cos(),
+                y: 750.0 + 60.0 * ang.sin(),
+            };
+            buf.clear();
+            e.escrever(&mut buf);
+            envio.write_all(&buf).await?;
+        }
+        println!("  {rajada} eventos de input enviados pela mesma conexao");
+    }
 
     let caminho = std::env::temp_dir().join("logistream-sink.h264");
     let mut arquivo = std::fs::File::create(&caminho)?;

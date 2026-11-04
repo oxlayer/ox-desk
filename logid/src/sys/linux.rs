@@ -79,15 +79,35 @@ pub fn spawn_border(cfg: Arc<RwLock<Config>>) {
 /// usuario logado. Pegadinha paga: se os nos nasceram ANTES de a regra
 /// existir, nenhuma ACL foi aplicada e so `udevadm trigger` resolve.
 pub fn device_access() -> bool {
-    let Ok(entries) = std::fs::read_dir("/dev") else { return false };
+    let (_, abriveis) = hidraw_contagem();
+    abriveis > 0
+}
+
+/// (nos `hidraw` que existem, quantos conseguimos abrir).
+///
+/// Os dois numeros, e nao so o segundo, porque eles distinguem casos que
+/// pedem acoes opostas: zero nos significa que NAO HA hardware HID bruto
+/// -- o receptor foi desplugado -- e nos que existem mas nao abrem
+/// significam permissao. O painel dizia "sem acesso: rode udevadm" nos
+/// dois casos, e no primeiro isso manda a pessoa consertar uma permissao
+/// que nao esta quebrada. Aconteceu: o usuario levou o receptor para a
+/// outra maquina e o painel acusou falta de ACL.
+pub fn hidraw_contagem() -> (usize, usize) {
+    let Ok(entries) = std::fs::read_dir("/dev") else { return (0, 0) };
+    let mut total = 0;
+    let mut abriveis = 0;
     for e in entries.flatten() {
         let name = e.file_name();
         let Some(n) = name.to_str() else { continue };
-        if n.starts_with("hidraw") && std::fs::File::open(e.path()).is_ok() {
-            return true;
+        if !n.starts_with("hidraw") {
+            continue;
+        }
+        total += 1;
+        if std::fs::File::open(e.path()).is_ok() {
+            abriveis += 1;
         }
     }
-    false
+    (total, abriveis)
 }
 
 /// Clientes de tela conhecidos, em ordem de preferencia.

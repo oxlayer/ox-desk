@@ -96,23 +96,43 @@ mod interno {
                 if sc.run(&quadro, &mut bgra).is_err() {
                     continue;
                 }
-                // BGRA em bytes vira 0xAARRGGBB em little-endian, que e o
-                // que o softbuffer espera (o byte alto e ignorado).
+                // Copia por LINHA, nao por pixel.
+                //
+                // Era um laco por pixel com verificacao de limite dentro:
+                // 921 mil iteracoes por quadro numa janela de 1280x720, a
+                // 60-80 quadros por segundo, para produzir bytes que o
+                // `swscale` JA entregou no layout certo. BGRA em bytes e
+                // exatamente `0xAARRGGBB` em little-endian, que e o que o
+                // softbuffer espera.
+                //
+                // Entao sao 720 `copy_from_slice` em vez de 921 mil
+                // conversoes. O `unsafe` e uma reinterpretacao de
+                // `[u32]` como `[u8]`: mesmo tamanho total, e ir de
+                // alinhamento 4 para 1 e sempre valido.
+                //
+                // Little-endian esta assumido aqui e nas duas pontas que
+                // nos interessam (x86-64 e Apple Silicon). Num alvo
+                // big-endian isto inverteria os canais -- barulhento o
+                // bastante para alguem notar na primeira imagem.
                 let linha = bgra.stride(0);
                 let dados = bgra.data(0);
+                let largura_bytes = dw as usize * 4;
                 let mut rgb = vec![0u32; (dw * dh) as usize];
-                for y in 0..dh as usize {
-                    let ini = y * linha;
-                    for x in 0..dw as usize {
-                        let p = ini + x * 4;
-                        if p + 3 < dados.len() {
-                            rgb[y * dw as usize + x] = u32::from_le_bytes([
-                                dados[p],
-                                dados[p + 1],
-                                dados[p + 2],
-                                dados[p + 3],
-                            ]);
+                {
+                    let destino: &mut [u8] = unsafe {
+                        std::slice::from_raw_parts_mut(
+                            rgb.as_mut_ptr() as *mut u8,
+                            rgb.len() * 4,
+                        )
+                    };
+                    for y in 0..dh as usize {
+                        let o = y * linha;
+                        let d = y * largura_bytes;
+                        if o + largura_bytes > dados.len() || d + largura_bytes > destino.len() {
+                            break;
                         }
+                        destino[d..d + largura_bytes]
+                            .copy_from_slice(&dados[o..o + largura_bytes]);
                     }
                 }
                 saida.push(Pronto { rgb, ox, oy, w: dw, h: dh, rw, rh });

@@ -247,19 +247,39 @@ fn ping_retry(rx: &hidpp::Receiver, slot: u8, attempts: u8) -> Result<f64, Strin
 }
 
 fn no_access() -> Survey {
+    // Tres situacoes, tres acoes diferentes. Dizer "sem acesso" para as
+    // tres mandava a pessoa consertar permissao quando o problema era
+    // outro -- e foi o que aconteceu quando o receptor mudou de maquina.
+    #[cfg(target_os = "linux")]
+    let erro = {
+        let (total, abriveis) = crate::sys::hidraw_contagem();
+        if total == 0 {
+            "nenhum no `/dev/hidraw*` neste sistema: nao ha receptor \
+             Logitech conectado aqui (ou o kernel nao o enumerou)"
+                .to_string()
+        } else if abriveis == 0 {
+            format!(
+                "{total} no(s) `/dev/hidraw*` existem, mas nenhum abre: e \
+                 permissao. Rode `sudo udevadm trigger \
+                 --subsystem-match=hidraw --action=add` (a regra do Solaar \
+                 so aplica ACL a nos criados depois dela)"
+            )
+        } else {
+            "acesso ao hidraw ok, mas nenhuma interface HID++ respondeu".to_string()
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let erro = "sem acesso ao dispositivo HID bruto".to_string();
+
     Survey {
         hidraw_access: false,
         backend: "hidpp",
         pausado_s: None,
         receivers: Vec::new(),
-        error: Some(
-            "sem acesso a /dev/hidraw: rode \
-             `sudo udevadm trigger --subsystem-match=hidraw --action=add` \
-             (a regra do Solaar so aplica ACL a nos criados depois dela)"
-                .into(),
-        ),
+        error: Some(erro),
     }
 }
+
 
 /// Varredura completa, com nome e bateria.
 pub fn survey() -> Survey {

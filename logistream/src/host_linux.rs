@@ -45,6 +45,20 @@ const T: Duration = Duration::from_secs(10);
 /// Dois quadros de folga. Mais que isso seria fila de coisa velha.
 const CAPACIDADE: usize = 2;
 
+/// Cadencia alvo da codificacao: um quadro a cada 16,67 ms (60 Hz).
+///
+/// O Mutter entrega a ~80 fps e nos codificavamos todos. Acima da taxa de
+/// atualizacao da tela de quem assiste isso nao vira imagem -- vira mais
+/// banda, mais GPU aqui e mais conversao de cor do outro lado, para o
+/// olho de ninguem. As telas das tres maquinas sao de 60 Hz.
+///
+/// O portao compara com um PRAZO que avanca, e nao com o tempo desde o
+/// ultimo quadro. A primeira versao fazia o segundo e mediu 48 fps em vez
+/// de 60: com a fonte entregando a cada 12,5 ms, "recuse se faz menos de
+/// 16,7 ms" aceita um sim e um nao, e 80 vira ~40. Com o prazo que
+/// avanca, medido: 60,0 fps e 4,5 Mbps, contra 80 fps e 6,2 Mbps antes.
+const CADENCIA: Duration = Duration::from_micros(16_667);
+
 pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
     // Canal do TOKIO, nao `std::sync::mpsc`.
     //
@@ -153,6 +167,8 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
 
     let cod = Rc::new(RefCell::new(None::<Codificador>));
     let descartados = Rc::new(Cell::new(0u64));
+    let proximo_quadro = Rc::new(Cell::new(Instant::now()));
+    let proximo_proc = Rc::clone(&proximo_quadro);
     let cod_fmt = Rc::clone(&cod);
     let cod_proc = Rc::clone(&cod);
     let desc_proc = Rc::clone(&descartados);
@@ -202,6 +218,16 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
             if !sinais_proc.tem_cliente() {
                 return;
             }
+            // Teto de taxa: descartar aqui e de graca (o buffer ja
+            // voltou), e codificar custa GPU dos dois lados.
+            let agora = Instant::now();
+            if agora < proximo_proc.get() {
+                return;
+            }
+            // `max(agora, ...)`: depois de uma pausa (tela parada, host
+            // sem cliente) o prazo nao pode estar no passado distante,
+            // senao o primeiro punhado de quadros passaria todo junto.
+            proximo_proc.set((proximo_proc.get() + CADENCIA).max(agora));
             let mut g = cod_proc.borrow_mut();
             let Some(c) = g.as_mut() else { return };
             if sinais_proc.pegar_idr() {
@@ -272,33 +298,56 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Injeta um evento na sessao do Mutter.
+/// Injeta um evento na sessao do Mutter, SEM esperar resposta.
 ///
 /// `NotifyPointerMotionAbsolute` recebe o caminho do STREAM de tela: e
 /// ele que define o espaco de coordenadas. Por isso a sessao de input
 /// precisa estar vinculada a de tela -- sem o vinculo, nao ha para onde
 /// mapear o x,y.
-fn aplicar(rd: &dbus::blocking::Proxy<'_, &Connection>, stream: &str, e: Evento) {
+///
+/// ## Por que `no_reply`, e nao `method_call`
+///
+/// Era `method_call`, que ESPERA a resposta. O usuario descreveu os dois
+/// sintomas disso na mesma frase: "mac para ubuntu meeeeeeeio bugado e
+/// lento o iiiiiiiinput" -- as letras repetidas sao tecla presa, o
+/// "solta tecla" chegando tarde -- e "o video para se eu paro de
+/// digitar".
+///
+/// Uma causa, dois sintomas. A thread que injeta input e a MESMA que
+/// bombeia os datagramas de video (ver `servir`: runtime de uma thread,
+/// porque a conexao D-Bus nao e Send). Cada evento parava ali esperando o
+/// Mutter responder -- o Mutter, que naquele instante tambem esta
+/// capturando e codificando. Enquanto a resposta nao vinha, nenhum quadro
+/// saia; e enquanto quadros saiam, o "solta tecla" esperava.
+///
+/// A resposta de uma injecao de input nao carrega nada que a gente use.
+/// Com `NO_REPLY_EXPECTED` a chamada vira uma escrita no socket e nao ha
+/// mais ida e volta no caminho quente.
+///
+/// O preco e real e aceito: erro de injecao deixa de ser visivel por
+/// evento. O que sobra e o erro de ESCRITA, que e o que indica sessao
+/// morta -- o caso que importa.
+fn aplicar(conn: &Connection, rd: &Path, stream: &str, e: Evento) -> Result<(), String> {
     use crate::input::Evento as E;
-    let r = match e {
-        E::Mouse { x, y } => {
-            rd.method_call::<(), _, _, _>(RD_SESSION, "NotifyPointerMotionAbsolute", (stream, x, y))
-        }
+    let m = |membro: &str| {
+        dbus::Message::new_method_call(RD, rd.clone(), RD_SESSION, membro)
+    };
+    let msg = match e {
+        E::Mouse { x, y } => m("NotifyPointerMotionAbsolute").map(|z| z.append3(stream, x, y)),
         E::Botao { codigo, apertado } => {
-            rd.method_call::<(), _, _, _>(RD_SESSION, "NotifyPointerButton", (codigo, apertado))
+            m("NotifyPointerButton").map(|z| z.append2(codigo, apertado))
         }
         // flags 0 = rolagem continua. O `AxisDiscrete` seria para roda
         // com clique, mas o trackpad do Mac nao tem passo.
-        E::Rolagem { dx, dy } => {
-            rd.method_call::<(), _, _, _>(RD_SESSION, "NotifyPointerAxis", (dx, dy, 0u32))
-        }
+        E::Rolagem { dx, dy } => m("NotifyPointerAxis").map(|z| z.append3(dx, dy, 0u32)),
         E::Tecla { keycode, apertado } => {
-            rd.method_call::<(), _, _, _>(RD_SESSION, "NotifyKeyboardKeycode", (keycode, apertado))
+            m("NotifyKeyboardKeycode").map(|z| z.append2(keycode, apertado))
         }
     };
-    if let Err(err) = r {
-        eprintln!("  input recusado: {err}");
-    }
+    let mut msg = msg.map_err(|e| format!("montar mensagem: {e}"))?;
+    msg.set_no_reply(true);
+    conn.channel().send(msg).map_err(|_| "fila do D-Bus cheia".to_string())?;
+    Ok(())
 }
 
 /// Rede: serve video por datagrama e recebe input por stream.
@@ -341,14 +390,22 @@ fn servir(
             let stream_in = caminho_stream.clone();
             tokio::task::spawn_local(async move {
                 let Ok(mut recv) = conexao.accept_uni().await else { return };
-                let rd = dbus.with_proxy(RD, rd_in, T);
                 let mut leitor = Leitor::default();
                 let mut buf = vec![0u8; 4096];
                 let mut n = 0u64;
+                let mut falhas = 0u64;
                 while let Ok(Some(lidos)) = recv.read(&mut buf).await {
                     leitor.alimentar(&buf[..lidos]);
                     while let Some(e) = leitor.proximo() {
-                        aplicar(&rd, &stream_in, e);
+                        if let Err(err) = aplicar(&dbus, &rd_in, &stream_in, e) {
+                            falhas += 1;
+                            // Uma vez e as potencias de dez: injecao a 60 Hz
+                            // transformaria log em ruido, e o numero que
+                            // importa e "parou de funcionar", nao cada evento.
+                            if falhas == 1 || falhas % 100 == 0 {
+                                eprintln!("  input recusado ({falhas}): {err}");
+                            }
+                        }
                         n += 1;
                         // Os primeiros, um a um: "nao deu erro" e prova
                         // fraca de que o input chegou. Depois so o

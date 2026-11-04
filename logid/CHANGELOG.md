@@ -6,6 +6,16 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Input do Mac para o Ubuntu: tecla presa e lentidão
+Cada evento era uma chamada ao compositor **esperando resposta**, na
+mesma thread que bombeia o vídeo — então a tecla esperava o quadro e o
+quadro esperava a tecla. Agora a injeção não espera resposta (ela não
+tem nada de útil). O host do Ubuntu também passou a respeitar 60 fps em
+vez de mandar 80: medido, 4,5 Mbps contra 6,2, sem diferença visível numa
+tela de 60 Hz. E o visualizador do Mac copia os pixels por linha em vez
+de um a um — eram 921 mil iterações por quadro para produzir bytes que já
+vinham no formato certo.
+
 ## 2026-11-04 · O RDP saiu: o Windows também assiste pelo nosso protocolo
 O visualizador passou a compilar lá, decodificando por NVDEC — não existe
 `libavcodec` no Windows e era só isso que mantinha aquele caminho no

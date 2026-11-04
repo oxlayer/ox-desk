@@ -198,10 +198,14 @@ pub fn devices(api: &HidApi) -> Value {
         })
         .collect();
 
-    let link = match Receiver::open(api) {
-        Ok(l) => l,
-        Err(e) => return json!({ "ok": false, "error": e, "interfaces": interfaces }),
-    };
+    // TODOS os receptores, nao o primeiro. Com dois na mesma maquina,
+    // escolher um fazia o agente listar os slots de um e declarar os
+    // dispositivos do outro ausentes.
+    let links = Receiver::open_all(api);
+    if links.is_empty() {
+        return json!({ "ok": false, "interfaces": interfaces,
+                       "error": "nenhum receptor HID++ Logitech conectado aqui" });
+    }
 
     // Caminho eficiente: ping de 250 ms primeiro, e host_info (mais caro)
     // so para quem respondeu. Antes chamavamos host_info nos 6 slots --
@@ -210,16 +214,21 @@ pub fn devices(api: &HidApi) -> Value {
     // -- canal e ambiguo quando mouse e teclado declaram o mesmo.
     let conhecidos = nomes_lidos();
     let mut vistos = std::collections::BTreeMap::new();
-    let slots: Vec<_> = link
-        .devices(6, true, false)
-        .into_iter()
-        .map(|d| {
+    let slots: Vec<_> = links
+        .iter()
+        .enumerate()
+        .flat_map(|(i, link)| {
+            let rid = format!("{:04x}@{i}", link.product_id);
+            link.devices(6, true, false).into_iter().map(move |d| (rid.clone(), d))
+        })
+        .map(|(rid, d)| {
             if d.online {
                 if let Some(n) = d.name.clone() {
-                    vistos.insert(d.slot.to_string(), n);
+                    vistos.insert(format!("{rid}/{}", d.slot), n);
                 }
                 json!({
                     "slot": d.slot,
+                    "receptor": rid,
                     "name": d.name,
                     "online": true,
                     "paired": true,
@@ -232,9 +241,10 @@ pub fn devices(api: &HidApi) -> Value {
                 // Nome do cache: separa "slot vazio" de "pareado, mas o
                 // dispositivo esta em outra maquina". Sem isto os dois
                 // casos sao o mesmo JSON, e quem le conclui errado.
-                let lembrado = conhecidos.get(&d.slot.to_string());
+                let lembrado = conhecidos.get(&format!("{rid}/{}", d.slot));
                 json!({
                     "slot": d.slot,
+                    "receptor": rid,
                     "name": lembrado,
                     "online": false,
                     "paired": lembrado.is_some(),
@@ -243,7 +253,8 @@ pub fn devices(api: &HidApi) -> Value {
         })
         .collect();
     nomes_gravar(&vistos);
-    json!({ "ok": true, "interfaces": interfaces, "slots": slots })
+    json!({ "ok": true, "interfaces": interfaces,
+            "receptores": links.len(), "slots": slots })
 }
 
 pub fn host_info(api: &HidApi, slot: u8) -> Value {

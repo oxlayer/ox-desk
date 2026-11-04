@@ -7,7 +7,14 @@
 //! **Mexe o cursor da maquina alvo de verdade.** O movimento e pequeno e
 //! a tecla e um Shift solto, que nao digita nada.
 //!
-//!   cargo run --release --bin input-send -- <host:porta>
+//! Com `--rajada N` manda N movimentos de mouse SEM pausa entre eles.
+//! Serve para medir o que o usuario sentiu: "o video para se eu paro de
+//! digitar" e "o input e lento" tinham a mesma causa -- a injecao
+//! esperava resposta do Mutter na mesma thread que bombeia o video. Uma
+//! rajada enquanto o `sink` mede fps mostra o estrago, e mostra a
+//! melhora.
+//!
+//!   cargo run --release --bin input-send -- <host:porta> [--rajada N]
 
 use bytes::BytesMut;
 use logistream::input::{Evento, BTN_LEFT};
@@ -25,6 +32,32 @@ async fn main() -> anyhow::Result<()> {
     let conexao = ep.connect(destino, "logistream")?.await?;
     let mut envio = conexao.open_uni().await?;
     println!("  conectado; mandando eventos");
+
+    let rajada: usize = std::env::args()
+        .position(|a| a == "--rajada")
+        .and_then(|i| std::env::args().nth(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    if rajada > 0 {
+        // Movimento so, sem tecla nem botao: muda o cursor da maquina
+        // alvo e nada mais. Um circulo pequeno para o cursor nao parar
+        // num canto que dispare coisa do sistema.
+        let mut buf = BytesMut::new();
+        let t0 = std::time::Instant::now();
+        for i in 0..rajada {
+            let a = (i as f64) * 0.1;
+            let e = Evento::Mouse { x: 1300.0 + 60.0 * a.cos(), y: 750.0 + 60.0 * a.sin() };
+            buf.clear();
+            e.escrever(&mut buf);
+            envio.write_all(&buf).await?;
+        }
+        envio.finish()?;
+        let s = t0.elapsed().as_secs_f64();
+        println!("  {rajada} eventos em {s:.2}s = {:.0}/s", rajada as f64 / s);
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        return Ok(());
+    }
 
     let mut eventos = Vec::new();
     // Um quadrado pequeno perto do centro: visivel, sem atravessar a

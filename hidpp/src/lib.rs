@@ -127,6 +127,38 @@ pub struct Receiver {
 
 impl Receiver {
     /// Abre a colecao de report longo do primeiro receptor Logitech.
+    /// Todos os receptores HID++ ligados, nao so o primeiro.
+    ///
+    /// Existe porque o usuario pos DOIS receptores na mesma maquina
+    /// (levou o do Ubuntu para o Windows) e o `open` escolhia um,
+    /// silenciosamente: o agente listava os slots de um receptor e
+    /// reportava os dispositivos do outro como ausentes. O painel ficava
+    /// coerente consigo mesmo e errado sobre o mundo.
+    ///
+    /// Ordem estavel pelo caminho do dispositivo, para duas leituras
+    /// seguidas nao trocarem os receptores de lugar na lista.
+    pub fn open_all(api: &HidApi) -> Vec<Self> {
+        let mut caminhos: Vec<_> = api
+            .device_list()
+            .filter(|d| {
+                d.vendor_id() == LOGITECH_VID
+                    && d.usage_page() == HIDPP_USAGE_PAGE
+                    && d.usage() == USAGE_LONG
+                    && (0xC500..=0xC5FF).contains(&d.product_id())
+            })
+            .map(|d| (d.path().to_string_lossy().to_string(), d.product_id()))
+            .collect();
+        caminhos.sort();
+        caminhos
+            .into_iter()
+            .filter_map(|(path, product_id)| {
+                let dev = api.open_path(&std::ffi::CString::new(path.clone()).ok()?).ok()?;
+                dev.set_blocking_mode(false).ok()?;
+                Some(Self { dev, path, product_id })
+            })
+            .collect()
+    }
+
     pub fn open(api: &HidApi) -> Result<Self, String> {
         let info = api
             .device_list()
