@@ -662,6 +662,31 @@ aqui e rode `solaar config <slot> change-host`.
 > para escrever e ler na mesma coleção. No Linux um único `hidraw`
 > carrega todos os tipos — o problema não existe lá.
 
+### Bateria e botões
+
+```
+GET  /api/controls           controles de cada dispositivo ONLINE
+POST /api/controls/remap     {slot, cid, to, confirm}
+```
+
+A bateria vem por HID++ em dois features, porque dispositivos da mesma
+família usam diferentes: **0x1004** (porcentagem) no MX Anywhere 3 e
+**0x1000** (faixa) no MX Keys. Validada contra o `upower`, que lê pelo
+driver do kernel e reporta o mesmo.
+
+Leitura ausente usa a **última conhecida**, com `battery_age_s` — porque
+o HID++ não lê bateria de quem não responde, e "5% há 2min" vale mais
+que "?" numa bandeja. Fingir que é leitura de agora seria pior.
+
+O remapeamento recusa controle que o próprio dispositivo diz não ser
+reprogramável: esquerdo e direito reportam `flags=0x01`, sem o bit
+`0x10`. E `to: "0"` restaura o padrão remapeando o controle **para ele
+mesmo** — com zero, a escrita retorna `ok` e nada muda.
+
+> ⚠️ Bateria baixa **quebra** enumeração longa. O teclado tem 24
+> controles e a 5% não sustenta as ~50 idas e voltas; o mouse, com 7,
+> completa. O erro sai por dispositivo, não derrubando a resposta.
+
 ### Três estados por serviço
 
 Dois davam falso alarme — o SSH que não existe aqui de propósito e o

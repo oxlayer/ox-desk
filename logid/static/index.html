@@ -82,6 +82,28 @@
   .bar i{display:block;height:100%;background:var(--up);border-radius:2px;
     transition:width .5s ease}
 
+  .ctlwrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .ctlhead{display:flex;align-items:center;gap:10px;padding:12px 16px;
+    border-bottom:1px solid var(--line)}
+  .ctlhead h2{font-size:13px;font-weight:650;margin:0}
+  .ctlhead .meta{color:var(--faint);font-size:11px;font-family:var(--mono)}
+  .ctlbody{padding:6px 0}
+  .ctldev{padding:8px 16px 4px;font-size:12px;color:var(--dim);font-weight:600}
+  .ctlrow{display:flex;align-items:center;gap:10px;padding:5px 16px;
+    flex-wrap:wrap}
+  .ctlrow:hover{background:var(--inset)}
+  .ctlrow .cid{font:11px var(--mono);color:var(--faint);flex:none;width:4.2em}
+  .ctlrow .nm{font-size:13px;flex:1;min-width:9em}
+  .ctlrow select{font:12px inherit;padding:3px 6px;border-radius:7px;
+    border:1px solid var(--line);background:var(--bg);color:var(--fg);
+    max-width:14em}
+  .ctlrow select:disabled{opacity:.45}
+  .ctlrow .fix{font:11px var(--mono);color:var(--faint)}
+  .ctlrow .st{font:11px var(--mono);min-width:5em}
+  .ctlrow .st.ok{color:var(--up)} .ctlrow .st.no{color:var(--down)}
+  .ctlnote{padding:8px 16px 12px;color:var(--faint);font-size:11.5px}
+
   .logwrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
     border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
   .loghead{display:flex;align-items:center;gap:10px;padding:12px 16px;
@@ -115,6 +137,19 @@
 </header>
 <p class="sub">LAN 192.168.1.0/24 &middot; leitura direta de portas, sem agente remoto</p>
 <div class="grid" id="grid"></div>
+
+<div class="ctlwrap">
+  <div class="ctlhead">
+    <h2>Botoes</h2>
+    <span class="meta" id="ctlmeta"></span>
+  </div>
+  <div class="ctlbody" id="ctl"><div class="ctlnote">carregando...</div></div>
+  <div class="ctlnote">
+    Escrever aqui muda o comportamento fisico do botao, no proprio
+    dispositivo. &ldquo;padrao&rdquo; desfaz. Dispositivo em outra maquina nao
+    aparece: o HID++ nao alcanca quem esta em outro canal.
+  </div>
+</div>
 
 <div class="logwrap">
   <div class="loghead">
@@ -180,6 +215,86 @@ function card(h){
   </div>`;
 }
 
+let ctlBusy = false;
+
+async function remap(slot, cid, to, statusEl){
+  if (ctlBusy) return;
+  ctlBusy = true;
+  statusEl.textContent = 'aplicando'; statusEl.className = 'st';
+  try{
+    const r = await fetch('/api/controls/remap', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      // confirm exigido pela API: isto escreve no dispositivo.
+      body: JSON.stringify({slot, cid, to, confirm: true}),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok){
+      statusEl.textContent = 'ok'; statusEl.className = 'st ok';
+    } else {
+      statusEl.textContent = (d.error || 'falhou').slice(0, 40);
+      statusEl.className = 'st no';
+    }
+  }catch(e){
+    statusEl.textContent = 'erro'; statusEl.className = 'st no';
+  }
+  ctlBusy = false;
+  setTimeout(controls, 1200);
+}
+
+async function controls(){
+  const box = document.getElementById('ctl');
+  try{
+    const r = await fetch('/api/controls', {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (d.error){
+      box.innerHTML = `<div class="ctlnote">${esc(d.error)}</div>`;
+      document.getElementById('ctlmeta').textContent = '';
+      return;
+    }
+    if (!d.devices.length){
+      box.innerHTML = '<div class="ctlnote">nenhum dispositivo alcancavel agora</div>';
+      document.getElementById('ctlmeta').textContent = '';
+      return;
+    }
+    box.innerHTML = d.devices.map(dev => {
+      const alvos = dev.controls;
+      const rows = dev.controls.map(c => {
+        const atual = c.remapped_to || '';
+        if (!c.reprogrammable){
+          return `<div class="ctlrow"><span class="cid">${esc(c.cid)}</span>` +
+                 `<span class="nm">${esc(c.name)}</span>` +
+                 `<span class="fix">fixo (flags ${esc(c.flags)})</span></div>`;
+        }
+        const opts = ['<option value="0">padrao</option>'].concat(
+          alvos.filter(t => t.cid !== c.cid).map(t =>
+            `<option value="${esc(t.cid)}"${t.cid === atual ? ' selected' : ''}>` +
+            `age como ${esc(t.name)}</option>`)
+        ).join('');
+        return `<div class="ctlrow"><span class="cid">${esc(c.cid)}</span>` +
+               `<span class="nm">${esc(c.name)}</span>` +
+               `<select data-slot="${dev.slot}" data-cid="${esc(c.cid)}">${opts}</select>` +
+               `<span class="st"></span></div>`;
+      }).join('');
+      return `<div class="ctldev">${esc(dev.device)} (slot ${dev.slot})</div>${rows}`;
+    }).join('');
+
+    for (const sel of box.querySelectorAll('select')){
+      sel.addEventListener('change', (ev) => {
+        const el = ev.target;
+        remap(+el.dataset.slot, el.dataset.cid, el.value,
+              el.parentElement.querySelector('.st'));
+      });
+    }
+    const n = d.devices.reduce((a, x) => a + x.controls.length, 0);
+    document.getElementById('ctlmeta').textContent =
+      n + ' controles em ' + d.devices.length + ' dispositivo(s)';
+  }catch(e){
+    box.innerHTML = `<div class="ctlnote">inacessivel: ${esc(e.message)}</div>`;
+  }
+}
+
 async function logs(){
   const box = document.getElementById('log');
   try{
@@ -223,4 +338,7 @@ async function tick(){
 }
 tick(); setInterval(tick, RS*1000);
 logs(); setInterval(logs, RS*1000);
+// Controles mudam pouco e a leitura e caro (uma ida e volta HID++ por
+// controle): intervalo bem maior que o do painel.
+controls(); setInterval(controls, 60000);
 </script></body></html>
