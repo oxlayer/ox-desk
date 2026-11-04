@@ -16,9 +16,6 @@ role = "Ubuntu 26.04 - este PC"
 units = ["logid.service"]
 
 
-  [[hosts.services]]
-  label = "KDE Connect"
-  port = 1716
 
 
 [[hosts]]
@@ -33,9 +30,6 @@ agent = "%LOCALAPPDATA%\\logid\\logid-agent.exe"
   port = 22
 
 
-  [[hosts.services]]
-  label = "KDE Connect"
-  port = 1716
 
 
 # Canal Easy-Switch de cada dispositivo em cada host.
