@@ -479,7 +479,13 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     match path.as_str() {
         // Barato de proposito: NAO toca em rede. O health check do Electron
         // batia no /api/status com 800 ms de timeout e falhava sempre.
-        "/healthz" => ok_json(req, r#"{"ok":true}"#.into()),
+        // O `build` existe para o deploy conferir que as tres maquinas
+        // rodam o MESMO commit. Ja aconteceu de o Mac ficar para tras e o
+        // usuario notar antes de mim.
+        "/healthz" => ok_json(
+            req,
+            serde_json::json!({ "ok": true, "build": env!("LOGI_BUILD") }).to_string(),
+        ),
 
         "/api/status" | "/api/hosts" => {
             let snap = cached(&snap_cfg, cache);
