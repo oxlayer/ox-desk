@@ -50,14 +50,159 @@ mod visual {
     use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
     use winit::window::{Window, WindowId};
 
-    /// O quadro pronto para desenhar, e o tamanho dele.
+    /// O quadro pronto para desenhar, com a geometria que o explica.
+    ///
+    /// Tres tamanhos diferentes vivem aqui, e confundi-los foi um bug
+    /// visivel: a tela REMOTA (`rw`x`rh`), a IMAGEM desenhada (`w`x`h`,
+    /// a remota ajustada a janela sem distorcer) e a JANELA (`jw`x`jh`).
+    ///
+    /// O calculo da posicao do mouse usava o tamanho da imagem como se
+    /// fosse o da tela remota. Como a imagem tem o tamanho da janela,
+    /// `posicao / janela * imagem` devolvia a propria posicao -- numa
+    /// janela de 1280x720 contra uma tela de 2560x1440, o cursor so
+    /// alcancava o QUARTO superior esquerdo do desktop remoto. Era o que
+    /// o usuario via como "a posicao nao bate".
     #[derive(Default)]
     pub struct Slot {
         pub rgb: Vec<u32>,
+        /// Tamanho da imagem desenhada.
         pub w: u32,
         pub h: u32,
+        /// Canto onde a imagem comeca dentro da janela (barras laterais).
+        pub ox: u32,
+        pub oy: u32,
+        /// Tamanho da tela remota -- o espaco de coordenadas do host.
+        pub rw: u32,
+        pub rh: u32,
+        /// Janela para a qual esta geometria foi calculada.
+        pub jw: u32,
+        pub jh: u32,
         /// Sobe a cada quadro novo; a janela so redesenha quando muda.
         pub geracao: u64,
+    }
+
+    /// Cor das barras quando a proporcao da janela nao bate com a da tela
+    /// remota. Escura e neutra: barra clara puxa o olho para fora da
+    /// imagem.
+    const FUNDO: u32 = 0x0010_1014;
+
+    /// Imagem ajustada a janela SEM distorcer: escala pelo lado que
+    /// aperta, centraliza o resto.
+    ///
+    /// Antes a imagem era esticada para o tamanho exato da janela. Numa
+    /// tela 16:10 mostrando um desktop 16:9 isso deforma tudo -- e, pior,
+    /// um circulo no host nao e um circulo aqui, o que atrapalha
+    /// justamente quem esta tentando trabalhar na outra maquina.
+    fn encaixa(rw: u32, rh: u32, jw: u32, jh: u32) -> (u32, u32, u32, u32) {
+        if rw == 0 || rh == 0 || jw == 0 || jh == 0 {
+            return (0, 0, 0, 0);
+        }
+        let e = (jw as f64 / rw as f64).min(jh as f64 / rh as f64);
+        let w = ((rw as f64 * e).round() as u32).clamp(1, jw);
+        let h = ((rh as f64 * e).round() as u32).clamp(1, jh);
+        ((jw - w) / 2, (jh - h) / 2, w, h)
+    }
+
+    /// Posicao na janela -> posicao na tela remota.
+    ///
+    /// `None` quando o cursor esta sobre a barra e nao sobre a imagem:
+    /// nao ha ponto remoto correspondente, e grudar na beirada inventaria
+    /// um movimento que a pessoa nao fez.
+    ///
+    /// Pura e separada do laco de eventos porque foi exatamente aqui que
+    /// o bug morou -- e um erro de escala nao da erro, so poe o cursor
+    /// no lugar errado, o que se descobre usando.
+    #[allow(clippy::type_complexity)]
+    fn ponto_remoto(
+        px: f64,
+        py: f64,
+        (ox, oy, iw, ih, rw, rh): (f64, f64, f64, f64, f64, f64),
+    ) -> Option<(f64, f64)> {
+        if iw <= 0.0 || ih <= 0.0 {
+            return None;
+        }
+        let x = (px - ox) / iw * rw;
+        let y = (py - oy) / ih * rh;
+        if x < 0.0 || y < 0.0 || x >= rw || y >= rh {
+            return None;
+        }
+        Some((x, y))
+    }
+
+    #[cfg(test)]
+    mod testes {
+        use super::*;
+
+        #[test]
+        fn mesma_proporcao_preenche_sem_barra() {
+            // 2560x1440 numa janela 1280x720: cabe exato, sem barra.
+            assert_eq!(encaixa(2560, 1440, 1280, 720), (0, 0, 1280, 720));
+        }
+
+        #[test]
+        fn janela_mais_larga_ganha_barra_lateral() {
+            // 16:9 numa janela 2:1 -> aperta pela altura, sobra largura.
+            // 1920 * (1000/1080) = 1777,8 -> 1778, arredondado e nao
+            // truncado: truncar encolhe a imagem um pixel a cada
+            // redimensionamento e a conta do cursor herda o erro.
+            let (ox, oy, w, h) = encaixa(1920, 1080, 2000, 1000);
+            assert_eq!((w, h), (1778, 1000));
+            assert_eq!(oy, 0, "sem barra em cima quando aperta pela altura");
+            assert_eq!(ox, (2000 - 1778) / 2, "centralizada");
+        }
+
+        #[test]
+        fn janela_mais_alta_ganha_barra_acima() {
+            let (ox, oy, w, h) = encaixa(1920, 1080, 1000, 1000);
+            assert_eq!((w, h), (1000, 563));
+            assert_eq!(ox, 0);
+            assert_eq!(oy, (1000 - 563) / 2);
+        }
+
+        #[test]
+        fn a_imagem_nunca_passa_da_janela() {
+            // Arredondar para cima nao pode criar imagem maior que a
+            // janela: o desenho recortaria e a conta do cursor mentiria.
+            for (rw, rh, jw, jh) in
+                [(2560u32, 1440u32, 1281u32, 721u32), (1366, 768, 999, 1), (3, 7, 100, 100)]
+            {
+                let (ox, oy, w, h) = encaixa(rw, rh, jw, jh);
+                assert!(w <= jw && h <= jh, "{rw}x{rh} em {jw}x{jh} deu {w}x{h}");
+                assert!(ox + w <= jw && oy + h <= jh);
+            }
+        }
+
+        #[test]
+        fn tamanho_zero_nao_divide_por_zero() {
+            assert_eq!(encaixa(0, 0, 100, 100), (0, 0, 0, 0));
+            assert_eq!(encaixa(100, 100, 0, 0), (0, 0, 0, 0));
+            assert_eq!(ponto_remoto(1.0, 1.0, (0.0, 0.0, 0.0, 0.0, 10.0, 10.0)), None);
+        }
+
+        #[test]
+        fn o_cursor_cobre_a_tela_remota_inteira() {
+            // O bug: numa janela de 1280x720 contra 2560x1440, o cursor
+            // so alcancava o quarto superior esquerdo. O canto inferior
+            // direito da janela tem de chegar ao canto da tela remota.
+            let g = (0.0, 0.0, 1280.0, 720.0, 2560.0, 1440.0);
+            assert_eq!(ponto_remoto(0.0, 0.0, g), Some((0.0, 0.0)));
+            assert_eq!(ponto_remoto(640.0, 360.0, g), Some((1280.0, 720.0)));
+            let (x, y) = ponto_remoto(1279.0, 719.0, g).expect("dentro");
+            assert!(x > 2550.0 && y > 1430.0, "canto virou {x},{y}");
+        }
+
+        #[test]
+        fn sobre_a_barra_nao_manda_nada() {
+            // Imagem de 800x600 centralizada numa janela de 1000x600:
+            // barra de 100px em cada lado.
+            let g = (100.0, 0.0, 800.0, 600.0, 1920.0, 1440.0);
+            assert_eq!(ponto_remoto(50.0, 300.0, g), None, "barra esquerda");
+            assert_eq!(ponto_remoto(950.0, 300.0, g), None, "barra direita");
+            assert!(ponto_remoto(100.0, 300.0, g).is_some(), "primeira coluna da imagem");
+            // E o inicio da imagem e o inicio da tela remota, nao um
+            // deslocamento de 100px.
+            assert_eq!(ponto_remoto(100.0, 0.0, g), Some((0.0, 0.0)));
+        }
     }
 
     pub fn run() -> anyhow::Result<()> {
@@ -146,21 +291,25 @@ mod visual {
                     }
                 }
                 WindowEvent::CursorMoved { position, .. } => {
-                    // A janela pode estar menor que a tela remota, entao
-                    // a posicao vai em coordenadas DO STREAM -- e o host
-                    // que tem o espaco de coordenadas, nao nos.
-                    let (sw, sh) = match self.slot.lock() {
-                        Ok(s) if s.w > 0 => (s.w as f64, s.h as f64),
+                    // A posicao vai em coordenadas da TELA REMOTA -- e o
+                    // host que define o espaco, nao nos. E a conversao e
+                    // pela IMAGEM desenhada, nao pela janela: com barras
+                    // laterais as duas diferem, e usar a janela jogaria o
+                    // cursor remoto para o lugar errado por todo o
+                    // tamanho da barra.
+                    let (rw, rh, ox, oy, iw, ih) = match self.slot.lock() {
+                        Ok(s) if s.rw > 0 && s.w > 0 => {
+                            (s.rw as f64, s.rh as f64, s.ox as f64, s.oy as f64,
+                             s.w as f64, s.h as f64)
+                        }
                         _ => return,
                     };
-                    let (jw, jh) = self.tam_janela;
-                    if jw <= 0.0 || jh <= 0.0 {
+                    let Some((x, y)) =
+                        ponto_remoto(position.x, position.y, (ox, oy, iw, ih, rw, rh))
+                    else {
                         return;
-                    }
-                    self.manda(Evento::Mouse {
-                        x: position.x / jw * sw,
-                        y: position.y / jh * sh,
-                    });
+                    };
+                    self.manda(Evento::Mouse { x, y });
                 }
                 WindowEvent::MouseInput { state, button, .. } => {
                     let codigo = match button {
@@ -236,20 +385,48 @@ mod visual {
                 Ok(s) => s,
                 Err(_) => return,
             };
-            // O quadro so serve se tiver o tamanho da janela AGORA; se a
-            // janela mudou de tamanho, o proximo quadro ja vem certo.
-            if s.w == 0 || s.h == 0 || s.w != fisico.width || s.h != fisico.height {
+            if s.w == 0 || s.h == 0 {
                 return;
             }
-            let (Some(w), Some(h)) = (NonZeroU32::new(s.w), NonZeroU32::new(s.h)) else {
+            // A superficie e do tamanho da JANELA, nao do quadro.
+            //
+            // Antes eu dimensionava pelo quadro e ABANDONAVA a pintura
+            // quando os dois nao batiam. Ao entrar em tela cheia a janela
+            // crescia, todo quadro em voo era descartado, e o que ficava
+            // na tela era o buffer antigo -- pequeno, no canto superior
+            // esquerdo, sem esticar. Era o que o usuario via.
+            //
+            // Agora pinta SEMPRE: a janela recebe fundo, a imagem vai no
+            // lugar dela, e um quadro de tamanho velho aparece
+            // ligeiramente fora de escala por um quadro em vez de travar
+            // a tela. Nao existe mais estado preso.
+            let (Some(sw), Some(sh)) =
+                (NonZeroU32::new(fisico.width.max(1)), NonZeroU32::new(fisico.height.max(1)))
+            else {
                 return;
             };
-            if surface.resize(w, h).is_err() {
+            if surface.resize(sw, sh).is_err() {
                 return;
             }
             let Ok(mut buf) = surface.buffer_mut() else { return };
-            let n = buf.len().min(s.rgb.len());
-            buf[..n].copy_from_slice(&s.rgb[..n]);
+            let (jw, jh) = (fisico.width as usize, fisico.height as usize);
+            buf.fill(FUNDO);
+            let (ox, oy) = (s.ox as usize, s.oy as usize);
+            let (iw, ih) = (s.w as usize, s.h as usize);
+            for y in 0..ih {
+                let dy = oy + y;
+                if dy >= jh {
+                    break;
+                }
+                let largura = iw.min(jw.saturating_sub(ox));
+                let origem = y * iw;
+                let destino = dy * jw + ox;
+                if origem + largura > s.rgb.len() || destino + largura > buf.len() {
+                    break;
+                }
+                buf[destino..destino + largura]
+                    .copy_from_slice(&s.rgb[origem..origem + largura]);
+            }
             self.desenhada = s.geracao;
             drop(s);
             let _ = buf.present();
@@ -365,16 +542,23 @@ mod visual {
                 // nao custa outra passada sobre os pixels.
                 let (jw, jh) = tam.lock().map(|g| *g).unwrap_or((w, h));
                 let (jw, jh) = (jw.max(1), jh.max(1));
+                // Destino = a tela remota ENCAIXADA na janela, nao a
+                // janela inteira: esticar deformava a imagem quando as
+                // proporcoes diferiam.
+                let (ox, oy, dw, dh) = encaixa(w, h, jw, jh);
+                if dw == 0 || dh == 0 {
+                    continue;
+                }
                 // Recriar o escalador e caro; so quando de fato mudou.
-                let agora = (w, h, jw, jh);
+                let agora = (w, h, dw, dh);
                 if escalador.is_none() || escala_de_para != agora {
                     escalador = ffmpeg_next::software::scaling::Context::get(
                         quadro.format(),
                         w,
                         h,
                         ffmpeg_next::format::Pixel::BGRA,
-                        jw,
-                        jh,
+                        dw,
+                        dh,
                         ffmpeg_next::software::scaling::Flags::BILINEAR,
                     )
                     .ok();
@@ -390,14 +574,14 @@ mod visual {
                 // que o softbuffer espera (o byte alto e ignorado).
                 let linha = rgba.stride(0);
                 let dados = rgba.data(0);
-                let (w, h) = (jw, jh);
-                let mut saida = vec![0u32; (w * h) as usize];
-                for y in 0..h as usize {
+                let (iw, ih) = (dw, dh);
+                let mut saida = vec![0u32; (iw * ih) as usize];
+                for y in 0..ih as usize {
                     let ini = y * linha;
-                    for x in 0..w as usize {
+                    for x in 0..iw as usize {
                         let p = ini + x * 4;
                         if p + 3 < dados.len() {
-                            saida[y * w as usize + x] = u32::from_le_bytes([
+                            saida[y * iw as usize + x] = u32::from_le_bytes([
                                 dados[p],
                                 dados[p + 1],
                                 dados[p + 2],
@@ -409,8 +593,14 @@ mod visual {
 
                 if let Ok(mut s) = slot.lock() {
                     s.rgb = saida;
-                    s.w = w;
-                    s.h = h;
+                    s.w = iw;
+                    s.h = ih;
+                    s.ox = ox;
+                    s.oy = oy;
+                    s.rw = w;
+                    s.rh = h;
+                    s.jw = jw;
+                    s.jh = jh;
                     s.geracao += 1;
                 }
                 quadros += 1;

@@ -6,6 +6,16 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Cursor no lugar certo e tela cheia que estica
+Dois defeitos meus, do mesmo conserto anterior. O cálculo da posição do
+mouse usava o tamanho da imagem como se fosse o da tela remota — numa
+janela de 1280x720 contra 2560x1440, seu cursor só alcançava o quarto
+superior esquerdo. E o desenho exigia casar o tamanho exato, então ao
+entrar em tela cheia todo quadro era descartado e ficava na tela o
+buffer antigo, pequeno, no canto. Agora a imagem se ajusta à janela sem
+distorcer (com barras quando a proporção difere) e o cursor é mapeado
+pela imagem, não pela janela.
+
 ## 2026-11-04 · Painel com barra lateral, favoritos e um painel por vez
 No estilo que você apontou no app do Windows: lateral translúcida com as
 máquinas em cima, favoritos logo abaixo e os painéis listados — o
