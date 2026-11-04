@@ -237,17 +237,12 @@ pub fn hidraw_access() -> bool {
 /// `change_host` nao tinham, e falhavam com "nao responde" segundos
 /// depois de uma leitura bem-sucedida. Observado com os devices a 5%.
 fn ping_retry(rx: &hidpp::Receiver, slot: u8, attempts: u8) -> Result<f64, String> {
-    let mut last = String::from("sem tentativa");
-    for i in 0..attempts.max(1) {
-        if i > 0 {
-            std::thread::sleep(Duration::from_millis(180));
-        }
-        match rx.ping(slot) {
-            Ok(ms) => return Ok(ms),
-            Err(e) => last = e,
-        }
+    // Delega ao crate: uma implementacao de retry para os dois lados.
+    if rx.present(slot, attempts) {
+        rx.ping(slot)
+    } else {
+        Err("sem resposta apos retry".into())
     }
-    Err(last)
 }
 
 fn no_access() -> Survey {

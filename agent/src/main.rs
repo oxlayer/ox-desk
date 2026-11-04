@@ -215,6 +215,21 @@ fn main() -> ExitCode {
                 return fail("edge: left | right | top | bottom");
             }
 
+            if !input::in_console_session() {
+                return fail(
+                    "watch-edge precisa da sessao do console: GetCursorPos e \
+                     GetLastInputInfo sao por sessao. Lancado assim ele nao \
+                     veria input e ainda competiria pelo receptor. Use o \
+                     atalho em shell:startup.",
+                );
+            }
+            if !input::claim_single_instance("logid-agent-watch-edge") {
+                return fail(
+                    "ja existe um watch-edge rodando -- tres instancias \
+                     competindo pelo mesmo receptor foi problema real",
+                );
+            }
+
             let (vx, vy, vw, vh) = input::virtual_screen();
             logline(&format!(
                 "watch-edge START borda='{edge}' area=({vx},{vy} {vw}x{vh}) \
@@ -260,7 +275,7 @@ fn main() -> ExitCode {
                 if ultima_checagem.elapsed() >= std::time::Duration::from_secs(1) {
                     ultima_checagem = std::time::Instant::now();
                 if let Ok(link) = hidpp::Receiver::open(&api) {
-                    let presente = slots.iter().any(|s| link.ping(*s).is_ok());
+                    let presente = slots.iter().any(|s| link.present(*s, 2));
                     if presente && !presente_antes {
                         idle_na_chegada = input::idle_ms().unwrap_or(0);
                         chegou_em = Some(std::time::Instant::now());
@@ -342,10 +357,12 @@ fn main() -> ExitCode {
                 // -- que e ausencia, nao falha. Tambem cobre numeracao de
                 // slot divergente: slot e por receptor e nao coincide entre
                 // maquinas.
+                // `present` com retry, nao `host_info`: ver a doc dele no
+                // crate. Era esta linha que fazia a borda "nao funcionar".
                 let presentes: Vec<u8> = slots
                     .iter()
                     .copied()
-                    .filter(|s| link.host_info(*s).is_ok())
+                    .filter(|s| link.present(*s, 3))
                     .collect();
                 if presentes.is_empty() {
                     logline(&format!(

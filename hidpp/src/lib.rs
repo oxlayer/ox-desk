@@ -226,6 +226,26 @@ impl Receiver {
         self.request(slot, fi, func, params).map(|(r, _)| r)
     }
 
+    /// O dispositivo esta presente? Com retry.
+    ///
+    /// Use ISTO para presenca, nao `host_info`: aquele custa duas idas e
+    /// volta com timeout de 700 ms cada, e um unico ping perdido nao
+    /// significa ausencia. Medido em uso real: com os dispositivos a 5% de
+    /// bateria, a checagem sem retry reportou "nenhum dispositivo neste
+    /// receptor" 25 vezes em 5 minutos enquanto o usuario movia o mouse
+    /// naquela maquina -- e a borda nao funcionava.
+    pub fn present(&self, slot: u8, attempts: u8) -> bool {
+        for i in 0..attempts.max(1) {
+            if i > 0 {
+                std::thread::sleep(Duration::from_millis(160));
+            }
+            if self.ping(slot).is_ok() {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn host_info(&self, slot: u8) -> Result<HostInfo, String> {
         let fi = self.feature_index(slot, FEATURE_CHANGE_HOST)?;
         let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0])?;

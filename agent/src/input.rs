@@ -96,3 +96,59 @@ pub fn at_edge(edge: &str, p: Point) -> bool {
         _ => false,
     }
 }
+
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateMutexW(attrs: *const u8, initial_owner: i32, name: *const u16) -> isize;
+    fn GetLastError() -> u32;
+    fn WTSGetActiveConsoleSessionId() -> u32;
+    fn ProcessIdToSessionId(pid: u32, sid: *mut u32) -> i32;
+    fn GetCurrentProcessId() -> u32;
+}
+
+const ERROR_ALREADY_EXISTS: u32 = 183;
+
+/// Garante uma instancia so dos modos residentes.
+///
+/// Sem isto, o atalho do Startup mais um lancamento manual empilham: ja
+/// aconteceu -- tres `watch-edge` ao mesmo tempo, competindo pelo mesmo
+/// receptor e triplicando o trafego HID++.
+///
+/// O handle e deliberadamente vazado: o mutex tem de viver enquanto o
+/// processo viver, e o Windows o libera no encerramento.
+/// Estamos na sessao do console fisico?
+///
+/// Os modos residentes SO funcionam la: GetLastInputInfo e GetCursorPos
+/// sao por sessao. Rodar na sessao 0 (o caso de lancar por SSH) nao e
+/// inofensivo -- aquela instancia nao ve input nenhum, reporta um desktop
+/// falso de 1024x768 e um idle igual ao uptime, e ainda compete pelo
+/// receptor HID++ com a instancia de verdade.
+pub fn in_console_session() -> bool {
+    let console = unsafe { WTSGetActiveConsoleSessionId() };
+    let mut mine: u32 = u32::MAX;
+    let ok = unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut mine) };
+    if ok == 0 || console == u32::MAX {
+        // Nao deu para saber: seguir e melhor que recusar.
+        return true;
+    }
+    mine == console
+}
+
+pub fn claim_single_instance(name: &str) -> bool {
+    // Local\ e nao Global\: o Global exige SeCreateGlobalPrivilege, e
+    // quando a criacao falha nao da para distinguir "ja existe" de "nao
+    // pude criar" -- medido, duas instancias passaram. O caso entre
+    // sessoes ja e barrado por `in_console_session`, entao o namespace por
+    // sessao e exatamente o escopo que falta cobrir.
+    let wide: Vec<u16> = format!("Local\\{name}")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let h = unsafe { CreateMutexW(std::ptr::null(), 0, wide.as_ptr()) };
+    if h == 0 {
+        // Nao conseguimos criar o mutex: seguir e melhor que nao rodar.
+        return true;
+    }
+    unsafe { GetLastError() != ERROR_ALREADY_EXISTS }
+}

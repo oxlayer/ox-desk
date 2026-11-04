@@ -853,6 +853,64 @@ voltas: `/api/controls` devolve
 7 controles, completa. O erro aparece por dispositivo em vez de
 derrubar a resposta inteira.
 
+## Por que a borda do Windows "não funcionava" — era meu bug
+
+Reclamação do usuário: bater na borda no Windows às vezes não traz os
+dispositivos. O log do agente — que só existe desde que paramos de voar
+cego daquele lado — mostrou isso 25 vezes em 5 minutos:
+
+```
+21:24:54  BORDA TOCADA em (0,516) mas nenhum dos slots [1,2] esta neste receptor
+21:25:06  BORDA TOCADA em (0,516) mas nenhum dos slots [1,2] esta neste receptor
+...
+```
+
+A borda **era detectada** — a posição do cursor está ali. O que falhava
+era a **checagem de presença**, dizendo que não havia dispositivo
+enquanto o usuário movia o mouse naquela máquina. Impossível.
+
+Causa: eu checava presença com `host_info`, que custa **duas** idas e
+volta com timeout de 700 ms cada, e **sem retry**. Com os dispositivos a
+5% de bateria, isso perde. Eu já havia corrigido exatamente isso no lado
+Linux e esquecido no agente — a segunda vez que o mesmo descuido
+aparece.
+
+Agora existe `Receiver::present(slot, tentativas)` no crate
+compartilhado, com `ping` (250 ms) e retry, e os dois lados o usam. Uma
+implementação de retry, não duas.
+
+## Guardas do `watch-edge`
+
+Problema real observado: **três instâncias ao mesmo tempo**, competindo
+pelo mesmo receptor e triplicando o tráfego HID++. O atalho do Startup
+mais um lançamento manual empilham.
+
+Duas guardas, e as duas custaram uma tentativa errada:
+
+**Sessão do console.** Lançar por SSH cria uma instância na sessão 0 que
+não vê input nenhum (`area=(0,0 1024x768)`, idle igual ao uptime) e ainda
+disputa o receptor. `WTSGetActiveConsoleSessionId` +
+`ProcessIdToSessionId` recusam isso com mensagem explícita.
+
+**Instância única, no namespace `Local\`.** Minha primeira versão usou
+`Global\`, e **duas instâncias passaram**: o `Global` exige
+`SeCreateGlobalPrivilege`, e quando a criação falha não dá para
+distinguir "já existe" de "não pude criar". Como a guarda de sessão já
+barra o caso entre sessões, o namespace por sessão é exatamente o escopo
+que faltava.
+
+> Nota de método: ao testar, contei dois processos e quase reportei a
+> guarda como quebrada. Eram a instância boa mais a recusada **saindo** —
+> minha medição correndo com o teardown. O log tinha um único
+> `watch-edge START`, e é ele que decide, não o `Get-Process`.
+
+### Deploy no Windows precisa de rename, não de `scp` direto
+
+`scp` sobre o exe falha com `dest open ... Failure` quando qualquer
+instância o mantém aberto, e o script ainda imprimia "trocado". Agora:
+enviar como `.new.exe`, `Remove-Item` no atual, `Move-Item`, e
+**conferir tamanho e data** — não confiar na ausência de erro.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.
