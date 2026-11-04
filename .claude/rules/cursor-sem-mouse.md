@@ -88,3 +88,28 @@ de uso do KVM nessa máquina.
 
 - [[tela-bloqueada-windows]] — outra família de sintomas do mesmo host
 - [[../../specs/005-input-switch.md]] — o KVM por LAN
+
+## Desfecho (04/11)
+
+O usuário plugou o dongle reserva no Windows. O resultado, medido:
+
+```
+Get-PnpDevice -Class Mouse  ->  HID-compliant mouse
+host log                    ->  forma de ponteiro: Cor 32x32 pitch=128 (4096 bytes)
+                                cursor desenhado em 1356,728 (32x32)
+```
+
+Um receptor Unifying **sem nada pareado** basta: ele enumera interfaces
+de mouse e teclado sozinho. O Windows voltou a desenhar o cursor no
+monitor físico, e o DXGI voltou a mandar a forma de verdade — colorida
+com alfa, 32x32 —, que passamos a compor no lugar da nossa seta.
+
+A seta embutida continua no código e continua certa: ela cobre quem
+assiste uma máquina que não tem mouse nenhum. O que mudou é que ela
+deixou de ser o caminho normal desta máquina.
+
+Com cursor de sistema presente, `Visible` do DXGI passou a significar
+algo, então voltamos a respeitá-lo — jogo em tela cheia esconde o
+ponteiro de propósito, e desenhar um por cima seria intrometer-se.
+Sem mouse, `Visible` é sempre falso e obedecê-lo apagaria justamente o
+fallback.

@@ -182,6 +182,7 @@ impl Monitor {
                         visivel: false,
                         salvo: None,
                         desenhou_uma_vez: false,
+                        visivel_sistema: false,
                     });
                 }
                 Err(e) => {
@@ -244,6 +245,8 @@ pub struct Tela {
     salvo: Option<(u32, u32, u32, u32, Vec<u8>)>,
     /// So para o log dizer uma vez que a composicao esta de pe.
     desenhou_uma_vez: bool,
+    /// O que o DXGI diz sobre o cursor DO SISTEMA estar visivel.
+    visivel_sistema: bool,
 }
 
 impl Tela {
@@ -299,7 +302,18 @@ impl Tela {
             } else {
                 false
             };
-            self.visivel = true;
+            // Visibilidade: so acreditar no DXGI quando ele tem um
+            // cursor de verdade para falar sobre.
+            //
+            // Sem mouse na maquina, `Visible` vem false para sempre e
+            // obedecer isso apagaria a seta embutida -- que existe
+            // justamente para esse caso. Com mouse, `Visible` passa a
+            // significar algo: jogo em tela cheia esconde o ponteiro de
+            // proposito, e desenhar um por cima seria nos intrometendo.
+            if info.LastMouseUpdateTime != 0 {
+                self.visivel_sistema = info.PointerPosition.Visible.as_bool();
+            }
+            self.visivel = self.forma.is_none() || self.visivel_sistema;
 
             // Se o sistema TEM um cursor, ele manda a forma quando ela
             // muda, e desenhar a dele e melhor que a nossa (mao, barra
