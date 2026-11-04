@@ -1108,7 +1108,7 @@ medir em que porta o receptor estava. A ordem de investigacao no inicio
 desta secao agora comeca pelo fisico -- velocidade e barramento dos dois
 receptores -- porque custa um comando e elimina a classe inteira.
 
-### O dongle B esta defeituoso, e ele mentiu para nos o dia inteiro (04/11)
+### A cola segue o dongle, nao a maquina -- e o dongle B le lixo (04/11)
 
 Invertendo os dois dongles entre as maquinas, a cola seguiu o **dongle**,
 nao a maquina: os dispositivos foram para onde o dongle A estava, e
@@ -1134,8 +1134,32 @@ comporta assim; e a convergencia "sempre no host 1" era convergencia no
 **dongle que funciona**.
 
 **Remedio:** usar so o dongle A, e alcancar a outra maquina pela tela
-remota (specs/010) em vez de mover os dispositivos. O KVM por troca de
-canal estava brigando com hardware defeituoso.
+remota (specs/010) em vez de mover os dispositivos.
+
+#### Ressalva: o titulo desta secao afirma mais do que eu medi
+
+Escrevi "o dongle B esta defeituoso" no mesmo dia em que vi o lixo, e o
+commit cb5722c carrega essa frase. Ela pode estar certa, mas as duas
+leituras corrompidas **nao a provam**: naquele momento os dispositivos
+estavam caindo do dongle B o tempo todo, e uma leitura HID++ de um
+dispositivo que ja saiu do ar devolve exatamente esse tipo de payload
+sem sentido. Lixo na resposta e sintoma compativel com receptor com
+defeito **e** com dispositivo ausente -- e eu tinha as duas condicoes
+juntas.
+
+O que ficou medido, e que basta para a decisao pratica:
+
+- a cola segue o dongle, nao a maquina nem a porta (isso derrubou a
+  hipotese de USB 3.0, e foi medido invertendo os dois);
+- com o dongle A sozinho as leituras sao coerentes -- `canal=1 de 3` nos
+  dois dispositivos, nome correto, estavel por 20 minutos de vigilancia;
+- com o dongle B as leituras nao eram confiaveis.
+
+Isso justifica usar so o dongle A. Nao justifica afirmar a causa fisica.
+Para decidir de verdade bastaria parear os dois dispositivos no dongle B
+numa maquina sem o dongle A por perto e ler com eles presentes e
+acordados; se o lixo voltar com dispositivo vivo, ai sim e o receptor.
+Fica anotado como nao feito, nao como sabido.
 
 ### Dois instrumentos consertados por causa disto
 

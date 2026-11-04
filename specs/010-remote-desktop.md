@@ -478,3 +478,85 @@ caminho atual e procurar pelo nome com `av_find_input_format`, que e o
 que o proprio `ffmpeg -f avfoundation` faz. Ponteiro nao nulo prova duas
 coisas de uma vez: o dispositivo esta compilado na biblioteca e o
 `avdevice` foi registrado -- sem o registro, o nome nao resolve.
+
+## "Qualidade pessima" no Ubuntu -> Windows eram tres bugs nossos (04/11)
+
+O usuario comparou os dois caminhos e so um estava ruim: Mac -> Windows
+(decodificado por `swscale`) estava otimo; Ubuntu -> Windows (nosso
+caminho de GPU) estava, nas palavras dele, pessimo. Caminho diferente,
+mesma rede, mesma tela: o problema era nosso codigo, e nao a banda.
+
+Tres causas independentes, todas encontradas por medicao depois que a
+comparacao apontou o caminho culpado.
+
+### 1. O bitrate nunca saiu do piso (nvenc.rs)
+
+`pixels * 60 / 1000` da 221 kbps em 1440p, entao o `.clamp(8_000_000,
+..)` devolvia **8 Mbps em qualquer resolucao** -- enquanto o comentario
+logo acima prometia ~15 em 1440p e ~34 em 4K. Os tres hosts codificaram
+a 8 Mbps por semanas.
+
+So apareceu porque a tela Retina do Mac (3360x2100) tambem anunciou
+"8 Mbps alvo" e o numero ficou absurdo o bastante para eu refazer a
+conta. **O host Windows nunca imprimiu o alvo** -- por isso o bug
+sobreviveu la. Hoje os tres imprimem: numero que ninguem ve e numero que
+ninguem confere.
+
+### 2. O VBV media a taxa media e anulava o proprio teto (nvenc.rs)
+
+    maxBitRate    = alvo * 2     // "pode gastar o dobro quando muda tudo"
+    vbvBufferSize = alvo / 60    // mas o quadro nao passa de alvo/60 bits
+
+Duas linhas que se contradiziam. A folga do `maxBitRate` nunca pode ser
+gasta porque o VBV, dimensionado pela media, limitava qualquer quadro a
+16 KB. Rolar uma pagina e justamente quando o encoder precisa gastar --
+e era justamente quando ele nao podia, entao subia o QP ate o `maxQP`.
+Isso saia como borrao **no movimento**, que e onde a pessoa olha.
+
+A prova estava no log desde sempre: quadro-chave de 120 KB contra um VBV
+de 16 KB. Agora o VBV mede um quadro do teto; em 1440p o orcamento por
+quadro vai de 16 KB para 60 KB.
+
+| tela | alvo | teto | orcamento/quadro |
+|---|---:|---:|---:|
+| 1080p | 8.3 Mbps | 16.6 | 33.8 KB |
+| 1440p | 14.7 Mbps | 29.5 | 60.0 KB |
+| Retina | 28.2 Mbps | 56.4 | 114.8 KB |
+| 4K | 33.2 Mbps | 66.4 | 135.0 KB |
+
+### 3. A conversao serrilhava e ainda era o gargalo (decode_nv.rs)
+
+`nv12_para_bgra` amostrava por vizinho mais proximo, com um comentario
+meu dizendo que bilinear era "o proximo passo se incomodar". Incomodou:
+encolher 1440p numa janela serrilha cada letra, e era so no caminho da
+GPU -- o `swscale` do outro caminho ja era bilinear. Lado a lado a
+diferenca salta.
+
+**Consertar isso sozinho teria piorado.** Bilinear quadruplica as
+leituras de luma, entao medi antes de confiar: **28.25 ms por quadro,
+teto de 35 fps** -- e o visualizador do usuario marcava exatamente
+**27 fps desenhados**. A rede entregava 60 e o desenho segurava. Ninguem
+tinha medido a conversao porque ela nao parece um gargalo; ela e so um
+laco.
+
+Duas correcoes no mesmo laco:
+
+- a tabela de colunas nao depende da linha, e estava sendo refeita 1232
+  vezes por quadro;
+- linhas de saida sao independentes entre si, entao o quadro se divide
+  em faixas por nucleo.
+
+28.25 ms -> **2.76 ms**, teto de 362 fps. Virou teste de orcamento
+(`conversao_cabe_no_orcamento`, teto de 12 ms) para nao voltar.
+
+### A licao
+
+Os tres bugs eram invisiveis individualmente e visiveis juntos, e os
+tres foram achados pelo mesmo movimento: **comparar dois caminhos que
+deveriam dar o mesmo resultado**. O Mac servia de controle. Sem ele eu
+teria culpado a rede.
+
+O segundo padrao: dois dos tres sobreviveram porque o numero que os
+denunciava nao era impresso em lugar nenhum (o alvo no Windows) ou nunca
+tinha sido medido (o custo da conversao). Instrumentar custou minutos e
+apontou direto.
