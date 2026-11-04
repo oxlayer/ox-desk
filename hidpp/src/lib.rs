@@ -85,10 +85,19 @@ pub struct HostInfo {
 /// MX Anywhere 3 expoe 0x1004 (porcentagem) e o MX Keys 0x1000 (faixa).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Battery {
-    /// Porcentagem, quando o dispositivo reporta (feature 0x1004).
+    /// Porcentagem, quando o dispositivo reporta.
     pub percent: Option<u8>,
-    /// Faixa textual, quando so ha 0x1000: full | good | low | critical.
-    pub level: Option<&'static str>,
+    /// Status **declarado pelo dispositivo**, nao deduzido por nos.
+    ///
+    /// Vale desconfiar dele: medido, um MX Keys no cabo subiu de 5% para
+    /// 50% reportando `descarregando` o tempo todo -- e o `upower`, que le
+    /// pelo driver do kernel, reporta o mesmo. A mentira e do firmware; o
+    /// nome do campo deixa claro de quem e a afirmacao.
+    pub status: Option<&'static str>,
+    /// Proximo degrau de descarga que o dispositivo prevê (0x1000).
+    pub next_level: Option<u8>,
+    /// Carregando. Para 0x1004 usamos chargingStatus **ou** externalPower,
+    /// que e mais confiavel que so o primeiro.
     pub charging: bool,
     /// Qual feature respondeu, para o diagnostico nao virar adivinhacao.
     pub source: &'static str,
@@ -320,11 +329,19 @@ impl Receiver {
         if let Ok(fi) = self.feature_index(slot, FEATURE_UNIFIED_BATTERY) {
             if let Ok((r, _)) = self.request(slot, fi, 0x01, &[0, 0, 0]) {
                 if r.len() >= 3 {
-                    // r[0] = stateOfCharge (%), r[2] = chargingStatus
+                    // r[0]=stateOfCharge(%), r[1]=level, r[2]=chargingStatus,
+                    // r[3]=externalPowerStatus. Medido no MX Anywhere 3 no
+                    // cabo: 05 01 01 01.
+                    let ext = r.get(3).copied().unwrap_or(0);
                     return Some(Battery {
                         percent: Some(r[0]),
-                        level: None,
-                        charging: r[2] != 0,
+                        status: Some(if r[2] != 0 || ext != 0 {
+                            "carregando"
+                        } else {
+                            "descarregando"
+                        }),
+                        next_level: None,
+                        charging: r[2] != 0 || ext != 0,
                         source: "0x1004",
                     });
                 }
@@ -336,23 +353,23 @@ impl Receiver {
         if r.len() < 3 {
             return None;
         }
-        // r[0] = nivel de descarga (%, ou 0 se so faixa), r[2] = status
-        let level = match r[1] {
-            // bitfield de "proximo nivel"; usamos o status como faixa
-            _ => match r[2] {
-                0 => "descarregando",
-                1 => "recarregando",
-                2 => "quase cheia",
-                3 => "cheia",
-                4 => "lenta",
-                5 => "invalida",
-                6 => "erro",
-                _ => "desconhecida",
-            },
+        // r[0]=nivel de descarga (%), r[1]=proximo degrau, r[2]=status.
+        // Medido no MX Keys carregando: 32 14 00 -- 50%, proximo 20%, e
+        // status 0 ("descarregando") apesar de estar no cabo.
+        let status = match r[2] {
+            0 => "descarregando",
+            1 => "recarregando",
+            2 => "quase cheia",
+            3 => "cheia",
+            4 => "carga lenta",
+            5 => "invalida",
+            6 => "erro",
+            _ => "desconhecido",
         };
         Some(Battery {
             percent: if r[0] > 0 { Some(r[0]) } else { None },
-            level: Some(level),
+            status: Some(status),
+            next_level: if r[1] > 0 { Some(r[1]) } else { None },
             charging: matches!(r[2], 1 | 2),
             source: "0x1000",
         })

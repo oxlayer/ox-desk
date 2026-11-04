@@ -128,8 +128,12 @@ function toggle() {
 function batteryLabel(d) {
   const parts = [];
   if (d.battery_percent != null) parts.push(d.battery_percent + '%');
-  if (d.battery_level) parts.push(d.battery_level);
+  // O status vem do dispositivo e pode contradizer a realidade: medido,
+  // um MX Keys no cabo subiu de 5% para 50% dizendo "descarregando".
+  // Marcamos de quem e a afirmacao.
   if (d.charging) parts.push('carregando');
+  else if (d.battery_status) parts.push(`diz: ${d.battery_status}`);
+  if (d.battery_next_level != null) parts.push(`prox ${d.battery_next_level}%`);
   // Idade da leitura: com o dispositivo ausente, isto e memoria, e dizer
   // "5% (2min)" vale mais que "?" -- mas fingir que e agora seria pior.
   if (d.battery_age_s > 60) {

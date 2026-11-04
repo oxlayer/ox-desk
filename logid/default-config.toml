@@ -10,7 +10,7 @@ refresh_seconds = 10
 name = "ubuntu-host"
 addr = "127.0.0.1"
 role = "Ubuntu 26.04 - este PC"
-units = ["deskflow-client.service", "gnome-remote-desktop.service"]
+units = ["logid.service", "gnome-remote-desktop.service"]
 
   [[hosts.services]]
   label = "RDP (GNOME)"
@@ -20,10 +20,6 @@ units = ["deskflow-client.service", "gnome-remote-desktop.service"]
   label = "KDE Connect"
   port = 1716
 
-  [[hosts.services]]
-  label = "Deskflow srv"
-  port = 24800
-  expect = "down"          # esta maquina e cliente, nao servidor
 
 [[hosts]]
 name = "windows-host"
@@ -36,9 +32,6 @@ agent = "%LOCALAPPDATA%\\logid\\logid-agent.exe"
   label = "SSH"
   port = 22
 
-  [[hosts.services]]
-  label = "Deskflow srv"
-  port = 24800
 
   [[hosts.services]]
   label = "KDE Connect"

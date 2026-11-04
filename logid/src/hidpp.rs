@@ -32,7 +32,7 @@ pub struct Known {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battery_percent: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub battery_level: Option<String>,
+    pub battery_status: Option<String>,
     /// Epoch em segundos da leitura de bateria.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battery_at: Option<u64>,
@@ -75,7 +75,7 @@ fn load_cache() -> BTreeMap<u8, Known> {
         .map(|m| {
             m.into_iter()
                 .filter_map(|(k, v)| k.parse::<u8>().ok().map(|s| {
-                    (s, Known { name: v, battery_percent: None, battery_level: None, battery_at: None })
+                    (s, Known { name: v, battery_percent: None, battery_status: None, battery_at: None })
                 }))
                 .collect()
         })
@@ -108,7 +108,7 @@ fn remember(slot: u8, name: &str, bat: Option<(Option<u8>, Option<String>)>) {
         let e = m.entry(slot).or_insert_with(|| Known {
             name: name.to_string(),
             battery_percent: None,
-            battery_level: None,
+            battery_status: None,
             battery_at: None,
         });
         let mut dirty = false;
@@ -117,11 +117,11 @@ fn remember(slot: u8, name: &str, bat: Option<(Option<u8>, Option<String>)>) {
             dirty = true;
         }
         if let Some((pct, lvl)) = bat {
-            if e.battery_percent != pct || e.battery_level != lvl {
+            if e.battery_percent != pct || e.battery_status != lvl {
                 dirty = true;
             }
             e.battery_percent = pct;
-            e.battery_level = lvl;
+            e.battery_status = lvl;
             e.battery_at = Some(now_secs());
             dirty = true;
         }
@@ -179,8 +179,12 @@ pub struct Device {
     /// Porcentagem, quando o dispositivo reporta.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub battery_percent: Option<u8>,
+    /// Status DECLARADO pelo dispositivo -- nao confie cegamente: um MX
+    /// Keys no cabo subiu de 5% para 50% dizendo "descarregando".
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub battery_level: Option<String>,
+    pub battery_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_next_level: Option<u8>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub charging: bool,
     /// Qual feature respondeu (0x1004 ou 0x1000), para diagnostico.
@@ -316,7 +320,8 @@ pub fn survey_cached_or_fresh(max_age: Duration) -> Survey {
                         current_host: host,
                         num_hosts: None,
                         battery_percent: None,
-                        battery_level: None,
+                        battery_status: None,
+                        battery_next_level: None,
                         charging: false,
                         battery_source: None,
                         battery_age_s: None,
@@ -431,7 +436,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
             let bat = d
                 .battery
                 .as_ref()
-                .map(|b| (b.percent, b.level.map(String::from)));
+                .map(|b| (b.percent, b.status.map(String::from)));
             if bat.is_some() || d.name.is_some() {
                 remember(d.slot, &name, bat);
             }
@@ -441,10 +446,10 @@ pub fn survey_opts(with_battery: bool) -> Survey {
             // Sem leitura agora? usa a ultima conhecida, declarando a idade.
             let cached = remembered_full(d.slot);
             let (pct, lvl, age) = match d.battery.as_ref() {
-                Some(b) => (b.percent, b.level.map(String::from), Some(0)),
+                Some(b) => (b.percent, b.status.map(String::from), Some(0)),
                 None => (
                     cached.as_ref().and_then(|k| k.battery_percent),
-                    cached.as_ref().and_then(|k| k.battery_level.clone()),
+                    cached.as_ref().and_then(|k| k.battery_status.clone()),
                     cached
                         .as_ref()
                         .and_then(|k| k.battery_at)
@@ -454,7 +459,8 @@ pub fn survey_opts(with_battery: bool) -> Survey {
             Device {
             slot: d.slot,
             battery_percent: pct,
-            battery_level: lvl,
+            battery_status: lvl,
+            battery_next_level: d.battery.as_ref().and_then(|b| b.next_level),
             charging: d.battery.as_ref().is_some_and(|b| b.charging),
             battery_source: d.battery.as_ref().map(|b| b.source.to_string()),
             battery_age_s: age,

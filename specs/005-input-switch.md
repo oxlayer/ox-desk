@@ -968,6 +968,55 @@ testes, os dispositivos saíram três vezes sem intenção.
 máquina por raspão. `3` evita o acidente e devolve o delay. Não há
 escolha certa sem saber o seu uso.
 
+## O status de bateria é afirmação do dispositivo, não nossa
+
+Reclamação: "teclado carregando há 30 minutos já" — e o painel dizia
+`descarregando`. Investigado nos bytes crus:
+
+```
+MX Keys   0x1000 getLevel -> 32 14 00    = 50%, proximo 20%, status 0
+MX Anywhere 3 0x1004 getStatus -> 05 01 01 01  = 5%, nivel 1,
+                                                 chargingStatus 1, externalPower 1
+```
+
+**A carga estava funcionando**: o teclado havia subido de 5% para 50%, e
+o mouse foi de 5% a 70% durante a própria investigação. O que estava
+errado era o meu rótulo.
+
+O MX Keys reporta `status = 0` ("descarregando") **no cabo, com a carga
+subindo**. O `upower`, que lê pelo driver do kernel, reporta o mesmo — a
+afirmação falsa é do firmware. Mas eu a exibia como se fosse leitura
+minha, num campo chamado `battery_level`, como se fosse o nível.
+
+Correções:
+
+- `battery_level` virou **`battery_status`**, e a doc diz de quem é a
+  afirmação. A bandeja mostra `diz: descarregando`, não `descarregando`.
+- `charging` para 0x1004 agora usa `chargingStatus` **ou**
+  `externalPower` (byte 3), mais confiável que só o primeiro.
+- `battery_next_level` (byte 1 do 0x1000) deixou de ser descartado.
+
+> Quando o dispositivo está ausente, o valor vem do cache com
+> `battery_age_s` — observado: teclado `50% idade=49s` enquanto o mouse
+> lia `70% idade=0s`. Memória declarada como memória.
+
+## Troca imediata na borda, por pedido
+
+`hold_hits = 1`: troca no primeiro toque, sem permanência. O usuário
+pediu explicitamente depois de eu apresentar o trade-off — a borda
+direita não é caminho frequente para ele.
+
+O default do repo segue `2`, para quem instalar não ser surpreendido.
+
+## O Deskflow ainda aparecia no painel
+
+Removido do pacote e das duas máquinas, mas continuava na config: um
+`[[hosts.services]]` na porta 24800 e o unit `deskflow-client.service`
+em `units`. O painel mostrava `Deskflow srv: fechada` e
+`deskflow-client · inactive` — ruído sobre algo que não existe mais.
+
+Trocado por `logid.service`, que é o que de fato importa vigiar.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.
