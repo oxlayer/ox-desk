@@ -6,6 +6,10 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Tela remota própria: teclado e mouse já voltam
+O laço fechou — o input do cliente chega ao host e é aplicado. Falta
+trocar o botão "Ver a tela" para chamar o nosso em vez do RDP.
+
 ## 2026-11-04 · Tela remota própria: já dá para VER o Ubuntu no Mac
 A imagem é capturada, codificada pela GPU, atravessa a rede e é
 decodificada no M1 a 72 fps. Falta mandar teclado e mouse de volta para

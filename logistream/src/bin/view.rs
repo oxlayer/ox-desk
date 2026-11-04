@@ -33,7 +33,10 @@ mod mac {
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
+    use logistream::input::{evdev_de_winit, Evento, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
     use logistream::net::{self, Reassembler};
+    use winit::event::{ElementState, MouseButton, MouseScrollDelta};
+    use winit::keyboard::PhysicalKey;
     use winit::application::ApplicationHandler;
     use winit::event::WindowEvent;
     use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -54,8 +57,15 @@ mod mac {
         let slot: Arc<Mutex<Slot>> = Arc::new(Mutex::new(Slot::default()));
         let slot_rede = Arc::clone(&slot);
 
+        // Canal do tokio usado de codigo SINCRONO (o laco de janela):
+        // `try_send` nao bloqueia, e se encher e porque o input esta
+        // chegando mais rapido que a rede -- descartar movimento de
+        // mouse e aceitavel, e os eventos de tecla sao raros o bastante
+        // para nunca encherem isto.
+        let (tx_in, rx_in) = tokio::sync::mpsc::channel::<Evento>(256);
+
         std::thread::spawn(move || {
-            if let Err(e) = receber(&alvo, slot_rede) {
+            if let Err(e) = receber(&alvo, slot_rede, rx_in) {
                 eprintln!("rede: {e}");
                 std::process::exit(1);
             }
@@ -65,7 +75,16 @@ mod mac {
         // `Wait` e nao `Poll`: acordamos quando chega quadro, nao a
         // 100% de CPU perguntando se chegou.
         ev.set_control_flow(ControlFlow::Wait);
-        let mut app = App { janela: None, surface: None, slot, desenhada: 0, n: 0, t0: Instant::now() };
+        let mut app = App {
+            janela: None,
+            surface: None,
+            slot,
+            desenhada: 0,
+            n: 0,
+            t0: Instant::now(),
+            tx_in,
+            tam_janela: (1280.0, 720.0),
+        };
         ev.run_app(&mut app)?;
         Ok(())
     }
@@ -77,6 +96,10 @@ mod mac {
         desenhada: u64,
         n: u64,
         t0: Instant,
+        tx_in: tokio::sync::mpsc::Sender<Evento>,
+        /// Tamanho atual da janela, para converter a posicao do cursor
+        /// no espaco do stream.
+        tam_janela: (f64, f64),
     }
 
     impl ApplicationHandler for App {
@@ -95,6 +118,62 @@ mod mac {
             match evento {
                 WindowEvent::CloseRequested => ev.exit(),
                 WindowEvent::RedrawRequested => self.desenhar(),
+                WindowEvent::Resized(t) => {
+                    self.tam_janela = (t.width as f64, t.height as f64);
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    // A janela pode estar menor que a tela remota, entao
+                    // a posicao vai em coordenadas DO STREAM -- e o host
+                    // que tem o espaco de coordenadas, nao nos.
+                    let (sw, sh) = match self.slot.lock() {
+                        Ok(s) if s.w > 0 => (s.w as f64, s.h as f64),
+                        _ => return,
+                    };
+                    let (jw, jh) = self.tam_janela;
+                    if jw <= 0.0 || jh <= 0.0 {
+                        return;
+                    }
+                    self.manda(Evento::Mouse {
+                        x: position.x / jw * sw,
+                        y: position.y / jh * sh,
+                    });
+                }
+                WindowEvent::MouseInput { state, button, .. } => {
+                    let codigo = match button {
+                        MouseButton::Left => BTN_LEFT,
+                        MouseButton::Right => BTN_RIGHT,
+                        MouseButton::Middle => BTN_MIDDLE,
+                        _ => return,
+                    };
+                    self.manda(Evento::Botao {
+                        codigo,
+                        apertado: state == ElementState::Pressed,
+                    });
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    // O trackpad do Mac manda pixels; a roda manda
+                    // linhas. O Mutter quer um deslocamento continuo,
+                    // entao a linha vira um passo de ~15 px.
+                    let (dx, dy) = match delta {
+                        MouseScrollDelta::LineDelta(x, y) => (-x as f64 * 15.0, -y as f64 * 15.0),
+                        MouseScrollDelta::PixelDelta(p) => (-p.x, -p.y),
+                    };
+                    self.manda(Evento::Rolagem { dx, dy });
+                }
+                WindowEvent::KeyboardInput { event, is_synthetic, .. } => {
+                    // Sintetico e o que o sistema inventa ao focar a
+                    // janela; repassar isso apertaria tecla que ninguem
+                    // apertou.
+                    if is_synthetic {
+                        return;
+                    }
+                    let PhysicalKey::Code(code) = event.physical_key else { return };
+                    let Some(keycode) = evdev_de_winit(code) else { return };
+                    self.manda(Evento::Tecla {
+                        keycode,
+                        apertado: event.state == ElementState::Pressed,
+                    });
+                }
                 _ => {}
             }
         }
@@ -112,6 +191,12 @@ mod mac {
     }
 
     impl App {
+        /// `try_send` e nao `send`: o laco de janela nao pode bloquear
+        /// esperando a rede -- travaria a interface inteira.
+        fn manda(&self, e: Evento) {
+            let _ = self.tx_in.try_send(e);
+        }
+
         fn desenhar(&mut self) {
             let (Some(janela), Some(surface)) = (self.janela.as_ref(), self.surface.as_mut())
             else {
@@ -150,7 +235,11 @@ mod mac {
 
     /// Recebe, remonta, decodifica e deixa no slot.
     #[tokio::main(flavor = "current_thread")]
-    async fn receber(alvo: &str, slot: Arc<Mutex<Slot>>) -> anyhow::Result<()> {
+    async fn receber(
+        alvo: &str,
+        slot: Arc<Mutex<Slot>>,
+        mut rx_in: tokio::sync::mpsc::Receiver<Evento>,
+    ) -> anyhow::Result<()> {
         ffmpeg_next::init()?;
 
         let mut enderecos: Vec<std::net::SocketAddr> =
@@ -164,6 +253,20 @@ mod mac {
         let ep = net::cliente(bind)?;
         let conexao = ep.connect(destino, "logistream")?.await?;
         println!("conectado em {destino}");
+
+        // Input por stream unidirecional: confiavel e ordenado. Perder
+        // um "tecla solta" deixaria a tecla presa no host.
+        let mut envio = conexao.open_uni().await?;
+        tokio::spawn(async move {
+            let mut buf = bytes::BytesMut::new();
+            while let Some(e) = rx_in.recv().await {
+                buf.clear();
+                e.escrever(&mut buf);
+                if envio.write_all(&buf).await.is_err() {
+                    break;
+                }
+            }
+        });
 
         let codec = ffmpeg_next::decoder::find(ffmpeg_next::codec::Id::H264)
             .ok_or_else(|| anyhow::anyhow!("sem decoder H.264"))?;

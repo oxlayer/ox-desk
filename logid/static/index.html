@@ -995,14 +995,33 @@ document.getElementById('fshost').addEventListener('click', ev => {
 
 // Versao do build: as tres maquinas tem de estar no mesmo commit, e ja
 // aconteceu de uma ficar para tras sem ninguem notar.
-fetch('/healthz', {cache:'no-store'}).then(r => r.json())
-  .then(d => {
+// Versao do build, e recarga quando ela muda.
+//
+// A janela do Electron carrega a pagina UMA vez e fica com ela: depois
+// de um deploy o daemon ja serve HTML novo e a tela continua velha --
+// foi exatamente o que o usuario viu no Mac. Conferir a cada tick
+// resolve nos dois lugares, app e navegador.
+let BUILD_INICIAL = null;
+async function versao(){
+  try{
+    const d = await (await fetch('/healthz', {cache:'no-store'})).json();
     // Numero antes do hash: ele diz QUAL maquina esta atras, nao so que
     // estao diferentes.
-    document.getElementById('build').textContent =
-      (d.n ? '#' + d.n + ' ' : '') + (d.build || '?');
-  })
-  .catch(() => {});
+    const atual = (d.n ? '#' + d.n + ' ' : '') + (d.build || '?');
+    const el = document.getElementById('build');
+    if (BUILD_INICIAL === null){ BUILD_INICIAL = atual; el.textContent = atual; return; }
+    if (atual !== BUILD_INICIAL){
+      // Marcar ANTES de recarregar: se algo falhar no caminho, nao vira
+      // laco de recarga.
+      BUILD_INICIAL = atual;
+      el.textContent = atual + ' - recarregando';
+      setTimeout(() => location.reload(), 400);
+      return;
+    }
+    el.textContent = atual;
+  }catch(e){ /* daemon reiniciando: tenta no proximo tick */ }
+}
+versao(); setInterval(versao, 5000);
 
 tick(); setInterval(tick, RS*1000);
 files();

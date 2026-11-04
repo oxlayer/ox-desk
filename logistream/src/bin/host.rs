@@ -21,9 +21,11 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use cudarc::driver::CudaContext;
+use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
 use dbus::blocking::Connection;
 use dbus::message::MatchRule;
 use dbus::Path;
+use logistream::input::{Evento, Leitor};
 use logistream::net::{self, SliceHeader};
 use moq_nvenc::sys::nvEncodeAPI::{
     NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_P4_GUID, NV_ENC_TUNING_INFO,
@@ -39,6 +41,9 @@ const SC: &str = "org.gnome.Mutter.ScreenCast";
 const SC_OBJ: &str = "/org/gnome/Mutter/ScreenCast";
 const SESSION: &str = "org.gnome.Mutter.ScreenCast.Session";
 const STREAM: &str = "org.gnome.Mutter.ScreenCast.Stream";
+const RD: &str = "org.gnome.Mutter.RemoteDesktop";
+const RD_OBJ: &str = "/org/gnome/Mutter/RemoteDesktop";
+const RD_SESSION: &str = "org.gnome.Mutter.RemoteDesktop.Session";
 const T: Duration = Duration::from_secs(10);
 /// Dois quadros de folga. Mais que isso seria fila de coisa velha.
 const CAPACIDADE: usize = 2;
@@ -70,18 +75,44 @@ fn main() -> anyhow::Result<()> {
     // "0 recusados" com o receptor em zero, porque nada era transmitido.
     let (tx, rx) = tokio::sync::mpsc::channel::<Codificado>(CAPACIDADE);
 
-    // --- thread de rede -------------------------------------------------
+    // --- coreografia entre as duas threads -------------------------------
+    //
+    // A sessao de INPUT tem de existir antes da de TELA: e o `SessionId`
+    // dela que amarra as duas, e sem o vinculo o
+    // `NotifyPointerMotionAbsolute` nao tem espaco de coordenadas.
+    //
+    // Mas quem injeta e a thread de rede, e no D-Bus a sessao pertence a
+    // conexao que a criou -- outra conexao nao pode chamar `Notify*`
+    // nela. Entao a sessao de input nasce LA, e so o identificador
+    // atravessa.
+    //
+    //   rede:  cria input  -> manda SessionId ----> main
+    //   main:  cria tela vinculada, RecordMonitor -> manda caminho do
+    //          stream (para o ponteiro absoluto) -> rede
+    //   rede:  Start() -- que inicia as duas
+    //   main:  recebe PipeWireStreamAdded e segue
+    let (tx_id, rx_id) = std::sync::mpsc::channel::<String>();
+    let (tx_pronto, rx_pronto) = std::sync::mpsc::channel::<String>();
+
     let rede = std::thread::spawn(move || {
-        if let Err(e) = servir(porta, rx) {
+        if let Err(e) = servir(porta, rx, tx_id, rx_pronto) {
             eprintln!("  rede: {e}");
         }
     });
 
+    let rd_id = rx_id
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|_| anyhow::anyhow!("a thread de rede nao criou a sessao de input"))?;
+
     // --- Mutter ---------------------------------------------------------
     let conn = Connection::new_session()?;
     let root = conn.with_proxy(SC, SC_OBJ, T);
-    let (sess_path,): (Path,) =
-        root.method_call(SC, "CreateSession", (dbus::arg::PropMap::new(),))?;
+    let mut sc_props = dbus::arg::PropMap::new();
+    sc_props.insert(
+        "remote-desktop-session-id".into(),
+        dbus::arg::Variant(Box::new(rd_id) as Box<dyn dbus::arg::RefArg>),
+    );
+    let (sess_path,): (Path,) = root.method_call(SC, "CreateSession", (sc_props,))?;
     let sp = conn.with_proxy(SC, sess_path.into_static(), T);
     let mut props = dbus::arg::PropMap::new();
     props.insert(
@@ -90,15 +121,18 @@ fn main() -> anyhow::Result<()> {
     );
     let (stream_path,): (Path,) =
         sp.method_call(SESSION, "RecordMonitor", (conector.as_str(), props))?;
+    let stream_path = stream_path.into_static();
     let node = std::sync::Arc::new(std::sync::Mutex::new(None::<u32>));
     let node2 = std::sync::Arc::clone(&node);
     let mut regra = MatchRule::new_signal(STREAM, "PipeWireStreamAdded");
-    regra.path = Some(stream_path.into_static());
+    regra.path = Some(stream_path.clone());
     conn.add_match(regra, move |(id,): (u32,), _, _| {
         *node2.lock().unwrap() = Some(id);
         true
     })?;
-    sp.method_call::<(), _, _, _>(SESSION, "Start", ())?;
+    // Quem chama Start e a thread de rede, dona da sessao de input --
+    // iniciar a de input inicia a de tela vinculada.
+    tx_pronto.send(stream_path.to_string())?;
     let limite = Instant::now() + Duration::from_secs(5);
     while node.lock().unwrap().is_none() && Instant::now() < limite {
         conn.process(Duration::from_millis(100))?;
@@ -309,84 +343,165 @@ fn montar_nvenc(
     Ok((s, i, o))
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn servir(
+/// Injeta um evento na sessao do Mutter.
+///
+/// `NotifyPointerMotionAbsolute` recebe o caminho do STREAM de tela: e
+/// ele que define o espaco de coordenadas. Por isso a sessao de input
+/// precisa estar vinculada a de tela -- sem o vinculo, nao ha para onde
+/// mapear o x,y.
+#[cfg(target_os = "linux")]
+fn aplicar(
+    rd: &dbus::blocking::Proxy<'_, &Connection>,
+    stream: &str,
+    e: Evento,
+) {
+    use logistream::input::Evento as E;
+    let r = match e {
+        E::Mouse { x, y } => {
+            rd.method_call::<(), _, _, _>(RD_SESSION, "NotifyPointerMotionAbsolute", (stream, x, y))
+        }
+        E::Botao { codigo, apertado } => {
+            rd.method_call::<(), _, _, _>(RD_SESSION, "NotifyPointerButton", (codigo, apertado))
+        }
+        // flags 0 = rolagem continua. O `AxisDiscrete` seria para roda
+        // com clique, mas o trackpad do Mac nao tem passo.
+        E::Rolagem { dx, dy } => {
+            rd.method_call::<(), _, _, _>(RD_SESSION, "NotifyPointerAxis", (dx, dy, 0u32))
+        }
+        E::Tecla { keycode, apertado } => {
+            rd.method_call::<(), _, _, _>(RD_SESSION, "NotifyKeyboardKeycode", (keycode, apertado))
+        }
+    };
+    if let Err(err) = r {
+        eprintln!("  input recusado: {err}");
+    }
+}
+
+/// Rede: serve video por datagrama e recebe input por stream.
+///
+/// `LocalSet` e nao `tokio::spawn` porque a conexao D-Bus **nao e
+/// Send**, e a sessao de input pertence a conexao que a criou -- uma
+/// segunda conexao chamando `Notify*` naquela sessao seria recusada pelo
+/// Mutter. Entao tudo roda nesta thread e o `Rc` compartilha.
+fn servir(
     porta: u16,
     mut rx: tokio::sync::mpsc::Receiver<Codificado>,
+    tx_id: std::sync::mpsc::Sender<String>,
+    rx_pronto: std::sync::mpsc::Receiver<String>,
 ) -> anyhow::Result<()> {
-    let ep = net::servidor(([0, 0, 0, 0], porta).into())?;
-    println!("  escutando em 0.0.0.0:{porta}");
-    while let Some(entrando) = ep.accept().await {
-        let conexao = entrando.await?;
-        println!("  conectado: {}", conexao.remote_address());
-        // `None` aqui significa que o PAR nao aceita datagramas -- e
-        // entao nada de video passa. Seguir com um palpite de 1200
-        // produziria exatamente o que produziu: host dizendo 80 fps e
-        // receptor com zero.
-        let Some(max) = conexao.max_datagram_size() else {
-            eprintln!("  ERRO: o par nao aceita datagramas QUIC; nada de video vai passar");
-            continue;
-        };
-        println!("  datagrama maximo: {max} bytes");
+    use std::rc::Rc;
 
-        let mut quadro: u32 = 0;
-        let mut enviados = 0u64;
-        let mut bytes = 0u64;
-        let mut recusados = 0u64;
-        let t0 = Instant::now();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    let local = tokio::task::LocalSet::new();
 
-        loop {
-            // `.await` e nao bloqueio: enquanto espera quadro, o driver
-            // da conexao roda e de fato transmite o que ja foi
-            // enfileirado.
-            let c = match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
-                Ok(Some(c)) => c,
-                Ok(None) => break, // captura encerrou
-                Err(_) => {
-                    if conexao.close_reason().is_some() {
+    local.block_on(&rt, async move {
+        let dbus = Rc::new(Connection::new_session()?);
+        let rd_root = dbus.with_proxy(RD, RD_OBJ, T);
+        let (rd_path,): (Path,) = rd_root.method_call(RD, "CreateSession", ())?;
+        let rd_path = rd_path.into_static();
+        let id: String = dbus.with_proxy(RD, rd_path.clone(), T).get(RD_SESSION, "SessionId")?;
+        tx_id.send(id)?;
+
+        // Espera a sessao de tela existir, ja vinculada a esta.
+        let caminho_stream = rx_pronto.recv_timeout(Duration::from_secs(10))?;
+        dbus.with_proxy(RD, rd_path.clone(), T)
+            .method_call::<(), _, _, _>(RD_SESSION, "Start", ())?;
+        println!("  input ligado (stream {caminho_stream})");
+
+        let ep = net::servidor(([0, 0, 0, 0], porta).into())?;
+        println!("  escutando em 0.0.0.0:{porta}");
+
+        while let Some(entrando) = ep.accept().await {
+            let conexao = entrando.await?;
+            println!("  conectado: {}", conexao.remote_address());
+            let Some(max) = conexao.max_datagram_size() else {
+                eprintln!("  ERRO: o par nao aceita datagramas QUIC; nada de video vai passar");
+                continue;
+            };
+            println!("  datagrama maximo: {max} bytes");
+
+            // Input por stream unidirecional: perder um "tecla solta"
+            // deixaria a tecla presa no host, entao nao pode ser
+            // datagrama.
+            let conexao_in = conexao.clone();
+            let dbus_in = Rc::clone(&dbus);
+            let rd_in = rd_path.clone();
+            let stream_in = caminho_stream.clone();
+            let entrada = tokio::task::spawn_local(async move {
+                let Ok(mut recv) = conexao_in.accept_uni().await else { return };
+                let rd = dbus_in.with_proxy(RD, rd_in, T);
+                let mut leitor = Leitor::default();
+                let mut buf = vec![0u8; 4096];
+                let mut n_eventos = 0u64;
+                while let Ok(Some(n)) = recv.read(&mut buf).await {
+                    leitor.alimentar(&buf[..n]);
+                    while let Some(e) = leitor.proximo() {
+                        aplicar(&rd, &stream_in, e);
+                        n_eventos += 1;
+                        // Os primeiros, um a um: "nao deu erro" e prova
+                        // fraca de que o input chegou. Depois so o
+                        // agregado, para nao encher o log a 60 Hz.
+                        if n_eventos <= 8 {
+                            println!("  input #{n_eventos}: {e:?}");
+                        } else if n_eventos % 500 == 0 {
+                            println!("  {n_eventos} eventos de input aplicados");
+                        }
+                    }
+                }
+            });
+
+            let mut quadro: u32 = 0;
+            let mut enviados = 0u64;
+            let mut bytes = 0u64;
+            let mut recusados = 0u64;
+            let t0 = Instant::now();
+
+            loop {
+                let c = match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+                    Ok(Some(c)) => c,
+                    Ok(None) => break,
+                    Err(_) => {
+                        if conexao.close_reason().is_some() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+
+                let cab = SliceHeader {
+                    frame: quadro,
+                    piece: 0,
+                    pieces: 0,
+                    keyframe: c.keyframe,
+                    captured_at_ns: c.captured_at_ns,
+                };
+                for fatia in net::slice(&c.dados, cab, max) {
+                    bytes += fatia.len() as u64;
+                    if let Err(err) = conexao.send_datagram(fatia) {
+                        if !matches!(err, quinn::SendDatagramError::TooLarge) {
+                            eprintln!("  datagrama recusado: {err}");
+                        }
+                        recusados += 1;
                         break;
                     }
-                    continue;
                 }
-            };
-
-            let cab = SliceHeader {
-                frame: quadro,
-                piece: 0,
-                pieces: 0,
-                keyframe: c.keyframe,
-                captured_at_ns: c.captured_at_ns,
-            };
-            for fatia in net::slice(&c.dados, cab, max) {
-                bytes += fatia.len() as u64;
-                // Datagrama recusado por congestionamento e normal e o
-                // certo e descartar o quadro, nao derrubar a sessao. Mas
-                // recusa por OUTRO motivo precisa aparecer: engolir isso
-                // foi o que fez o host dizer "80 fps" com o receptor em
-                // zero.
-                if let Err(err) = conexao.send_datagram(fatia) {
-                    if !matches!(err, quinn::SendDatagramError::TooLarge) {
-                        eprintln!("  datagrama recusado: {err}");
-                    }
-                    recusados += 1;
+                quadro = quadro.wrapping_add(1);
+                enviados += 1;
+                if enviados % 120 == 0 {
+                    let s = t0.elapsed().as_secs_f64();
+                    println!(
+                        "  {enviados} quadros, {:.1} fps, {:.1} Mbps, {recusados} recusado(s)",
+                        enviados as f64 / s,
+                        bytes as f64 * 8.0 / s / 1_000_000.0
+                    );
+                }
+                if conexao.close_reason().is_some() {
                     break;
                 }
             }
-            quadro = quadro.wrapping_add(1);
-            enviados += 1;
-            if enviados % 120 == 0 {
-                let s = t0.elapsed().as_secs_f64();
-                println!(
-                    "  {enviados} quadros, {:.1} fps, {:.1} Mbps, {recusados} recusado(s)",
-                    enviados as f64 / s,
-                    bytes as f64 * 8.0 / s / 1_000_000.0
-                );
-            }
-            if conexao.close_reason().is_some() {
-                break;
-            }
+            entrada.abort();
+            println!("  cliente saiu");
         }
-        println!("  cliente saiu");
-    }
-    Ok(())
+        Ok::<(), anyhow::Error>(())
+    })
 }

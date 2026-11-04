@@ -89,7 +89,7 @@ não pode significar reescrever o pipeline.
 |---|---|---|
 | **v1** | ✅ **FEITA** — tela capturada, NVENC, arquivo | captura no Wayland e NVENC funcionam mesmo |
 | **v2** | ✅ **FEITA** — chega, decodifica e desenha no Mac | transporte e decodificação |
-| **v3** | input do Mac de volta (libei no Ubuntu) | o laço fecha: dá para usar |
+| **v3** | ✅ **FEITA** — input do Mac chega e é aplicado | o laço fecha: dá para usar |
 | **v4** | FEC, controle de taxa, Windows como host (DXGI) | qualidade e a segunda plataforma |
 | **v5** | áudio, pareamento com PIN, NAT | o resto |
 
@@ -305,3 +305,62 @@ de taxa — primeiro fazer funcionar, depois fazer render direto.
 
 A v3: mandar teclado e mouse do Mac de volta para o host. Sem isso dá
 para **ver** a máquina, não para usá-la.
+
+## v3 fechada: o input chega e o Mutter aceita (04/11)
+
+```
+input ligado (stream /org/gnome/Mutter/ScreenCast/Stream/u11)
+input #1: Mouse { x: 1200.0, y: 700.0 }
+...
+input #7: Rolagem { dx: 0.0, dy: 15.0 }
+```
+
+Sete eventos, nenhuma recusa — o cursor desenhou um quadrado na tela do
+Ubuntu.
+
+### `org.gnome.Mutter.RemoteDesktop`, e a coreografia que ele impõe
+
+A sessão de **input** tem de nascer antes da de **tela**: é o
+`SessionId` dela que as vincula, e sem o vínculo o
+`NotifyPointerMotionAbsolute` não tem espaço de coordenadas para mapear.
+
+Só que no D-Bus a sessão pertence à **conexão que a criou** — uma
+segunda conexão chamando `Notify*` nela é recusada. E quem injeta é a
+thread de rede, não a que fala com o PipeWire. Daí a dança:
+
+```
+rede:  cria input  -> manda SessionId ----------> main
+main:  cria tela vinculada, RecordMonitor
+       -> manda o caminho do stream -----------> rede
+rede:  Start()  (inicia as duas)
+main:  recebe PipeWireStreamAdded e segue
+```
+
+Dentro da thread de rede, tudo compartilha a **mesma** conexão por `Rc`,
+e as tarefas rodam num `LocalSet` — `tokio::spawn` exigiria `Send`, que
+a conexão D-Bus não é.
+
+### Input vai por stream, vídeo por datagrama
+
+Vídeo tolera perda; input não. Soltar um *"tecla solta"* deixa a tecla
+presa no host, e um *"botão solto"* deixa o mouse arrastando sozinho.
+Por isso o input usa stream QUIC — confiável e ordenado.
+
+O leitor acumula bytes antes de interpretar: stream não respeita
+fronteira de mensagem, e meio evento interpretado viraria comando errado
+na máquina de alguém. Travado por um teste que alimenta **um byte por
+vez**.
+
+### Tecla física, não caractere
+
+O cliente manda a **posição** da tecla (keycode do evdev), não o
+caractere. Mandar o caractere faria o layout do cliente mandar no host:
+apertar uma tecla num teclado ABNT2 viraria outra coisa numa máquina com
+layout americano. Com a posição, cada máquina aplica o próprio layout —
+que é como um teclado de verdade se comporta.
+
+### O que falta para aposentar o RDP
+
+Nada de protocolo: falta **costura**. O botão "Ver a tela" do painel
+ainda chama cliente de RDP; precisa chamar o nosso. E o host precisa
+subir sozinho, como serviço, em vez de ser lançado à mão.

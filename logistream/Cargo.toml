@@ -41,8 +41,21 @@ pipewire = "0.8"
 # Linux nao decodifica nada.
 [target.'cfg(target_os = "macos")'.dependencies]
 ffmpeg-next = "7.1"
-winit = "0.30"
 softbuffer = "0.4"
+
+[dependencies.winit]
+version = "0.30"
+optional = true
+
+[features]
+# Ligada por padrao no macOS, que e onde o visualizador roda. Nao da
+# para uma crate depender de si mesma com feature, entao a feature e
+# default e o `winit` ja e dependencia so daquela plataforma.
+default = ["winit-keys"]
+# A tabela de teclas depende do `winit`, que so e dependencia no macOS.
+# Feature em vez de `cfg(target_os)` para o teste dela poder rodar em
+# qualquer maquina onde o winit compile.
+winit-keys = ["dep:winit"]
 
 [lib]
 name = "logistream"
