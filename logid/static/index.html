@@ -20,6 +20,11 @@
     --upbg:#e6f6ec; --downbg:#fdeaea;
     --shadow:0 1px 2px rgba(16,20,28,.05), 0 8px 24px rgba(16,20,28,.05);
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    /* Barra lateral translucida: alfa sobre o fundo da pagina, nao cor
+       solida. E o que da a sensacao de camada da referencia -- a lateral
+       mais clara que o conteudo, nao um bloco de outra cor. */
+    --sidebg:rgba(255,255,255,.66); --selbg:rgba(16,20,28,.07);
+    --accent:#2563eb;
   }
   @media (prefers-color-scheme:dark){:root{
     --bg:#0c0e12; --card:#15181e; --fg:#e9ebee; --dim:#949aa4; --faint:#5f6670;
@@ -27,10 +32,16 @@
     --up:#45d483; --down:#ff6b6b; --warn:#f0b429;
     --upbg:#0c2c1a; --downbg:#2d1113;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.3);
+    --sidebg:rgba(27,31,39,.62); --selbg:rgba(255,255,255,.09);
+    --accent:#60a5fa;
   }}
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--fg);
+    /* Gradiente discreto: sem nada atras, translucidez nao aparece --
+       a lateral ficaria de uma cor chapada e a camada nao se leria. */
+    background-image:radial-gradient(1200px 600px at 12% -10%,
+      color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%);
     font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     -webkit-font-smoothing:antialiased;
     padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
@@ -51,6 +62,9 @@
     padding:18px;box-shadow:var(--shadow);
     display:flex;flex-direction:column;gap:14px}
 
+  /* Pulo da lateral para o cartao: um brilho curto, senao a pessoa nao
+     sabe qual dos tres cartoes era. */
+  .card.flash{box-shadow:0 0 0 2px var(--accent), var(--shadow)}
   .top{display:flex;align-items:flex-start;gap:12px}
   .dot{width:9px;height:9px;border-radius:50%;flex:none;margin-top:6px;
     background:var(--down);box-shadow:0 0 0 3px var(--downbg)}
@@ -274,7 +288,90 @@
     border-radius:5px;border:1px solid var(--line)}
   .err{background:var(--downbg);color:var(--down);padding:12px 14px;
     border-radius:10px;font-size:13px}
-</style></head><body><div class="wrap">
+
+  /* --- Barra lateral: maquinas, favoritos, paineis ------------------
+     O painel era um rolo unico com cinco secoes empilhadas: para ver o
+     log era preciso passar por tudo. A referencia que o usuario deu (o
+     app do Windows) resolve diferente -- lateral com as maquinas em
+     cima, favoritos logo abaixo, e o conteudo TROCA no lugar em vez de
+     crescer para baixo. */
+  .app{display:grid;grid-template-columns:238px minmax(0,1fr);min-height:100vh}
+  .side{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+    padding:16px 10px 24px;border-right:1px solid var(--line);
+    background:var(--sidebg);
+    backdrop-filter:blur(20px) saturate(1.3);
+    -webkit-backdrop-filter:blur(20px) saturate(1.3)}
+  .sidetop{display:flex;align-items:center;gap:9px;padding:4px 9px 10px}
+  .sidetop .mark{width:22px;height:22px;border-radius:6px;flex:none;
+    background:linear-gradient(140deg,var(--accent),color-mix(in srgb,var(--accent) 45%,var(--up)));
+    box-shadow:0 1px 3px rgba(0,0,0,.25)}
+  .sidetop .tt{font-weight:660;letter-spacing:-.01em}
+  .navgrp{font:10px/1 var(--mono);text-transform:uppercase;letter-spacing:.09em;
+    color:var(--faint);padding:14px 10px 6px;display:flex;align-items:center;gap:6px}
+  .navgrp .n{color:var(--faint);opacity:.7}
+  .navit{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;
+    cursor:pointer;font-size:13.5px;user-select:none;position:relative}
+  .navit:hover{background:var(--selbg)}
+  .navit.on{background:var(--selbg);font-weight:620}
+  .navit.on::before{content:"";position:absolute;left:-10px;top:7px;bottom:7px;
+    width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+  .navit .ic{width:15px;text-align:center;flex:none;color:var(--dim);font-size:12px}
+  .navit .lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .navit .sdot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--down)}
+  .navit .sdot.on{background:var(--up)}
+  /* Acoes aparecem no hover, nao sempre: a lista fica legivel e o clique
+     principal continua sendo "mostre esta maquina". */
+  .navit .act{display:flex;gap:2px;opacity:0;transition:opacity .12s}
+  .navit:hover .act,.navit:focus-within .act{opacity:1}
+  .navit .act button{all:unset;cursor:pointer;width:20px;height:20px;
+    border-radius:5px;display:grid;place-items:center;font-size:11px;
+    color:var(--dim)}
+  .navit .act button:hover{background:var(--card);color:var(--fg)}
+  .navit .act button.fav{color:var(--warn)}
+  .sidenote{font-size:11px;color:var(--faint);padding:10px 10px 0;line-height:1.5}
+
+  /* Uma secao por vez. O conteudo e o MESMO de antes -- so deixou de
+     estar todo visivel ao mesmo tempo. */
+  .sec{display:none}
+  .sec.on{display:block}
+
+  .wrap{max-width:none;margin:0;padding:24px 26px 40px}
+
+  /* Estreito (a janela do Electron abre pequena, e da para apertar
+     mais): a lateral vira uma fila horizontal de paineis. Maquinas e
+     favoritos saem porque a visao geral ja mostra as maquinas. */
+  @media (max-width:880px){
+    .app{grid-template-columns:1fr}
+    .side{position:static;height:auto;overflow:visible;
+      border-right:0;border-bottom:1px solid var(--line);padding:10px}
+    .sidenav{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px}
+    .side .navgrp,.side .sidenote,.sidetop .tt{display:none}
+    .sidetop{padding:0 0 8px}
+    .grpmaq,.grpfav{display:none}
+    .navit{white-space:nowrap}
+    .navit.on::before{display:none}
+    .wrap{padding:18px 16px 32px}
+  }
+</style></head><body><div class="app">
+<aside class="side">
+  <div class="sidetop"><span class="mark"></span><span class="tt">Maquinas</span></div>
+  <div class="grpfav"><div class="navgrp">Favoritos <span class="n" id="favn"></span></div>
+    <div id="favlist"></div></div>
+  <div class="grpmaq"><div class="navgrp">Maquinas</div>
+    <div id="maqlist"></div></div>
+  <div class="navgrp">Paineis</div>
+  <div class="sidenav">
+    <div class="navit" data-sec="geral"><span class="ic">&#9636;</span><span class="lbl">Visao geral</span></div>
+    <div class="navit" data-sec="botoes"><span class="ic">&#9673;</span><span class="lbl">Botoes</span></div>
+    <div class="navit" data-sec="disposicao"><span class="ic">&#9638;</span><span class="lbl">Disposicao</span></div>
+    <div class="navit" data-sec="tarefas"><span class="ic">&#9776;</span><span class="lbl">Tarefas</span></div>
+    <div class="navit" data-sec="arquivos"><span class="ic">&#9639;</span><span class="lbl">Arquivos</span></div>
+    <div class="navit" data-sec="log"><span class="ic">&#9783;</span><span class="lbl">Log</span></div>
+  </div>
+  <div class="sidenote">A estrela ao lado de uma maquina fixa ela em
+    Favoritos; o &#9654; abre a tela dela direto.</div>
+</aside>
+<main class="wrap">
 <header>
   <h1>Maquinas</h1>
   <div class="summary" id="sum"></div>
@@ -285,9 +382,12 @@
     <div class="novpop" id="novpop"><h3>Novidades</h3><div id="novlist"></div></div>
   </div>
 </header>
+<section class="sec" data-sec="geral">
 <p class="sub">LAN 192.168.1.0/24 &middot; leitura direta de portas, sem agente remoto</p>
 <div class="grid" id="grid"></div>
+</section>
 
+<section class="sec" data-sec="botoes">
 <div class="ctlwrap">
   <div class="ctlhead">
     <h2>Botoes</h2>
@@ -300,7 +400,9 @@
     aparece: o HID++ nao alcanca quem esta em outro canal.
   </div>
 </div>
+</section>
 
+<section class="sec" data-sec="disposicao">
 <div class="lywrap">
   <div class="lyhead">
     <h2>Disposicao</h2>
@@ -320,7 +422,9 @@
     proximo boot do daemon.
   </div>
 </div>
+</section>
 
+<section class="sec" data-sec="tarefas">
 <div class="tkwrap">
   <div class="tkhead">
     <h2>Tarefas</h2>
@@ -336,7 +440,9 @@
     &ldquo;forcado&rdquo; nao deixa o programa salvar nada.
   </div>
 </div>
+</section>
 
+<section class="sec" data-sec="arquivos">
 <div class="fswrap">
   <div class="fshead">
     <h2>Arquivos</h2>
@@ -350,7 +456,9 @@
     por SFTP no mesmo SSH que o daemon ja usa.
   </div>
 </div>
+</section>
 
+<section class="sec" data-sec="log">
 <div class="logwrap">
   <div class="loghead">
     <h2>Log do daemon</h2>
@@ -359,12 +467,14 @@
   </div>
   <div class="log" id="log"><div class="empty">carregando...</div></div>
 </div>
+</section>
 
 <footer>
   <span>atualiza a cada <b id="rs"></b>s</span>
   <span>JSON em <code>/api/status</code></span>
   <span>build <code id="build">...</code></span>
 </footer>
+</main>
 </div>
 <script>
 const RS = __REFRESH__;
@@ -546,6 +656,7 @@ async function tick(){
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     grid.innerHTML = d.hosts.map(card).join('');
+    renderSide(d.hosts);
     fsHosts(d.hosts);
     tkHosts(d.hosts);
     screens();
@@ -1044,6 +1155,112 @@ async function versao(){
     el.textContent = atual;
   }catch(e){ /* daemon reiniciando: tenta no proximo tick */ }
 }
+// --- barra lateral -----------------------------------------------------
+//
+// Troca de painel, lista de maquinas e favoritos. Tudo no `localStorage`:
+// e preferencia de QUEM esta olhando, por maquina, e nao tem por que
+// atravessar a rede nem virar linha de config. Se o armazenamento falhar
+// (janela privada, dados limpos), a pagina volta ao padrao em vez de
+// quebrar -- dai o try/catch em cada acesso.
+const SEC_PADRAO = 'geral';
+
+function guardado(chave, padrao){
+  try{ const v = localStorage.getItem(chave); return v === null ? padrao : v; }
+  catch(e){ return padrao; }
+}
+function guarda(chave, valor){
+  try{ localStorage.setItem(chave, valor); }catch(e){ /* sem storage: so nao lembra */ }
+}
+function favoritos(){
+  try{ return JSON.parse(guardado('favs', '[]')) || []; }catch(e){ return []; }
+}
+function salvaFavoritos(v){ guarda('favs', JSON.stringify(v)); }
+
+function mostra(sec){
+  let achou = false;
+  for (const el of document.querySelectorAll('.sec')){
+    const on = el.dataset.sec === sec;
+    el.classList.toggle('on', on);
+    achou = achou || on;
+  }
+  // Secao guardada que nao existe mais (renomeei um painel): cai no
+  // padrao em vez de deixar a tela vazia.
+  if (!achou){ mostra(SEC_PADRAO); return; }
+  for (const n of document.querySelectorAll('.navit[data-sec]'))
+    n.classList.toggle('on', n.dataset.sec === sec);
+  guarda('sec', sec);
+}
+
+/// Linha da lateral para uma maquina.
+function linhaMaq(h, favorito){
+  const fav = favorito ? ' fav' : '';
+  const tem = h.kvm && h.kvm.border != null;
+  const alerta = tem && (h.kvm.border || h.kvm.follow);
+  return `<div class="navit" data-maq="${esc(h.name)}" title="${esc(h.role)}">` +
+    `<span class="sdot${h.online ? ' on' : ''}"></span>` +
+    `<span class="lbl">${esc(h.name)}${alerta ? ' &middot;' : ''}</span>` +
+    `<span class="act">` +
+      `<button data-tela="${esc(h.name)}" title="abrir a tela desta maquina">&#9654;</button>` +
+      `<button class="fav${fav}" data-fav="${esc(h.name)}" ` +
+      `title="${favorito ? 'tirar dos favoritos' : 'fixar em favoritos'}">` +
+      `${favorito ? '&#9733;' : '&#9734;'}</button>` +
+    `</span></div>`;
+}
+
+/// Redesenha maquinas e favoritos. Chamada do `tick`, que e quem tem os
+/// dados -- a lateral nao faz requisicao propria.
+function renderSide(hosts){
+  const favs = favoritos().filter(n => hosts.some(h => h.name === n));
+  const fixos = favs.map(n => hosts.find(h => h.name === n));
+  document.getElementById('favlist').innerHTML =
+    fixos.length ? fixos.map(h => linhaMaq(h, true)).join('')
+                 : `<div class="sidenote">nenhum ainda</div>`;
+  document.getElementById('favn').textContent = fixos.length ? fixos.length : '';
+  document.getElementById('maqlist').innerHTML =
+    hosts.map(h => linhaMaq(h, favs.includes(h.name))).join('');
+}
+
+document.querySelector('.side').addEventListener('click', ev => {
+  const painel = ev.target.closest('.navit[data-sec]');
+  if (painel){ mostra(painel.dataset.sec); return; }
+
+  const estrela = ev.target.closest('button[data-fav]');
+  if (estrela){
+    const nome = estrela.dataset.fav;
+    const atual = favoritos();
+    salvaFavoritos(atual.includes(nome) ? atual.filter(n => n !== nome) : [...atual, nome]);
+    tick();                       // redesenha a lateral com o dado fresco
+    return;
+  }
+
+  const tela = ev.target.closest('button[data-tela]');
+  if (tela){
+    // Reaproveita o botao do cartao em vez de repetir a chamada: as
+    // opcoes (teclado, som, microfone) e o relato de erro moram la, e
+    // duas copias divergiriam. Trocar para a visao geral primeiro para a
+    // pessoa VER o que aconteceu.
+    mostra('geral');
+    const b = document.querySelector(`button[data-open="${CSS.escape(tela.dataset.tela)}"]`);
+    if (b && !b.disabled) b.click();
+    return;
+  }
+
+  const maq = ev.target.closest('.navit[data-maq]');
+  if (maq){
+    mostra('geral');
+    const alvo = [...document.querySelectorAll('.card .nm')]
+      .find(n => n.textContent === maq.dataset.maq);
+    if (alvo){
+      const card = alvo.closest('.card');
+      card.scrollIntoView({block:'center', behavior:'smooth'});
+      card.classList.add('flash');
+      setTimeout(() => card.classList.remove('flash'), 1200);
+    }
+  }
+});
+
+mostra(guardado('sec', SEC_PADRAO));
+
 versao(); setInterval(versao, 5000);
 
 tick(); setInterval(tick, RS*1000);

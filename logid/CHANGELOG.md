@@ -6,6 +6,13 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Painel com barra lateral, favoritos e um painel por vez
+No estilo que você apontou no app do Windows: lateral translúcida com as
+máquinas em cima, favoritos logo abaixo e os painéis listados — o
+conteúdo troca no lugar em vez de ser um rolo único de cinco seções. A
+estrela fixa uma máquina em Favoritos; o ▶ ao lado dela abre a tela
+direto. Em janela estreita a lateral vira uma barra horizontal.
+
 ## 2026-11-04 · "Ver a tela" do Windows, daqui, já é o nosso
 O visualizador passou a compilar no Linux (libavcodec do apt), então o
 botão do painel do Ubuntu deixou de chamar RDP. Três defeitos saíram no
