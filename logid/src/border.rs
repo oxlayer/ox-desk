@@ -52,8 +52,11 @@ const _PULLBACK_NAO_FUNCIONA: () = ();
 ///
 /// Enquanto coletamos, o `Release` vai SEM recuo -- de proposito: e o
 /// re-disparo que serve de sinal. So recuamos ao decidir.
-const HOLD_WINDOW: Duration = Duration::from_millis(400);
-const HOLD_HITS: usize = 3;
+/// Defaults; a config manda (`[input.border] hold_hits/hold_window_ms`).
+/// Baixado de 3/400ms para 2/300ms: o usuario sentia delay, e um raspao
+/// de passagem gera uma ativacao so -- duas ja indicam intencao.
+const HOLD_WINDOW_DEFAULT: Duration = Duration::from_millis(300);
+const HOLD_HITS_DEFAULT: usize = 2;
 
 /// Janela em que uma segunda travessia e ignorada. A acao disparada e
 /// IRREVERSIVEL; sem isto, um encostao duplo na borda viraria duas trocas.
@@ -150,14 +153,20 @@ fn open(edge: &str) -> Result<Session, String> {
 /// o resto do logid continua util sem a deteccao.
 pub fn spawn(cfg: Arc<RwLock<Config>>) {
     std::thread::spawn(move || {
-        let (edge, target) = {
+        let (edge, target, hold_hits, hold_window) = {
             let Ok(g) = cfg.read() else { return };
             let b = &g.input.border;
             if !b.enabled {
                 return;
             }
+            let hits = if b.hold_hits == 0 { HOLD_HITS_DEFAULT } else { b.hold_hits };
+            let win = if b.hold_window_ms == 0 {
+                HOLD_WINDOW_DEFAULT
+            } else {
+                Duration::from_millis(b.hold_window_ms)
+            };
             match &b.target {
-                Some(t) => (b.edge.clone(), t.clone()),
+                Some(t) => (b.edge.clone(), t.clone(), hits, win),
                 None => {
                     eprintln!("border: habilitado sem `target`; nada a fazer");
                     return;
@@ -211,12 +220,12 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                 let hits = {
                     let Ok(mut v) = hits2.write() else { return true };
                     let now = Instant::now();
-                    v.retain(|t: &Instant| now.duration_since(*t) < HOLD_WINDOW);
+                    v.retain(|t: &Instant| now.duration_since(*t) < hold_window);
                     v.push(now);
                     v.len()
                 };
-                if hits < HOLD_HITS {
-                    println!("border: permanencia {hits}/{HOLD_HITS}, aguardando");
+                if hits < hold_hits {
+                    println!("border: permanencia {hits}/{hold_hits}, aguardando");
                     return true;
                 }
 
@@ -309,7 +318,11 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             }),
         );
 
-        println!("border: vigiando borda '{edge}' -> {target}");
+        println!(
+            "border: vigiando borda '{edge}' -> {target} \
+             (permanencia {hold_hits} em {}ms)",
+            hold_window.as_millis()
+        );
         let mut ticks: u64 = 0;
         loop {
             if let Err(e) = sess.conn.process(Duration::from_millis(500)) {

@@ -108,3 +108,8 @@ target = "windows-host"
 enabled = false
 leader = "MX Anywhere 3"     # nome HID++; confira com o bin `probe`
 interval_seconds = 5
+
+# Permanencia na borda antes de trocar. hold_hits = 1 troca no primeiro
+# toque (mais imediato, mais chance de troca por raspao).
+# hold_hits = 2
+# hold_window_ms = 300

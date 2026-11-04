@@ -67,11 +67,33 @@ pub struct BorderCfg {
     /// Host que recebe o foco ao atravessar. Sem ele, nao arma.
     #[serde(default)]
     pub target: Option<String>,
+    /// Quantas ativacoes na janela antes de trocar. `1` = imediato.
+    ///
+    /// O mutter dispara no contato e nao tem dwell; aproximamos pela
+    /// densidade de ativacoes. Mais alto evita troca por raspao, mais
+    /// baixo responde na hora.
+    #[serde(default = "default_hold_hits")]
+    pub hold_hits: usize,
+    #[serde(default = "default_hold_window_ms")]
+    pub hold_window_ms: u64,
+}
+
+fn default_hold_hits() -> usize {
+    2
+}
+fn default_hold_window_ms() -> u64 {
+    300
 }
 
 impl Default for BorderCfg {
     fn default() -> Self {
-        Self { enabled: false, edge: default_edge(), target: None }
+        Self {
+            enabled: false,
+            edge: default_edge(),
+            target: None,
+            hold_hits: default_hold_hits(),
+            hold_window_ms: default_hold_window_ms(),
+        }
     }
 }
 

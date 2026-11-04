@@ -196,7 +196,10 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
             let (survey, agent_info, age_ms) = if req.fast {
                 let c = peers::cached(&req.host);
                 (
-                    hidpp::survey_opts(false),
+                    // Cache curto do survey: a varredura custa ~360 ms e o
+                    // refresher a mantem fresca a cada 1,5 s. Se estiver
+                    // velha, pagamos -- correcao antes de velocidade.
+                    hidpp::survey_cached_or_fresh(std::time::Duration::from_millis(2500)),
                     c.as_ref().map(|(i, _)| AgentInfo {
                         reachable: i.reachable,
                         slots: i.slots.clone(),
@@ -397,6 +400,36 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
     let mut results = Vec::new();
     let mut moved = 0usize;
     let mut stuck: Vec<String> = Vec::new();
+    if req.fast {
+        // Caminho sentido pelo usuario: dispara os dois EM PARALELO e nao
+        // espera confirmacao. Antes eram 2x (ping + set + 120 ms de espera)
+        // em sequencia; agora e um ping e um set por dispositivo, juntos.
+        let resolved = plan.resolved.clone();
+        let outs: Vec<(String, Result<(), String>)> = std::thread::scope(|sc| {
+            let hs: Vec<_> = resolved
+                .iter()
+                .map(|(name, slot, chan)| {
+                    let (n, s2, c2) = (name.clone(), *slot, *chan);
+                    sc.spawn(move || (n, hidpp::change_host_now(s2, c2)))
+                })
+                .collect();
+            hs.into_iter().filter_map(|h| h.join().ok()).collect()
+        });
+        for ((name, r), (_, slot, chan)) in outs.into_iter().zip(resolved.iter()) {
+            match r {
+                Ok(()) => {
+                    moved += 1;
+                    results.push(format!("{name}: enviado para o canal {chan}"));
+                    // Confirmacao vira log, nao espera.
+                    hidpp::verify_left(*slot, *chan);
+                }
+                Err(e) => {
+                    stuck.push(name.clone());
+                    results.push(format!("{name}: FALHOU -- {e}"));
+                }
+            }
+        }
+    } else {
     for (name, slot, chan) in plan.resolved.clone() {
         let d = (name, slot);
         let (name, slot) = (d.0.as_str(), d.1);
@@ -411,6 +444,7 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
                 results.push(format!("{name}: FALHOU -- {e}"));
             }
         }
+    }
     }
 
     // A troca nao e atomica: sao comandos independentes, segundos cada um.

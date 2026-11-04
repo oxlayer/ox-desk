@@ -114,6 +114,8 @@ fn main() {
     follow::spawn(Arc::clone(&cfg));
     // Mantem o estado dos pares fresco, para o caminho quente nao esperar SSH.
     peers::spawn(Arc::clone(&cfg));
+    // Mantem o survey local quente: a borda nao pode pagar ~360 ms.
+    hidpp::spawn_refresher();
 
     let server = Arc::new(server);
     let workers: Vec<_> = (0..4)

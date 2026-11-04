@@ -264,6 +264,79 @@ pub fn survey() -> Survey {
     survey_opts(true)
 }
 
+/// Ultimo survey leve, para o caminho quente nao pagar ~360 ms.
+static LAST: Mutex<Option<(std::time::Instant, Vec<(u8, String, bool, Option<u8>)>)>> =
+    Mutex::new(None);
+
+/// Dispositivos conhecidos (slot, nome, online, canal) do cache curto.
+///
+/// Devolve `None` se nao houver leitura recente -- quem chama decide se
+/// vale pagar a varredura.
+pub fn cached_devices(max_age: Duration) -> Option<Vec<(u8, String, bool, Option<u8>)>> {
+    let g = LAST.lock().ok()?;
+    let (at, v) = g.as_ref()?;
+    (at.elapsed() <= max_age).then(|| v.clone())
+}
+
+fn store_last(devs: &[Device]) {
+    if let Ok(mut g) = LAST.lock() {
+        *g = Some((
+            std::time::Instant::now(),
+            devs.iter()
+                .map(|d| (d.slot, d.name.clone(), d.online, d.current_host))
+                .collect(),
+        ));
+    }
+}
+
+/// Survey do cache curto quando fresco; varre se estiver velho.
+///
+/// Correcao antes de velocidade: dado velho sobre quem detemos o
+/// dispositivo levaria a tentar trocar o que nao temos.
+pub fn survey_cached_or_fresh(max_age: Duration) -> Survey {
+    if let Some(devs) = cached_devices(max_age) {
+        return Survey {
+            hidraw_access: true,
+            backend: "hidpp (cache)",
+            receivers: vec![Receiver {
+                name: "Receptor Logitech".into(),
+                hidraw: None,
+                usb_id: None,
+                serial: None,
+                devices: devs
+                    .into_iter()
+                    .map(|(slot, name, online, host)| Device {
+                        slot,
+                        name,
+                        kind: String::new(),
+                        wpid: String::new(),
+                        hidraw: None,
+                        online,
+                        ping_ms: None,
+                        current_host: host,
+                        num_hosts: None,
+                        battery_percent: None,
+                        battery_level: None,
+                        charging: false,
+                        battery_source: None,
+                        battery_age_s: None,
+                    })
+                    .collect(),
+            }],
+            error: None,
+        };
+    }
+    survey_opts(false)
+}
+
+/// Mantem o cache curto quente, para a borda nao esperar varredura.
+pub fn spawn_refresher() {
+    std::thread::spawn(|| loop {
+        let _ = survey_opts(false);
+        std::thread::sleep(Duration::from_millis(1500));
+    });
+}
+
 /// `with_battery = false` para o caminho quente: a bateria custa duas
 /// idas e voltas por dispositivo e nao influencia decisao de troca.
 pub fn survey_opts(with_battery: bool) -> Survey {
@@ -397,6 +470,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
         })
         .collect();
 
+    store_last(&devices);
     Survey {
         hidraw_access: true,
         backend: "hidpp",
@@ -409,6 +483,46 @@ pub fn survey_opts(with_battery: bool) -> Survey {
         }],
         error: None,
     }
+}
+
+/// Troca de canal SEM esperar confirmacao.
+///
+/// Para o caminho sentido pelo usuario: ele percebe a troca quando o
+/// dispositivo de fato muda de radio, nao quando nos confirmamos. A
+/// verificacao vira log em background.
+///
+/// Ainda pingamos uma vez antes -- e o unico jeito de saber que detemos o
+/// dispositivo. Sem isso o `set_host` trata "sem resposta" como sucesso
+/// (porque numa troca real o radio cai antes da resposta) e um no-op
+/// pareceria ter funcionado.
+pub fn change_host_now(slot: u8, host: u8) -> Result<(), String> {
+    if host == 0 {
+        return Err("canal e 1-based".into());
+    }
+    let api = hidpp::hidapi::HidApi::new().map_err(|e| format!("hidapi: {e}"))?;
+    let rx = hidpp::Receiver::open(&api)?;
+    rx.ping(slot)
+        .map_err(|_| format!("slot {slot} nao responde -- nao detemos este dispositivo"))?;
+    rx.set_host_nowait(slot, host)
+}
+
+/// Confirma, em background, que o dispositivo saiu. So loga.
+pub fn verify_left(slot: u8, host: u8) {
+    std::thread::spawn(move || {
+        let Ok(api) = hidpp::hidapi::HidApi::new() else { return };
+        let Ok(rx) = hidpp::Receiver::open(&api) else { return };
+        for i in 1..=LEAVE_CHECKS {
+            std::thread::sleep(LEAVE_WAIT);
+            if !rx.present(slot, 1) {
+                println!(
+                    "verificacao: slot {slot} saiu (canal {host}) em {}ms",
+                    i as u32 * LEAVE_WAIT.as_millis() as u32
+                );
+                return;
+            }
+        }
+        eprintln!("verificacao: slot {slot} AINDA responde -- a troca para o canal {host} nao pegou");
+    });
 }
 
 /// Manda o dispositivo do slot `slot` para o canal `host` (1-based).

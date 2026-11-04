@@ -911,6 +911,63 @@ instância o mantém aberto, e o script ainda imprimia "trocado". Agora:
 enviar como `.new.exe`, `Remove-Item` no atual, `Move-Item`, e
 **conferir tamanho e data** — não confiar na ausência de erro.
 
+## A espera que eu estava pagando por nada: 2,27 s → 66 ms
+
+O usuário continuou sentindo delay depois do modo rápido, e tinha razão.
+Cronometrado isoladamente, sem API nem verificação:
+
+```
+abrir receptor     :  0,01 ms
+ping de posse      : 45,54 ms
+feature index      : 20,00 ms   (memoizado depois da 1a vez)
+escrita ChangeHost :  0,60 ms
+TOTAL              : 66,14 ms
+```
+
+No daemon o `feature_index` já está memoizado, então o custo real é
+**~46 ms**.
+
+### O que era o resto
+
+**`set_host` esperava 700 ms por uma resposta que nunca vem.** Numa
+troca bem-sucedida o dispositivo sai do rádio **antes** de responder — eu
+já sabia disso (tratava ausência como sucesso) e ainda assim pagava o
+`REPLY_TIMEOUT` inteiro, em cada dispositivo. `set_host_nowait` escreve o
+report e volta: **0,6 ms**.
+
+**O `feature_index` custava uma ida e volta por chamada.** Ele é estável
+por dispositivo; memoizado, sai do caminho quente (20 ms → ~0).
+
+**O `plan()` varria o receptor a cada travessia** (~360 ms). Agora há
+cache curto, mantido a 1,5 s por um refresher, com fallback para
+varredura se estiver velho — correção antes de velocidade.
+
+**As duas trocas eram sequenciais.** Agora disparam em paralelo, e a
+confirmação virou log em background (`verificacao: slot 1 saiu em
+120ms`) em vez de bloquear a resposta.
+
+Medido: o `plan()` em modo rápido responde em **0,98 ms**.
+
+### A tensão que isso cria, e é decisão sua
+
+Baixei a permanência de 3 toques em 400 ms para **2 em 300 ms**, e ficou
+configurável:
+
+```toml
+[input.border]
+hold_hits = 2          # 1 = troca no primeiro toque
+hold_window_ms = 300
+```
+
+Mas atravessar a borda aqui **não é como no Flow**: lá o cursor volta de
+graça, aqui é um reparelhamento de rádio. Com `hold_hits = 2` o
+movimento normal até a borda direita já dispara — observado durante os
+testes, os dispositivos saíram três vezes sem intenção.
+
+`hold_hits = 1` dá o imediato que você pediu, ao custo de trocar de
+máquina por raspão. `3` evita o acidente e devolve o delay. Não há
+escolha certa sem saber o seu uso.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.

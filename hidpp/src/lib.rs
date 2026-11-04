@@ -36,6 +36,12 @@
 pub use hidapi;
 
 use hidapi::{HidApi, HidDevice};
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+/// Indice de feature por (slot, feature). E estavel por dispositivo, e
+/// descobri-lo custa uma ida e volta -- no caminho quente isso conta.
+static FEATURE_CACHE: Mutex<Option<BTreeMap<(u8, u16), u8>>> = Mutex::new(None);
 use std::time::{Duration, Instant};
 
 pub const LOGITECH_VID: u16 = 0x046D;
@@ -187,7 +193,25 @@ impl Receiver {
     }
 
     /// ROOT.getFeature -- indice do feature neste dispositivo.
+    ///
+    /// Memoizado: o indice nao muda para um dado dispositivo, e no caminho
+    /// quente cada ida e volta evitada e ~25 ms.
     pub fn feature_index(&self, slot: u8, feature: u16) -> Result<u8, String> {
+        if let Ok(g) = FEATURE_CACHE.lock() {
+            if let Some(m) = g.as_ref() {
+                if let Some(&i) = m.get(&(slot, feature)) {
+                    return Ok(i);
+                }
+            }
+        }
+        let idx = self.feature_index_uncached(slot, feature)?;
+        if let Ok(mut g) = FEATURE_CACHE.lock() {
+            g.get_or_insert_with(BTreeMap::new).insert((slot, feature), idx);
+        }
+        Ok(idx)
+    }
+
+    fn feature_index_uncached(&self, slot: u8, feature: u16) -> Result<u8, String> {
         let p = [(feature >> 8) as u8, (feature & 0xFF) as u8, 0];
         let (r, _) = self.request(slot, 0x00, 0x00, &p)?;
         let idx = *r.first().ok_or("resposta vazia de getFeature")?;
@@ -332,6 +356,30 @@ impl Receiver {
             charging: matches!(r[2], 1 | 2),
             source: "0x1000",
         })
+    }
+
+    /// Troca de canal SEM esperar resposta.
+    ///
+    /// Numa troca bem-sucedida o dispositivo sai do radio **antes** de
+    /// responder, entao esperar e esperar por nada: medido, o
+    /// `REPLY_TIMEOUT` de 700 ms era pago inteiro em cada troca. Aqui
+    /// escrevemos o report e voltamos.
+    ///
+    /// Com o indice do feature memoizado, isto custa uma escrita -- a
+    /// ordem de 1 ms em vez de 700.
+    pub fn set_host_nowait(&self, slot: u8, host: u8) -> Result<(), String> {
+        if host == 0 {
+            return Err("host e 1-based".into());
+        }
+        let fi = self.feature_index(slot, FEATURE_CHANGE_HOST)?;
+        let head = (0x01u8 << 4) | SW_ID;
+        let mut out = [0u8; LONG_LEN];
+        out[0] = REPORT_LONG;
+        out[1] = slot;
+        out[2] = fi;
+        out[3] = head;
+        out[4] = host - 1;
+        self.dev.write(&out).map(|_| ()).map_err(|e| format!("write: {e}"))
     }
 
     /// CHANGE_HOST.setCurrentHost. `host` e 1-based.
