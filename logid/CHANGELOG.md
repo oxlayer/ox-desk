@@ -6,6 +6,11 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Tela remota própria: já dá para VER o Ubuntu no Mac
+A imagem é capturada, codificada pela GPU, atravessa a rede e é
+decodificada no M1 a 72 fps. Falta mandar teclado e mouse de volta para
+poder usar, e não só olhar.
+
 ## 2026-11-04 · Tela remota própria: a imagem já chega no Mac
 Capturada no Ubuntu, codificada pela GPU e transmitida por QUIC: 77 fps
 a 1440p, 1,7 Mbps, sem perder quadro. Falta desenhar na tela e mandar o

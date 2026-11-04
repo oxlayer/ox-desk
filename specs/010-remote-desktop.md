@@ -88,7 +88,7 @@ não pode significar reescrever o pipeline.
 | v | entrega | a incógnita que ela mata |
 |---|---|---|
 | **v1** | ✅ **FEITA** — tela capturada, NVENC, arquivo | captura no Wayland e NVENC funcionam mesmo |
-| **v2** | ✅ **transporte feito** · ⬜ decodificar e exibir | transporte e decodificação |
+| **v2** | ✅ **FEITA** — chega, decodifica e desenha no Mac | transporte e decodificação |
 | **v3** | input do Mac de volta (libei no Ubuntu) | o laço fecha: dá para usar |
 | **v4** | FEC, controle de taxa, Windows como host (DXGI) | qualidade e a segunda plataforma |
 | **v5** | áudio, pareamento com PIN, NAT | o resto |
@@ -261,3 +261,47 @@ forma.
 
 Decodificar com VideoToolbox e desenhar numa janela no Mac. O transporte
 já entrega o quadro inteiro, em ordem, sem perda.
+
+## v2 fechada: decodifica no M1 (04/11)
+
+`view` no Mac contra o `host` no Ubuntu:
+
+```
+1080 quadros decodificados em 15s  (~72 fps)
+host: 79 fps, 1.5 Mbps, 0 recusados
+```
+
+Decodificação por `libavcodec` do brew, conversão de cor por `swscale`,
+janela por `winit` + `softbuffer`.
+
+### Decisões que valem explicar
+
+**Rede e decodificação numa thread, desenho na outra.** O laço de janela
+do macOS é dono da thread principal e não pode bloquear; decodificar ali
+travaria a interface a cada quadro.
+
+**Entre as duas há um slot, não uma fila.** Quadro novo sobrescreve o que
+ainda não foi desenhado. Fila só acumularia atraso — e numa tela remota
+quadro velho não vale nada, já passou. Mesma razão do canal raso do lado
+do host.
+
+**A janela acorda por geração, não por timer.** `ControlFlow::Wait` mais
+um contador que sobe a cada quadro: sem isso a interface gastaria CPU
+perguntando se chegou algo.
+
+**`ffmpeg-next` está amarrado ao macOS na config.** As duas máquinas têm
+versões diferentes de libavcodec pelo brew (61 no Mac, 62 aqui), e
+amarrar por plataforma resolve sem fingir que são a mesma — o host Linux
+não decodifica nada.
+
+### O que ainda é trabalho de CPU
+
+A conversão YUV→BGRA no `swscale` e a cópia para o buffer da janela. Em
+1440p isso é alguns milissegundos por quadro que o **VideoToolbox** (e um
+shader de YUV no `wgpu`) eliminam. Está na v4, junto com FEC e controle
+de taxa — primeiro fazer funcionar, depois fazer render direto.
+
+### Falta para substituir o RDP
+
+A v3: mandar teclado e mouse do Mac de volta para o host. Sem isso dá
+para **ver** a máquina, não para usá-la.

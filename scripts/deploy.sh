@@ -81,7 +81,10 @@ if [ "$PULAR_MAC" -eq 1 ]; then
   echo "  mac: pulado"
 else
   passo "mac: enviar fonte"
-  if out=$(for d in hidpp logid; do
+  # `logistream` vai junto: o Mac e o CLIENTE da tela remota, e deixar o
+  # binario dele para tras ja aconteceu uma vez -- quem notou foi o
+  # usuario, nao eu.
+  if out=$(for d in hidpp logid logistream; do
              rsync -az --delete --exclude target -e "ssh -o BatchMode=yes" "$d" mac:~/logi/ || exit 1
            done 2>&1); then ok; else erro "$out"; fi
   passo "mac: compilar e reiniciar"
@@ -91,6 +94,10 @@ else
             "cd ~/logi/logid && LOGI_BUILD='$BUILD' LOGI_BUILD_N='$LOGI_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
              install -m755 target/release/logid ~/.local/bin/logid &&
              launchctl kickstart -k gui/\$(id -u)/ai.logi.logid" 2>&1); then ok; else erro "$out"; fi
+
+  passo "mac: cliente de tela (logistream)"
+  if out=$(timeout 420 ssh -n -o BatchMode=yes mac \
+            "cd ~/logi/logistream && ~/.cargo/bin/cargo build --release --bin sink 2>&1 | tail -3" 2>&1); then ok; else erro "$out"; fi
 fi
 
 # ---------- conferencia ----------

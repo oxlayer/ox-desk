@@ -33,6 +33,17 @@ cudarc = { version = "0.19", default-features = false, features = ["driver", "dy
 dbus = "0.9.12"
 pipewire = "0.8"
 
+# Decodificacao e janela so no macOS, que e quem faz papel de CLIENTE.
+#
+# O `ffmpeg-next` precisa casar com a versao do libavcodec instalado, e
+# as duas maquinas tem versoes diferentes pelo brew (61 no Mac, 62 aqui).
+# Amarrar por plataforma resolve sem fingir que sao a mesma: o host
+# Linux nao decodifica nada.
+[target.'cfg(target_os = "macos")'.dependencies]
+ffmpeg-next = "7.1"
+winit = "0.30"
+softbuffer = "0.4"
+
 [lib]
 name = "logistream"
 path = "src/lib.rs"
