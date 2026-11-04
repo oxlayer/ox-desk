@@ -28,6 +28,7 @@ remota própria, e o controle de tudo num painel só.
 - [Mudar config nas três máquinas](.claude/skills/mudar-config-nas-tres.md)
 - [Dar acesso aos dispositivos de input (KVM)](.claude/skills/dar-acesso-a-input.md)
 - [Testar o host de tela com a tela apagada](.claude/skills/testar-tela-apagada.md)
+- [Clipboard entre as máquinas](.claude/skills/clipboard.md)
 
 ## Docs
 
@@ -54,9 +55,9 @@ receptor.
 **Nunca escreva IP em config.** O IP do Windows já mudou uma vez e
 quebrou Deskflow, SSH e o painel de uma vez. Use mDNS.
 
-**O RDP saiu** (04/11): os quatro caminhos de tela são nossos. O KDE
-Connect sai quando o clipboard nativo entrar — e **não antes**, porque
-hoje é ele que dá clipboard entre as máquinas.
+**O RDP e o KDE Connect saíram** (04/11). Os quatro caminhos de tela
+são nossos, e o clipboard também — pela API privada do Mutter no
+Linux, com SSH como transporte. Só texto, por enquanto.
 
 **Um dongle só.** Dois receptores Logitech perto não funcionam: a cola
 segue o dongle, não a máquina. Ver [`specs/005`](specs/005-input-switch.md).

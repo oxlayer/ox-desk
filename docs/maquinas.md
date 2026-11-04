@@ -35,7 +35,7 @@ dois. Conferir sempre com
 | 8787 | API + painel do `logid` (cada máquina serve o seu) |
 | 9777 | host de tela `logistream` (QUIC: vídeo por datagrama, input por stream) |
 | 22 | SSH (Windows e Mac) |
-| 1716 | KDE Connect — **sai quando o clipboard nativo entrar** |
+| 1716 | ~~KDE Connect~~ — saiu em 04/11, substituído pelo clipboard nativo |
 | 5900 | VNC do Mac — fica enquanto o host do Mac não produzir quadro |
 
 RDP (3389) saiu em 04/11: os quatro caminhos de tela são nossos.
