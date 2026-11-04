@@ -109,14 +109,30 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   if out=$(cp "$AG" "$AGSIG" && bash scripts/sign-windows.sh "$AGSIG" 2>&1 &&
            timeout 120 scp -q "$AGSIG" \
              'windows-host:C:/Users/user/AppData/Local/logid/logid-agent.new.exe' 2>&1); then
-    out=$(cat <<'PS1' | psrun
-$dst = Join-Path $env:LOCALAPPDATA 'logid'
-$novo = Join-Path $dst 'logid-agent.new.exe'
-if (-not (Test-Path $novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
-$v = Get-AuthenticodeSignature $novo
-if ($v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + $v.Status); exit 1 }
+    # O tamanho esperado viaja no comando: e assim que o passo deixa de
+    # poder dizer "ok" sem ter trocado nada.
+    #
+    # Ele disse "ok" enquanto o Windows seguia com a versao de uma hora
+    # antes -- o Defender revertia a gravacao em silencio e o `Move-Item`
+    # nao reclamava. Um passo de deploy que nao confere o resultado
+    # mente, e mentiu.
+    TAM=$(stat -c%s "$AGSIG")
+    out=$(cat <<PS1 | psrun
+\$dst = Join-Path \$env:LOCALAPPDATA 'logid'
+\$novo = Join-Path \$dst 'logid-agent.new.exe'
+\$alvo = Join-Path \$dst 'logid-agent.exe'
+if (-not (Test-Path \$novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
+\$v = Get-AuthenticodeSignature \$novo
+if (\$v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + \$v.Status); exit 1 }
 # O agente e invocado e morre; nao ha processo residente para parar.
-Move-Item -Force $novo (Join-Path $dst 'logid-agent.exe')
+Copy-Item -Force \$novo \$alvo
+Remove-Item -Force \$novo
+Start-Sleep -Milliseconds 500
+\$tem = (Get-Item \$alvo).Length
+if (\$tem -ne $TAM) {
+  Write-Output ('ERRO: gravou mas o arquivo tem ' + \$tem + ' bytes, esperado $TAM -- antivirus revertendo? confira a exclusao de ' + \$dst)
+  exit 1
+}
 exit 0
 PS1
 )

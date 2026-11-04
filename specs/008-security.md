@@ -131,3 +131,39 @@ reaparecer, as saídas são, em ordem de menor dano:
 2. envio a Microsoft como falso positivo (demora dias, mas conserta para
    todo mundo);
 3. exclusão da pasta — maior escopo, último recurso.
+
+## Exclusão do Defender, e por que ela foi necessária (04/11)
+
+O Defender agiu três vezes sobre os nossos binários — o histórico dele
+lista `logid.exe` e `logid.new.exe` como **`Trojan:Win32/Bearfoos.A!ml`**.
+O sufixo `!ml` é palpite de modelo, não assinatura de malware conhecido;
+a silhueta (executável novo, sem reputação, que cria tarefa agendada,
+executa comando remoto e lê dispositivo de entrada em modo bruto) é
+parecida de verdade.
+
+Assinar resolveu para o `logid.exe`. **Não resolveu para o
+`logid-agent.exe`**: os mesmos bytes assinados eram aceitos com outro
+nome e revertidos em silêncio com o nome certo. O Windows ficou uma hora
+rodando a versão anterior enquanto o deploy dizia `ok`.
+
+O usuário autorizou a exclusão de `%LOCALAPPDATA%\logid`. O custo é
+real e fica escrito aqui: **o Defender deixou de examinar aquela pasta**,
+então o que cair lá não é verificado. Em troca, a entrega deixou de
+depender de um heurístico que muda de opinião entre versões de assinatura.
+
+### A lição que vale mais que a exclusão
+
+O passo do deploy dizia **"ok" sem conferir o resultado**. `Move-Item`
+não reclamava, o antivírus revertia depois, e o relatório mentia. Agora
+o tamanho esperado viaja no comando e o passo compara depois de gravar.
+
+E a verificação foi testada com um tamanho errado de propósito, até
+falhar:
+
+```
+ERRO: gravou mas o arquivo tem 458792 bytes, esperado 999999
+      -- antivirus revertendo? confira a exclusao de C:\...\logid
+```
+
+Verificação que nunca falhou não é verificação conhecida. Vale para as
+outras etapas do deploy que hoje só olham a assinatura.
