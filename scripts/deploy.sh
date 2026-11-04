@@ -227,6 +227,18 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path logistream/Cargo.toml --bin logistream-host 2>&1); then
   HOSTEXE=logistream/target/x86_64-pc-windows-gnu/release/logistream-host.exe
   HOSTSIG=$(mktemp -u /tmp/logistream-host-assinado-XXXX.exe)
+  # Apagar o destino ANTES do scp.
+  #
+  # O servidor SFTP do Windows recusa sobrescrever com "Overwriting an
+  # existing file is not supported" -- e um deploy interrompido no meio
+  # (foi o caso: matei a assinatura que pendurava na TSA) deixa o
+  # `.new.exe` para tras e envenena todos os deploys seguintes. Um
+  # passo que so funciona se o anterior tiver terminado bem nao e um
+  # passo, e uma armadilha.
+  limpa=$({ cat <<'PS1' | psrun; } 2>&1
+Remove-Item (Join-Path $env:LOCALAPPDATA 'logid\logistream-host.new.exe') -ErrorAction SilentlyContinue
+PS1
+)
   if out=$(cp "$HOSTEXE" "$HOSTSIG" && bash scripts/sign-windows.sh "$HOSTSIG" 2>&1 &&
            timeout 180 scp -q "$HOSTSIG" \
              'windows-host:C:/Users/user/AppData/Local/logid/logistream-host.new.exe' 2>&1); then
@@ -315,7 +327,18 @@ else
              ~/.cargo/bin/cargo build --release --bin logistream-view --bin logistream-host 2>&1 | tail -3 &&
              mkdir -p ~/.local/bin ~/.local/state &&
              install -m755 target/release/logistream-view ~/.local/bin/ &&
-             install -m755 target/release/logistream-host ~/.local/bin/" 2>&1); then ok; else erro "$out"; fi
+             install -m755 target/release/logistream-host ~/.local/bin/ &&
+             ~/.local/bin/assinar.sh ~/.local/bin/logistream-host" 2>&1); then ok; else erro "$out"; fi
+
+  passo "mac: scripts de assinatura"
+  # Assinar o host com identidade ESTAVEL e o que faz a permissao de
+  # Gravacao de Tela sobreviver a um rebuild: o binario do cargo e
+  # ad-hoc/linker-signed e o cdhash muda sempre, entao o TCC perde a
+  # concessao a cada deploy. A identidade em si e criada a mao, uma
+  # vez, no Terminal do Mac (`criar-identidade.sh`) -- por SSH o
+  # chaveiro esta trancado.
+  if out=$(scp -q -o BatchMode=yes mac/criar-identidade.sh mac/assinar.sh mac:.local/bin/ 2>&1 &&
+           ssh -n -o BatchMode=yes mac "chmod +x ~/.local/bin/criar-identidade.sh ~/.local/bin/assinar.sh" 2>&1); then ok; else erro "$out"; fi
 
   passo "mac: LaunchAgent do host de tela"
   # O host TEM de nascer na sessao grafica: a captura depende de
