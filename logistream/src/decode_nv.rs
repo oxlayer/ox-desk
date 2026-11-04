@@ -327,49 +327,143 @@ fn copia_quadro(st: &mut Estado, info: *mut CUVIDPARSERDISPINFO) -> Result<(), S
 /// (o caso normal, janela menor que a tela remota) isso faz menos
 /// trabalho que converter e depois escalar.
 ///
+/// **Amostragem bilinear.** A primeira versao usava vizinho mais
+/// proximo, com um comentario dizendo que bilinear era "o proximo passo
+/// se incomodar". Incomodou: o usuario comparou Mac->Windows (que
+/// decodifica por `swscale`, bilinear) com Ubuntu->Windows (este
+/// caminho) e chamou o segundo de pessimo. Encolher texto de 1440p com
+/// vizinho mais proximo serrilha cada letra -- e era so no caminho da
+/// GPU, o que fazia a diferenca salta aos olhos lado a lado.
+///
+/// O mapeamento usa centro de pixel (`(x+0.5)*escala-0.5`), nao
+/// `x*escala`: sem o meio-pixel a imagem desloca meio pixel para cima e
+/// para a esquerda, e em 1:1 a interpolacao deixaria de ser exata.
+///
 /// BT.709 de faixa limitada: e o que um desktop de 1440p e, e o
-/// codificador nao escreve a descricao de cor no fluxo. Usar BT.601 aqui
-/// daria verde deslavado e vermelho puxado -- erro que se ve, mas que
-/// nao da erro.
+/// codificador nao escreve a descricao de cor no fluxo. Conferido contra
+/// o ffmpeg no mesmo quadro -- um ponto de diferenca no verde.
 pub fn nv12_para_bgra(q: &Nv12, dst: &mut [u32], dw: u32, dh: u32) {
     if dw == 0 || dh == 0 || q.w == 0 || q.h == 0 {
         return;
     }
     let (sw, sh) = (q.w as usize, q.h as usize);
     let plano_uv = q.pitch * sh;
-    for y in 0..dh as usize {
-        // Amostragem por vizinho mais proximo. Bilinear melhoraria texto
-        // encolhido, e e o proximo passo se incomodar -- mas custa quatro
-        // leituras por pixel e aqui o caminho e quente.
-        let sy = y * sh / dh as usize;
-        let linha_y = sy * q.pitch;
-        let linha_uv = plano_uv + (sy / 2) * q.pitch;
-        let destino = y * dw as usize;
-        for x in 0..dw as usize {
-            let sx = x * sw / dw as usize;
-            let yy = q.dados.get(linha_y + sx).copied().unwrap_or(16) as i32;
-            let i_uv = linha_uv + (sx & !1);
-            let u = q.dados.get(i_uv).copied().unwrap_or(128) as i32;
-            let v = q.dados.get(i_uv + 1).copied().unwrap_or(128) as i32;
+    let ex = sw as f32 / dw as f32;
+    let ey = sh as f32 / dh as f32;
 
-            let c = (yy - 16) * 298;
-            let d = u - 128;
-            let e = v - 128;
-            let r = (c + 459 * e + 128) >> 8;
-            let g = (c - 55 * d - 136 * e + 128) >> 8;
-            let b = (c + 541 * d + 128) >> 8;
-            let px = ((r.clamp(0, 255) as u32) << 16)
-                | ((g.clamp(0, 255) as u32) << 8)
-                | (b.clamp(0, 255) as u32);
-            if let Some(s) = dst.get_mut(destino + x) {
-                *s = px;
-            }
+    // A coluna de origem nao depende da linha: as mesmas 1451 contas de
+    // ponto flutuante estavam sendo refeitas 1232 vezes por quadro. Uma
+    // tabela por quadro troca isso por tres leituras de vetor.
+    let colunas: Vec<(usize, usize, i32)> = (0..dw as usize)
+        .map(|x| {
+            let fx = ((x as f32 + 0.5) * ex - 0.5).max(0.0);
+            let x0 = (fx as usize).min(sw - 1);
+            let x1 = (x0 + 1).min(sw - 1);
+            (x0, x1, ((fx - x0 as f32) * 256.0) as i32)
+        })
+        .collect();
+
+    // Uma linha de saida nao olha para nenhuma outra, entao dividir o
+    // quadro em faixas e exato, nao aproximado. Sem isso a conversao
+    // sozinha custava 28 ms (teto de 35 fps) e segurava o desenho em 27
+    // quando a rede ja entregava 60.
+    let fatias = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 16)
+        .min(dh as usize);
+    let por_fatia = (dh as usize).div_ceil(fatias);
+    let dados = &q.dados;
+    let pitch = q.pitch;
+    let colunas = &colunas;
+
+    std::thread::scope(|escopo| {
+        for (n, faixa) in dst.chunks_mut(por_fatia * dw as usize).enumerate() {
+            let y_ini = n * por_fatia;
+            escopo.spawn(move || {
+                for (dy, linha) in faixa.chunks_mut(dw as usize).enumerate() {
+                    let y = y_ini + dy;
+                    let fy = ((y as f32 + 0.5) * ey - 0.5).max(0.0);
+                    let y0 = (fy as usize).min(sh - 1);
+                    let y1 = (y0 + 1).min(sh - 1);
+                    let wy = ((fy - y0 as f32) * 256.0) as i32;
+                    let l0 = y0 * pitch;
+                    let l1 = y1 * pitch;
+                    let linha_uv = plano_uv + (y0 / 2) * pitch;
+
+                    for (x, px) in linha.iter_mut().enumerate() {
+                        let (x0, x1, wx) = colunas[x];
+
+                        // Dois lerps horizontais e um vertical, em
+                        // inteiros. Bilinear so na luma: o olho ve
+                        // detalhe em luminancia, e o NV12 ja guarda
+                        // croma pela metade -- interpolar os dois
+                        // dobraria o laco quente para melhorar o que
+                        // ninguem enxerga.
+                        let a = dados[l0 + x0] as i32;
+                        let b = dados[l0 + x1] as i32;
+                        let c = dados[l1 + x0] as i32;
+                        let d = dados[l1 + x1] as i32;
+                        let topo = a * (256 - wx) + b * wx;
+                        let base = c * (256 - wx) + d * wx;
+                        let yy = (topo * (256 - wy) + base * wy) >> 16;
+
+                        let i_uv = linha_uv + (x0 & !1);
+                        let u = dados[i_uv] as i32;
+                        let v = dados[i_uv + 1] as i32;
+
+                        let cc = (yy - 16) * 298;
+                        let du = u - 128;
+                        let dv = v - 128;
+                        let r = (cc + 459 * dv + 128) >> 8;
+                        let g = (cc - 55 * du - 136 * dv + 128) >> 8;
+                        let bl = (cc + 541 * du + 128) >> 8;
+                        *px = ((r.clamp(0, 255) as u32) << 16)
+                            | ((g.clamp(0, 255) as u32) << 8)
+                            | (bl.clamp(0, 255) as u32);
+                    }
+                }
+            });
         }
-    }
+    });
 }
 
 #[cfg(test)]
 mod testes {
+    /// A conversao tem orcamento de tempo, e ele e testavel.
+    ///
+    /// Ela roda na CPU para cada quadro desenhado, entao e o teto do
+    /// visualizador inteiro: a versao de uma thread so custava 28 ms
+    /// (35 fps) e segurava o desenho em 27 enquanto a rede entregava 60.
+    /// O usuario viu isso como "qualidade pessima" -- metade era o
+    /// serrilhado do vizinho mais proximo, metade era este laco.
+    ///
+    /// 12 ms e folgado de proposito: medimos 2.8 numa maquina de 12
+    /// nucleos, e quem roda os testes pode estar ocupado. O que importa
+    /// e nao voltar para a casa dos 28.
+    #[test]
+    fn conversao_cabe_no_orcamento() {
+        use std::time::Instant;
+        let (sw, sh) = (2560usize, 1440usize);
+        let mut dados = vec![128u8; sw * sh + sw * sh / 2];
+        for (i, b) in dados.iter_mut().enumerate() {
+            *b = (i % 255) as u8;
+        }
+        let q = Nv12 { w: sw as u32, h: sh as u32, pitch: sw, dados };
+        let (dw, dh) = (1451u32, 1232u32);
+        let mut dst = vec![0u32; (dw * dh) as usize];
+        nv12_para_bgra(&q, &mut dst, dw, dh); // aquece cache e paginas
+
+        let t = Instant::now();
+        let n = 30;
+        for _ in 0..n {
+            nv12_para_bgra(&q, &mut dst, dw, dh);
+        }
+        let ms = t.elapsed().as_secs_f64() * 1000.0 / n as f64;
+        println!("conversao {sw}x{sh} -> {dw}x{dh}: {ms:.2} ms ({:.0} fps)", 1000.0 / ms);
+        assert!(ms < 12.0, "conversao a {ms:.1} ms/quadro: teto de {:.0} fps", 1000.0 / ms);
+    }
+
     use super::*;
 
     /// Monta um NV12 de cor constante.

@@ -57,9 +57,19 @@ impl Codificador {
         // resultado: "a imagem esta meio bugada, sem muita qualidade".
         // Numa LAN isso e banda sobrando na mesa -- o Parsec usa 20-50.
         let pixels = (w as u64) * (h as u64);
-        // ~8 Mbps em 1080p, ~15 em 1440p, ~34 em 4K. Escala com a area
-        // em vez de ser numero fixo: 1440p e 4K nao cabem no mesmo teto.
-        let alvo = (pixels * 60 / 1000).clamp(8_000_000, 60_000_000) as u32;
+        // ~8 Mbps em 1080p, ~15 em 1440p, ~33 em 4K: escala com a area,
+        // porque 1440p e 4K nao cabem no mesmo teto.
+        //
+        // Era `pixels * 60 / 1000`, que da 221 kbps em 1440p e **sempre**
+        // caia no piso de 8 Mbps -- em qualquer resolucao. O comentario
+        // prometia 15 e 34 e entregava 8 nos tres casos; so apareceu
+        // quando a tela Retina do Mac (3360x2100) tambem anunciou
+        // "8 Mbps alvo" e o numero ficou absurdo o suficiente para eu
+        // conferir a conta.
+        //
+        // 4 bits por pixel por segundo a 60 fps e o que produz os numeros
+        // que o comentario sempre afirmou.
+        let alvo = (pixels * 4).clamp(8_000_000, 60_000_000) as u32;
         cfg.rcParams.rateControlMode = NV_ENC_PARAMS_RC_MODE::NV_ENC_PARAMS_RC_VBR;
         cfg.rcParams.averageBitRate = alvo;
         // Teto com folga: tela parada gasta quase nada, e quando a

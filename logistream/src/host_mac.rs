@@ -103,8 +103,9 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     enc.set_format(ffmpeg_next::format::Pixel::NV12);
     enc.set_time_base(ffmpeg_next::Rational::new(1, 60));
     enc.set_frame_rate(Some(ffmpeg_next::Rational::new(60, 1)));
-    // Mesma escala dos outros dois hosts: ~8 Mbps em 1080p, ~15 em 1440p.
-    let alvo = ((w as u64 * h as u64) * 60 / 1000).clamp(8_000_000, 60_000_000);
+    // Mesma escala dos outros dois hosts (ver `nvenc::Codificador::novo`):
+    // 4 bits por pixel por segundo a 60 fps.
+    let alvo = ((w as u64) * (h as u64) * 4).clamp(8_000_000, 60_000_000);
     enc.set_bit_rate(alvo as usize);
     enc.set_max_bit_rate((alvo * 2) as usize);
     // IDR a cada 2s: perdeu quadro, o erro cicatriza em 2s em vez de
@@ -161,11 +162,37 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     let mut n = 0i64;
     let mut descartados = 0u64;
 
-    for (fluxo, pacote) in entrada.packets() {
+    // `Packet::read` direto, e NAO o iterador `packets()`.
+    //
+    // O iterador encerra em qualquer erro que nao seja fim de arquivo --
+    // inclusive `EAGAIN`, que e a resposta normal de um dispositivo de
+    // captura que ainda nao tem quadro pronto. A documentacao da propria
+    // crate diz isso: "callers that must observe these errors drive
+    // `Packet::read` directly".
+    //
+    // O sintoma foi exato: o host abria a tela, montava o encoder,
+    // anunciava a porta e imprimia "captura encerrada" **antes** de
+    // alguem conectar. O log do usuario trazia a pista uma linha acima:
+    // `not enough frames to estimate rate`. O dispositivo tinha acabado
+    // de abrir e nao tinha quadro; a primeira leitura devolveu "tente de
+    // novo"; o iterador leu isso como fim do fluxo.
+    let mut pacote = ffmpeg_next::Packet::empty();
+    loop {
         if sinais.deve_sair() {
             break;
         }
-        if fluxo.index() != indice_fluxo {
+        match pacote.read(&mut entrada) {
+            Ok(()) => {}
+            // Fim de verdade: o dispositivo sumiu.
+            Err(ffmpeg_next::Error::Eof) => break,
+            // Qualquer outra coisa e "ainda nao": captura nao termina, ela
+            // espera. Dormir um pouco evita girar a 100% de CPU.
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+        }
+        if pacote.stream() != indice_fluxo {
             continue;
         }
         if dec.send_packet(&pacote).is_err() {
