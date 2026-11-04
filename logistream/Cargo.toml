@@ -37,6 +37,9 @@ softbuffer = "0.4"
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9.12"
 pipewire = "0.8"
+# So pelo ioctl EVIOCGRAB da captura de input. Nao vale uma crate de
+# evdev inteira: lemos quatro tipos de evento e chamamos um ioctl.
+libc = "0.2"
 
 
 [target."cfg(windows)".dependencies]

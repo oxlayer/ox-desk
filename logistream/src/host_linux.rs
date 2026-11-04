@@ -334,6 +334,10 @@ fn aplicar(conn: &Connection, rd: &Path, stream: &str, e: Evento) -> Result<(), 
     };
     let msg = match e {
         E::Mouse { x, y } => m("NotifyPointerMotionAbsolute").map(|z| z.append3(stream, x, y)),
+        // Relativo tem metodo proprio no Mutter, e nao e o absoluto com
+        // conta feita: `NotifyPointerMotion` respeita aceleracao e os
+        // limites de tela do lado de ca, que e o que o KVM quer.
+        E::MouseRel { dx, dy } => m("NotifyPointerMotion").map(|z| z.append2(dx, dy)),
         E::Botao { codigo, apertado } => {
             m("NotifyPointerButton").map(|z| z.append2(codigo, apertado))
         }

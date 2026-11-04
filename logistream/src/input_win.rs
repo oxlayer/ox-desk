@@ -71,6 +71,7 @@ impl Teclado {
     pub fn aplicar(&mut self, e: Evento) {
         match e {
             Evento::Mouse { x, y } => self.mover(x, y),
+            Evento::MouseRel { dx, dy } => self.mover_relativo(dx, dy),
             Evento::Botao { codigo, apertado } => self.botao(codigo, apertado),
             Evento::Rolagem { dx, dy } => self.rolar(dx, dy),
             Evento::Tecla { keycode, apertado } => self.tecla(keycode, apertado),
@@ -207,6 +208,36 @@ fn virtual_screen() -> (i32, i32, i32, i32) {
             GetSystemMetrics(SM_CXVIRTUALSCREEN),
             GetSystemMetrics(SM_CYVIRTUALSCREEN),
         )
+    }
+}
+
+impl Teclado {
+    /// Deslocamento relativo, sem passar por coordenada de tela.
+    ///
+    /// O KVM manda isto. Nao da para reaproveitar `mover()`: aquele
+    /// normaliza para 0..65535 sobre o desktop virtual, e converter
+    /// relativo em absoluto exigiria manter um cursor virtual nosso --
+    /// que divergiria do cursor real assim que qualquer outra coisa
+    /// mexesse o ponteiro.
+    ///
+    /// Sem `MOUSEEVENTF_ABSOLUTE`, o Windows aplica a propria aceleracao
+    /// de ponteiro, que e o que a pessoa espera sentir. Jogo que le
+    /// entrada bruta recebe o deslocamento direto.
+    pub fn mover_relativo(&self, dx: f64, dy: f64) {
+        let mut e = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: dx.round() as i32,
+                    dy: dy.round() as i32,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_MOVE,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        unsafe { SendInput(std::slice::from_mut(&mut e), std::mem::size_of::<INPUT>() as i32) };
     }
 }
 

@@ -17,6 +17,7 @@
 //! biblioteca inteira para gerar so o visualizador.
 
 pub mod capture;
+pub mod capture_input;
 pub mod capture_win;
 pub mod decode;
 pub mod decode_nv;

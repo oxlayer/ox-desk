@@ -1046,6 +1046,7 @@ dependencies = [
  "cudarc",
  "dbus",
  "ffmpeg-next",
+ "libc",
  "moq-nvenc",
  "pipewire",
  "quinn",

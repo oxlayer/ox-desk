@@ -1,0 +1,21 @@
+# Acesso de leitura aos dispositivos de input para o KVM por LAN.
+#
+# Para capturar teclado e mouse e manda-los a outra maquina, o logid
+# precisa ler /dev/input/event* e chamar EVIOCGRAB. Por padrao esses nos
+# sao do grupo `input`, que o usuario de desktop nao integra.
+#
+# Usamos TAG+="uaccess" em vez de por o usuario no grupo `input`:
+#
+#  - `uaccess` faz o systemd-logind dar ACL ao usuario da SESSAO ATIVA,
+#    entao o acesso segue quem esta de fato na maquina, e some quando a
+#    sessao acaba. Entrar no grupo `input` daria acesso permanente a
+#    TODOS os dispositivos de input, para qualquer processo do usuario,
+#    inclusive com a sessao encerrada -- um keylogger passivo de graca
+#    para qualquer coisa que rode na conta.
+#  - vale na hora (udevadm trigger), sem precisar deslogar; grupo novo
+#    so entra em vigor em sessao nova.
+#
+# Restrito aos receptores Logitech (046d) de proposito: nao e para abrir
+# o teclado do laptop nem webcam. Se um dispositivo novo entrar no KVM,
+# acrescente o idVendor dele aqui -- explicitamente.
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", TAG+="uaccess"

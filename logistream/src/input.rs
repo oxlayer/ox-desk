@@ -30,6 +30,18 @@ pub enum Evento {
     /// cursor dele esta dentro da janela, e converter para relativo
     /// acumularia erro a cada quadro.
     Mouse { x: f64, y: f64 },
+    /// Deslocamento relativo do ponteiro, em pixels.
+    ///
+    /// O KVM por LAN manda isto, nao `Mouse`. Dois motivos:
+    ///
+    /// - **Jogo.** Mouse-look le movimento relativo; com posicao
+    ///   absoluta a mira trava nas bordas da tela. E o caso de uso que
+    ///   motivou o KVM ("mudar para Windows para jogar").
+    /// - **Nao precisa saber o tamanho do outro lado.** O visualizador
+    ///   sabe onde o cursor esta dentro da janela e manda absoluto; o
+    ///   KVM nao tem janela nenhuma, e perguntar a resolucao remota so
+    ///   para converter seria handshake a mais para piorar o resultado.
+    MouseRel { dx: f64, dy: f64 },
     Botao { codigo: i32, apertado: bool },
     Rolagem { dx: f64, dy: f64 },
     /// Keycode do evdev (o que o `NotifyKeyboardKeycode` recebe).
@@ -41,6 +53,7 @@ impl Evento {
     const T_BOTAO: u8 = 2;
     const T_ROLAGEM: u8 = 3;
     const T_TECLA: u8 = 4;
+    const T_MOUSE_REL: u8 = 5;
 
     /// Bytes de payload de cada tipo, sem contar o byte do tipo.
     fn tamanho(tag: u8) -> Option<usize> {
@@ -49,6 +62,7 @@ impl Evento {
             Self::T_BOTAO => 5,
             Self::T_ROLAGEM => 16,
             Self::T_TECLA => 5,
+            Self::T_MOUSE_REL => 16,
             _ => return None,
         })
     }
@@ -74,6 +88,11 @@ impl Evento {
                 b.put_u8(Self::T_TECLA);
                 b.put_u32(keycode);
                 b.put_u8(u8::from(apertado));
+            }
+            Evento::MouseRel { dx, dy } => {
+                b.put_u8(Self::T_MOUSE_REL);
+                b.put_f64(dx);
+                b.put_f64(dy);
             }
         }
     }
@@ -125,15 +144,91 @@ impl Leitor {
                 Evento::T_ROLAGEM => {
                     Evento::Rolagem { dx: self.buf.get_f64(), dy: self.buf.get_f64() }
                 }
-                _ => Evento::Tecla {
+                Evento::T_MOUSE_REL => {
+                    Evento::MouseRel { dx: self.buf.get_f64(), dy: self.buf.get_f64() }
+                }
+                Evento::T_TECLA => Evento::Tecla {
                     keycode: self.buf.get_u32(),
                     apertado: self.buf.get_u8() != 0,
                 },
+                // Inalcancavel: `tamanho()` ja recusou qualquer tag fora
+                // da lista, e so chegamos aqui com os bytes completos.
+                // Mesmo assim NAO cai em `Tecla`, que era o que estava
+                // escrito -- um `_ =>` que inventa um tipo le a
+                // quantidade errada de bytes e dessincroniza o stream
+                // inteiro a partir dali. Com tag de 16 bytes lida como
+                // tecla de 5, sobram 11 bytes que viram comandos
+                // fantasma no computador de outra pessoa. Descartar o
+                // payload inteiro e a unica saida segura.
+                outra => {
+                    self.buf.advance(n);
+                    self.desconhecidos += 1;
+                    debug_assert!(false, "tag {outra} passou por tamanho() sem arm");
+                    continue;
+                }
             };
             return Some(e);
         }
     }
 }
+
+#[cfg(test)]
+mod testes_codec {
+    use super::*;
+
+    /// Ida e volta de cada tipo, inclusive o relativo novo.
+    #[test]
+    fn todo_evento_volta_igual() {
+        let amostras = [
+            Evento::Mouse { x: 12.5, y: -3.25 },
+            Evento::MouseRel { dx: -4.0, dy: 7.5 },
+            Evento::Botao { codigo: BTN_LEFT, apertado: true },
+            Evento::Rolagem { dx: 0.0, dy: -120.0 },
+            Evento::Tecla { keycode: 30, apertado: false },
+        ];
+        let mut b = BytesMut::new();
+        for e in &amostras {
+            e.escrever(&mut b);
+        }
+        let mut l = Leitor::default();
+        l.alimentar(&b);
+        let lidos: Vec<_> = std::iter::from_fn(|| l.proximo()).collect();
+        assert_eq!(lidos, amostras, "o codec nao fechou a volta");
+        assert_eq!(l.desconhecidos, 0);
+    }
+
+    /// Um tipo novo NAO pode ser lido como outro.
+    ///
+    /// O decodificador terminava em `_ => Tecla`, entao qualquer tag que
+    /// ele nao conhecesse lia 5 bytes como tecla. Quando `MouseRel`
+    /// (16 bytes) entrou, aquele arm teria lido 5 e deixado 11 bytes
+    /// soltos -- e dali em diante TODO o stream vira comando fantasma no
+    /// computador de outra pessoa. Este teste trava o formato.
+    #[test]
+    fn tag_de_16_bytes_nao_desalinha_o_que_vem_depois() {
+        let mut b = BytesMut::new();
+        Evento::MouseRel { dx: 1.0, dy: 2.0 }.escrever(&mut b);
+        Evento::Tecla { keycode: 57, apertado: true }.escrever(&mut b);
+        let mut l = Leitor::default();
+        l.alimentar(&b);
+        assert_eq!(l.proximo(), Some(Evento::MouseRel { dx: 1.0, dy: 2.0 }));
+        assert_eq!(l.proximo(), Some(Evento::Tecla { keycode: 57, apertado: true }));
+        assert_eq!(l.proximo(), None);
+    }
+
+    /// Tag de verdade desconhecida some sem levar o resto junto.
+    #[test]
+    fn tag_desconhecida_e_pulada() {
+        let mut b = BytesMut::new();
+        b.put_u8(200); // nao existe
+        Evento::Tecla { keycode: 1, apertado: true }.escrever(&mut b);
+        let mut l = Leitor::default();
+        l.alimentar(&b);
+        assert_eq!(l.proximo(), Some(Evento::Tecla { keycode: 1, apertado: true }));
+        assert_eq!(l.desconhecidos, 1);
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
