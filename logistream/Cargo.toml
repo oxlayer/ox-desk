@@ -27,43 +27,33 @@ moq-nvenc = "0.1.2"
 # Contexto CUDA para alimentar o NVENC. Tambem carregado em runtime.
 cudarc = { version = "0.19", default-features = false, features = ["driver", "dynamic-loading", "cuda-version-from-build-system"] }
 
+# Janela e superficie de pixels em CPU. Comum as tres plataformas: o
+# visualizador deixou de ser so do Mac quando o NVDEC passou a
+# decodificar aqui e no Windows.
+softbuffer = "0.4"
+
 # Captura no Linux: o Mutter entrega o stream por PipeWire e a negociacao
 # acontece por D-Bus. Mesma crate de D-Bus que o logid usa.
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9.12"
 pipewire = "0.8"
-softbuffer = "0.4"
-
-# Decodificacao e janela so no macOS, que e quem faz papel de CLIENTE.
-#
-# O `ffmpeg-next` precisa casar com a versao do libavcodec instalado, e
-# as duas maquinas tem versoes diferentes pelo brew (61 no Mac, 62 aqui).
-# Amarrar por plataforma resolve sem fingir que sao a mesma: o host
-# Linux nao decodifica nada.
-[target.'cfg(target_os = "macos")'.dependencies]
-softbuffer = "0.4"
 
 
 [target."cfg(windows)".dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
-# Decodificacao: quem ASSISTE precisa dela -- hoje o Mac e esta maquina.
-#
-# UMA versao para os dois, e nao uma por plataforma, porque o
-# `ffmpeg-sys-next` declara `links = "ffmpeg"`: o cargo resolve o grafo
-# inteiro de uma vez e recusa duas versoes de uma crate que linka a mesma
-# biblioteca nativa, mesmo que sejam de alvos diferentes. A 9.0 detecta a
-# versao instalada em tempo de build, entao serve para o libavcodec 61 do
-# brew no Mac e o 62 do apt aqui.
+# Decodificacao do MAC, e so dele: ele nao tem NVIDIA. Linux e Windows
+# decodificam por NVDEC (ver `decode.rs`), que vem com o driver -- e era
+# justamente a falta de `libavcodec` no Windows que mantinha aquele lado
+# no RDP.
 #
 # `default-features = false`: o default puxa avdevice e avfilter, que nao
 # estao instalados. Pedir so o que usamos faz dependencia que falta virar
 # erro claro em vez de erro de link obscuro.
 #
 # `format` entra sem ser usada por nos: o modulo `codec` da propria crate
-# importa `crate::format`, entao `codec` sozinha nao compila. A libavformat
-# esta instalada; a alternativa seria remendar a crate.
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# importa `crate::format`, entao `codec` sozinha nao compila.
+[target.'cfg(target_os = "macos")'.dependencies]
 ffmpeg-next = { version = "9.0", default-features = false, features = [
   "codec",
   "format",
@@ -75,9 +65,9 @@ version = "0.30"
 optional = true
 
 [features]
-# Ligada por padrao no macOS, que e onde o visualizador roda. Nao da
-# para uma crate depender de si mesma com feature, entao a feature e
-# default e o `winit` ja e dependencia so daquela plataforma.
+# Ligada por padrao: o visualizador roda nas tres plataformas, e a tabela
+# de teclas depende do `winit`. Feature em vez de `cfg(target_os)` para o
+# teste dela rodar em qualquer maquina onde o winit compile.
 default = ["winit-keys"]
 # A tabela de teclas depende do `winit`, que so e dependencia no macOS.
 # Feature em vez de `cfg(target_os)` para o teste dela poder rodar em

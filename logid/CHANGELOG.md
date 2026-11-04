@@ -6,6 +6,12 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · O RDP saiu: o Windows também assiste pelo nosso protocolo
+O visualizador passou a compilar lá, decodificando por NVDEC — não existe
+`libavcodec` no Windows e era só isso que mantinha aquele caminho no
+mstsc. Os quatro trajetos entre as três máquinas agora são nossos.
+Medido daqui com a GPU: 840 quadros a 65 fps, zero perdido.
+
 ## 2026-11-04 · Decodificação pela GPU, sem depender do ffmpeg
 O NVDEC decodifica o nosso fluxo: 2560x1440 a 250 fps, 4 ms por quadro
 contando a volta para a CPU. A conversão de cor foi conferida contra o

@@ -154,15 +154,45 @@ impl Monitor {
 
     /// Comeca a capturar. A partir daqui o compositor esta nos esperando
     /// a cada quadro, entao tudo que e lento tem de estar pronto.
+    ///
+    /// Tenta algumas vezes antes de desistir: `DuplicateOutput` recusa
+    /// por motivos TEMPORARIOS (tela de UAC na frente, sessao trocando)
+    /// e morrer na primeira faria o botao "Ver a tela" falhar por causa
+    /// de um dialogo que sai sozinho em dois segundos.
     pub fn duplicar(self) -> anyhow::Result<Tela> {
-        unsafe {
-            let dup = self
-                .saida
-                .DuplicateOutput(&self.dispositivo)
-                .map_err(|e| anyhow::anyhow!("DuplicateOutput: {e}"))?;
-            let staging = cria_staging(&self.dispositivo, self.w, self.h)?;
-            Ok(Tela { m: self, dup, staging, tem_imagem: false })
+        const TENTATIVAS: u32 = 5;
+        let mut ultimo = String::new();
+        for i in 0..TENTATIVAS {
+            if i > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(600));
+            }
+            match unsafe { self.saida.DuplicateOutput(&self.dispositivo) } {
+                Ok(dup) => {
+                    let staging = cria_staging(&self.dispositivo, self.w, self.h)?;
+                    return Ok(Tela { m: self, dup, staging, tem_imagem: false });
+                }
+                Err(e) => {
+                    ultimo = e.to_string();
+                    println!("  DuplicateOutput recusou ({}/{TENTATIVAS}): {e}", i + 1);
+                }
+            }
         }
+        // "Acesso negado" sozinho manda a pessoa procurar permissao, que
+        // nao e o problema. Os tres motivos reais, em ordem de frequencia
+        // medida: a pilha de display meio instalada (foi o caso quando o
+        // driver de display virtual do Parsec saiu e o reinicio ficou
+        // pendente -- um `Microsoft Basic Display Adapter` em estado
+        // `Unknown` no gerenciador), a tela bloqueada, e o desktop seguro
+        // do UAC na frente. O DXGI nao captura nenhum dos dois ultimos,
+        // por desenho -- e uma diferenca real em relacao ao RDP, que cria
+        // sessao propria.
+        anyhow::bail!(
+            "DuplicateOutput recusou {TENTATIVAS} vezes ({ultimo}). \
+             Causas, em ordem: driver de video meio instalado (confira \
+             reinicio pendente e adaptador em estado Unknown), tela \
+             bloqueada, ou dialogo do UAC na frente -- o DXGI nao captura \
+             os dois ultimos."
+        )
     }
 }
 

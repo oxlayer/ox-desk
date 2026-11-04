@@ -11,10 +11,11 @@
 //!
 //! ## Onde ele compila
 //!
-//! Onde ha `libavcodec`: macOS (brew) e Linux (apt). Fora disso o `main`
-//! e um recado em vez de um erro de link, porque o binario e construido
-//! junto dos outros e nao vale quebrar o build todo por ele. O Windows
-//! ainda cai aqui -- ele ja SERVE a propria tela, mas nao assiste.
+//! Nas tres. Quem decodifica muda por plataforma e esta em
+//! `logistream::decode`: NVDEC no Linux e no Windows (vem com o driver
+//! NVIDIA), `ffmpeg` no Mac (que nao tem NVIDIA). Foi o NVDEC que tirou
+//! o Windows do RDP -- la nao existe `libavcodec` e levar as DLLs para
+//! la seria encanamento sem ganho.
 //!
 //! Entre as duas ha **um slot**, nao uma fila: quadro novo sobrescreve o
 //! que ainda nao foi desenhado. Fila so acumularia atraso, e numa tela
@@ -22,20 +23,21 @@
 //!
 //!   cargo run --release --bin view -- <host:porta>
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn main() {
     eprintln!(
-        "o visualizador precisa de libavcodec, e aqui nao ha: ele compila \
-         no macOS (brew) e no Linux (apt). Ver specs/010."
+        "o visualizador nao compila neste sistema: ele precisa de NVDEC \
+         (Linux/Windows com GPU NVIDIA) ou do libavcodec (macOS). \
+         Ver specs/010."
     );
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn main() -> anyhow::Result<()> {
     visual::run()
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod visual {
     use std::num::NonZeroU32;
     use std::sync::{Arc, Mutex};
@@ -454,17 +456,13 @@ mod visual {
         //
         // Ele ficava depois da conexao, e isso perdia o primeiro
         // quadro-chave: o host comeca a despejar o IDR no instante do
-        // handshake, e enquanto montavamos o decodificador (e esperavamos
-        // uma ida e volta para abrir o stream de input) os datagramas
+        // handshake, e enquanto montavamos o decodificador os datagramas
         // iam chegando. O que nao cabia na fila era descartado, o IDR
         // chegava incompleto, e o log enchia de `non-existing PPS 0
-        // referenced`. Reproduzia ao reconectar, porque ai o host ja
-        // esta quente e dispara na hora.
-        ffmpeg_next::init()?;
-        let codec = ffmpeg_next::decoder::find(ffmpeg_next::codec::Id::H264)
-            .ok_or_else(|| anyhow::anyhow!("sem decoder H.264"))?;
-        let ctx = ffmpeg_next::codec::context::Context::new_with_codec(codec);
-        let mut dec = ctx.decoder().video()?;
+        // referenced`.
+        let mut dec = logistream::decode::Decodificador::novo()
+            .map_err(|e| anyhow::anyhow!("sem decodificador: {e}"))?;
+        println!("decodificando por {}", dec.nome());
 
         let mut enderecos: Vec<std::net::SocketAddr> =
             tokio::net::lookup_host(alvo).await?.collect();
@@ -499,8 +497,6 @@ mod visual {
         });
 
         let mut r = Reassembler::default();
-        let mut escalador: Option<ffmpeg_next::software::scaling::Context> = None;
-        let mut escala_de_para = (0u32, 0u32, 0u32, 0u32);
         let mut quadros = 0u64;
 
         loop {
@@ -519,7 +515,7 @@ mod visual {
             // quadro inteiro NAO e chave, o host mandou P para um cliente
             // sem contexto; se e chave mas `perdidos` ja subiu, ele veio
             // picado; se esta tudo certo aqui, o problema e do
-            // decodificador. Sem isto eu passei a gastar palpites.
+            // decodificador.
             if quadros < 3 {
                 println!(
                     "  recebi quadro {} {} {} bytes, {} perdido(s) ate aqui",
@@ -530,75 +526,32 @@ mod visual {
                 );
             }
 
-            let pacote = ffmpeg_next::Packet::copy(&unidade);
-            if dec.send_packet(&pacote).is_err() {
-                continue;
-            }
-            let mut quadro = ffmpeg_next::frame::Video::empty();
-            while dec.receive_frame(&mut quadro).is_ok() {
-                let (w, h) = (quadro.width(), quadro.height());
-                // Destino = tamanho da JANELA. O `swscale` ja estava no
-                // caminho fazendo conversao de cor; redimensionar junto
-                // nao custa outra passada sobre os pixels.
-                let (jw, jh) = tam.lock().map(|g| *g).unwrap_or((w, h));
-                let (jw, jh) = (jw.max(1), jh.max(1));
-                // Destino = a tela remota ENCAIXADA na janela, nao a
-                // janela inteira: esticar deformava a imagem quando as
-                // proporcoes diferiam.
-                let (ox, oy, dw, dh) = encaixa(w, h, jw, jh);
-                if dw == 0 || dh == 0 {
+            // O encaixe depende do tamanho da ORIGEM, que so o
+            // decodificador conhece, e do da JANELA, que so a interface
+            // conhece. Dai passar a conta como funcao em vez de um
+            // numero: cada lado contribui com o que sabe.
+            let tam_agora = Arc::clone(&tam);
+            let mut encaixe = move |rw: u32, rh: u32| {
+                let (jw, jh) = tam_agora.lock().map(|g| *g).unwrap_or((rw, rh));
+                encaixa(rw, rh, jw.max(1), jh.max(1))
+            };
+            let prontos = match dec.alimentar(&unidade, &mut encaixe) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("decodificar: {e}");
                     continue;
                 }
-                // Recriar o escalador e caro; so quando de fato mudou.
-                let agora = (w, h, dw, dh);
-                if escalador.is_none() || escala_de_para != agora {
-                    escalador = ffmpeg_next::software::scaling::Context::get(
-                        quadro.format(),
-                        w,
-                        h,
-                        ffmpeg_next::format::Pixel::BGRA,
-                        dw,
-                        dh,
-                        ffmpeg_next::software::scaling::Flags::BILINEAR,
-                    )
-                    .ok();
-                    escala_de_para = agora;
-                }
-                let Some(sc) = escalador.as_mut() else { continue };
-                let mut rgba = ffmpeg_next::frame::Video::empty();
-                if sc.run(&quadro, &mut rgba).is_err() {
-                    continue;
-                }
-
-                // BGRA em bytes vira 0xAARRGGBB em little-endian, que e o
-                // que o softbuffer espera (o byte alto e ignorado).
-                let linha = rgba.stride(0);
-                let dados = rgba.data(0);
-                let (iw, ih) = (dw, dh);
-                let mut saida = vec![0u32; (iw * ih) as usize];
-                for y in 0..ih as usize {
-                    let ini = y * linha;
-                    for x in 0..iw as usize {
-                        let p = ini + x * 4;
-                        if p + 3 < dados.len() {
-                            saida[y * iw as usize + x] = u32::from_le_bytes([
-                                dados[p],
-                                dados[p + 1],
-                                dados[p + 2],
-                                dados[p + 3],
-                            ]);
-                        }
-                    }
-                }
-
+            };
+            for pr in prontos {
                 if let Ok(mut s) = slot.lock() {
-                    s.rgb = saida;
-                    s.w = iw;
-                    s.h = ih;
-                    s.ox = ox;
-                    s.oy = oy;
-                    s.rw = w;
-                    s.rh = h;
+                    let (jw, jh) = tam.lock().map(|g| *g).unwrap_or((pr.w, pr.h));
+                    s.rgb = pr.rgb;
+                    s.w = pr.w;
+                    s.h = pr.h;
+                    s.ox = pr.ox;
+                    s.oy = pr.oy;
+                    s.rw = pr.rw;
+                    s.rh = pr.rh;
                     s.jw = jw;
                     s.jh = jh;
                     s.geracao += 1;

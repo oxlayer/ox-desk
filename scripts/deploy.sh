@@ -125,6 +125,37 @@ PS1
   rm -f "$AGSIG"
 else erro "$out"; fi
 
+passo "windows: visualizador de tela"
+# O visualizador deixou de ser so do Mac quando o NVDEC passou a
+# decodificar -- e e ele que tira o ultimo RDP do sistema. Sem
+# `libavcodec` do lado de la: a lista de DLLs do .exe traz so coisa do
+# Windows, e o decodificador vem com o driver NVIDIA, carregado em
+# runtime.
+if out=$(cargo build --release --target x86_64-pc-windows-gnu \
+           --manifest-path logistream/Cargo.toml --bin logistream-view 2>&1); then
+  VW=logistream/target/x86_64-pc-windows-gnu/release/logistream-view.exe
+  VWSIG=$(mktemp -u /tmp/logistream-view-assinado-XXXX.exe)
+  if out=$(cp "$VW" "$VWSIG" && bash scripts/sign-windows.sh "$VWSIG" 2>&1 &&
+           timeout 180 scp -q "$VWSIG" \
+             'windows-host:C:/Users/user/AppData/Local/logid/logistream-view.new.exe' 2>&1); then
+    out=$(cat <<'PS1' | psrun
+$dst = Join-Path $env:LOCALAPPDATA 'logid'
+$novo = Join-Path $dst 'logistream-view.new.exe'
+if (-not (Test-Path $novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $novo
+if ($v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + $v.Status); exit 1 }
+# Pode estar aberto: quem assiste fecha a janela quando quiser.
+Get-Process -Name logistream-view -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 400
+Move-Item -Force $novo (Join-Path $dst 'logistream-view.exe')
+exit 0
+PS1
+)
+    if echo "$out" | grep -q ERRO; then erro "$out"; else ok; fi
+  else erro "$out"; fi
+  rm -f "$VWSIG"
+else erro "$out"; fi
+
 passo "windows: host de tela (logistream)"
 # O Windows virou HOST do nosso protocolo (v4): DXGI -> NVENC -> QUIC.
 # Precisa de assinatura pelo mesmo motivo que o logid -- o Defender
