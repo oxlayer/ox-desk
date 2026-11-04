@@ -6,6 +6,16 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Uptime, RAM e CPU em todos os cartões, sempre
+A máquina que você está olhando ficava sem detalhe nenhum: a leitura ia
+por SSH e ninguém faz SSH para si mesmo — daí você ver a RAM do MacBook
+pelo Windows e não pelo próprio MacBook. Agora o cartão local lê
+localmente. A RAM do Linux nunca tinha funcionado (os dois números saíam
+colados por dependerem da ordem do /proc/meminfo) e o bug sobreviveu
+porque esta é a única máquina Linux e o detalhe dela nunca era
+consultado. Entrou CPU junto, e a linha aparece sempre — com travessão
+quando não deu para ler, em vez de desaparecer.
+
 ## 2026-11-04 · Cursor no lugar certo e tela cheia que estica
 Dois defeitos meus, do mesmo conserto anterior. O cálculo da posição do
 mouse usava o tamanho da imagem como se fosse o da tela remota — numa

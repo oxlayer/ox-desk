@@ -128,7 +128,7 @@ pub struct Cell {
 /// Passou a importar quando o par deixou de ser sempre Windows. Dois
 /// lugares montam comando para rodar NO par, e os dois sao especificos:
 /// `agent::devices` monta PowerShell (`& "exe" devices`) e
-/// `probe::ssh_detail` roda um one-liner de PowerShell com CIM. Contra
+/// `probe::detalhe` roda um one-liner de PowerShell com CIM. Contra
 /// Ubuntu ou macOS os dois falhariam -- e falhariam em silencio, porque
 /// o detalhe e enfeite e o probe do agente ja degrada para "nao
 /// respondeu".

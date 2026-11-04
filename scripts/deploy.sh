@@ -84,6 +84,35 @@ PS1
 else erro "$out"; fi
 rm -f "$ASSINADO"
 
+passo "windows: agente"
+# O agente FICOU PARA TRAS por um dia inteiro: este script atualizava
+# `logid.exe` e esquecia `logid-agent.exe`, que e justamente quem o
+# Ubuntu invoca por SSH para ler dispositivos e pedir troca de canal.
+# Binario velho do outro lado da ponte e o tipo de divergencia que nao
+# da erro -- responde, so responde o de ontem.
+if out=$(cargo build --release --target x86_64-pc-windows-gnu \
+           --manifest-path agent/Cargo.toml 2>&1); then
+  AG=agent/target/x86_64-pc-windows-gnu/release/logid-agent.exe
+  AGSIG=$(mktemp -u /tmp/logid-agent-assinado-XXXX.exe)
+  if out=$(cp "$AG" "$AGSIG" && bash scripts/sign-windows.sh "$AGSIG" 2>&1 &&
+           timeout 120 scp -q "$AGSIG" \
+             'windows-host:C:/Users/user/AppData/Local/logid/logid-agent.new.exe' 2>&1); then
+    out=$(cat <<'PS1' | psrun
+$dst = Join-Path $env:LOCALAPPDATA 'logid'
+$novo = Join-Path $dst 'logid-agent.new.exe'
+if (-not (Test-Path $novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $novo
+if ($v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + $v.Status); exit 1 }
+# O agente e invocado e morre; nao ha processo residente para parar.
+Move-Item -Force $novo (Join-Path $dst 'logid-agent.exe')
+exit 0
+PS1
+)
+    if echo "$out" | grep -q ERRO; then erro "$out"; else ok; fi
+  else erro "$out"; fi
+  rm -f "$AGSIG"
+else erro "$out"; fi
+
 passo "windows: host de tela (logistream)"
 # O Windows virou HOST do nosso protocolo (v4): DXGI -> NVENC -> QUIC.
 # Precisa de assinatura pelo mesmo motivo que o logid -- o Defender

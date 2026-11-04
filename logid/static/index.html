@@ -518,16 +518,37 @@ function card(h){
     }
   }
 
-  const d = h.detail, det = [];
+  // A linha de detalhe aparece SEMPRE, com travessao no que nao sabemos.
+  //
+  // Antes ela era omitida quando vinha vazia, e o usuario leu isso como
+  // "nao da para ver a RAM desta maquina" -- ele via a do MacBook pelo
+  // Windows e nao pelo proprio MacBook. Ausencia silenciosa nao
+  // distingue "nao consegui ler" de "nao existe"; travessao distingue.
+  const d = h.detail || {}, det = [];
   if (d.uptime_min != null){
     const m = d.uptime_min, dd = Math.floor(m/1440), hh = Math.floor((m%1440)/60);
     det.push(`<span>no ar <b>${dd ? dd+'d ' : ''}${hh}h</b></span>`);
+  } else {
+    det.push(`<span>no ar <b>&mdash;</b></span>`);
   }
   if (d.ram_total_gb){
-    const used = d.ram_total_gb - d.ram_free_gb;
+    const used = d.ram_total_gb - (d.ram_free_gb || 0);
     const pct = Math.round(used / d.ram_total_gb * 100);
     det.push(`<span>RAM <b>${used.toFixed(1)}/${d.ram_total_gb} GB</b>
               <span class="bar"><i style="width:${pct}%"></i></span></span>`);
+  } else {
+    det.push(`<span title="${esc(h.online ? 'o host respondeu, mas a leitura de memoria falhou'
+      : 'host offline: nada a ler')}">RAM <b>&mdash;</b></span>`);
+  }
+  if (d.cpu_pct != null){
+    // A janela de amostragem difere por SO (ver `probe::Detail`): o
+    // numero responde "esta ocupada?", nao serve para comparar decimais
+    // entre maquinas.
+    det.push(`<span title="janela de amostragem difere por sistema">CPU
+              <b>${Math.round(d.cpu_pct)}%</b>
+              <span class="bar"><i style="width:${Math.round(d.cpu_pct)}%"></i></span></span>`);
+  } else {
+    det.push(`<span>CPU <b>&mdash;</b></span>`);
   }
 
   return `<div class="card">

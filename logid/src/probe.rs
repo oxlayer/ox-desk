@@ -35,6 +35,17 @@ pub struct Detail {
     pub ram_free_gb: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ram_total_gb: Option<f64>,
+    /// Uso de CPU, 0-100.
+    ///
+    /// A JANELA de amostragem difere por SO, e isso e deliberado: no
+    /// Linux sao duas leituras do `/proc/stat` 200 ms apart (percentual
+    /// exato), no macOS a soma do `%cpu` dos processos dividida pelos
+    /// nucleos (media que decai em ~1 min) e no Windows o
+    /// `LoadPercentage` do WMI (~1 s). Nenhuma e comparavel ao decimal
+    /// com as outras -- todas respondem "esta maquina esta ocupada?",
+    /// que e a pergunta que o cartao faz.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_pct: Option<f64>,
 }
 
 /// Estado de KVM **daquele** host: borda e reconciliador.
@@ -187,15 +198,33 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
             "$up=[int]((Get-Date)-$o.LastBootUpTime).TotalMinutes;",
             "$free=[math]::Round($o.FreePhysicalMemory/1MB,1);",
             "$tot=[math]::Round($c.TotalPhysicalMemory/1GB,1);",
-            "\"$up|$free|$tot\""
+            "$cpu=[int](Get-CimInstance Win32_Processor | ",
+            "Measure-Object -Property LoadPercentage -Average).Average;",
+            "\"$up|$free|$tot|$cpu\""
         ),
         // MemAvailable e nao MemFree: o kernel usa RAM livre como cache, e
         // MemFree num Linux saudavel e quase zero -- mostrar isso daria a
         // impressao de maquina afogada.
+        //
+        // Os valores sao guardados e impressos no END, e nao na hora em
+        // que a linha aparece. Imprimir na hora amarrava a saida a ORDEM
+        // do /proc/meminfo, onde `MemTotal` vem ANTES de `MemAvailable`:
+        // os dois numeros sairam colados (`31.315.6`) e os dois campos
+        // viravam `None`. O bug sobreviveu porque esta e a unica maquina
+        // Linux e o detalhe dela nunca era consultado -- ninguem roda
+        // isto contra si mesmo por SSH. Apareceu no instante em que o
+        // cartao local passou a buscar detalhe.
         HostOs::Linux => concat!(
             "awk '{printf \"%d|\", $1/60}' /proc/uptime; ",
-            "awk '/MemAvailable/{printf \"%.1f|\", $2/1048576} ",
-            "/MemTotal/{printf \"%.1f\", $2/1048576}' /proc/meminfo"
+            "awk '/^MemAvailable:/{a=$2} /^MemTotal:/{t=$2} ",
+            "END{printf \"%.1f|%.1f|\", a/1048576, t/1048576}' /proc/meminfo; ",
+            // Duas amostras: o /proc/stat conta TEMPO acumulado desde o
+            // boot, nao uso atual. Uma leitura so daria a media da vida
+            // da maquina, que nunca muda e nao serve para nada.
+            "s() { awk '/^cpu /{t=0;for(i=2;i<=NF;i++)t+=$i;print t\" \"($5+$6)}' /proc/stat; }; ",
+            "a=$(s); sleep 0.2; b=$(s); ",
+            "echo \"$a $b\" | awk '{d=$3-$1; i=$4-$2; ",
+            "if(d>0) printf \"%.0f\", (d-i)*100/d; else printf \"0\"}'"
         ),
         // macOS nao tem /proc. `kern.boottime` da a epoca do boot, e as
         // paginas livres saem do vm_stat (free + inactive, que e o que de
@@ -212,42 +241,57 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
             "fr=$(vm_stat | awk -v p=$ps '/Pages free/{f=$3} /Pages inactive/{i=$3} ",
             "END{gsub(/\\./,\"\",f); gsub(/\\./,\"\",i); printf \"%.1f\", (f+i)*p/1073741824}'); ",
             "tot=$(echo $(sysctl -n hw.memsize) | awk '{printf \"%.1f\", $1/1073741824}'); ",
-            "echo \"$up|$fr|$tot\""
+            // Sem `top -l 2`: ele espera ~1 s pela segunda amostra e o
+            // cartao do Mac ficaria sempre um segundo atrasado. A soma do
+            // %cpu dos processos dividida pelos nucleos ja responde "esta
+            // ocupada?" sem custo nenhum.
+            "n=$(sysctl -n hw.ncpu); ",
+            "cpu=$(ps -A -o %cpu | awk -v n=$n 'NR>1{s+=$1} ",
+            "END{v=s/n; if(v>100)v=100; printf \"%.0f\", v}'); ",
+            "echo \"$up|$fr|$tot|$cpu\""
         ),
         HostOs::Unknown => return None,
     })
 }
 
-pub fn ssh_detail(h: &HostCfg) -> Detail {
-    let (Some(alias), Some(cmd)) = (h.ssh.as_deref(), detail_cmd(h.os())) else {
+/// Uptime e RAM de um host -- inclusive DESTE.
+///
+/// Era `ssh_detail` e exigia `h.ssh`, entao a maquina local ficava sem:
+/// ela nao tem SSH para si mesma. O cartao de quem estava olhando o
+/// painel aparecia sem uptime nem RAM, que e justamente o cartao mais
+/// facil de conferir -- e o usuario notou.
+///
+/// Quem resolve local x remoto e o `remote::run`, que ja existia para
+/// isso. Um caminho para os dois casos: o comando e escolhido pelo SO do
+/// ALVO, e rodar PowerShell contra o Ubuntu falharia calado.
+pub fn detalhe(h: &HostCfg) -> Detail {
+    let Some(cmd) = detail_cmd(h.os()) else {
         return Detail::default();
     };
-    // O MESMO contorno de resolucao do `agent.rs` e do `files.rs`. Faltava
-    // aqui, e o sintoma era discreto: o card do par vinha sem uptime nem
-    // RAM, visto do Windows, e detalhe ausente parece "o host nao
-    // respondeu" em vez de "o ssh nao resolveu o nome".
-    let mut args: Vec<String> = vec![
-        "-o".into(), "BatchMode=yes".into(),
-        "-o".into(), "ConnectTimeout=3".into(),
-        "-o".into(), "LogLevel=ERROR".into(),
-    ];
-    args.extend(ssh_addr_opts(&h.addr));
-    args.push(alias.to_string());
-    args.push(cmd.to_string());
-    let out = crate::sys::child("ssh").args(&args).output();
-    let Ok(out) = out else { return Detail::default() };
-    let text = String::from_utf8_lossy(&out.stdout);
+    // Host remoto sem `ssh` na config nao tem por onde ser consultado.
+    if !h.is_local() && h.ssh.is_none() {
+        return Detail::default();
+    }
+    let Ok(text) = crate::remote::run(h, cmd, 3) else {
+        return Detail::default();
+    };
     let Some(line) = text.lines().filter(|l| l.contains('|')).next_back() else {
         return Detail::default();
     };
     let parts: Vec<&str> = line.trim().split('|').collect();
-    if parts.len() != 3 {
+    // Tres campos ou mais: a CPU entrou depois, e aceitar a linha curta
+    // faz um campo novo degradar em vez de apagar os que ja funcionavam.
+    if parts.len() < 3 {
         return Detail::default();
     }
     Detail {
         uptime_min: parts[0].trim().parse::<f64>().ok().map(|v| v as u64),
         ram_free_gb: parts[1].trim().parse().ok(),
         ram_total_gb: parts[2].trim().parse().ok(),
+        cpu_pct: parts
+            .get(3)
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .map(|v| v.clamp(0.0, 100.0)),
     }
 }
 
@@ -294,10 +338,10 @@ fn check_host(h: &HostCfg, cfg: &Config) -> HostState {
             .map(|u| UnitState { unit: u.clone(), state: "remoto".into() })
             .collect()
     };
-    let detail = match (&h.ssh, online) {
-        (Some(_), true) => ssh_detail(h),
-        _ => Detail::default(),
-    };
+    // A propria maquina responde sempre; as outras, so quando estao no ar
+    // -- consultar host desligado custa o timeout inteiro para devolver o
+    // que ja sabemos.
+    let detail = if h.is_local() || online { detalhe(h) } else { Detail::default() };
 
     // So quando esta no ar: uma chamada SSH para host desligado custa o
     // timeout inteiro e devolve o que ja sabemos.

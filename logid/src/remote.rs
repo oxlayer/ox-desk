@@ -1,6 +1,6 @@
 //! Executar uma linha de shell num host -- aqui ou no par.
 //!
-//! Extraido na terceira vez que apareceu. O `probe::ssh_detail` e o
+//! Extraido na terceira vez que apareceu. O `probe::detalhe` e o
 //! `agent` ja montavam `ssh` com as mesmas quatro opcoes mais o contorno
 //! de resolucao, e o gerenciador de processos precisaria do mesmo. A
 //! quarta copia seria onde uma delas esqueceria o `ssh_addr_opts` e
