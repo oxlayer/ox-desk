@@ -6,6 +6,12 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · "Ver a tela" do Mac já usa o nosso, não RDP
+Clicar acorda o host da outra máquina sozinho e abre nossa janela. A
+imagem foi corrigida (ela era redimensionada errado), ganhou taxa de
+bits de LAN e keyframe a cada 2s para o erro cicatrizar. O Windows
+segue em RDP até existir captura lá.
+
 ## 2026-11-04 · Tela remota própria: teclado e mouse já voltam
 O laço fechou — o input do cliente chega ao host e é aplicado. Falta
 trocar o botão "Ver a tela" para chamar o nosso em vez do RDP.

@@ -96,8 +96,19 @@ fn main() -> anyhow::Result<()> {
     let (tx_id, rx_id) = std::sync::mpsc::channel::<String>();
     let (tx_pronto, rx_pronto) = std::sync::mpsc::channel::<String>();
 
+    // Quem decide encerrar e a rede (ninguem assistindo), mas quem pode
+    // PARAR e a thread de captura -- e a dona do laco do PipeWire e dos
+    // recursos de CUDA/NVENC.
+    //
+    // Tentei `std::process::exit` da thread de rede e o processo travou:
+    // o exit comeca a destruir os estaticos enquanto a captura ainda
+    // esta codificando, e o log mostrou `encode: InvalidParam` seguido
+    // de nada. Bandeira + timer no proprio laco resolve na ordem certa.
+    let sair = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sair_rede = std::sync::Arc::clone(&sair);
+
     let rede = std::thread::spawn(move || {
-        if let Err(e) = servir(porta, rx, tx_id, rx_pronto) {
+        if let Err(e) = servir(porta, rx, tx_id, rx_pronto, sair_rede) {
             eprintln!("  rede: {e}");
         }
     });
@@ -308,8 +319,25 @@ fn main() -> anyhow::Result<()> {
         &mut params,
     )?;
 
+    // Timer no proprio laco: e o unico lugar de onde da para chamar
+    // `quit` com seguranca, porque o `MainLoop` nao atravessa threads.
+    let ml = mainloop.clone();
+    let sair_timer = std::sync::Arc::clone(&sair);
+    let timer = mainloop.loop_().add_timer(move |_| {
+        if sair_timer.load(std::sync::atomic::Ordering::Relaxed) {
+            ml.quit();
+        }
+    });
+    timer
+        .update_timer(
+            Some(Duration::from_millis(500)),
+            Some(Duration::from_millis(500)),
+        )
+        .into_result()?;
+
     println!("  host na porta {porta}; ctrl-c para parar");
     mainloop.run();
+    println!("  captura encerrada");
     let _ = sp.method_call::<(), _, _, _>(SESSION, "Stop", ());
     let _ = rede.join();
     Ok(())
@@ -428,6 +456,7 @@ fn servir(
     mut rx: tokio::sync::mpsc::Receiver<Codificado>,
     tx_id: std::sync::mpsc::Sender<String>,
     rx_pronto: std::sync::mpsc::Receiver<String>,
+    sair: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> anyhow::Result<()> {
     use std::rc::Rc;
 
@@ -565,13 +594,11 @@ fn servir(
             } else {
                 println!("  ninguem voltou; encerrando");
             }
-            // `exit` e nao `break`: sair deste laco encerraria so a
-            // thread de rede, e o laco do PipeWire na thread principal
-            // seguiria capturando para sempre -- exatamente o processo
-            // esquecido que esta saida existe para evitar. Nao ha estado
-            // a salvar: o Mutter solta as sessoes quando o par sai do
-            // barramento.
-            std::process::exit(0);
+            // Pede para a captura parar; ela encerra o processo na
+            // ordem certa. Matar daqui travava no meio da destruicao do
+            // NVENC.
+            sair.store(true, std::sync::atomic::Ordering::Relaxed);
+            return Ok(());
         }
         Ok::<(), anyhow::Error>(())
     })
