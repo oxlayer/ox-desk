@@ -6,6 +6,7 @@
 //! Quem sabe o commit e quem dispara o deploy; ele passa adiante.
 fn main() {
     println!("cargo:rerun-if-env-changed=LOGI_BUILD");
+    println!("cargo:rerun-if-env-changed=LOGI_BUILD_N");
     let v = std::env::var("LOGI_BUILD").unwrap_or_else(|_| {
         std::process::Command::new("git")
             .args(["rev-parse", "--short", "HEAD"])
@@ -16,4 +17,18 @@ fn main() {
             .unwrap_or_else(|| "desconhecido".into())
     });
     println!("cargo:rustc-env=LOGI_BUILD={v}");
+
+    // Numero incremental alem do hash: hash diz que duas maquinas estao
+    // DIFERENTES, nao qual esta atras. `rev-list --count` cresce sempre e
+    // e igual nas tres para o mesmo commit.
+    let n = std::env::var("LOGI_BUILD_N").unwrap_or_else(|_| {
+        std::process::Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|| "0".into())
+    });
+    println!("cargo:rustc-env=LOGI_BUILD_N={n}");
 }

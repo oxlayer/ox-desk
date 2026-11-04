@@ -23,6 +23,7 @@
 mod say;
 
 mod agent;
+mod changelog;
 #[cfg(target_os = "linux")]
 mod border;
 #[cfg(windows)]
@@ -418,6 +419,45 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
     }
 }
 
+/// POST /api/follow {"enabled": bool, "leader": "<nome HID++>"}
+///
+/// Qual dispositivo manda depende de COMO a pessoa troca de maquina:
+/// pela borda quem atravessa e o mouse; pelo botao Easy-Switch do
+/// teclado, o lider tem de ser o teclado -- senao o reconciliador desfaz
+/// a acao que ela acabou de fazer. Por isso e escolha, nao constante.
+fn post_follow(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let atual = cfg.read().map(|g| g.input.follow.enabled).unwrap_or(false);
+    let on = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(atual);
+    let leader = v.get("leader").and_then(|x| x.as_str());
+    if let Err(e) = config::save_follow(on, leader) {
+        return err_json(req, 500, &e);
+    }
+    match Config::load() {
+        Ok(novo) => {
+            let lider = novo.input.follow.leader.clone().unwrap_or_default();
+            if let Ok(mut g) = cfg.write() {
+                *g = novo;
+            }
+            if let Ok(mut c) = cache.lock() {
+                c.at = None;
+            }
+            say!("follow: {} com lider '{lider}'", if on { "LIGADO" } else { "desligado" });
+            ok_json(
+                req,
+                serde_json::json!({ "ok": true, "enabled": on, "leader": lider,
+                    "nota": "vale no proximo boot do daemon" })
+                .to_string(),
+            )
+        }
+        Err(e) => err_json(req, 500, &format!("gravou mas nao recarregou: {e}")),
+    }
+}
+
 /// POST /api/border {"enabled": bool} -- liga/desliga o KVM por borda.
 fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
@@ -555,6 +595,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     if path == "/api/border" && method == "POST" {
         return post_border(req, cfg, cache);
     }
+    if path == "/api/follow" && method == "POST" {
+        return post_follow(req, cfg, cache);
+    }
     if path == "/api/focus" && method == "POST" {
         return post_focus(req, cfg);
     }
@@ -577,7 +620,14 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         // usuario notar antes de mim.
         "/healthz" => ok_json(
             req,
-            serde_json::json!({ "ok": true, "build": env!("LOGI_BUILD") }).to_string(),
+            serde_json::json!({
+                "ok": true,
+                "build": env!("LOGI_BUILD"),
+                // Incremental: diz QUAL maquina esta atras, nao so que
+                // estao diferentes.
+                "n": env!("LOGI_BUILD_N").parse::<u64>().unwrap_or(0),
+            })
+            .to_string(),
         ),
 
         "/api/status" | "/api/hosts" => {
@@ -644,6 +694,11 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             }
         }
 
+        "/api/changelog" => match serde_json::to_string(&changelog::entradas()) {
+            Ok(b) => ok_json(req, b),
+            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+        },
+
         "/api/layout" => {
             let snap = match cfg.read() {
                 Ok(g) => g.clone(),
@@ -670,6 +725,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 "hosts": hosts,
                 "edges": bordas,
                 "border_enabled": snap.input.border.enabled,
+                "follow_enabled": snap.input.follow.enabled,
+                "follow_leader": snap.input.follow.leader,
+                "devices": snap.devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>(),
             });
             ok_json(req, body.to_string())
         }

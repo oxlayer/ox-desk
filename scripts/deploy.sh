@@ -18,7 +18,11 @@ PULAR_MAC=0
 BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo desconhecido)"
 git diff --quiet 2>/dev/null || BUILD="$BUILD-sujo"
 export LOGI_BUILD="$BUILD"
-echo "== build $BUILD =="
+# Numero incremental: diz QUAL maquina esta atras, nao so que estao
+# diferentes. Viaja junto porque a copia do Mac nao tem .git.
+LOGI_BUILD_N="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+export LOGI_BUILD_N
+echo "== build #$LOGI_BUILD_N $BUILD =="
 
 falhas=0
 passo() { printf '  %-44s' "$1"; }
@@ -84,7 +88,7 @@ else
   # Sem cross-compile de Linux para macOS: exige o SDK da Apple, entao o
   # build acontece la. O LOGI_BUILD viaja junto porque a copia nao tem .git.
   if out=$(timeout 420 ssh -n -o BatchMode=yes mac \
-            "cd ~/logi/logid && LOGI_BUILD='$BUILD' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
+            "cd ~/logi/logid && LOGI_BUILD='$BUILD' LOGI_BUILD_N='$LOGI_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
              install -m755 target/release/logid ~/.local/bin/logid &&
              launchctl kickstart -k gui/\$(id -u)/ai.logi.logid" 2>&1); then ok; else erro "$out"; fi
 fi
@@ -100,8 +104,9 @@ visto[windows]=$(echo "(Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 'http:/
 
 for h in "${!visto[@]}"; do
   b=$(printf '%s' "${visto[$h]}" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')
+  n=$(printf '%s' "${visto[$h]}" | sed -n 's/.*"n":\([0-9]*\).*/\1/p')
   if [ "$b" = "$BUILD" ]; then
-    printf '  %-10s %s\n' "$h" "$b"
+    printf '  %-10s #%s %s\n' "$h" "${n:-?}" "$b"
   else
     printf '  %-10s %s  <-- FORA DE SINCRONIA (esperado %s)\n' "$h" "${b:-sem resposta}" "$BUILD"
     falhas=$((falhas+1))

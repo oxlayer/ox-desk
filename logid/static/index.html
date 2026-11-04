@@ -128,11 +128,36 @@
   .scr .why{font:11px var(--mono);color:var(--faint);flex-basis:100%;min-width:0}
   .scr .why.er{color:var(--down)}
 
+  .novwrap{position:relative;margin-left:auto}
+  .novbtn{background:none;border:1px solid var(--line);border-radius:999px;
+    width:30px;height:30px;cursor:pointer;color:var(--dim);font-size:14px;
+    display:flex;align-items:center;justify-content:center;position:relative}
+  .novbtn:hover{background:var(--inset);color:var(--fg)}
+  .novbtn .badge{position:absolute;top:-3px;right:-3px;min-width:15px;height:15px;
+    border-radius:999px;background:var(--down);color:#fff;font:9.5px/15px var(--mono);
+    text-align:center;padding:0 3px}
+  .novpop{position:absolute;right:0;top:36px;width:min(26rem,85vw);z-index:40;
+    background:var(--card);border:1px solid var(--line);border-radius:12px;
+    box-shadow:var(--shadow);max-height:60vh;overflow-y:auto;display:none}
+  .novpop.on{display:block}
+  .novpop h3{margin:0;padding:11px 14px;font-size:12px;font-weight:650;
+    border-bottom:1px solid var(--line)}
+  .novitem{padding:9px 14px;border-bottom:1px solid var(--line)}
+  .novitem:last-child{border-bottom:none}
+  .novitem .d{font:10px var(--mono);color:var(--faint)}
+  .novitem .t{font-size:12.5px;font-weight:600;margin:1px 0 2px}
+  .novitem .x{font-size:11.5px;color:var(--dim);line-height:1.45}
+  .novitem.novo{background:var(--inset)}
+  .novitem.novo .t::after{content:" novo";font:9.5px var(--mono);
+    color:var(--up);letter-spacing:.04em}
+
   .lywrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
     border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
   .lyhead{display:flex;align-items:center;gap:10px;padding:12px 16px;
     border-bottom:1px solid var(--line);flex-wrap:wrap}
   .lyhead h2{font-size:13px;font-weight:650;margin:0}
+  .lyhead select{font:11.5px inherit;padding:2px 5px;border-radius:7px;
+    border:1px solid var(--line);background:var(--bg);color:var(--fg);max-width:13em}
   .lyhead .opt{display:flex;align-items:center;gap:5px;font-size:11.5px;
     color:var(--dim);cursor:pointer;user-select:none}
   .lyhead .meta{color:var(--faint);font-size:11px;font-family:var(--mono);
@@ -252,6 +277,10 @@
   <div class="summary" id="sum"></div>
   <div class="spacer"></div>
   <div class="stamp" id="stamp">...</div>
+  <div class="novwrap">
+    <button class="novbtn" id="novbtn" title="novidades">&#9733;<span class="badge" id="novbadge" hidden></span></button>
+    <div class="novpop" id="novpop"><h3>Novidades</h3><div id="novlist"></div></div>
+  </div>
 </header>
 <p class="sub">LAN 192.168.1.0/24 &middot; leitura direta de portas, sem agente remoto</p>
 <div class="grid" id="grid"></div>
@@ -274,6 +303,9 @@
     <h2>Disposicao</h2>
     <label class="opt" id="lykvm" title="desligar para a borda parar de trocar de maquina">
       <input type="checkbox" id="lykvmon"> KVM por borda</label>
+    <label class="opt" title="os outros dispositivos seguem este quando ele muda de maquina">
+      <input type="checkbox" id="lyfollowon"> seguir
+      <select id="lyleader"></select></label>
     <span class="meta" id="lymeta"></span>
   </div>
   <div class="lygrid" id="lygrid"></div>
@@ -572,6 +604,49 @@ document.getElementById('grid').addEventListener('click', async ev => {
   setTimeout(screens, 2500);
 });
 
+// --- novidades ---------------------------------------------------------
+// O changelog vem do binario (include_str!), nao de disco: o que aparece
+// aqui e o que ESTA maquina roda. Lendo de arquivo, uma maquina atrasada
+// anunciaria novidade que ela nao tem.
+async function novidades(){
+  let itens = [];
+  try{
+    const r = await fetch('/api/changelog', {cache:'no-store'});
+    if (r.ok) itens = await r.json();
+  }catch(e){ return; }
+  if (!itens.length) return;
+
+  // "Visto" por titulo da entrada mais recente, no armazenamento do
+  // navegador: e conveniencia por pessoa, nao estado que precise durar.
+  let visto = null;
+  try{ visto = localStorage.getItem('logi.novidades.visto'); }catch(e){}
+  const corte = itens.findIndex(i => i.titulo === visto);
+  const novos = corte < 0 ? (visto ? itens.length : 0) : corte;
+
+  document.getElementById('novlist').innerHTML = itens.map((i, n) =>
+    `<div class="novitem${n < novos ? ' novo' : ''}">` +
+    `<div class="d">${esc(i.data)}</div>` +
+    `<div class="t">${esc(i.titulo)}</div>` +
+    `<div class="x">${esc(i.descricao)}</div></div>`).join('');
+
+  const badge = document.getElementById('novbadge');
+  badge.textContent = novos;
+  badge.hidden = novos === 0;
+
+  document.getElementById('novbtn').onclick = () => {
+    const pop = document.getElementById('novpop');
+    pop.classList.toggle('on');
+    if (pop.classList.contains('on')){
+      try{ localStorage.setItem('logi.novidades.visto', itens[0].titulo); }catch(e){}
+      badge.hidden = true;
+      for (const el of pop.querySelectorAll('.novitem.novo')) el.classList.remove('novo');
+    }
+  };
+}
+document.addEventListener('click', ev => {
+  if (!ev.target.closest('.novwrap')) document.getElementById('novpop').classList.remove('on');
+});
+
 // --- disposicao --------------------------------------------------------
 // A grade diz a mesma coisa que `edge = "right"` + `target = "..."`, mas
 // do jeito que a pessoa ja pensa: "o Windows fica a direita".
@@ -645,6 +720,17 @@ async function layout(){
     lyDesenha();
     lyEdges(d.edges, d.border_enabled);
     document.getElementById('lykvmon').checked = !!d.border_enabled;
+    // Quem manda depende de COMO voce troca: pela borda e o mouse que
+    // atravessa; pelo Easy-Switch do teclado, tem de ser o teclado --
+    // senao o reconciliador desfaz o que voce acabou de fazer.
+    const sel = document.getElementById('lyleader');
+    const nomes = d.devices || [];
+    if (sel.dataset.nomes !== nomes.join('|')){
+      sel.dataset.nomes = nomes.join('|');
+      sel.innerHTML = nomes.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    }
+    if (d.follow_leader) sel.value = d.follow_leader;
+    document.getElementById('lyfollowon').checked = !!d.follow_enabled;
   }catch(e){
     document.getElementById('lymeta').textContent = 'inacessivel: ' + e.message;
   }
@@ -685,6 +771,24 @@ document.getElementById('lykvmon').addEventListener('change', async ev => {
     ev.target.checked = !on;
   }
 });
+
+async function salvaFollow(){
+  const meta = document.getElementById('lymeta');
+  try{
+    const r = await fetch('/api/follow', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        enabled: document.getElementById('lyfollowon').checked,
+        leader: document.getElementById('lyleader').value || undefined,
+      })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    meta.textContent = d.nota;
+  }catch(e){ meta.textContent = e.message; }
+}
+document.getElementById('lyfollowon').addEventListener('change', salvaFollow);
+document.getElementById('lyleader').addEventListener('change', salvaFollow);
 
 let lyArrastando = null;
 document.addEventListener('dragstart', ev => {
@@ -892,13 +996,19 @@ document.getElementById('fshost').addEventListener('click', ev => {
 // Versao do build: as tres maquinas tem de estar no mesmo commit, e ja
 // aconteceu de uma ficar para tras sem ninguem notar.
 fetch('/healthz', {cache:'no-store'}).then(r => r.json())
-  .then(d => { document.getElementById('build').textContent = d.build || '?'; })
+  .then(d => {
+    // Numero antes do hash: ele diz QUAL maquina esta atras, nao so que
+    // estao diferentes.
+    document.getElementById('build').textContent =
+      (d.n ? '#' + d.n + ' ' : '') + (d.build || '?');
+  })
   .catch(() => {});
 
 tick(); setInterval(tick, RS*1000);
 files();
 tarefas();
 layout();
+novidades();
 setInterval(() => { if (TK.pendente === null) tarefas(); }, 10000);
 logs(); setInterval(logs, RS*1000);
 // Controles mudam pouco e a leitura e caro (uma ida e volta HID++ por

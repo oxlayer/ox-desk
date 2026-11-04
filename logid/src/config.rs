@@ -283,35 +283,56 @@ pub struct Config {
 
 pub const DEFAULT_TOML: &str = include_str!("../default-config.toml");
 
-/// Liga ou desliga a borda, preservando comentarios.
+/// Troca valores dentro de uma secao, preservando o resto do arquivo.
 ///
-/// Mesma cirurgia de texto do `apply_layout`, e pelo mesmo motivo: o
-/// `[input.border]` desta config carrega seis linhas explicando por que
-/// ela esta como esta, e um toggle na GUI nao pode apagar isso.
-pub fn set_border_enabled(toml_text: &str, on: bool) -> String {
+/// Terceira vez que esta cirurgia apareceu (grade, borda, agora o
+/// reconciliador), entao virou funcao. O motivo e sempre o mesmo:
+/// reserializar a struct produz TOML correto e apaga os comentarios, e
+/// nesta config eles sao o registro de por que cada escolha foi feita.
+///
+/// Chave que nao existe na secao e **acrescentada** ao fim dela, nao
+/// ignorada -- `leader` pode nunca ter sido escrito.
+pub fn set_in_section(toml_text: &str, secao: &str, pares: &[(&str, String)]) -> String {
+    let cabecalho = format!("[{secao}]");
     let mut out: Vec<String> = Vec::new();
     let mut dentro = false;
-    let mut trocou = false;
+    let mut vistos: Vec<&str> = Vec::new();
+
+    let faltantes = |vistos: &Vec<&str>| -> Vec<String> {
+        pares
+            .iter()
+            .filter(|(k, _)| !vistos.contains(k))
+            .map(|(k, v)| format!("{k} = {v}"))
+            .collect()
+    };
+
     for linha in toml_text.lines() {
         let t = linha.trim();
         if t.starts_with('[') {
-            // Ao sair da secao sem ter achado a chave, escreve-a.
-            if dentro && !trocou {
-                out.push(format!("enabled = {on}"));
-                trocou = true;
+            if dentro {
+                out.extend(faltantes(&vistos));
             }
-            dentro = t == "[input.border]";
-        }
-        if dentro && !trocou && t.starts_with("enabled") && t.contains('=') {
-            out.push(format!("enabled = {on}"));
-            trocou = true;
+            dentro = t == cabecalho;
+            vistos.clear();
+            out.push(linha.to_string());
             continue;
+        }
+        if dentro {
+            if let Some((chave, _)) = t.split_once('=') {
+                let chave = chave.trim();
+                if let Some((k, v)) = pares.iter().find(|(k, _)| *k == chave) {
+                    out.push(format!("{k} = {v}"));
+                    vistos.push(k);
+                    continue;
+                }
+            }
         }
         out.push(linha.to_string());
     }
-    if dentro && !trocou {
-        out.push(format!("enabled = {on}"));
+    if dentro {
+        out.extend(faltantes(&vistos));
     }
+
     let mut texto = out.join("\n");
     if toml_text.ends_with('\n') && !texto.ends_with('\n') {
         texto.push('\n');
@@ -319,12 +340,35 @@ pub fn set_border_enabled(toml_text: &str, on: bool) -> String {
     texto
 }
 
+fn gravar(depois: String) -> Result<(), String> {
+    // Valida ANTES de gravar: edicao de texto que produz TOML invalido
+    // deixaria o daemon sem config no proximo boot.
+    toml::from_str::<Config>(&depois).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
+    let p = Config::path();
+    std::fs::write(&p, depois).map_err(|e| format!("gravar {p:?}: {e}"))
+}
+
 pub fn save_border_enabled(on: bool) -> Result<(), String> {
     let p = Config::path();
     let antes = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
-    let depois = set_border_enabled(&antes, on);
-    toml::from_str::<Config>(&depois).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
-    std::fs::write(&p, depois).map_err(|e| format!("gravar {p:?}: {e}"))
+    gravar(set_in_section(&antes, "input.border", &[("enabled", on.to_string())]))
+}
+
+/// Liga/desliga o reconciliador e escolhe quem manda.
+///
+/// Configuravel porque a resposta certa depende de como a pessoa troca
+/// de maquina: com a borda ligada quem manda e o mouse (e ele que
+/// atravessa); trocando no botao Easy-Switch do teclado, o lider tem de
+/// ser o TECLADO -- senao o reconciliador puxa o teclado de volta para
+/// onde o mouse esta e desfaz a acao que a pessoa acabou de fazer.
+pub fn save_follow(on: bool, leader: Option<&str>) -> Result<(), String> {
+    let p = Config::path();
+    let antes = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+    let mut pares: Vec<(&str, String)> = vec![("enabled", on.to_string())];
+    if let Some(l) = leader {
+        pares.push(("leader", format!("\"{}\"", l.replace('"', ""))));
+    }
+    gravar(set_in_section(&antes, "input.follow", &pares))
 }
 
 /// Grava as posicoes no arquivo, preservando comentarios.
@@ -675,9 +719,23 @@ addr = "la.local"
     }
 
     #[test]
+    fn chave_que_falta_e_acrescentada() {
+        // `leader` pode nunca ter sido escrito na secao.
+        let antes = "[input.follow]\n# comentario\nenabled = false\n";
+        let depois = set_in_section(
+            antes,
+            "input.follow",
+            &[("enabled", "true".into()), ("leader", "\"MX Keys\"".into())],
+        );
+        assert!(depois.contains("# comentario"));
+        assert!(depois.contains("enabled = true"));
+        assert!(depois.contains("leader = \"MX Keys\""));
+    }
+
+    #[test]
     fn toggle_da_borda_preserva_a_secao() {
         let antes = "# topo\n[input.border]\n# por que esta assim\nenabled = false\nedge = \"right\"\n\n[input.follow]\nenabled = true\n";
-        let depois = set_border_enabled(antes, true);
+        let depois = set_in_section(antes, "input.border", &[("enabled", "true".into())]);
         assert!(depois.contains("# por que esta assim"));
         assert!(depois.contains("[input.border]\n# por que esta assim\nenabled = true"));
         // Nao pode encostar no enabled do OUTRO bloco.
@@ -687,7 +745,7 @@ addr = "la.local"
         assert!(c.input.follow.enabled);
 
         // E desligar de volta tambem.
-        let c2: Config = toml::from_str(&set_border_enabled(&depois, false)).unwrap();
+        let c2: Config = toml::from_str(&set_in_section(&depois, "input.border", &[("enabled", "false".into())])).unwrap();
         assert!(!c2.input.border.enabled);
         assert!(c2.input.follow.enabled, "o follow nao pode ser arrastado junto");
     }
