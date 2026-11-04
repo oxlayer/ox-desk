@@ -309,3 +309,67 @@ impl Drop for TelaAcesa {
         unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
     }
 }
+
+/// Encerra qualquer protetor de tela rodando. Devolve quantos matou.
+///
+/// **Esta era a causa real do "nao consigo acordar o Windows".**
+///
+/// O protetor de tela roda num desktop proprio ("Screen-saver"), e o
+/// DXGI recusa duplicar para um processo que nao esta no desktop de
+/// input corrente: `DuplicateOutput` devolve `E_ACCESSDENIED`, o mesmo
+/// codigo da tela bloqueada e do driver pela metade. Diagnostiquei as
+/// duas causas erradas antes de olhar a lista de processos e achar o
+/// `Bubbles.scr` rodando, com o `LogonUI` ausente e o adaptador de
+/// video OK.
+///
+/// Nao da para dispensar por `SendInput`: a injecao vai para o desktop
+/// da THREAD que chama, que e o `Default` -- o protetor, noutro
+/// desktop, nem fica sabendo. Por isso `acordar_tela()` resolve tela
+/// apagada e nao resolve esta.
+///
+/// `SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, FALSE)` tambem nao
+/// serve sozinho: impede o proximo, nao encerra o que ja esta na tela.
+///
+/// Terminar o processo e o que sobra, e e o que as ferramentas de
+/// acesso remoto fazem. O risco e baixo: um protetor de tela nao tem
+/// estado para perder, e o proprio Windows o mata a qualquer movimento
+/// de mouse.
+pub fn encerrar_protetor_de_tela() -> usize {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    let mut mortos = 0usize;
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return 0;
+        };
+        let mut e = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snap, &mut e).is_ok() {
+            loop {
+                let fim = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+                let nome = String::from_utf16_lossy(&e.szExeFile[..fim]);
+                if nome.to_ascii_lowercase().ends_with(".scr") {
+                    if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, e.th32ProcessID) {
+                        if TerminateProcess(h, 0).is_ok() {
+                            println!("  protetor de tela encerrado: {nome}");
+                            mortos += 1;
+                        }
+                        let _ = CloseHandle(h);
+                    }
+                }
+                if Process32NextW(snap, &mut e).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snap);
+    }
+    mortos
+}

@@ -82,6 +82,11 @@ pub fn executar(porta: u16, monitor: u32) -> anyhow::Result<()> {
     // na frente e o DXGI nao o captura por desenho. Limite conhecido.
     let _acesa = crate::input_win::TelaAcesa::nova();
     crate::input_win::acordar_tela();
+    // E o protetor de tela, que e problema DIFERENTE da tela apagada:
+    // ele roda num desktop proprio e o DXGI recusa duplicar para quem
+    // nao esta no desktop de input. `acordar_tela()` nao o dispensa,
+    // porque `SendInput` vai para o desktop da thread que chama.
+    crate::input_win::encerrar_protetor_de_tela();
 
     // ORDEM IMPORTA: o encoder primeiro, a duplicacao depois.
     //

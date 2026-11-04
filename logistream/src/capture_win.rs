@@ -177,21 +177,35 @@ impl Monitor {
                 }
             }
         }
-        // "Acesso negado" sozinho manda a pessoa procurar permissao, que
-        // nao e o problema. Os tres motivos reais, em ordem de frequencia
-        // medida: a pilha de display meio instalada (foi o caso quando o
-        // driver de display virtual do Parsec saiu e o reinicio ficou
-        // pendente -- um `Microsoft Basic Display Adapter` em estado
-        // `Unknown` no gerenciador), a tela bloqueada, e o desktop seguro
-        // do UAC na frente. O DXGI nao captura nenhum dos dois ultimos,
-        // por desenho -- e uma diferenca real em relacao ao RDP, que cria
-        // sessao propria.
+        // "Acesso negado" sozinho manda a pessoa procurar permissao de
+        // usuario, que NUNCA e o problema. Sao quatro causas com o
+        // mesmo codigo, e ja diagnostiquei a errada tres vezes num dia
+        // -- por isso a ordem aqui e por frequencia MEDIDA, nao por
+        // intuicao:
+        //
+        // 1. Protetor de tela rodando. Ele vive num desktop proprio e o
+        //    DXGI nao duplica para quem nao esta no desktop de input.
+        //    Foi a causa do "nao consigo acordar o Windows", com
+        //    LogonUI ausente e adaptador de video OK -- os dois sinais
+        //    que me fizeram descartar as outras hipoteses. O host ja
+        //    tenta encerra-lo na partida.
+        // 2. Tela bloqueada de verdade (LogonUI na frente).
+        // 3. Dialogo de UAC no desktop seguro.
+        // 4. Pilha de display meio instalada -- foi real quando o
+        //    driver virtual do Parsec saiu e deixou um `Microsoft Basic
+        //    Display Adapter` em estado `Unknown` com reinicio
+        //    pendente.
+        //
+        // O roteiro para distinguir esta em
+        // .claude/rules/tela-bloqueada-windows.md.
         anyhow::bail!(
             "DuplicateOutput recusou {TENTATIVAS} vezes ({ultimo}). \
-             Causas, em ordem: driver de video meio instalado (confira \
-             reinicio pendente e adaptador em estado Unknown), tela \
-             bloqueada, ou dialogo do UAC na frente -- o DXGI nao captura \
-             os dois ultimos."
+             Quatro causas dao este mesmo erro; confira nesta ordem: \
+             (1) protetor de tela rodando -- `Get-Process | ? Path -like '*.scr'`; \
+             (2) tela bloqueada -- `Get-Process LogonUI`; \
+             (3) dialogo de UAC na frente -- `Get-Process consent`; \
+             (4) driver de video meio instalado -- `Get-CimInstance Win32_VideoController`. \
+             O DXGI nao captura desktop que nao seja o de input, por desenho."
         )
     }
 }
