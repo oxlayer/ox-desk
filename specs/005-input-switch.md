@@ -234,15 +234,43 @@ Duas consequências de projeto:
 outro repo: a ação é irreversível, então preview é obrigatório.
 
 **2. O dead-man's switch mora no ALVO.** Quem pode devolver o
-dispositivo é quem passa a detê-lo. O agente do alvo deve:
+dispositivo é quem passa a detê-lo. Isso inverte a responsabilidade: a
+origem não tenta se salvar, o destino a resgata.
 
-- esperar input por N segundos depois de receber o device;
-- se nada chegar, emitir `ChangeHost` de volta por conta própria.
+### Implementado dentro do `watch-edge` — e por que ali
 
-Isso inverte a responsabilidade: a origem não tenta se salvar, o
-destino a resgata. É também a razão mais forte para existir um agente
-no Windows em vez de só SSH — e enquanto ele não existir, a rota física
-é **de ida só**, e a volta é pelo botão físico do dispositivo.
+Primeira ideia: o `logid` pediria ao agente do alvo, por SSH, que rodasse
+`guard`. **Não funciona.** `GetLastInputInfo` é por sessão, e comando por
+SSH cai numa sessão que nunca viu input — medido: reporta o uptime da
+máquina (704577031 ms ≈ 8 dias).
+
+Então o guard foi para dentro do `watch-edge`, que já é residente na
+sessão do usuário e já faz polling:
+
+1. detecta que os dispositivos **chegaram** (transição de ausente para
+   presente, checada a 1 Hz);
+2. grava o idle naquele instante e abre uma janela de `LOGID_GUARD_SECS`
+   (25 s por padrão);
+3. se o idle cair abaixo do tempo desde a chegada, houve atividade — e
+   desarma;
+4. se a janela fechar sem input, emite `ChangeHost` de volta.
+
+Validado na primeira execução:
+
+```
+watch-edge START borda='left' area=(0,0 4480x1440) slots=[1, 2] -> host 1
+dispositivos CHEGARAM -- vigiando input por 25s (idle na chegada: 0ms)
+input detectado -- dead-man's switch desarmado
+```
+
+> A checagem de presença é HID++ e o loop gira a cada 30 ms para o cursor
+> responder rápido. Sem limitar, seriam 33 pings por segundo martelando o
+> rádio — está a 1 Hz, e a janela do guard é de dezenas de segundos.
+
+Outro dado do mesmo log: a área virtual passou de `2048x1152` para
+`4480x1440` entre execuções — a máquina ganhou um segundo monitor. É o
+argumento prático para usar `SM_XVIRTUALSCREEN` e família em vez de
+`SM_CXSCREEN`, que só veria o primário.
 
 ### Recuperação sem input
 

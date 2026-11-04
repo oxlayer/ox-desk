@@ -91,7 +91,7 @@ fn survey(api: &HidApi) -> serde_json::Value {
     // Com nomes: o reconciliador do logid casa dispositivo por NOME, nao
     // por canal -- canal e ambiguo quando mouse e teclado declaram o mesmo.
     let slots: Vec<_> = link
-        .devices(6, true)
+        .devices(6, true, false)
         .into_iter()
         .map(|d| {
             if d.online {
@@ -223,6 +223,29 @@ fn main() -> ExitCode {
 
             let mut touching_since: Option<std::time::Instant> = None;
             let mut cooldown_until: Option<std::time::Instant> = None;
+
+            // Dead-man's switch. A spec 005 o exige e eu nunca o havia
+            // ativado, porque descobri que ele NAO pode ser lancado por
+            // SSH: GetLastInputInfo nao ve a sessao do usuario de fora
+            // dela. Aqui dentro funciona -- este processo ja e residente
+            // na sessao e ja faz polling.
+            //
+            // Logica: quando os dispositivos CHEGAM nesta maquina, damos
+            // uma janela. Se nenhum input aparecer nela, devolvemos -- quem
+            // os mandou nao pode desfazer, so quem os detem.
+            let guard_secs: u64 = std::env::var("LOGID_GUARD_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(25);
+            let mut presente_antes = false;
+            let mut chegou_em: Option<std::time::Instant> = None;
+            let mut idle_na_chegada: u64 = 0;
+            // O loop gira a cada 30 ms para o cursor responder rapido, mas
+            // a checagem de presenca e HID++: a 33 Hz seria martelar o
+            // radio sem motivo. Uma vez por segundo basta -- a janela do
+            // guard e de dezenas de segundos.
+            let mut ultima_checagem = std::time::Instant::now()
+                - std::time::Duration::from_secs(2);
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(30));
 
@@ -231,6 +254,63 @@ fn main() -> ExitCode {
                         continue;
                     }
                     cooldown_until = None;
+                }
+
+                // --- dead-man's switch: detecta chegada e vigia o input
+                if ultima_checagem.elapsed() >= std::time::Duration::from_secs(1) {
+                    ultima_checagem = std::time::Instant::now();
+                if let Ok(link) = hidpp::Receiver::open(&api) {
+                    let presente = slots.iter().any(|s| link.ping(*s).is_ok());
+                    if presente && !presente_antes {
+                        idle_na_chegada = input::idle_ms().unwrap_or(0);
+                        chegou_em = Some(std::time::Instant::now());
+                        logline(&format!(
+                            "dispositivos CHEGARAM -- vigiando input por {guard_secs}s \
+                             (idle na chegada: {idle_na_chegada}ms)"
+                        ));
+                    } else if !presente && presente_antes {
+                        chegou_em = None;
+                        logline("dispositivos SAIRAM -- vigilancia encerrada");
+                    }
+                    presente_antes = presente;
+
+                    if let Some(t0) = chegou_em {
+                        match input::idle_ms() {
+                            // Input novo: o idle caiu abaixo do tempo desde
+                            // a chegada, logo houve atividade depois dela.
+                            Ok(idle) if idle < t0.elapsed().as_millis() as u64 => {
+                                logline("input detectado -- dead-man's switch desarmado");
+                                chegou_em = None;
+                            }
+                            Ok(idle) if t0.elapsed().as_secs() >= guard_secs => {
+                                logline(&format!(
+                                    "SEM INPUT em {guard_secs}s (idle {idle}ms) -- \
+                                     devolvendo para o host {host}"
+                                ));
+                                for slot in &slots {
+                                    if link.ping(*slot).is_err() {
+                                        continue;
+                                    }
+                                    match link.set_host(*slot, host) {
+                                        Ok(()) => logline(&format!(
+                                            "resgate: slot {slot} -> host {host}"
+                                        )),
+                                        Err(e) => logline(&format!(
+                                            "resgate do slot {slot} FALHOU: {e}"
+                                        )),
+                                    }
+                                }
+                                chegou_em = None;
+                                cooldown_until = Some(
+                                    std::time::Instant::now()
+                                        + std::time::Duration::from_secs(15),
+                                );
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 }
 
                 let Some(p) = input::cursor() else { continue };
