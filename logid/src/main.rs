@@ -35,6 +35,8 @@ mod hidpp;
 mod logs;
 mod peers;
 mod probe;
+mod procs;
+mod remote;
 mod screen;
 mod sys;
 
@@ -416,6 +418,37 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
     }
 }
 
+/// POST /api/processes/kill {"host","pid","force"?,"confirm":true}
+///
+/// `confirm` obrigatorio pelo mesmo motivo do `/api/focus`: matar
+/// processo na maquina de alguem nao pode sair de um clique distraido, e
+/// nao tem desfazer.
+fn post_kill(mut req: Request, cfg: &RwLock<Config>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let (Some(host), Some(pid)) = (
+        v.get("host").and_then(|h| h.as_str()).map(String::from),
+        v.get("pid").and_then(|p| p.as_u64()).map(|p| p as u32),
+    ) else {
+        return err_json(req, 400, "informe {\"host\": \"<nome>\", \"pid\": <n>}");
+    };
+    let force = v.get("force").and_then(|f| f.as_bool()).unwrap_or(false);
+    let confirm = v.get("confirm").and_then(|c| c.as_bool()).unwrap_or(false);
+    let snap = match cfg.read() {
+        Ok(g) => g.clone(),
+        Err(_) => return err_json(req, 500, "config travada"),
+    };
+    match procs::kill(&snap, &host, pid, force, confirm) {
+        Ok(detalhe) => {
+            ok_json(req, serde_json::json!({ "ok": true, "detail": detalhe }).to_string())
+        }
+        Err(e) => err_json(req, 409, &e),
+    }
+}
+
 fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
     let method = req.method().as_str().to_string();
@@ -425,6 +458,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     }
     if path == "/api/screen" && method == "POST" {
         return post_screen(req, cfg);
+    }
+    if path == "/api/processes/kill" && method == "POST" {
+        return post_kill(req, cfg);
     }
     if path == "/api/focus" && method == "POST" {
         return post_focus(req, cfg);
@@ -504,6 +540,30 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 Err(_) => return err_json(req, 500, "config travada"),
             };
             match serde_json::to_string(&screen::plans(&snap)) {
+                Ok(b) => ok_json(req, b),
+                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            }
+        }
+
+        "/api/processes" => {
+            let q = req.url().split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
+            let snap = match cfg.read() {
+                Ok(g) => g.clone(),
+                Err(_) => return err_json(req, 500, "config travada"),
+            };
+            let host = q
+                .split('&')
+                .filter_map(|kv| kv.split_once('='))
+                .find(|(k, _)| *k == "host")
+                .map(|(_, v)| files::percent_decode(v))
+                .unwrap_or_else(|| {
+                    snap.hosts
+                        .iter()
+                        .find(|h| h.is_local())
+                        .map(|h| h.name.clone())
+                        .unwrap_or_default()
+                });
+            match serde_json::to_string(&procs::list(&snap, &host)) {
                 Ok(b) => ok_json(req, b),
                 Err(e) => err_json(req, 500, &format!("serializar: {e}")),
             }

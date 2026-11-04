@@ -128,6 +128,38 @@
   .scr .why{font:11px var(--mono);color:var(--faint);flex-basis:100%;min-width:0}
   .scr .why.er{color:var(--down)}
 
+  .tkwrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .tkhead{display:flex;align-items:center;gap:10px;padding:12px 16px;
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .tkhead h2{font-size:13px;font-weight:650;margin:0}
+  .tkhead .meta{color:var(--faint);font-size:11px;font-family:var(--mono);
+    margin-left:auto}
+  .tkbody{max-height:340px;overflow-y:auto}
+  .tkrow{display:flex;align-items:center;gap:10px;padding:3px 16px;
+    font-size:12.5px}
+  .tkrow:hover{background:var(--inset)}
+  .tkrow .pid{flex:none;width:5.5em;font:11px var(--mono);color:var(--faint);
+    text-align:right}
+  .tkrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .tkrow .cpu,.tkrow .mem{flex:none;width:5.5em;text-align:right;
+    font:11px var(--mono)}
+  .tkrow .act{flex:none;width:9.5em;text-align:right}
+  .tkrow .act button{font:11px inherit;padding:2px 8px;border-radius:7px;
+    border:1px solid var(--line);background:var(--bg);color:var(--dim);
+    cursor:pointer}
+  .tkrow .act button:hover{color:var(--down);border-color:var(--down)}
+  .tkrow .act button.sim{color:var(--down);border-color:var(--down)}
+  .tkhdr{display:flex;gap:10px;padding:5px 16px;font:10.5px var(--mono);
+    color:var(--faint);border-bottom:1px solid var(--line);
+    text-transform:uppercase;letter-spacing:.04em}
+  .tkhdr .pid{flex:none;width:5.5em;text-align:right}
+  .tkhdr .nm{flex:1}
+  .tkhdr .cpu,.tkhdr .mem{flex:none;width:5.5em;text-align:right}
+  .tkhdr .act{flex:none;width:9.5em}
+  .tknote{padding:8px 16px 12px;color:var(--faint);font-size:11.5px}
+
   .fswrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
     border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
   .fshead{display:flex;align-items:center;gap:10px;padding:12px 16px;
@@ -205,6 +237,22 @@
     Escrever aqui muda o comportamento fisico do botao, no proprio
     dispositivo. &ldquo;padrao&rdquo; desfaz. Dispositivo em outra maquina nao
     aparece: o HID++ nao alcanca quem esta em outro canal.
+  </div>
+</div>
+
+<div class="tkwrap">
+  <div class="tkhead">
+    <h2>Tarefas</h2>
+    <div class="fshost" id="tkhost"></div>
+    <span class="meta" id="tkmeta"></span>
+  </div>
+  <div class="tkhdr"><span class="pid">pid</span><span class="nm">processo</span>
+    <span class="cpu" id="tkcpu">cpu</span><span class="mem">mem MB</span>
+    <span class="act"></span></div>
+  <div class="tkbody" id="tkbody"><div class="tknote">carregando...</div></div>
+  <div class="tknote">
+    Ordenado por CPU. Encerrar pede confirmacao e nao tem desfazer --
+    &ldquo;forcado&rdquo; nao deixa o programa salvar nada.
   </div>
 </div>
 
@@ -398,6 +446,7 @@ async function tick(){
     const d = await r.json();
     grid.innerHTML = d.hosts.map(card).join('');
     fsHosts(d.hosts);
+    tkHosts(d.hosts);
     screens();
     const on = d.hosts.filter(h => h.online).length;
     const bad = d.hosts.reduce((n,h) => n + h.services.filter(s => !s.ok).length, 0);
@@ -475,6 +524,86 @@ document.getElementById('grid').addEventListener('click', async ev => {
     why.classList.add('er');
   }
   setTimeout(screens, 2500);
+});
+
+// --- tarefas -----------------------------------------------------------
+const TK = {host:null, pendente:null};
+
+function tkHosts(hosts){
+  const box = document.getElementById('tkhost');
+  const want = hosts.map(h => h.name).join('|');
+  if (box.dataset.hosts === want) return;
+  box.dataset.hosts = want;
+  box.innerHTML = hosts.map(h =>
+    `<button data-host="${esc(h.name)}">${esc(h.name)}</button>`).join('');
+}
+
+async function tarefas(){
+  const body = document.getElementById('tkbody');
+  const q = TK.host ? ('?host=' + encodeURIComponent(TK.host)) : '';
+  try{
+    const r = await fetch('/api/processes' + q, {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    TK.host = d.host;
+    for (const b of document.querySelectorAll('#tkhost button'))
+      b.classList.toggle('on', b.dataset.host === d.host);
+    // A unidade de CPU muda por SO: percentual no Unix, segundos
+    // acumulados no Windows. Rotular errado seria mentira plausivel.
+    document.getElementById('tkcpu').textContent =
+      d.cpu_kind === 'seconds' ? 'cpu s' : 'cpu %';
+    if (d.error){
+      body.innerHTML = `<div class="tknote">${esc(d.error)}</div>`;
+      document.getElementById('tkmeta').textContent = d.source;
+      return;
+    }
+    body.innerHTML = d.procs.map(p => {
+      const confirmando = TK.pendente === p.pid;
+      const acao = confirmando
+        ? `<button class="sim" data-kill="${p.pid}">encerrar</button>` +
+          `<button class="sim" data-kill="${p.pid}" data-force="1">forcado</button>`
+        : `<button data-ask="${p.pid}">encerrar</button>`;
+      return `<div class="tkrow"><span class="pid">${p.pid}</span>` +
+             `<span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>` +
+             `<span class="cpu">${p.cpu}</span>` +
+             `<span class="mem">${p.mem_mb}</span>` +
+             `<span class="act">${acao}</span></div>`;
+    }).join('') || '<div class="tknote">nada rodando?</div>';
+    document.getElementById('tkmeta').textContent =
+      d.procs.length + ' processos - ' + d.source;
+  }catch(e){
+    body.innerHTML = `<div class="tknote">inacessivel: ${esc(e.message)}</div>`;
+  }
+}
+
+document.getElementById('tkhost').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-host]');
+  if (!b || b.dataset.host === TK.host) return;
+  TK.host = b.dataset.host; TK.pendente = null;
+  tarefas();
+});
+
+document.getElementById('tkbody').addEventListener('click', async ev => {
+  // Dois passos de proposito: o primeiro clique so arma, o segundo age.
+  const ask = ev.target.closest('button[data-ask]');
+  if (ask){ TK.pendente = Number(ask.dataset.ask); return tarefas(); }
+  const kill = ev.target.closest('button[data-kill]');
+  if (!kill) return;
+  const pid = Number(kill.dataset.kill);
+  const force = kill.dataset.force === '1';
+  kill.disabled = true; kill.textContent = '...';
+  try{
+    const r = await fetch('/api/processes/kill', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({host: TK.host, pid, force, confirm: true})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  }catch(e){
+    document.getElementById('tkmeta').textContent = e.message;
+  }
+  TK.pendente = null;
+  setTimeout(tarefas, 600);
 });
 
 // --- arquivos ---------------------------------------------------------
@@ -572,6 +701,8 @@ document.getElementById('fshost').addEventListener('click', ev => {
 
 tick(); setInterval(tick, RS*1000);
 files();
+tarefas();
+setInterval(() => { if (TK.pendente === null) tarefas(); }, 10000);
 logs(); setInterval(logs, RS*1000);
 // Controles mudam pouco e a leitura e caro (uma ida e volta HID++ por
 // controle): intervalo bem maior que o do painel.
