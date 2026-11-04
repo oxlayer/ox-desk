@@ -1193,3 +1193,92 @@ acrescente aqui depois.
 - Latência real da troca HID++ ponta a ponta — medir antes de prometer.
 - E se o mouse estiver no canal de uma máquina desligada? Só o botão
   físico resolve, e a GUI tem que dizer isso.
+
+## KVM por LAN: trocar de máquina sem trocar de dongle (04/11)
+
+Dois dongles perto não funcionam — a cola segue o dongle, e ficou um só
+no Ubuntu. Isso resolve a instabilidade e deixa um problema: alcançar
+as outras máquinas exige mover o receptor na mão.
+
+A saída é parar de tratar troca de máquina como comando de rádio para o
+teclado e passar a tratá-la como decisão de software: capturar aqui e
+injetar lá, pela LAN.
+
+### Por que evdev e não o `InputCapture` do Mutter
+
+O GNOME 50 expõe `org.gnome.Mutter.InputCapture`, que é a API feita
+para isto. Introspeccionando uma sessão (sonda descartável, porque ela
+morre junto com a conexão que a cria e o `busctl` não serve), ela
+oferece:
+
+```
+GetZones, AddBarrier, ClearBarriers, Enable, Disable,
+ConnectToEIS, Release, Close
+sinais: Activated(barrier_id, activation_id, cursor_position), Deactivated
+```
+
+Não há **nenhum** método para ativar a captura sob demanda. O
+compositor só entrega input quando o ponteiro cruza uma barreira de
+borda — exatamente o gesto que estamos tentando abandonar em favor do
+clique na bandeja.
+
+Daria para contornar: criar uma barreira e teleportar o ponteiro para
+dentro dela pelo `RemoteDesktop`. Seria simular a borda, com mais peças
+para quebrar.
+
+O evdev resolve direto: `EVIOCGRAB` é explícito (a semântica do
+clique), **os códigos já são os nossos** — `Evento::Tecla` carrega
+keycode de evdev porque é o que `NotifyKeyboardKeycode` recebe, e
+`scancode_de_evdev()` já traduz para o Windows — e independe de
+compositor.
+
+### Movimento relativo
+
+`Evento::MouseRel` entrou no protocolo. O visualizador manda absoluto
+porque sabe onde o cursor está dentro da janela dele; o KVM não tem
+janela. E jogo lê movimento relativo: com absoluto a mira trava nas
+bordas, e "mudar para Windows para jogar" é o caso que motivou tudo.
+
+A tag nova quase ativou um bug latente: o decodificador terminava em
+`_ => Tecla`, então qualquer tag desconhecida lia 5 bytes. Um `MouseRel`
+de 16 lido como tecla deixaria 11 bytes soltos e, dali em diante, todo
+o stream vira comando fantasma **no computador de outra pessoa**. Cada
+tag tem arm próprio agora, e um teste trava o formato.
+
+### As três salvaguardas
+
+Agarrado, o teclado não existe para o desktop local. Isso é o que
+queremos — sem o grab, cada tecla seria digitada nos dois computadores
+— e é o que torna o modo perigoso.
+
+1. **Conectar antes de agarrar.** Falhou a conexão, ninguém agarra.
+   Sem isso, alvo fora do ar deixaria a pessoa sem teclado e sem
+   destino.
+2. **Socorro que não depende da rede.** Os dois Ctrl juntos soltam tudo
+   e encerram. Nenhum texto os produz e nenhum programa os usa — é o
+   mesmo gesto de switch KVM de hardware, pelo mesmo motivo.
+3. **Soltar o que ficou apertado.** O kernel solta o grab quando o fd
+   fecha, então teclado travado para sempre não é alcançável. Mas as
+   teclas apertadas **no outro lado** ficariam presas, e isso é
+   alcançável — já aconteceu no caminho do visualizador. Mandamos
+   key-up de tudo antes de sair.
+
+`--observar` lê e imprime sem agarrar e sem mandar: é o modo de
+conferir antes de deixar o programa roubar o teclado de alguém.
+
+### Permissão
+
+`logid/udev/70-logid-input.rules`, com `TAG+="uaccess"` nos
+dispositivos Logitech — não o grupo `input`, que daria a qualquer
+processo da conta acesso permanente a todo dispositivo de entrada,
+inclusive com a sessão encerrada. Receita em
+`.claude/skills/dar-acesso-a-input.md`.
+
+### O que falta
+
+- A bandeja nativa que chama isto (hoje é linha de comando).
+- Captura no Windows (`SetWindowsHookEx` + Raw Input) para o caminho
+  inverso, quando o dongle estiver lá.
+- Modo só-input no host: hoje o KVM conecta no host de tela, que passa
+  a codificar vídeo sem ninguém assistindo. Para jogar no Windows isso
+  é GPU jogada fora.
