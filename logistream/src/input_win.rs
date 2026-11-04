@@ -222,23 +222,26 @@ fn virtual_screen() -> (i32, i32, i32, i32) {
 // Isso so aparece no uso real, porque e justamente quando a maquina
 // ficou sozinha um tempo que voce quer alcanca-la de longe.
 
-/// Acorda a tela sem mexer o ponteiro nem apertar nada.
+/// Acorda a tela sem apertar nada e sem deslocar o ponteiro.
 ///
-/// Um `MOUSEEVENTF_MOVE` relativo de (0,0) conta como atividade para o
-/// contador de ociosidade do Windows -- o bastante para religar a saida
-/// de video -- e nao desloca o cursor nem um pixel, entao e invisivel
-/// para quem estiver na frente da maquina.
+/// Dois `MOUSEEVENTF_MOVE` relativos na MESMA chamada: +1 e depois -1.
+/// O ponteiro acaba onde estava, e o par e atomico, entao nao da para
+/// alguem clicar entre os dois.
 ///
-/// Nao resolve o caso de sessao REALMENTE bloqueada: ali o desktop
-/// seguro esta na frente e o DXGI nao o captura por desenho. Isso
-/// continua precisando de outra arquitetura (processo na sessao do
-/// Winlogon), e segue como limite conhecido.
+/// Tem de ser movimento de verdade. A primeira versao mandava um unico
+/// (0,0) achando que o contador de ociosidade bastava; o Windows
+/// descarta o no-op e a tela ficou apagada. Isso apareceu medindo: o
+/// `DuplicateOutput` passava, o cliente conectava, e nenhum quadro saia
+/// -- porque a saida de video continuava desligada.
+///
+/// NAO resolve sessao realmente bloqueada: ali o desktop seguro esta na
+/// frente e o DXGI nao o captura por desenho. Limite conhecido.
 pub fn acordar_tela() {
-    let mut e = INPUT {
+    let passo = |dx: i32| INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
-                dx: 0,
+                dx,
                 dy: 0,
                 mouseData: 0,
                 dwFlags: MOUSEEVENTF_MOVE,
@@ -247,7 +250,8 @@ pub fn acordar_tela() {
             },
         },
     };
-    unsafe { SendInput(std::slice::from_mut(&mut e), std::mem::size_of::<INPUT>() as i32) };
+    let mut par = [passo(1), passo(-1)];
+    unsafe { SendInput(&mut par, std::mem::size_of::<INPUT>() as i32) };
 }
 
 /// Enquanto existir, a tela nao apaga sozinha.

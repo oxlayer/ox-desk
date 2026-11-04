@@ -45,6 +45,23 @@ const BATIDA: Duration = Duration::from_millis(500);
 /// Quanto esperar por quadro novo em cada volta. Um quadro a 60 Hz.
 const ESPERA_MS: u32 = 16;
 
+/// Com cliente esperando e NENHUM quadro capturado ainda, de quanto em
+/// quanto tempo cutucar a tela para acordar.
+///
+/// O caso real: a maquina ficou sozinha, a economia de energia desligou
+/// a saida de video, e o DXGI passa a devolver `Parado` para sempre --
+/// `DuplicateOutput` nem recusa. Sem isto o cliente conectava e ficava
+/// na tela preta indefinidamente, e o host ficava de pe sem nada a
+/// fazer. Medido: zero quadro em oito segundos com a tela apagada.
+const CUTUCADA: Duration = Duration::from_secs(3);
+
+/// Depois disto, a duplicacao e recriada em vez de so cutucar.
+///
+/// Acordar a tela pode invalidar a duplicacao que nasceu com a saida
+/// desligada. Cutucar sozinho nao resolveria esse caso, e recriar e
+/// barato perto de deixar o usuario olhando para o nada.
+const RECRIAR_APOS: Duration = Duration::from_secs(9);
+
 pub fn executar(porta: u16, monitor: u32) -> anyhow::Result<()> {
     // PRIMEIRA COISA: acordar a tela, e segura-la acordada.
     //
@@ -105,6 +122,11 @@ pub fn executar(porta: u16, monitor: u32) -> anyhow::Result<()> {
     println!("  host na porta {porta}; ctrl-c para parar");
     let mut ultimo_envio = Instant::now();
     let mut descartados = 0u64;
+    // Vigia de tela muda: desde quando ha cliente esperando sem que a
+    // captura tenha produzido um unico quadro.
+    let mut mudo_desde: Option<Instant> = None;
+    let mut ultima_cutucada: Option<Instant> = None;
+    let mut ja_recriou = false;
 
     while !sinais.deve_sair() {
         // Sem ninguem assistindo, nao codifica: o quadro iria para um
@@ -114,6 +136,41 @@ pub fn executar(porta: u16, monitor: u32) -> anyhow::Result<()> {
         let assistindo = sinais.tem_cliente();
         if sinais.pegar_idr() {
             cod.pedir_idr();
+        }
+
+        // Vigia de tela muda.
+        //
+        // `tem_imagem()` falso com cliente conectado significa que nunca
+        // capturamos nada para mandar -- a batida de tela parada nao tem
+        // o que reenviar e o laco faria `continue` para sempre. Era
+        // exatamente isso que acontecia com a tela apagada: o cliente
+        // ficava no preto e o host nao reclamava.
+        if assistindo && !tela.tem_imagem() {
+            // Dois relogios: o total decide quando recriar, o da
+            // cutucada decide quando cutucar de novo. Com um so, reiniciar
+            // o relogio para espacar as cutucadas apagaria o total e o
+            // `recriar` nunca chegaria.
+            let desde = *mudo_desde.get_or_insert_with(Instant::now);
+            let mudo_ha = desde.elapsed();
+            let cutucar = ultima_cutucada.map_or(mudo_ha >= CUTUCADA, |t: Instant| {
+                t.elapsed() >= CUTUCADA
+            });
+
+            if mudo_ha >= RECRIAR_APOS && !ja_recriou {
+                ja_recriou = true;
+                println!("  nenhum quadro em {}s; recriando a duplicacao", mudo_ha.as_secs());
+                if let Err(e) = tela.recriar() {
+                    eprintln!("  recriar apos tela muda: {e}");
+                }
+            } else if cutucar {
+                println!("  nenhum quadro em {}s; acordando a tela", mudo_ha.as_secs());
+                crate::input_win::acordar_tela();
+                ultima_cutucada = Some(Instant::now());
+            }
+        } else if tela.tem_imagem() {
+            mudo_desde = None;
+            ultima_cutucada = None;
+            ja_recriou = false;
         }
 
         let estado = match tela.proximo(ESPERA_MS) {
