@@ -62,3 +62,22 @@ Write-Host '  1. abra o Deskflow, escolha Server'
 Write-Host '  2. Configure Server -> arraste uma tela nova ao lado do Windows'
 Write-Host '     (nome EXATO do hostname que o cliente Ubuntu mostrar)'
 Write-Host '  3. instale o KDE Connect pela Microsoft Store (clipboard + arquivos)'
+
+# --- logistream: tela e input -------------------------------------------
+#
+# Duas portas, duas regras. A de input (9778) ficou faltando quando o
+# KVM por LAN entrou, e o sintoma nao disse "firewall": o KVM agarrava o
+# teclado aqui, nao conectava la, e o teclado voltava sozinho. Regra
+# separada de proposito -- quem nao quer o KVM desabilita so ela.
+foreach ($r in @(
+  @{ nome = 'logistream (tela remota) UDP 9777'; porta = 9777 },
+  @{ nome = 'logistream (input KVM) UDP 9778';   porta = 9778 }
+)) {
+  if (-not (Get-NetFirewallRule -DisplayName $r.nome -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -DisplayName $r.nome -Direction Inbound -Protocol UDP `
+      -LocalPort $r.porta -Action Allow -Profile Any | Out-Null
+    Write-Host ("regra criada: " + $r.nome)
+  } else {
+    Write-Host ("regra ja existe: " + $r.nome)
+  }
+}

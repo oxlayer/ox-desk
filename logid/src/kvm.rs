@@ -83,6 +83,25 @@ pub fn mandar(cfg: &Config, host: &str) -> Result<String, String> {
         .as_ref()
         .ok_or_else(|| format!("'{host}' nao tem `[hosts.screen]`: sem porta para mandar input"))?;
 
+    // Recusar ANTES de agarrar o que nao sabe receber.
+    //
+    // O host do macOS captura tela mas nao injeta input -- ele registra
+    // o evento e ignora. Mandar o KVM para la agarrava o teclado da
+    // pessoa e nao fazia nada do outro lado: o pior modo de falha
+    // possivel, porque parece que o programa travou a maquina sem
+    // motivo. Foi o que o usuario viveu ("para macbook air nao
+    // funcionou tambem").
+    //
+    // Enquanto nao houver injecao por CGEvent la, e melhor dizer nao.
+    if h.os.as_deref() == Some("macos") {
+        return Err(format!(
+            "'{host}' roda macOS, e o host de la ainda nao injeta input -- \
+             agarrar o teclado para mandar eventos que ninguem aplica \
+             deixaria voce sem teclado e sem efeito. Falta a injecao por \
+             CGEvent (precisa de permissao de Acessibilidade)."
+        ));
+    }
+
     soltar()?;
 
     // Levantar o host da outra ponta primeiro. E ele quem recebe o
