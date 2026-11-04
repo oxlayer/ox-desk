@@ -1065,6 +1065,49 @@ alguns segundos depois volta".
 4. Outro gerenciador: `solaar`, `logiops`, `piper`, `ratbagd`.
 5. Energia do USB no host de DESTINO.
 
+### A causa, enfim: o receptor do Windows numa porta USB 3.0 (04/11)
+
+Depois de eliminar borda, reconciliador, sondagem (pausada nas duas
+maquinas), Options+, energia do USB e pareamento -- todos por experimento,
+nenhum por palpite -- sobrou a medicao que faltava:
+
+| canal | receptor em | |
+|---|---|---|
+| 1 (Ubuntu) | bus `usb1`, 12 Mbps, versao 2.00 | **USB 2.0** |
+| 2 (Windows) | `USB\ROOT_HUB30` | **USB 3.0** |
+
+Controlador USB 3.0 emite ruido de banda larga em torno de 2,4 GHz, que e
+a faixa do Unifying. Dongle numa porta USB 3 perde alcance e cai
+intermitentemente -- e documentado pela propria Logitech.
+
+**O que isso explica, que nada antes explicava:**
+
+- Os dispositivos sempre voltam para o **canal 1**, nao para uma MAQUINA.
+  Quando o usuario levou o receptor do Ubuntu para o Windows, eles
+  convergiram para o canal 1 **no Windows**. Nao e "algo puxa para o
+  Ubuntu"; e "eles largam o host 2 e caem no host estavel".
+- A relacao com a bateria, que era o pedaco que nao encaixava: mais carga
+  = transmissor mais forte = sobrevive mais tempo no ruido. Medido, com o
+  mesmo software e os mesmos receptores:
+
+  | bateria | tempo no canal 2 |
+  |---|---|
+  | teclado a 0% | ~10 s |
+  | teclado recarregando | ~48 s |
+  | mouse a 85% | ~85 s |
+
+- Nenhuma linha de log reivindicando a acao, nos dois lados, em nenhum
+  momento. Era informacao, nao falta de informacao: eliminava o software.
+
+**Remedio:** mover o dongle do Windows para uma porta **USB 2.0**, ou usar
+um cabo de extensao curto para tirar ele da carcaca e da vizinhanca das
+outras portas USB 3.
+
+**A licao de processo:** eu persegui seis atores de software antes de
+medir em que porta o receptor estava. A ordem de investigacao no inicio
+desta secao agora comeca pelo fisico -- velocidade e barramento dos dois
+receptores -- porque custa um comando e elimina a classe inteira.
+
 ### A regra que sai disto
 
 **Interruptor que não desliga é pior que interruptor nenhum.** Um laço
