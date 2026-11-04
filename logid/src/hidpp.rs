@@ -286,15 +286,29 @@ pub fn survey() -> Survey {
     survey_opts(true)
 }
 
-/// Ultimo survey leve, para o caminho quente nao pagar ~360 ms.
-static LAST: Mutex<Option<(std::time::Instant, Vec<(u8, String, bool, Option<u8>)>)>> =
-    Mutex::new(None);
+/// O que o cache curto guarda de cada dispositivo.
+///
+/// Era uma tupla de quatro. Virou struct quando a bandeja precisou da
+/// bateria: a tupla ja estava no limite do legivel, e `(u8, String,
+/// bool, Option<u8>, Option<u8>)` tem dois `Option<u8>` que so a ordem
+/// distingue -- trocar canal por bateria compilaria e mentiria.
+#[derive(Clone)]
+pub struct Breve {
+    pub slot: u8,
+    pub name: String,
+    pub online: bool,
+    pub current_host: Option<u8>,
+    pub battery_percent: Option<u8>,
+}
 
-/// Dispositivos conhecidos (slot, nome, online, canal) do cache curto.
+/// Ultimo survey leve, para o caminho quente nao pagar ~360 ms.
+static LAST: Mutex<Option<(std::time::Instant, Vec<Breve>)>> = Mutex::new(None);
+
+/// Dispositivos conhecidos do cache curto.
 ///
 /// Devolve `None` se nao houver leitura recente -- quem chama decide se
 /// vale pagar a varredura.
-pub fn cached_devices(max_age: Duration) -> Option<Vec<(u8, String, bool, Option<u8>)>> {
+pub fn cached_devices(max_age: Duration) -> Option<Vec<Breve>> {
     let g = LAST.lock().ok()?;
     let (at, v) = g.as_ref()?;
     (at.elapsed() <= max_age).then(|| v.clone())
@@ -305,7 +319,13 @@ fn store_last(devs: &[Device]) {
         *g = Some((
             std::time::Instant::now(),
             devs.iter()
-                .map(|d| (d.slot, d.name.clone(), d.online, d.current_host))
+                .map(|d| Breve {
+                    slot: d.slot,
+                    name: d.name.clone(),
+                    online: d.online,
+                    current_host: d.current_host,
+                    battery_percent: d.battery_percent,
+                })
                 .collect(),
         ));
     }
@@ -328,17 +348,17 @@ pub fn survey_cached_or_fresh(max_age: Duration) -> Survey {
                 serial: None,
                 devices: devs
                     .into_iter()
-                    .map(|(slot, name, online, host)| Device {
-                        slot,
-                        name,
+                    .map(|b| Device {
+                        slot: b.slot,
+                        name: b.name,
                         kind: String::new(),
                         wpid: String::new(),
                         hidraw: None,
-                        online,
+                        online: b.online,
                         ping_ms: None,
-                        current_host: host,
+                        current_host: b.current_host,
                         num_hosts: None,
-                        battery_percent: None,
+                        battery_percent: b.battery_percent,
                         battery_status: None,
                         battery_next_level: None,
                         charging: false,
@@ -489,17 +509,17 @@ fn survey_pausado(restante: u64) -> Survey {
             serial: None,
             devices: devs
                 .into_iter()
-                .map(|(slot, name, online, host)| Device {
-                    slot,
-                    name,
+                .map(|b| Device {
+                    slot: b.slot,
+                    name: b.name,
                     kind: String::new(),
                     wpid: String::new(),
                     hidraw: None,
-                    online,
+                    online: b.online,
                     ping_ms: None,
-                    current_host: host,
+                    current_host: b.current_host,
                     num_hosts: None,
-                    battery_percent: None,
+                    battery_percent: b.battery_percent,
                     battery_status: None,
                     battery_next_level: None,
                     charging: false,

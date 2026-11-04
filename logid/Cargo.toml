@@ -19,6 +19,9 @@ hidpp = { version = "0.1.0", path = "../hidpp" }
 # direto, entao nem a dependencia precisa existir la.
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9.12"
+# Bandeja nativa por StatusNotifierItem. D-Bus puro, sem GTK -- e o que
+# permite a bandeja viver dentro de um daemon que ja serve HTTP.
+ksni = { version = "0.3", features = ["blocking"] }
 
 # Win32 compartilhado com o logid-agent: sessao, instancia unica, cursor
 # e idade do input.

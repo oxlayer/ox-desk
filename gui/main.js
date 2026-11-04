@@ -6,6 +6,10 @@
 // GUI existir so no Ubuntu, que foi exatamente a assimetria reclamada.
 // O que muda por SO sao caminhos, e so eles ficam em `paths()`.
 const { app, BrowserWindow, Tray, Menu, shell, nativeImage } = require('electron');
+
+/// No Linux a bandeja e nativa (ksni dentro do logid). Windows e macOS
+/// seguem com a do Electron ate ganharem a sua.
+const BANDEJA_NATIVA = process.platform === 'linux';
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
@@ -137,9 +141,15 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  // Fechar esconde na bandeja; sair e pelo menu da bandeja.
+  // Fechar esconde na bandeja -- mas so onde ELA existe.
+  //
+  // No Linux a bandeja agora e nativa, dentro do logid, e esta casca
+  // nao cria mais a dela. Esconder a janela sem bandeja propria
+  // deixaria um processo invisivel e sem caminho de volta: o menu
+  // nativo abre o painel no navegador, nao esta janela. Entao aqui
+  // fechar e fechar.
   win.on('close', (e) => {
-    if (!quitting) { e.preventDefault(); win.hide(); }
+    if (!quitting && !BANDEJA_NATIVA) { e.preventDefault(); win.hide(); }
   });
 }
 
@@ -310,10 +320,19 @@ if (!app.requestSingleInstanceLock()) {
     const how = await ensureBackend();
     console.log(`backend em ${URL}: ${how}`);
     createWindow();
-    createTray();
+    // Bandeja so onde nao ha nativa. No Linux o logid registra a dele
+    // por StatusNotifierItem; criar a do Electron junto poria DOIS
+    // icones iguais na barra, cada um com um menu que o outro nao
+    // atualiza.
+    if (!BANDEJA_NATIVA) createTray();
   });
 
-  app.on('window-all-closed', () => { /* fica na bandeja */ });
+  // Sem bandeja propria, fechar a ultima janela tem de encerrar: um
+  // Electron invisivel sem icone nenhum e um processo que so o
+  // gerenciador de tarefas acha.
+  app.on('window-all-closed', () => {
+    if (BANDEJA_NATIVA) app.quit();
+  });
 
   app.on('before-quit', () => { quitting = true; });
 

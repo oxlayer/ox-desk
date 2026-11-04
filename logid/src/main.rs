@@ -41,6 +41,8 @@ mod procs;
 mod remote;
 mod screen;
 mod sys;
+#[cfg(target_os = "linux")]
+mod tray;
 
 use config::Config;
 use probe::Snapshot;
@@ -216,6 +218,16 @@ fn main() -> std::process::ExitCode {
     peers::spawn(Arc::clone(&cfg));
     // Mantem o survey local quente: a borda nao pode pagar ~360 ms.
     hidpp::spawn_refresher();
+    // Nenhum KVM orfao segurando teclado de ninguem.
+    kvm::limpar_orfaos();
+    // Bandeja nativa. Nao e fatal se nao subir: sem extensao de
+    // AppIndicator (ou sem bandeja nenhuma) o icone nao aparece e o
+    // daemon segue servindo painel e API. Derrubar o logid porque nao
+    // ha onde desenhar um icone seria trocar inconveniencia por queda.
+    #[cfg(target_os = "linux")]
+    if let Some(h) = tray::iniciar(Arc::clone(&cfg)) {
+        tray::vigiar(h, Arc::clone(&cfg));
+    }
 
     let server = Arc::new(server);
     let workers: Vec<_> = (0..4)

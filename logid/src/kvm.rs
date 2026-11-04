@@ -180,3 +180,27 @@ pub fn mandar(cfg: &Config, host: &str) -> Result<String, String> {
     say!("kvm: input indo para {host} ({destino})");
     Ok(destino)
 }
+
+/// Mata `logistream-kvm` orfao na partida do daemon.
+///
+/// Hoje o systemd ja limpa: `systemctl restart` derruba o cgroup
+/// inteiro, e o filho vai junto. Isto existe porque a consequencia de
+/// um dia NAO limpar e desproporcional -- um processo agarrando o
+/// teclado sem ninguem para solta-lo pelo menu. O kernel solta quando
+/// o fd fecha, e os dois Ctrl continuam valendo, mas depender de o
+/// usuario lembrar do atalho de socorro para recuperar a propria
+/// maquina nao e desenho, e sorte.
+///
+/// Matar por nome e seguro aqui: so pode existir um grab de cada
+/// dispositivo, entao um `logistream-kvm` que nao e nosso ja estaria
+/// disputando com o que vamos lancar.
+pub fn limpar_orfaos() {
+    let r = std::process::Command::new("pkill")
+        .args(["-x", "logistream-kvm"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if matches!(r, Ok(s) if s.success()) {
+        crate::say!("kvm: um processo orfao foi encerrado na partida");
+    }
+}
