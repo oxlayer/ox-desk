@@ -18,7 +18,7 @@ remota própria, e o controle de tudo num painel só.
 1. [Cada máquina tem a própria config, e nada sincroniza](.claude/rules/config-por-maquina.md)
 2. [Reiniciar agente: o nome do processo não é o nome do binário](.claude/rules/reiniciar-agente.md)
 3. [PowerShell remoto: sempre `-EncodedCommand` a partir de arquivo](.claude/rules/powershell-remoto.md)
-4. [O DXGI não captura a tela de bloqueio, e isso não é bug nosso](.claude/rules/tela-bloqueada-windows.md)
+4. [`E_ACCESSDENIED` no DXGI: quatro causas, e a mais comum é o protetor de tela](.claude/rules/tela-bloqueada-windows.md)
 5. [Mandar não é ter chegado; número que ninguém imprime ninguém confere](.claude/rules/verificar-o-que-chegou.md)
 
 ## Skills (procedimentos)
