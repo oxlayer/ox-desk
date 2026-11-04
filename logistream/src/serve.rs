@@ -50,6 +50,13 @@ pub fn agora_ns() -> u64 {
 ///
 /// Bandeira e nao canal porque toda mensagem aqui e idempotente: dois
 /// pedidos de quadro-chave valem um, e "saia" dito duas vezes e "saia".
+///
+/// Tudo em `SeqCst`, e nao `Relaxed`: a ORDEM entre elas importa. A rede
+/// liga `idr` antes de `cliente`, e a captura le `cliente` antes de
+/// `idr` -- com `Relaxed` ela pode ver "ha cliente" sem ver "manda
+/// quadro-chave", e ai o cliente novo recebe um quadro P que nao
+/// decodifica. Sao algumas escritas por segundo; a ordem vale mais que
+/// os nanossegundos.
 #[derive(Default)]
 pub struct Sinais {
     /// A rede decidiu encerrar; quem para de verdade e a captura, que e
@@ -64,13 +71,22 @@ pub struct Sinais {
 
 impl Sinais {
     pub fn deve_sair(&self) -> bool {
-        self.sair.load(Ordering::Relaxed)
+        self.sair.load(Ordering::SeqCst)
+    }
+
+    /// Pede que a captura encerre o processo.
+    ///
+    /// Publico porque quem descobre que nao ha mais o que fazer e a
+    /// REDE, e quem pode parar com seguranca e a captura -- ela e dona
+    /// do NVENC e do CUDA, e destruir isso do outro lado travava.
+    pub fn encerrar(&self) {
+        self.sair.store(true, Ordering::SeqCst);
     }
 
     /// Consome o pedido de quadro-chave. Devolve `true` uma vez por
     /// pedido -- quem chama repassa ao codificador.
     pub fn pegar_idr(&self) -> bool {
-        self.idr.swap(false, Ordering::Relaxed)
+        self.idr.swap(false, Ordering::SeqCst)
     }
 
     /// Vale a pena codificar agora?
@@ -80,7 +96,7 @@ impl Sinais {
     /// seria descartado. Medido no Windows -- 120 quadros descartados
     /// antes de o primeiro cliente conectar.
     pub fn tem_cliente(&self) -> bool {
-        self.cliente.load(Ordering::Relaxed)
+        self.cliente.load(Ordering::SeqCst)
     }
 }
 
@@ -104,29 +120,74 @@ pub async fn atender(
     sinais: &Sinais,
     mut abrir_input: impl FnMut(&quinn::Connection) -> tokio::task::JoinHandle<()>,
 ) -> anyhow::Result<()> {
+    // UM laco para o primeiro cliente e para os que voltam, com prazos
+    // diferentes.
+    //
+    // Antes eram dois lugares: o laco aceitava o primeiro, e depois de
+    // ele sair havia um `accept` separado so para saber se alguem
+    // voltava -- que entao encerrava de todo jeito, recusando quem
+    // acabara de conectar. O log dizia isso em voz alta ("alguem voltou,
+    // mas a conexao nao volta para o laco") e o sintoma era clicar "Ver
+    // a tela" duas vezes e a segunda falhar com "o servidor recusou".
+    let mut houve_cliente = false;
     loop {
-        let entrando = match tokio::time::timeout(
-            Duration::from_secs(ESPERA_PRIMEIRO_S),
-            ep.accept(),
-        )
-        .await
-        {
+        // Ate o primeiro cliente, o prazo e generoso: o painel acorda o
+        // host e abre o visualizador em seguida. Depois dele, o prazo e
+        // curto -- quem fechou a janela provavelmente acabou.
+        let prazo = if houve_cliente { OCIOSO_S } else { ESPERA_PRIMEIRO_S };
+        let entrando = match tokio::time::timeout(Duration::from_secs(prazo), ep.accept()).await {
             Ok(Some(e)) => e,
             // Endpoint fechado: nao ha mais o que aceitar.
             Ok(None) => break,
             Err(_) => {
-                println!("  ninguem conectou em {ESPERA_PRIMEIRO_S}s; encerrando");
-                sinais.sair.store(true, Ordering::Relaxed);
+                if houve_cliente {
+                    println!("  ninguem voltou em {prazo}s; encerrando");
+                } else {
+                    println!("  ninguem conectou em {prazo}s; encerrando");
+                }
+                sinais.sair.store(true, Ordering::SeqCst);
                 return Ok(());
             }
         };
-        let conexao = entrando.await?;
+        houve_cliente = true;
+        // Handshake que falha NAO e fatal.
+        //
+        // Com `?` aqui, um unico `timed out` -- cliente morto no meio do
+        // aperto de mao, pacote perdido, processo encerrado por SIGTERM --
+        // derrubava o laco inteiro. O host seguia VIVO, sem servir
+        // ninguem e sem encerrar: as duas tentativas seguintes de
+        // conectar nao recebiam nem recusa, so silencio. Medido.
+        let conexao = match entrando.await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("  handshake falhou ({e}); segue esperando");
+                continue;
+            }
+        };
         println!("  conectado: {}", conexao.remote_address());
         // O cliente novo nao tem contexto: o proximo quadro TEM de ser
         // quadro-chave, senao a janela dele fica preta ate o IDR
         // seguinte do GOP -- ate 2s olhando nada.
-        sinais.idr.store(true, Ordering::Relaxed);
-        sinais.cliente.store(true, Ordering::Relaxed);
+        // Ordem: `idr` ANTES de `cliente`. A captura le `cliente`
+        // primeiro, entao quando ela decidir codificar o pedido de
+        // quadro-chave ja esta visivel.
+        sinais.idr.store(true, Ordering::SeqCst);
+        sinais.cliente.store(true, Ordering::SeqCst);
+
+        // Joga fora o que sobrou da sessao anterior.
+        //
+        // O canal pode ter ate `CAPACIDADE` quadros codificados antes de
+        // o cliente de antes sair. Para o cliente NOVO eles sao quadros P
+        // sem referencia: o decodificador reclama `non-existing PPS 0
+        // referenced` e `no frame!` ate o IDR chegar. Medido reconectando
+        // no host do Windows.
+        let mut velhos = 0;
+        while rx.try_recv().is_ok() {
+            velhos += 1;
+        }
+        if velhos > 0 {
+            println!("  descartei {velhos} quadro(s) da sessao anterior");
+        }
         let Some(max) = conexao.max_datagram_size() else {
             eprintln!("  ERRO: o par nao aceita datagramas QUIC; nada de video vai passar");
             continue;
@@ -139,6 +200,22 @@ pub async fn atender(
 
         let mut quadro: u32 = 0;
         let mut enviados = 0u64;
+        // Nada sai antes do primeiro quadro-chave. GARANTIA, nao
+        // tentativa.
+        //
+        // Pedir IDR e drenar o canal cobre o caso comum, mas nao fecha a
+        // corrida: a captura le "ha cliente" no topo da volta e so manda
+        // o quadro ~20 ms depois, entao um P da sessao anterior pode
+        // entrar no canal DEPOIS da drenagem. Medido -- o cliente
+        // registrava `recebi quadro 0 P 6342 bytes` seguido de
+        // `non-existing PPS 0 referenced`, e o host concordava que havia
+        // mandado um P.
+        //
+        // Descartar aqui nao custa nada: quadro P sem referencia e
+        // inutil para quem acabou de chegar, decodificador nenhum
+        // aproveita. E a garantia fica LOCAL -- nao depende de ordem de
+        // bandeira nem de janela de tempo.
+        let mut esperando_chave = true;
         let mut bytes = 0u64;
         let mut recusados = 0u64;
         let t0 = Instant::now();
@@ -155,6 +232,26 @@ pub async fn atender(
                 }
             };
 
+            if esperando_chave {
+                if !c.keyframe {
+                    continue;
+                }
+                esperando_chave = false;
+            }
+
+            // Os primeiros quadros de cada conexao, um a um.
+            //
+            // A metade que faltava: o cliente dizia "recebi um P antes do
+            // quadro-chave" e eu nao tinha como saber se o host mandou
+            // errado ou se a rede entregou fora de ordem. Com os dois
+            // lados falando, sobra um suspeito.
+            if enviados < 3 {
+                println!(
+                    "  enviando quadro {quadro} {} {} bytes",
+                    if c.keyframe { "CHAVE" } else { "P" },
+                    c.dados.len()
+                );
+            }
             let cab = SliceHeader {
                 frame: quadro,
                 piece: 0,
@@ -187,31 +284,20 @@ pub async fn atender(
             }
         }
         entrada.abort();
-        sinais.cliente.store(false, Ordering::Relaxed);
+        sinais.cliente.store(false, Ordering::SeqCst);
         println!("  cliente saiu");
 
-        // Sem ninguem assistindo, capturar e codificar so queima GPU na
-        // maquina de outra pessoa. O host sobe sob demanda (o daemon o
-        // acorda quando alguem clica), entao sair e barato -- e e o unico
-        // jeito de ele nao virar processo esquecido rodando a 80 fps a
-        // noite inteira.
-        //
-        // A janela de espera existe para reconexao: cair o wifi por dois
-        // segundos nao deveria exigir voltar ao painel.
+        // Volta ao topo do laco: sem ninguem assistindo, capturar e
+        // codificar so queima GPU na maquina de outra pessoa, e o
+        // `tem_cliente` ja desligou o encoder. O prazo curto decide se
+        // vale continuar de pe -- cair o wifi por dois segundos nao
+        // deveria exigir voltar ao painel, e fechar a janela de verdade
+        // nao deveria deixar processo esquecido.
         println!("  aguardando {OCIOSO_S}s por outro cliente antes de sair");
-        if tokio::time::timeout(Duration::from_secs(OCIOSO_S), ep.accept()).await.is_ok() {
-            // Reconectou dentro da janela. Nao da para devolver a conexao
-            // ao laco de fora sem duplicar a logica, entao saimos e o
-            // daemon religa no proximo clique -- custa um clique, nao uma
-            // sessao travada.
-            println!("  alguem voltou, mas a conexao nao volta para o laco; encerrando");
-        } else {
-            println!("  ninguem voltou; encerrando");
-        }
-        // Pede para a captura parar; ela encerra o processo na ordem
-        // certa. Matar daqui travava no meio da destruicao do NVENC.
-        sinais.sair.store(true, Ordering::Relaxed);
-        return Ok(());
     }
+    // Endpoint fechado por fora. Pedir parada mesmo assim: a captura e
+    // quem encerra na ordem certa, e matar do lado da rede travava no
+    // meio da destruicao do NVENC.
+    sinais.sair.store(true, Ordering::SeqCst);
     Ok(())
 }

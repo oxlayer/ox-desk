@@ -70,9 +70,15 @@ pub fn executar(porta: u16, monitor: u32) -> anyhow::Result<()> {
         let sinais = Arc::clone(&sinais);
         let origem = Arc::clone(&origem);
         std::thread::spawn(move || {
-            if let Err(e) = servir(porta, rx, sinais, origem) {
+            if let Err(e) = servir(porta, rx, Arc::clone(&sinais), origem) {
                 eprintln!("  rede: {e}");
             }
+            // A rede acabou -- por sucesso ou por erro. Em qualquer caso
+            // nao ha mais para quem mandar quadro, e quem encerra na
+            // ordem certa e a captura. Sem esta linha, um erro na rede
+            // deixava o processo vivo para sempre, capturando para
+            // ninguem.
+            sinais.encerrar();
         })
     };
 

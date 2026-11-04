@@ -195,9 +195,16 @@ pub fn servidor(bind: SocketAddr) -> Result<quinn::Endpoint> {
     let mut cfg = quinn::ServerConfig::with_single_cert(vec![cert], key)
         .context("config do servidor")?;
     // Sem keep-alive o NAT fecha o buraco no silencio entre quadros.
+    //
+    // Ocioso CURTO (5s, nao 10s) porque o host serve um cliente de cada
+    // vez: enquanto a conexao morta nao expira, ele nao aceita ninguem.
+    // Com 10s, fechar a janela e clicar de novo em seguida nao conectava
+    // -- e o cliente nem recusa recebia, so silencio, porque ninguem
+    // estava chamando `accept`. Um visualizador encerrado a forca (sem
+    // CONNECTION_CLOSE) e o caso normal aqui, nao a excecao.
     let t = Arc::get_mut(&mut cfg.transport).expect("transport novo");
-    t.max_idle_timeout(Some(std::time::Duration::from_secs(10).try_into()?));
-    t.keep_alive_interval(Some(std::time::Duration::from_secs(2)));
+    t.max_idle_timeout(Some(std::time::Duration::from_secs(5).try_into()?));
+    t.keep_alive_interval(Some(std::time::Duration::from_secs(1)));
     quinn::Endpoint::server(cfg, bind).context("abrir servidor")
 }
 
@@ -207,9 +214,23 @@ pub fn cliente(bind: SocketAddr) -> Result<quinn::Endpoint> {
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AceitaQualquer))
         .with_no_client_auth();
-    let cfg = quinn::ClientConfig::new(Arc::new(
+    let mut cfg = quinn::ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(cripto)?,
     ));
+
+    // Fila de datagramas grande o bastante para UM quadro-chave inteiro.
+    //
+    // Um IDR de 1440p sai em dezenas de datagramas de ~1,1 KB, todos no
+    // mesmo instante. O que nao couber na fila de recepcao e DESCARTADO
+    // (datagrama nao retransmite, e essa e a semantica que queremos para
+    // video) -- e um quadro-chave incompleto e o pior a perder: o
+    // decodificador reclama `non-existing PPS 0 referenced` e nao desenha
+    // nada ate o IDR seguinte. 8 MB e folga de sobra e custa memoria que
+    // uma tela remota ja gasta.
+    let mut t = quinn::TransportConfig::default();
+    t.datagram_receive_buffer_size(Some(8 * 1024 * 1024));
+    cfg.transport_config(Arc::new(t));
+
     ep.set_default_client_config(cfg);
     Ok(ep)
 }

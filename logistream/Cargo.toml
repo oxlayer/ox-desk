@@ -32,6 +32,7 @@ cudarc = { version = "0.19", default-features = false, features = ["driver", "dy
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9.12"
 pipewire = "0.8"
+softbuffer = "0.4"
 
 # Decodificacao e janela so no macOS, que e quem faz papel de CLIENTE.
 #
@@ -40,11 +41,34 @@ pipewire = "0.8"
 # Amarrar por plataforma resolve sem fingir que sao a mesma: o host
 # Linux nao decodifica nada.
 [target.'cfg(target_os = "macos")'.dependencies]
-ffmpeg-next = "7.1"
 softbuffer = "0.4"
+
 
 [target."cfg(windows)".dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+
+# Decodificacao: quem ASSISTE precisa dela -- hoje o Mac e esta maquina.
+#
+# UMA versao para os dois, e nao uma por plataforma, porque o
+# `ffmpeg-sys-next` declara `links = "ffmpeg"`: o cargo resolve o grafo
+# inteiro de uma vez e recusa duas versoes de uma crate que linka a mesma
+# biblioteca nativa, mesmo que sejam de alvos diferentes. A 9.0 detecta a
+# versao instalada em tempo de build, entao serve para o libavcodec 61 do
+# brew no Mac e o 62 do apt aqui.
+#
+# `default-features = false`: o default puxa avdevice e avfilter, que nao
+# estao instalados. Pedir so o que usamos faz dependencia que falta virar
+# erro claro em vez de erro de link obscuro.
+#
+# `format` entra sem ser usada por nos: o modulo `codec` da propria crate
+# importa `crate::format`, entao `codec` sozinha nao compila. A libavformat
+# esta instalada; a alternativa seria remendar a crate.
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+ffmpeg-next = { version = "9.0", default-features = false, features = [
+  "codec",
+  "format",
+  "software-scaling",
+] }
 
 [dependencies.winit]
 version = "0.30"

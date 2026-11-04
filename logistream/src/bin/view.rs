@@ -5,8 +5,16 @@
 //! ## Onde cada coisa roda
 //!
 //! Rede e decodificacao numa thread, desenho na thread da interface. O
-//! laco de janela do macOS e dono da thread principal e nao pode
-//! bloquear -- se decodificasse ali, cada quadro travaria a interface.
+//! laco de janela e dono da thread principal (exigencia do macOS, boa
+//! pratica no resto) e nao pode bloquear -- se decodificasse ali, cada
+//! quadro travaria a interface.
+//!
+//! ## Onde ele compila
+//!
+//! Onde ha `libavcodec`: macOS (brew) e Linux (apt). Fora disso o `main`
+//! e um recado em vez de um erro de link, porque o binario e construido
+//! junto dos outros e nao vale quebrar o build todo por ele. O Windows
+//! ainda cai aqui -- ele ja SERVE a propria tela, mas nao assiste.
 //!
 //! Entre as duas ha **um slot**, nao uma fila: quadro novo sobrescreve o
 //! que ainda nao foi desenhado. Fila so acumularia atraso, e numa tela
@@ -14,21 +22,21 @@
 //!
 //!   cargo run --release --bin view -- <host:porta>
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn main() {
     eprintln!(
-        "o visualizador so compila no macOS por enquanto: ele usa o \
-         libavcodec do brew e a janela do AppKit. Ver specs/010."
+        "o visualizador precisa de libavcodec, e aqui nao ha: ele compila \
+         no macOS (brew) e no Linux (apt). Ver specs/010."
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn main() -> anyhow::Result<()> {
-    mac::run()
+    visual::run()
 }
 
-#[cfg(target_os = "macos")]
-mod mac {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod visual {
     use std::num::NonZeroU32;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
@@ -265,7 +273,21 @@ mod mac {
         mut rx_in: tokio::sync::mpsc::Receiver<Evento>,
         tam: Arc<Mutex<(u32, u32)>>,
     ) -> anyhow::Result<()> {
+        // Decodificador montado ANTES de conectar.
+        //
+        // Ele ficava depois da conexao, e isso perdia o primeiro
+        // quadro-chave: o host comeca a despejar o IDR no instante do
+        // handshake, e enquanto montavamos o decodificador (e esperavamos
+        // uma ida e volta para abrir o stream de input) os datagramas
+        // iam chegando. O que nao cabia na fila era descartado, o IDR
+        // chegava incompleto, e o log enchia de `non-existing PPS 0
+        // referenced`. Reproduzia ao reconectar, porque ai o host ja
+        // esta quente e dispara na hora.
         ffmpeg_next::init()?;
+        let codec = ffmpeg_next::decoder::find(ffmpeg_next::codec::Id::H264)
+            .ok_or_else(|| anyhow::anyhow!("sem decoder H.264"))?;
+        let ctx = ffmpeg_next::codec::context::Context::new_with_codec(codec);
+        let mut dec = ctx.decoder().video()?;
 
         let mut enderecos: Vec<std::net::SocketAddr> =
             tokio::net::lookup_host(alvo).await?.collect();
@@ -281,8 +303,14 @@ mod mac {
 
         // Input por stream unidirecional: confiavel e ordenado. Perder
         // um "tecla solta" deixaria a tecla presa no host.
-        let mut envio = conexao.open_uni().await?;
+        //
+        // O `open_uni` entra na tarefa, e nao aqui: ele custa uma ida e
+        // volta, e pagar isso antes do laco de datagramas era perder o
+        // comeco do video. Quem digita no primeiro milissegundo nao
+        // existe; quem perde o quadro-chave ve tela preta.
+        let conexao_in = conexao.clone();
         tokio::spawn(async move {
+            let Ok(mut envio) = conexao_in.open_uni().await else { return };
             let mut buf = bytes::BytesMut::new();
             while let Some(e) = rx_in.recv().await {
                 buf.clear();
@@ -292,11 +320,6 @@ mod mac {
                 }
             }
         });
-
-        let codec = ffmpeg_next::decoder::find(ffmpeg_next::codec::Id::H264)
-            .ok_or_else(|| anyhow::anyhow!("sem decoder H.264"))?;
-        let ctx = ffmpeg_next::codec::context::Context::new_with_codec(codec);
-        let mut dec = ctx.decoder().video()?;
 
         let mut r = Reassembler::default();
         let mut escalador: Option<ffmpeg_next::software::scaling::Context> = None;
@@ -311,7 +334,24 @@ mod mac {
                     return Ok(());
                 }
             };
-            let Some((_cab, unidade)) = r.push(&d) else { continue };
+            let Some((cab, unidade)) = r.push(&d) else { continue };
+            // Os primeiros quadros, um a um.
+            //
+            // "A imagem nao aparece" tem causas diferentes com sintomas
+            // iguais, e so estes tres numeros as separam: se o primeiro
+            // quadro inteiro NAO e chave, o host mandou P para um cliente
+            // sem contexto; se e chave mas `perdidos` ja subiu, ele veio
+            // picado; se esta tudo certo aqui, o problema e do
+            // decodificador. Sem isto eu passei a gastar palpites.
+            if quadros < 3 {
+                println!(
+                    "  recebi quadro {} {} {} bytes, {} perdido(s) ate aqui",
+                    cab.frame,
+                    if cab.keyframe { "CHAVE" } else { "P" },
+                    unidade.len(),
+                    r.perdidos
+                );
+            }
 
             let pacote = ffmpeg_next::Packet::copy(&unidade);
             if dec.send_packet(&pacote).is_err() {

@@ -6,6 +6,14 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · "Ver a tela" do Windows, daqui, já é o nosso
+O visualizador passou a compilar no Linux (libavcodec do apt), então o
+botão do painel do Ubuntu deixou de chamar RDP. Três defeitos saíram no
+caminho: reconectar era recusado, um handshake que falhava derrubava o
+host inteiro, e o primeiro quadro de uma reconexão às vezes vinha sem
+ser quadro-chave — a janela abria preta reclamando do decodificador.
+Agora nada sai antes de um quadro-chave, por garantia e não por sorte.
+
 ## 2026-11-04 · A borda do Windows também obedece ao interruptor
 Eu havia corrigido só a do GNOME. O Windows tem implementação própria, e
 o log provou o estrago: dois segundos depois de desligar pela tela, ela
