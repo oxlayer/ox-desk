@@ -10,11 +10,11 @@ refresh_seconds = 10
 name = "ubuntu-host"
 addr = "127.0.0.1"
 role = "Ubuntu 26.04 - este PC"
-units = ["logid.service", "gnome-remote-desktop.service"]
+# O gnome-remote-desktop saiu junto com o RDP: nossa tela usa as APIs
+# privadas do Mutter (ScreenCast/RemoteDesktop), servidas pelo proprio
+# gnome-shell, e nao aquele daemon.
+units = ["logid.service"]
 
-  [[hosts.services]]
-  label = "RDP (GNOME)"
-  port = 3389
 
   [[hosts.services]]
   label = "KDE Connect"
@@ -37,10 +37,6 @@ agent = "%LOCALAPPDATA%\\logid\\logid-agent.exe"
   label = "KDE Connect"
   port = 1716
 
-  [[hosts.services]]
-  label = "RDP"
-  port = 3389
-  expect = "any"           # disponivel no Pro, desligado por escolha
 
 # Canal Easy-Switch de cada dispositivo em cada host.
 #
