@@ -1017,6 +1017,63 @@ em `units`. O painel mostrava `Deskflow srv: fechada` e
 
 Trocado por `logid.service`, que é o que de fato importa vigiar.
 
+## Quando os dispositivos "trocam de host sozinhos": a lista (04/11)
+
+Custou a manhã do usuário duas vezes. A próxima pessoa — provavelmente
+eu — merece uma lista em vez de uma investigação.
+
+**Quem pode mover um dispositivo, e nenhum deles aparece se você olhar
+só o painel de uma máquina:**
+
+| Ator | Onde | Como desligar | Pegadinha |
+|---|---|---|---|
+| Borda (GNOME) | `border.rs`, Ubuntu | `input.border.enabled` | As barreiras nascem no boot; a flag passou a ser lida **na encostada** |
+| Borda (Win32) | `border_win.rs`, Windows | a mesma flag, **naquela** máquina | Arquivo diferente — corrigir um não corrige o outro, e eu caí nisso |
+| Dead-man's switch | `border_win.rs`, `Guard` | junto com a borda | Devolve tudo se ninguém digitar em 25 s |
+| Reconciliador | `follow.rs` | `input.follow.enabled` | Pedia ao par e acreditava sem conferir; hoje tem disjuntor |
+| Energia do USB | **Windows, fora do nosso código** | ver abaixo | **Não loga nada em lugar nenhum** |
+
+### O ator que não deixa rastro: economia de energia do USB
+
+Com borda e reconciliador desligados nas três máquinas e nenhuma linha
+de log reivindicando a ação, os dispositivos ainda voltavam ao canal 1
+poucos segundos depois de irem para o 2. Nenhum software pediu.
+
+O Windows tinha permissão para **desligar o receptor Logitech** para
+economizar energia — nas três interfaces dele e no hub raiz:
+
+```powershell
+Get-CimInstance -Namespace root\wmi -ClassName MSPower_DeviceEnable |
+  Where-Object { $_.InstanceName -like '*VID_046D*' } |
+  ForEach-Object { Set-CimInstance -InputObject $_ -Property @{ Enable = $false } }
+```
+
+Dongle suspenso = o dispositivo não acha o host 2 e cai de volta no 1,
+que continua chamando. Explica os dois sintomas de uma vez: "tem hora
+que não vai" (dongle dormindo quando o pedido chega) e "quando vai,
+alguns segundos depois volta".
+
+### A ordem de investigação que funciona
+
+1. `GET /api/status` em **qualquer** máquina: o campo `kvm` de cada host
+   diz a borda e o reconciliador **daquele** host. Foi acrescentado
+   justamente porque olhar um lado só não bastava.
+2. Log das **duas** máquinas. "Nenhuma linha reivindica a ação" é
+   informação, não falta de informação: elimina o nosso código.
+3. Processos separados do daemon: `logid-agent watch-edge` tem atalho
+   próprio no Startup do Windows e não morre com a flag do daemon.
+4. Outro gerenciador: `solaar`, `logiops`, `piper`, `ratbagd`.
+5. Energia do USB no host de DESTINO.
+
+### A regra que sai disto
+
+**Interruptor que não desliga é pior que interruptor nenhum.** Um laço
+residente tem de ler a flag a cada volta, não no boot — senão a tela
+mostra "off" sobre um comportamento vivo, e a pessoa perde a confiança
+no painel exatamente quando mais precisa dele. Vale para a borda nas
+duas plataformas, para o reconciliador e para qualquer coisa que a gente
+acrescente aqui depois.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.

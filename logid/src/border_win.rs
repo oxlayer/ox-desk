@@ -126,8 +126,45 @@ fn run(cfg: Arc<RwLock<Config>>) {
         say!("border: cursor ja esta numa borda vigiada -- aguardando ele sair e voltar");
     }
 
+    // Lido a cada volta, e nao no boot.
+    //
+    // Este laco nasce com as bordas que a config tinha no inicio e segue
+    // para sempre; sem esta leitura, desligar a borda pela GUI nao
+    // desligava NADA aqui. O log provou o estrago, dois segundos depois
+    // de eu desligar pela API:
+    //
+    //   08:33:04 border: KVM por borda DESLIGADO pela GUI
+    //   08:33:04 border: armada -- os dispositivos estao aqui
+    //   08:33:06 border: borda 'left' alcancada -- trocando para ubuntu-host
+    //
+    // O usuario mandava os dispositivos para esta maquina, movia o mouse
+    // para a esquerda -- o movimento natural, porque o Ubuntu esta desse
+    // lado -- e tudo voltava. O painel do Ubuntu dizia, com razao, que a
+    // borda DELE estava desligada; esta era outra.
+    //
+    // Vale para o dead-man's switch tambem (`guard.tick`): ele existe
+    // para desfazer uma travessia de borda quando ninguem apareceu do
+    // outro lado. Sem borda, ele nao tem o que desfazer -- so puxa.
+    let mut desligada_avisada = false;
+
     loop {
         std::thread::sleep(TICK);
+
+        let ligada = cfg.read().map(|g| g.input.border.enabled).unwrap_or(false);
+        if !ligada {
+            if armada || !desligada_avisada {
+                armada = false;
+                desligada_avisada = true;
+                say!("border: desligada na config -- nao vigio nem devolvo nada");
+            }
+            // Zera a chegada nas bordas: se religarem, o cursor tera de
+            // SAIR de uma borda e voltar antes de valer.
+            was_at.iter_mut().for_each(|v| *v = true);
+            touching = None;
+            cooldown = None;
+            continue;
+        }
+        desligada_avisada = false;
 
         if let Some(t) = cooldown {
             if Instant::now() < t {

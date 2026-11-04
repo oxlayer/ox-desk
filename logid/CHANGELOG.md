@@ -6,6 +6,13 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · A borda do Windows também obedece ao interruptor
+Eu havia corrigido só a do GNOME. O Windows tem implementação própria, e
+o log provou o estrago: dois segundos depois de desligar pela tela, ela
+se armou e devolveu mouse e teclado para o Ubuntu. Agora as duas leem a
+flag a cada volta — e o dead-man's switch, que devolvia os dispositivos
+se você não digitasse em 25s, para junto.
+
 ## 2026-11-04 · O Windows serve a própria tela pelo nosso protocolo
 Captura por DXGI, codificação na GPU, QUIC — o mesmo caminho do Ubuntu.
 Verificado daqui: 2560x1440, 174 quadros em 10s, zero perdido. No painel
