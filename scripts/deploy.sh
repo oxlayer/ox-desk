@@ -344,8 +344,23 @@ else
              launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.assinar.plist 2>/dev/null;
              : > ~/.local/state/assinar.log;
              launchctl kickstart gui/\$(id -u)/ai.logi.assinar;
-             sleep 3; cat ~/.local/state/assinar.log;
-             codesign -dv ~/.local/bin/logistream-host 2>&1 | grep -q adhoc && echo 'AVISO: segue ad-hoc' || true" 2>&1); then ok; else erro "$out"; fi
+             # Esperar o codesign TERMINAR, nao so comecar. O kickstart
+             # devolve na hora, e a primeira assinatura pode ficar
+             # parada num dialogo do chaveiro -- sem esta espera o
+             # deploy seguia e dizia ok com o binario ainda ad-hoc.
+             for i in 1 2 3 4 5 6 7 8 9 10; do
+               pgrep -x codesign >/dev/null || break
+               sleep 2
+             done
+             cat ~/.local/state/assinar.log
+             # FALHAR se ficou ad-hoc. Antes havia um \`|| true\` aqui,
+             # entao o passo dizia ok com a assinatura nao aplicada --
+             # e so descobri porque a tela do Mac voltou a travar.
+             if codesign -dv ~/.local/bin/logistream-host 2>&1 | grep -q adhoc; then
+               echo 'ERRO: o binario seguiu ad-hoc. Ha dialogo do chaveiro aberto no Mac?'
+               echo 'Clique em Sempre Permitir e rode o deploy de novo.'
+               exit 1
+             fi" 2>&1); then ok; else erro "$out"; fi
 
   passo "mac: scripts de assinatura"
   # Assinar o host com identidade ESTAVEL e o que faz a permissao de

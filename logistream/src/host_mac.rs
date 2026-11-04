@@ -79,6 +79,11 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     // entrada vivem no libavdevice e precisam ser registrados.
     ffmpeg_next::device::register_all();
 
+    // A captura trava, nao falha, quando falta a permissao de
+    // Gravacao de Tela -- e o processo fica em `S` sem um unico erro.
+    // Avisar ANTES de tentar: se ficarmos pendurados, pelo menos a
+    // ultima linha do log diz onde procurar.
+    println!("  abrindo a tela {indice}... (se parar aqui, falta Gravacao de Tela para este binario)");
     let mut entrada = abrir(indice, 60)?;
     let fluxo = entrada
         .streams()
