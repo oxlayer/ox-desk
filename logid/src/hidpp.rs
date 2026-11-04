@@ -22,7 +22,30 @@ use std::time::Duration;
 /// cache, um dispositivo em outro canal simplesmente desaparecia da API e
 /// a GUI ficava em branco -- regressao em relacao ao backend solaar, que
 /// listava offline com nome.
-static SEEN: Mutex<Option<BTreeMap<u8, String>>> = Mutex::new(None);
+/// O que lembramos de cada slot. Nome e obrigatorio; bateria e a ULTIMA
+/// leitura, com quando foi -- porque HID++ nao le bateria de dispositivo
+/// ausente, e "5% ha 2 min" vale mais que "?" numa bandeja que se olha de
+/// relance.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Known {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery_percent: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery_level: Option<String>,
+    /// Epoch em segundos da leitura de bateria.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery_at: Option<u64>,
+}
+
+static SEEN: Mutex<Option<BTreeMap<u8, Known>>> = Mutex::new(None);
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 /// Onde o cache vive entre execucoes. E runtime descartavel, nao config:
 /// apagar nao perde nada alem de uma releitura.
@@ -36,20 +59,31 @@ fn cache_path() -> std::path::PathBuf {
     base.join("logi").join("slots.json")
 }
 
-fn load_cache() -> BTreeMap<u8, String> {
-    std::fs::read_to_string(cache_path())
-        .ok()
-        .and_then(|t| serde_json::from_str::<BTreeMap<String, String>>(&t).ok())
+fn load_cache() -> BTreeMap<u8, Known> {
+    let Ok(text) = std::fs::read_to_string(cache_path()) else {
+        return BTreeMap::new();
+    };
+    // Formato novo.
+    if let Ok(m) = serde_json::from_str::<BTreeMap<String, Known>>(&text) {
+        return m
+            .into_iter()
+            .filter_map(|(k, v)| k.parse::<u8>().ok().map(|s| (s, v)))
+            .collect();
+    }
+    // Formato antigo ({slot: nome}): migra sem perder o que ja sabiamos.
+    serde_json::from_str::<BTreeMap<String, String>>(&text)
         .map(|m| {
             m.into_iter()
-                .filter_map(|(k, v)| k.parse::<u8>().ok().map(|s| (s, v)))
+                .filter_map(|(k, v)| k.parse::<u8>().ok().map(|s| {
+                    (s, Known { name: v, battery_percent: None, battery_level: None, battery_at: None })
+                }))
                 .collect()
         })
         .unwrap_or_default()
 }
 
-fn save_cache(m: &BTreeMap<u8, String>) {
-    let as_str: BTreeMap<String, String> =
+fn save_cache(m: &BTreeMap<u8, Known>) {
+    let as_str: BTreeMap<String, Known> =
         m.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
     let Ok(text) = serde_json::to_string(&as_str) else { return };
     let p = cache_path();
@@ -59,7 +93,7 @@ fn save_cache(m: &BTreeMap<u8, String>) {
     let _ = std::fs::write(p, text);
 }
 
-fn with_cache<T>(f: impl FnOnce(&mut BTreeMap<u8, String>) -> T) -> Option<T> {
+fn with_cache<T>(f: impl FnOnce(&mut BTreeMap<u8, Known>) -> T) -> Option<T> {
     let mut guard = SEEN.lock().ok()?;
     if guard.is_none() {
         *guard = Some(load_cache());
@@ -68,14 +102,30 @@ fn with_cache<T>(f: impl FnOnce(&mut BTreeMap<u8, String>) -> T) -> Option<T> {
     Some(f(m))
 }
 
-fn remember(slot: u8, name: &str) {
+/// Guarda nome e, quando houver, a leitura de bateria.
+fn remember(slot: u8, name: &str, bat: Option<(Option<u8>, Option<String>)>) {
     let changed = with_cache(|m| {
-        if m.get(&slot).map(String::as_str) == Some(name) {
-            false
-        } else {
-            m.insert(slot, name.to_string());
-            true
+        let e = m.entry(slot).or_insert_with(|| Known {
+            name: name.to_string(),
+            battery_percent: None,
+            battery_level: None,
+            battery_at: None,
+        });
+        let mut dirty = false;
+        if e.name != name {
+            e.name = name.to_string();
+            dirty = true;
         }
+        if let Some((pct, lvl)) = bat {
+            if e.battery_percent != pct || e.battery_level != lvl {
+                dirty = true;
+            }
+            e.battery_percent = pct;
+            e.battery_level = lvl;
+            e.battery_at = Some(now_secs());
+            dirty = true;
+        }
+        dirty
     });
     if changed == Some(true) {
         if let Some(snapshot) = with_cache(|m| m.clone()) {
@@ -85,6 +135,10 @@ fn remember(slot: u8, name: &str) {
 }
 
 fn remembered(slot: u8) -> Option<String> {
+    with_cache(|m| m.get(&slot).map(|k| k.name.clone())).flatten()
+}
+
+fn remembered_full(slot: u8) -> Option<Known> {
     with_cache(|m| m.get(&slot).cloned()).flatten()
 }
 
@@ -132,6 +186,10 @@ pub struct Device {
     /// Qual feature respondeu (0x1004 ou 0x1000), para diagnostico.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub battery_source: Option<String>,
+    /// Segundos desde a leitura de bateria. `0` = agora; valor alto
+    /// significa que o dispositivo esta ausente e isto e memoria.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_age_s: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -275,20 +333,42 @@ pub fn survey_opts(with_battery: bool) -> Survey {
     let devices: Vec<Device> = raw
         .into_iter()
         .filter_map(|d| {
-            if let Some(n) = d.name.as_deref() {
-                remember(d.slot, n);
-            }
             // Offline sem nome conhecido = slot provavelmente vazio: nao
             // poluimos a lista com os 6 slots do receptor.
             let name = d.name.clone().or_else(|| remembered(d.slot))?;
+            // Gravar a bateria NAO pode depender de ter lido o nome agora:
+            // com o nome em cache (o caso normal) nunca gravavamos, e o
+            // arquivo ficava preso no formato antigo.
+            let bat = d
+                .battery
+                .as_ref()
+                .map(|b| (b.percent, b.level.map(String::from)));
+            if bat.is_some() || d.name.is_some() {
+                remember(d.slot, &name, bat);
+            }
             Some((d, name))
         })
-        .map(|(d, name)| Device {
+        .map(|(d, name)| {
+            // Sem leitura agora? usa a ultima conhecida, declarando a idade.
+            let cached = remembered_full(d.slot);
+            let (pct, lvl, age) = match d.battery.as_ref() {
+                Some(b) => (b.percent, b.level.map(String::from), Some(0)),
+                None => (
+                    cached.as_ref().and_then(|k| k.battery_percent),
+                    cached.as_ref().and_then(|k| k.battery_level.clone()),
+                    cached
+                        .as_ref()
+                        .and_then(|k| k.battery_at)
+                        .map(|t| now_secs().saturating_sub(t)),
+                ),
+            };
+            Device {
             slot: d.slot,
-            battery_percent: d.battery.as_ref().and_then(|b| b.percent),
-            battery_level: d.battery.as_ref().and_then(|b| b.level).map(String::from),
+            battery_percent: pct,
+            battery_level: lvl,
             charging: d.battery.as_ref().is_some_and(|b| b.charging),
             battery_source: d.battery.as_ref().map(|b| b.source.to_string()),
+            battery_age_s: age,
             name,
             kind: String::new(),
             wpid: String::new(),
@@ -297,6 +377,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
             ping_ms: d.reply_ms,
             current_host: d.host.map(|h| h.current),
             num_hosts: d.host.map(|h| h.num_hosts),
+            }
         })
         .collect();
 
