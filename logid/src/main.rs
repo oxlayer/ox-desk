@@ -418,6 +418,93 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
     }
 }
 
+/// POST /api/border {"enabled": bool} -- liga/desliga o KVM por borda.
+fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let Some(on) = v.get("enabled").and_then(|x| x.as_bool()) else {
+        return err_json(req, 400, "informe {\"enabled\": true|false}");
+    };
+    if let Err(e) = config::save_border_enabled(on) {
+        return err_json(req, 500, &e);
+    }
+    match Config::load() {
+        Ok(novo) => {
+            if let Ok(mut g) = cfg.write() {
+                *g = novo;
+            }
+            if let Ok(mut c) = cache.lock() {
+                c.at = None;
+            }
+            say!("border: KVM por borda {} pela GUI", if on { "LIGADO" } else { "DESLIGADO" });
+            ok_json(
+                req,
+                serde_json::json!({ "ok": true, "enabled": on,
+                    "nota": "vale no proximo boot do daemon" })
+                .to_string(),
+            )
+        }
+        Err(e) => err_json(req, 500, &format!("gravou mas nao recarregou: {e}")),
+    }
+}
+
+/// POST /api/layout {"posicoes": {"<host>": {"col": N, "row": M}}}
+///
+/// Grava por edicao cirurgica do TOML, nao por reserializacao: os
+/// comentarios da config sao o registro de por que cada escolha foi
+/// feita, e nao se perde isso para salvar duas coordenadas.
+fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let Some(obj) = v.get("posicoes").and_then(|p| p.as_object()) else {
+        return err_json(req, 400, "informe {\"posicoes\": {\"<host>\": {\"col\":N,\"row\":M}}}");
+    };
+    let mut pos = std::collections::BTreeMap::new();
+    for (nome, c) in obj {
+        let (Some(col), Some(row)) = (
+            c.get("col").and_then(|x| x.as_i64()),
+            c.get("row").and_then(|x| x.as_i64()),
+        ) else {
+            return err_json(req, 400, &format!("posicao invalida para '{nome}'"));
+        };
+        pos.insert(nome.clone(), config::Cell { col: col as i32, row: row as i32 });
+    }
+    if let Err(e) = config::save_layout(&pos) {
+        return err_json(req, 500, &e);
+    }
+    // Recarrega do disco: o que vale e o arquivo, e assim a resposta
+    // reflete o que ficou gravado, nao o que pedimos.
+    match Config::load() {
+        Ok(novo) => {
+            let bordas: Vec<_> = novo
+                .border_edges_full()
+                .into_iter()
+                .map(|(e, t, ok)| serde_json::json!({ "edge": e, "target": t, "ativa": ok }))
+                .collect();
+            if let Ok(mut g) = cfg.write() {
+                *g = novo;
+            }
+            if let Ok(mut c) = cache.lock() {
+                c.at = None;
+            }
+            say!("layout: grade salva; bordas agora {}", bordas.len());
+            ok_json(
+                req,
+                serde_json::json!({ "ok": true, "edges": bordas,
+                    "nota": "a borda so passa a valer no proximo boot do daemon" })
+                .to_string(),
+            )
+        }
+        Err(e) => err_json(req, 500, &format!("gravou mas nao recarregou: {e}")),
+    }
+}
+
 /// POST /api/processes/kill {"host","pid","force"?,"confirm":true}
 ///
 /// `confirm` obrigatorio pelo mesmo motivo do `/api/focus`: matar
@@ -461,6 +548,12 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     }
     if path == "/api/processes/kill" && method == "POST" {
         return post_kill(req, cfg);
+    }
+    if path == "/api/layout" && method == "POST" {
+        return post_layout(req, cfg, cache);
+    }
+    if path == "/api/border" && method == "POST" {
+        return post_border(req, cfg, cache);
     }
     if path == "/api/focus" && method == "POST" {
         return post_focus(req, cfg);
@@ -549,6 +642,36 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 Ok(b) => ok_json(req, b),
                 Err(e) => err_json(req, 500, &format!("serializar: {e}")),
             }
+        }
+
+        "/api/layout" => {
+            let snap = match cfg.read() {
+                Ok(g) => g.clone(),
+                Err(_) => return err_json(req, 500, "config travada"),
+            };
+            let hosts: Vec<_> = snap
+                .hosts
+                .iter()
+                .map(|h| {
+                    serde_json::json!({
+                        "name": h.name,
+                        "local": h.is_local(),
+                        "os": format!("{:?}", h.os()).to_lowercase(),
+                        "layout": h.layout.map(|c| serde_json::json!({"col": c.col, "row": c.row})),
+                    })
+                })
+                .collect();
+            let bordas: Vec<_> = snap
+                .border_edges_full()
+                .into_iter()
+                .map(|(e, t, ok)| serde_json::json!({ "edge": e, "target": t, "ativa": ok }))
+                .collect();
+            let body = serde_json::json!({
+                "hosts": hosts,
+                "edges": bordas,
+                "border_enabled": snap.input.border.enabled,
+            });
+            ok_json(req, body.to_string())
         }
 
         "/api/processes" => {

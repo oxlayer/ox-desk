@@ -283,6 +283,126 @@ pub struct Config {
 
 pub const DEFAULT_TOML: &str = include_str!("../default-config.toml");
 
+/// Liga ou desliga a borda, preservando comentarios.
+///
+/// Mesma cirurgia de texto do `apply_layout`, e pelo mesmo motivo: o
+/// `[input.border]` desta config carrega seis linhas explicando por que
+/// ela esta como esta, e um toggle na GUI nao pode apagar isso.
+pub fn set_border_enabled(toml_text: &str, on: bool) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut dentro = false;
+    let mut trocou = false;
+    for linha in toml_text.lines() {
+        let t = linha.trim();
+        if t.starts_with('[') {
+            // Ao sair da secao sem ter achado a chave, escreve-a.
+            if dentro && !trocou {
+                out.push(format!("enabled = {on}"));
+                trocou = true;
+            }
+            dentro = t == "[input.border]";
+        }
+        if dentro && !trocou && t.starts_with("enabled") && t.contains('=') {
+            out.push(format!("enabled = {on}"));
+            trocou = true;
+            continue;
+        }
+        out.push(linha.to_string());
+    }
+    if dentro && !trocou {
+        out.push(format!("enabled = {on}"));
+    }
+    let mut texto = out.join("\n");
+    if toml_text.ends_with('\n') && !texto.ends_with('\n') {
+        texto.push('\n');
+    }
+    texto
+}
+
+pub fn save_border_enabled(on: bool) -> Result<(), String> {
+    let p = Config::path();
+    let antes = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+    let depois = set_border_enabled(&antes, on);
+    toml::from_str::<Config>(&depois).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
+    std::fs::write(&p, depois).map_err(|e| format!("gravar {p:?}: {e}"))
+}
+
+/// Grava as posicoes no arquivo, preservando comentarios.
+pub fn save_layout(pos: &BTreeMap<String, Cell>) -> Result<(), String> {
+    let p = Config::path();
+    let antes = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+    let depois = apply_layout(&antes, pos);
+    // Valida ANTES de gravar: uma edicao de texto que produz TOML
+    // invalido deixaria o daemon sem config no proximo boot.
+    toml::from_str::<Config>(&depois).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
+    std::fs::write(&p, depois).map_err(|e| format!("gravar {p:?}: {e}"))
+}
+
+/// Escreve a posicao de cada host na grade, preservando o arquivo.
+///
+/// Edicao **cirurgica de texto**, nao serializacao. Reserializar a
+/// struct produziria um TOML correto e jogaria fora todos os
+/// comentarios -- e nesta config os comentarios sao o registro de por
+/// que cada escolha foi feita (por que o canal 3 nao esta mapeado, por
+/// que o follow esta desligado no Windows, por que nunca se escreve IP).
+/// Perder isso para salvar duas coordenadas seria pessimo negocio.
+///
+/// Para cada `[[hosts]]` com `name` conhecido: troca a linha `layout` se
+/// houver, senao insere logo depois do `name`.
+pub fn apply_layout(toml_text: &str, pos: &BTreeMap<String, Cell>) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut host_atual: Option<String> = None;
+    let mut ja_escrito = false;
+
+    for linha in toml_text.lines() {
+        let t = linha.trim();
+
+        // Um cabecalho de tabela qualquer fecha o host anterior.
+        if t.starts_with("[[") || (t.starts_with('[') && !t.starts_with("[[")) {
+            if t == "[[hosts]]" {
+                host_atual = None;
+                ja_escrito = false;
+            } else if !t.starts_with("[hosts.") && !t.starts_with("[[hosts.") {
+                host_atual = None;
+            }
+            out.push(linha.to_string());
+            continue;
+        }
+
+        // Dentro de um [[hosts]], a linha `name` identifica quem e.
+        if host_atual.is_none() {
+            if let Some(nome) = t
+                .strip_prefix("name")
+                .and_then(|r| r.trim_start().strip_prefix('='))
+                .map(|r| r.trim().trim_matches('"').to_string())
+            {
+                if pos.contains_key(&nome) {
+                    host_atual = Some(nome.clone());
+                    out.push(linha.to_string());
+                    let c = pos[&nome];
+                    out.push(format!("layout = {{ col = {}, row = {} }}", c.col, c.row));
+                    ja_escrito = true;
+                    continue;
+                }
+            }
+            out.push(linha.to_string());
+            continue;
+        }
+
+        // Ja escrevemos a nova: a antiga, se existir, e descartada.
+        if ja_escrito && t.starts_with("layout") && t.contains('=') {
+            continue;
+        }
+        out.push(linha.to_string());
+    }
+
+    let mut texto = out.join("\n");
+    if toml_text.ends_with('\n') && !texto.ends_with('\n') {
+        texto.push('\n');
+    }
+    texto
+}
+
 impl Config {
     /// Vizinhos da maquina local na grade: (borda, nome do host).
     ///
@@ -331,16 +451,45 @@ impl Config {
     /// escrito a mao -- as configs anteriores a grade continuam valendo,
     /// e quem quiser uma borda so continua podendo escreve-la.
     pub fn border_edges(&self) -> Vec<(String, String)> {
+        self.border_edges_full().into_iter().filter(|(_, _, ok)| *ok).map(|(e, t, _)| (e, t)).collect()
+    }
+
+    /// Como `border_edges`, mas sem esconder os vizinhos descartados.
+    ///
+    /// O terceiro campo e "este alvo consegue RECEBER". Um host sem
+    /// `ssh` + `agent` nao tem quem devolva o dispositivo, entao o
+    /// `focus::plan` bloqueia a troca -- criar barreira para ele daria
+    /// uma borda que so sabe recusar, enchendo o log a cada vez que a
+    /// pessoa encosta. E caso real: o MacBook nao tem receptor Logitech.
+    ///
+    /// A UI mostra os dois grupos, para a grade nao mentir em silencio
+    /// sobre um vizinho que esta la e nao funciona.
+    pub fn border_edges_full(&self) -> Vec<(String, String, bool)> {
         let b = &self.input.border;
         if !b.enabled {
             return Vec::new();
         }
+        let recebe = |nome: &str| {
+            self.hosts
+                .iter()
+                .find(|h| h.name == nome)
+                .is_some_and(|h| h.ssh.is_some() && h.agent.is_some())
+        };
         let da_grade = self.neighbors();
         if !da_grade.is_empty() {
-            return da_grade.into_iter().map(|(e, h)| (e.to_string(), h)).collect();
+            return da_grade
+                .into_iter()
+                .map(|(e, h)| {
+                    let ok = recebe(&h);
+                    (e.to_string(), h, ok)
+                })
+                .collect();
         }
         match &b.target {
-            Some(t) => vec![(b.edge.clone(), t.clone())],
+            Some(t) => {
+                let ok = recebe(t);
+                vec![(b.edge.clone(), t.clone(), ok)]
+            }
             None => Vec::new(),
         }
     }
@@ -378,6 +527,15 @@ impl Config {
     }
 
     /// Grava validando antes: se o TOML resultante nao reabre, nao escreve.
+    /// Grava a config inteira, reserializada.
+    ///
+    /// ⚠️ **Destroi todos os comentarios do arquivo.** Reserializar a
+    /// struct produz TOML correto e perde tudo que nao e dado -- e nesta
+    /// config os comentarios registram por que cada escolha foi feita.
+    ///
+    /// Hoje so o `PATCH /api/config` chama isto, e nada na UI usa aquela
+    /// rota. Para mudancas pontuais prefira edicao cirurgica de texto,
+    /// como `apply_layout` faz.
     pub fn save(&self) -> Result<(), String> {
         let text = toml::to_string_pretty(self).map_err(|e| format!("serializar: {e}"))?;
         toml::from_str::<Config>(&text).map_err(|e| format!("auto-validacao falhou: {e}"))?;
@@ -473,6 +631,72 @@ mod tests {
         assert!(c.hosts[0].is_local(), "flag explicita tem de vencer o endereco");
         assert!(!c.hosts[1].is_local(), "local = false vence o loopback");
         assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("la"));
+    }
+
+    #[test]
+    fn salvar_a_grade_nao_apaga_comentario() {
+        let antes = r#"# Config do logid. Comentario que explica uma decisao cara.
+port = 8787
+
+[[hosts]]
+name = "aqui"
+addr = "127.0.0.1"
+# Este comentario tem de sobreviver.
+local = true
+
+  [[hosts.services]]
+  label = "SSH"
+  port = 22
+
+[[hosts]]
+name = "la"
+layout = { col = 9, row = 9 }
+addr = "la.local"
+"#;
+        let mut pos = BTreeMap::new();
+        pos.insert("aqui".to_string(), Cell { col: 0, row: 1 });
+        pos.insert("la".to_string(), Cell { col: 2, row: 1 });
+        let depois = apply_layout(antes, &pos);
+
+        assert!(depois.contains("# Comentario que explica uma decisao cara.")
+                || depois.contains("Comentario que explica uma decisao cara"));
+        assert!(depois.contains("# Este comentario tem de sobreviver."));
+        assert!(depois.contains("label = \"SSH\""), "subtabela intacta");
+        // Inserida onde nao havia.
+        assert!(depois.contains("name = \"aqui\"\nlayout = { col = 0, row = 1 }"));
+        // Substituida onde havia -- e a antiga sumiu.
+        assert!(depois.contains("layout = { col = 2, row = 1 }"));
+        assert!(!depois.contains("col = 9"), "a posicao antiga tem de sair");
+        // E continua sendo TOML valido com o resto no lugar.
+        let c: Config = toml::from_str(&depois).unwrap();
+        assert_eq!(c.hosts.len(), 2);
+        assert_eq!(c.hosts[0].services.len(), 1);
+        assert_eq!(c.hosts[1].layout.map(|l| (l.col, l.row)), Some((2, 1)));
+    }
+
+    #[test]
+    fn toggle_da_borda_preserva_a_secao() {
+        let antes = "# topo\n[input.border]\n# por que esta assim\nenabled = false\nedge = \"right\"\n\n[input.follow]\nenabled = true\n";
+        let depois = set_border_enabled(antes, true);
+        assert!(depois.contains("# por que esta assim"));
+        assert!(depois.contains("[input.border]\n# por que esta assim\nenabled = true"));
+        // Nao pode encostar no enabled do OUTRO bloco.
+        assert!(depois.contains("[input.follow]\nenabled = true"));
+        let c: Config = toml::from_str(&depois).unwrap();
+        assert!(c.input.border.enabled);
+        assert!(c.input.follow.enabled);
+
+        // E desligar de volta tambem.
+        let c2: Config = toml::from_str(&set_border_enabled(&depois, false)).unwrap();
+        assert!(!c2.input.border.enabled);
+        assert!(c2.input.follow.enabled, "o follow nao pode ser arrastado junto");
+    }
+
+    #[test]
+    fn host_fora_do_mapa_fica_como_estava() {
+        let antes = "[[hosts]]\nname = \"intocado\"\naddr = \"x.local\"\n";
+        let depois = apply_layout(antes, &BTreeMap::new());
+        assert_eq!(antes, depois);
     }
 
     #[test]

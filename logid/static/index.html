@@ -128,6 +128,35 @@
   .scr .why{font:11px var(--mono);color:var(--faint);flex-basis:100%;min-width:0}
   .scr .why.er{color:var(--down)}
 
+  .lywrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .lyhead{display:flex;align-items:center;gap:10px;padding:12px 16px;
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .lyhead h2{font-size:13px;font-weight:650;margin:0}
+  .lyhead .opt{display:flex;align-items:center;gap:5px;font-size:11.5px;
+    color:var(--dim);cursor:pointer;user-select:none}
+  .lyhead .meta{color:var(--faint);font-size:11px;font-family:var(--mono);
+    margin-left:auto}
+  .lygrid{display:grid;gap:8px;padding:16px}
+  .lycell{min-height:62px;border:1px dashed var(--line);border-radius:10px;
+    display:flex;align-items:center;justify-content:center}
+  .lycell.alvo{border-color:var(--fg);background:var(--inset)}
+  .lytile{background:var(--inset);border:1px solid var(--line);border-radius:9px;
+    padding:7px 10px;cursor:grab;user-select:none;text-align:center;
+    min-width:7.5em;max-width:100%}
+  .lytile:active{cursor:grabbing}
+  .lytile.eu{border-color:var(--fg);background:var(--card)}
+  .lytile .n{font-size:12px;font-weight:600;display:block;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lytile .o{font:10px var(--mono);color:var(--faint)}
+  .lytray{display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 12px}
+  .lytray .lytile{opacity:.75}
+  .lynote{padding:0 16px 12px;color:var(--faint);font-size:11.5px}
+  .lyedge.off{opacity:.5;text-decoration:line-through}
+  .lyedge{display:inline-block;font:11px var(--mono);color:var(--dim);
+    background:var(--inset);border:1px solid var(--line);border-radius:999px;
+    padding:2px 9px;margin:0 6px 6px 0}
+
   .tkwrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
     border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
   .tkhead{display:flex;align-items:center;gap:10px;padding:12px 16px;
@@ -240,6 +269,23 @@
   </div>
 </div>
 
+<div class="lywrap">
+  <div class="lyhead">
+    <h2>Disposicao</h2>
+    <label class="opt" id="lykvm" title="desligar para a borda parar de trocar de maquina">
+      <input type="checkbox" id="lykvmon"> KVM por borda</label>
+    <span class="meta" id="lymeta"></span>
+  </div>
+  <div class="lygrid" id="lygrid"></div>
+  <div class="lytray" id="lytray"></div>
+  <div class="lynote" id="lyedges"></div>
+  <div class="lynote">
+    Arraste cada maquina para onde ela fica de verdade na sua mesa. As
+    bordas saem daqui: quem esta a direita vira a borda direita. Vale no
+    proximo boot do daemon.
+  </div>
+</div>
+
 <div class="tkwrap">
   <div class="tkhead">
     <h2>Tarefas</h2>
@@ -282,7 +328,7 @@
 <footer>
   <span>atualiza a cada <b id="rs"></b>s</span>
   <span>JSON em <code>/api/status</code></span>
-  <span>hosts em <code>hosts.json</code></span>
+  <span>build <code id="build">...</code></span>
 </footer>
 </div>
 <script>
@@ -526,6 +572,150 @@ document.getElementById('grid').addEventListener('click', async ev => {
   setTimeout(screens, 2500);
 });
 
+// --- disposicao --------------------------------------------------------
+// A grade diz a mesma coisa que `edge = "right"` + `target = "..."`, mas
+// do jeito que a pessoa ja pensa: "o Windows fica a direita".
+const LY = {cols:4, rows:3, pos:{}, hosts:[]};
+
+function lyDesenha(){
+  const g = document.getElementById('lygrid');
+  g.style.gridTemplateColumns = `repeat(${LY.cols}, minmax(0,1fr))`;
+  const porCelula = {};
+  for (const h of LY.hosts){
+    const c = LY.pos[h.name];
+    if (c) (porCelula[`${c.col},${c.row}`] ||= []).push(h);
+  }
+  let html = '';
+  for (let r = 0; r < LY.rows; r++){
+    for (let c = 0; c < LY.cols; c++){
+      const dentro = (porCelula[`${c},${r}`] || []).map(lyTile).join('');
+      html += `<div class="lycell" data-col="${c}" data-row="${r}">${dentro}</div>`;
+    }
+  }
+  g.innerHTML = html;
+
+  const soltos = LY.hosts.filter(h => !LY.pos[h.name]);
+  document.getElementById('lytray').innerHTML = soltos.length
+    ? soltos.map(lyTile).join('')
+    : '';
+  document.getElementById('lymeta').textContent =
+    soltos.length ? `${soltos.length} sem posicao` : 'todas posicionadas';
+}
+
+function lyTile(h){
+  return `<div class="lytile${h.local ? ' eu' : ''}" draggable="true" data-host="${esc(h.name)}">` +
+         `<span class="n">${esc(h.name)}</span>` +
+         `<span class="o">${esc(h.os)}${h.local ? ' - esta' : ''}</span></div>`;
+}
+
+function lyEdges(edges, ligada){
+  const box = document.getElementById('lyedges');
+  if (!edges || !edges.length){
+    box.innerHTML = ligada
+      ? '<span class="lyedge">nenhuma borda derivada</span>'
+      : '<span class="lyedge">borda desligada na config</span>';
+    return;
+  }
+  const nome = {right:'direita', left:'esquerda', top:'cima', bottom:'baixo'};
+  // Vizinho que nao RECEBE aparece, mas apagado e com o motivo: a grade
+  // nao pode mentir em silencio sobre um lado que nao vai funcionar.
+  box.innerHTML = edges.map(e => {
+    const rot = `${esc(nome[e.edge] || e.edge)} &rarr; ${esc(e.target)}`;
+    return e.ativa === false
+      ? `<span class="lyedge off" title="sem ssh+agent: nao ha quem devolva o dispositivo, ` +
+        `entao nao criamos borda para la">${rot} &middot; nao recebe</span>`
+      : `<span class="lyedge">${rot}</span>`;
+  }).join('');
+}
+
+async function layout(){
+  try{
+    const r = await fetch('/api/layout', {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    LY.hosts = d.hosts;
+    LY.pos = {};
+    for (const h of d.hosts) if (h.layout) LY.pos[h.name] = h.layout;
+    // A grade cresce para caber o que ja existe, nunca encolhe abaixo do
+    // minimo -- senao uma maquina salva em col=4 sumiria da tela.
+    for (const c of Object.values(LY.pos)){
+      LY.cols = Math.max(LY.cols, c.col + 1);
+      LY.rows = Math.max(LY.rows, c.row + 1);
+    }
+    lyDesenha();
+    lyEdges(d.edges, d.border_enabled);
+    document.getElementById('lykvmon').checked = !!d.border_enabled;
+  }catch(e){
+    document.getElementById('lymeta').textContent = 'inacessivel: ' + e.message;
+  }
+}
+
+async function lySalva(){
+  const posicoes = {};
+  for (const [h, c] of Object.entries(LY.pos)) posicoes[h] = c;
+  try{
+    const r = await fetch('/api/layout', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({posicoes})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    lyEdges(d.edges, true);
+    document.getElementById('lymeta').textContent = 'salvo';
+  }catch(e){
+    document.getElementById('lymeta').textContent = 'nao salvou: ' + e.message;
+  }
+}
+
+document.getElementById('lykvmon').addEventListener('change', async ev => {
+  const on = ev.target.checked;
+  const meta = document.getElementById('lymeta');
+  meta.textContent = on ? 'ligando...' : 'desligando...';
+  try{
+    const r = await fetch('/api/border', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({enabled: on})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    meta.textContent = d.nota;
+    layout();
+  }catch(e){
+    meta.textContent = e.message;
+    ev.target.checked = !on;
+  }
+});
+
+let lyArrastando = null;
+document.addEventListener('dragstart', ev => {
+  const t = ev.target.closest('.lytile');
+  if (!t) return;
+  lyArrastando = t.dataset.host;
+  ev.dataTransfer.effectAllowed = 'move';
+  // Firefox so inicia o arrasto se houver dado.
+  ev.dataTransfer.setData('text/plain', lyArrastando);
+});
+document.addEventListener('dragover', ev => {
+  const c = ev.target.closest('.lycell');
+  if (!c || !lyArrastando) return;
+  ev.preventDefault();
+  c.classList.add('alvo');
+});
+document.addEventListener('dragleave', ev => {
+  const c = ev.target.closest('.lycell');
+  if (c) c.classList.remove('alvo');
+});
+document.addEventListener('drop', ev => {
+  const c = ev.target.closest('.lycell');
+  if (!c || !lyArrastando) return;
+  ev.preventDefault();
+  c.classList.remove('alvo');
+  LY.pos[lyArrastando] = {col: Number(c.dataset.col), row: Number(c.dataset.row)};
+  lyArrastando = null;
+  lyDesenha();
+  lySalva();
+});
+
 // --- tarefas -----------------------------------------------------------
 const TK = {host:null, pendente:null};
 
@@ -699,9 +889,16 @@ document.getElementById('fshost').addEventListener('click', ev => {
   files();
 });
 
+// Versao do build: as tres maquinas tem de estar no mesmo commit, e ja
+// aconteceu de uma ficar para tras sem ninguem notar.
+fetch('/healthz', {cache:'no-store'}).then(r => r.json())
+  .then(d => { document.getElementById('build').textContent = d.build || '?'; })
+  .catch(() => {});
+
 tick(); setInterval(tick, RS*1000);
 files();
 tarefas();
+layout();
 setInterval(() => { if (TK.pendente === null) tarefas(); }, 10000);
 logs(); setInterval(logs, RS*1000);
 // Controles mudam pouco e a leitura e caro (uma ida e volta HID++ por
