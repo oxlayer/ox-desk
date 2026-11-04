@@ -329,36 +329,23 @@ else
              install -m755 target/release/logistream-view ~/.local/bin/ &&
              install -m755 target/release/logistream-host ~/.local/bin/" 2>&1); then ok; else erro "$out"; fi
 
-  passo "mac: assinar o host (sessao grafica)"
-  # Por `launchctl kickstart`, nao direto: o `codesign` precisa do
-  # chaveiro de LOGIN destrancado, e numa sessao SSH ele esta trancado
-  # -- falha com `errSecInternalComponent`, erro que nao menciona
-  # chaveiro nenhum. Terceira vez que a mesma fronteira aparece:
-  # Gravacao de Tela, Acessibilidade e agora o chaveiro.
+  passo "mac: assinar o host"
+  # Assinatura estavel e o que faz a permissao de Gravacao de Tela
+  # sobreviver ao rebuild: binario ad-hoc amarra o TCC no cdhash, que
+  # muda sempre.
   #
-  # Assinatura estavel e o que faz a permissao de tela sobreviver ao
-  # rebuild: binario ad-hoc amarra o TCC no cdhash, que muda sempre.
-  if out=$(scp -q -o BatchMode=yes mac/ai.logi.assinar.plist mac:Library/LaunchAgents/ 2>&1 &&
-           ssh -n -o BatchMode=yes mac \
-            "launchctl bootout gui/\$(id -u)/ai.logi.assinar 2>/dev/null;
-             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.assinar.plist 2>/dev/null;
-             : > ~/.local/state/assinar.log;
-             launchctl kickstart gui/\$(id -u)/ai.logi.assinar;
-             # Esperar o codesign TERMINAR, nao so comecar. O kickstart
-             # devolve na hora, e a primeira assinatura pode ficar
-             # parada num dialogo do chaveiro -- sem esta espera o
-             # deploy seguia e dizia ok com o binario ainda ad-hoc.
-             for i in 1 2 3 4 5 6 7 8 9 10; do
-               pgrep -x codesign >/dev/null || break
-               sleep 2
-             done
-             cat ~/.local/state/assinar.log
-             # FALHAR se ficou ad-hoc. Antes havia um \`|| true\` aqui,
-             # entao o passo dizia ok com a assinatura nao aplicada --
-             # e so descobri porque a tela do Mac voltou a travar.
+  # Roda direto por SSH porque a identidade vive num chaveiro NOSSO,
+  # com senha conhecida e lista de particao ajustada. No chaveiro de
+  # login isto era impossivel: o codesign pedia dialogo grafico a cada
+  # assinatura, e por SSH falhava com `errSecInternalComponent`.
+  #
+  # FALHA se o binario continuar ad-hoc. A versao anterior deste passo
+  # tinha um `|| true` e dizia ok com a assinatura nao aplicada -- e eu
+  # so descobri porque a tela do Mac voltou a travar.
+  if out=$(ssh -n -o BatchMode=yes mac \
+            "~/.local/bin/assinar.sh ~/.local/bin/logistream-host 2>&1 | tail -3;
              if codesign -dv ~/.local/bin/logistream-host 2>&1 | grep -q adhoc; then
-               echo 'ERRO: o binario seguiu ad-hoc. Ha dialogo do chaveiro aberto no Mac?'
-               echo 'Clique em Sempre Permitir e rode o deploy de novo.'
+               echo 'ERRO: o binario seguiu ad-hoc; rode criar-identidade.sh no Mac'
                exit 1
              fi" 2>&1); then ok; else erro "$out"; fi
 
@@ -379,7 +366,11 @@ else
   # pede a tela, para nao gastar bateria capturando para ninguem.
   if out=$(scp -q -o BatchMode=yes mac/ai.logi.logistream-host.plist mac:Library/LaunchAgents/ 2>&1 &&
            ssh -n -o BatchMode=yes mac \
-            "launchctl bootout gui/\$(id -u)/ai.logi.logistream-host 2>/dev/null;
+            "launchctl bootout gui/\$(id -u)/ai.logi.logistream-host 2>/dev/null || true;
+             # O bootstrap falha com I/O error se o anterior ainda esta
+             # saindo. Uma pausa curta cobre, e repetir e idempotente.
+             sleep 1
+             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.logistream-host.plist 2>/dev/null || \
              launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.logistream-host.plist" 2>&1); then ok; else erro "$out"; fi
 fi
 
