@@ -35,6 +35,7 @@ mod hidpp;
 mod logs;
 mod peers;
 mod probe;
+mod screen;
 mod sys;
 
 use config::Config;
@@ -302,12 +303,43 @@ fn post_remap(mut req: Request) {
     }
 }
 
+/// POST /api/screen {"host": "<nome>"} -- lanca o cliente de tela.
+///
+/// Separado do GET de proposito: o GET responde "da para clicar?" e a UI
+/// desabilita o botao com o motivo escrito do lado. Um botao que abre
+/// nada e pior que um botao desabilitado explicado.
+fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let host = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("host").and_then(|h| h.as_str()).map(String::from));
+    let Some(host) = host else {
+        return err_json(req, 400, "informe {\"host\": \"<nome>\"}");
+    };
+    let snap = match cfg.read() {
+        Ok(g) => g.clone(),
+        Err(_) => return err_json(req, 500, "config travada"),
+    };
+    match screen::launch(&snap, &host) {
+        Ok(linha) => {
+            ok_json(req, serde_json::json!({ "ok": true, "command": linha }).to_string())
+        }
+        Err(e) => err_json(req, 409, &e),
+    }
+}
+
 fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
     let method = req.method().as_str().to_string();
 
     if path == "/api/config" && method == "PATCH" {
         return patch_config(req, cfg, cache);
+    }
+    if path == "/api/screen" && method == "POST" {
+        return post_screen(req, cfg);
     }
     if path == "/api/focus" && method == "POST" {
         return post_focus(req, cfg);
@@ -376,6 +408,17 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             });
             let path = param("path").unwrap_or_default();
             match serde_json::to_string(&files::list(&snap, &host, &path)) {
+                Ok(b) => ok_json(req, b),
+                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            }
+        }
+
+        "/api/screen" => {
+            let snap = match cfg.read() {
+                Ok(g) => g.clone(),
+                Err(_) => return err_json(req, 500, "config travada"),
+            };
+            match serde_json::to_string(&screen::plans(&snap)) {
                 Ok(b) => ok_json(req, b),
                 Err(e) => err_json(req, 500, &format!("serializar: {e}")),
             }

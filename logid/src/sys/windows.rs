@@ -197,3 +197,32 @@ pub fn home_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|_| "C:\\".into())
 }
+
+/// Clientes de tela conhecidos, em ordem de preferencia.
+///
+/// RDP ja vem no Windows (`mstsc`). VNC nao vem nenhum, e e o que falta
+/// para alcancar o Mac: precisa instalar um viewer.
+pub fn screen_clients(kind: &str) -> Vec<(&'static str, Vec<&'static str>)> {
+    match kind {
+        "rdp" => vec![("mstsc.exe", vec!["/v:{host}:{port}"])],
+        "vnc" => vec![
+            ("vncviewer.exe", vec!["{host}:{port}"]),
+            ("tvnviewer.exe", vec!["{host}::{port}"]),
+        ],
+        _ => vec![],
+    }
+}
+
+/// Instaladores nao poem viewer de VNC no PATH; estes sao os lugares
+/// onde o RealVNC e o TightVNC caem por padrao.
+pub fn screen_client_dirs() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    for key in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Ok(base) = std::env::var(key) {
+            v.push(PathBuf::from(&base).join("RealVNC").join("VNC Viewer"));
+            v.push(PathBuf::from(&base).join("TightVNC"));
+            v.push(PathBuf::from(&base).join("uvnc bvba").join("UltraVNC"));
+        }
+    }
+    v
+}

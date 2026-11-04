@@ -126,3 +126,33 @@ pub fn config_dir() -> std::path::PathBuf {
 pub fn home_dir() -> std::path::PathBuf {
     std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| "/".into())
 }
+
+/// Clientes de tela conhecidos, em ordem de preferencia.
+///
+/// `gnome-connections` vem primeiro porque fala **RDP e VNC**: um app
+/// cobre o Windows e o Mac, em vez de dois clientes com duas UIs.
+pub fn screen_clients(kind: &str) -> Vec<(&'static str, Vec<&'static str>)> {
+    match kind {
+        "rdp" => vec![
+            ("gnome-connections", vec!["rdp://{user_at}{host}:{port}"]),
+            // `/dynamic-resolution` faz o host remoto acompanhar a janela;
+            // sem isso a sessao nasce com a resolucao do servidor e fica
+            // com barras. `+clipboard` e o que faz copiar e colar entre as
+            // duas maquinas funcionar na sessao de tela.
+            ("xfreerdp3", vec!["/v:{host}:{port}", "{u_flag}", "+clipboard", "/dynamic-resolution"]),
+            ("xfreerdp", vec!["/v:{host}:{port}", "{u_flag}", "+clipboard", "/dynamic-resolution"]),
+            ("remmina", vec!["-c", "rdp://{user_at}{host}:{port}"]),
+        ],
+        "vnc" => vec![
+            ("gnome-connections", vec!["vnc://{host}:{port}"]),
+            ("remmina", vec!["-c", "vnc://{host}:{port}"]),
+            ("vncviewer", vec!["{host}:{port}"]),
+        ],
+        _ => vec![],
+    }
+}
+
+/// Onde procurar clientes fora do PATH. No Linux o PATH basta.
+pub fn screen_client_dirs() -> Vec<std::path::PathBuf> {
+    vec![]
+}

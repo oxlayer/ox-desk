@@ -49,6 +49,9 @@ pub struct HostCfg {
     /// switch -- e sem dead-man's switch a rota fisica e de ida so.
     #[serde(default)]
     pub agent: Option<String>,
+    /// Como controlar a tela deste host, quando der.
+    #[serde(default)]
+    pub screen: Option<ScreenCfg>,
     /// Esta entrada e a maquina onde o daemon roda?
     ///
     /// Era implicito -- `addr = "127.0.0.1"` e um texto livre em `role`
@@ -69,6 +72,29 @@ impl HostCfg {
         }
         matches!(self.addr.as_str(), "127.0.0.1" | "::1" | "localhost")
     }
+}
+
+/// Protocolo de tela do host, e em que porta.
+///
+/// Um por host porque e propriedade do SO: o Windows fala RDP, o macOS
+/// fala VNC (Compartilhamento de Tela), o GNOME fala RDP pelo
+/// `gnome-remote-desktop`. Nao ha um protocolo que os tres sirvam, e
+/// escolher o nativo de cada um evita subir servidor novo em qualquer
+/// deles -- a decisao esta em specs/006.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenCfg {
+    /// rdp | vnc
+    pub kind: String,
+    #[serde(default = "default_screen_port")]
+    pub port: u16,
+    /// Usuario para o cliente ja preencher. Nao e credencial: senha
+    /// nunca entra nesta config.
+    #[serde(default)]
+    pub user: Option<String>,
+}
+
+fn default_screen_port() -> u16 {
+    3389
 }
 
 fn default_edge() -> String {

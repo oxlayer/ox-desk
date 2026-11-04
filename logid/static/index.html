@@ -113,6 +113,16 @@
   .ctlrow .st.ok{color:var(--up)} .ctlrow .st.no{color:var(--down)}
   .ctlnote{padding:8px 16px 12px;color:var(--faint);font-size:11.5px}
 
+  .scr{padding:8px 14px 12px;border-top:1px solid var(--line);
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .scr button{font:12px inherit;padding:4px 11px;border-radius:8px;
+    border:1px solid var(--line);background:var(--bg);color:var(--fg);
+    cursor:pointer}
+  .scr button:hover:not(:disabled){background:var(--inset)}
+  .scr button:disabled{opacity:.45;cursor:default}
+  .scr .why{font:11px var(--mono);color:var(--faint);flex:1;min-width:0}
+  .scr .why.er{color:var(--down)}
+
   .fswrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
     border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
   .fshead{display:flex;align-items:center;gap:10px;padding:12px 16px;
@@ -268,6 +278,7 @@ function card(h){
     <div class="svc"><table>${h.services.map(svcRow).join('')}</table></div>
     ${units ? `<div class="units">${units}</div>` : ''}
     ${det.length ? `<div class="det">${det.join('')}</div>` : ''}
+    <div class="scr" data-scr="${esc(h.name)}"></div>
   </div>`;
 }
 
@@ -382,6 +393,7 @@ async function tick(){
     const d = await r.json();
     grid.innerHTML = d.hosts.map(card).join('');
     fsHosts(d.hosts);
+    screens();
     const on = d.hosts.filter(h => h.online).length;
     const bad = d.hosts.reduce((n,h) => n + h.services.filter(s => !s.ok).length, 0);
     document.getElementById('sum').innerHTML = bad
@@ -393,6 +405,51 @@ async function tick(){
     document.getElementById('stamp').textContent = '--:--:--';
   }
 }
+// --- tela remota ------------------------------------------------------
+// O GET responde "da para clicar?"; o botao so fica ativo quando sim, e
+// o motivo de nao aparece do lado. Botao que abre nada e pior que botao
+// desabilitado explicado.
+async function screens(){
+  let plans = [];
+  try{
+    const r = await fetch('/api/screen', {cache:'no-store'});
+    if (r.ok) plans = await r.json();
+  }catch(e){ /* sem tela: os cards seguem uteis */ }
+  for (const box of document.querySelectorAll('[data-scr]')){
+    const p = plans.find(x => x.host === box.dataset.scr);
+    if (!p){ box.innerHTML = ''; box.style.display = 'none'; continue; }
+    box.style.display = '';
+    const lat = p.ms != null ? ` ${p.ms}ms` : '';
+    box.innerHTML =
+      `<button data-open="${esc(p.host)}"${p.ready ? '' : ' disabled'}>` +
+      `Ver a tela</button>` +
+      `<span class="why${p.ready ? '' : ' er'}">` +
+      (p.ready ? `${esc(p.kind)} ${p.port}${lat} via ${esc(p.client)}`
+               : esc(p.blocker || 'indisponivel')) + `</span>`;
+  }
+}
+
+document.getElementById('grid').addEventListener('click', async ev => {
+  const b = ev.target.closest('button[data-open]');
+  if (!b || b.disabled) return;
+  const why = b.parentElement.querySelector('.why');
+  b.disabled = true; why.textContent = 'abrindo...';
+  try{
+    const r = await fetch('/api/screen', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({host: b.dataset.open})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    why.textContent = 'aberto';
+    why.classList.remove('er');
+  }catch(e){
+    why.textContent = e.message;
+    why.classList.add('er');
+  }
+  setTimeout(screens, 2500);
+});
+
 // --- arquivos ---------------------------------------------------------
 // Navegacao e explicita: sem timer. Um refresh automatico brigaria com
 // quem esta navegando -- voce clica numa pasta e o tick te joga de volta.
