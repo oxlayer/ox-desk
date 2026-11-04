@@ -1,20 +1,45 @@
-// Casca nativa sobre o monitor.py. Nao duplica logica: o Python coleta e
-// serve a UI, o Electron da janela, bandeja e atalhos.
+// Casca nativa sobre o logid. Nao duplica logica: o daemon coleta e serve
+// a UI, o Electron da janela, bandeja e atalhos.
+//
+// Roda nas duas maquinas. O daemon e o mesmo binario nos dois SOs (ver
+// specs/001), entao a casca tambem tem de ser -- a alternativa seria a
+// GUI existir so no Ubuntu, que foi exatamente a assimetria reclamada.
+// O que muda por SO sao caminhos, e so eles ficam em `paths()`.
 const { app, BrowserWindow, Tray, Menu, shell, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
 
+// Os dois caminhos que mudam por SO. Tem de bater com o que o daemon usa
+// -- `sys::config_dir` e onde o install poe o binario. Divergir aqui
+// significa a GUI ler a config errada e nao achar o daemon.
+function paths() {
+  if (process.platform === 'win32') {
+    const appdata = process.env.APPDATA || process.env.USERPROFILE || '.';
+    const local = process.env.LOCALAPPDATA || appdata;
+    return {
+      config: path.join(appdata, 'logi', 'config.toml'),
+      logid: path.join(local, 'logid', 'logid.exe'),
+    };
+  }
+  const home = process.env.HOME || '/tmp';
+  return {
+    config: path.join(
+      process.env.XDG_CONFIG_HOME || path.join(home, '.config'),
+      'logi', 'config.toml'
+    ),
+    logid: path.join(home, '.local', 'bin', 'logid'),
+  };
+}
+
+const PATHS = paths();
+
 // A porta vem da config do logid (TOML). Regex em vez de parser: e uma
 // linha escalar num arquivo que nos mesmos geramos.
 function readPort() {
-  const cfg = path.join(
-    process.env.XDG_CONFIG_HOME || path.join(process.env.HOME, '.config'),
-    'logi', 'config.toml'
-  );
   try {
-    const m = fs.readFileSync(cfg, 'utf8').match(/^\s*port\s*=\s*(\d+)/m);
+    const m = fs.readFileSync(PATHS.config, 'utf8').match(/^\s*port\s*=\s*(\d+)/m);
     if (m) return parseInt(m[1], 10);
   } catch { /* sem config ainda: o logid grava o default no primeiro boot */ }
   return 8787;
@@ -22,7 +47,7 @@ function readPort() {
 
 const PORT = readPort();
 const URL = `http://127.0.0.1:${PORT}/`;
-const LOGID = path.join(process.env.HOME, '.local', 'bin', 'logid');
+const LOGID = PATHS.logid;
 
 let win = null;
 let tray = null;
@@ -68,7 +93,9 @@ async function ensureBackend() {
   // filho se nao houver ninguem respondendo -- e so entao o matamos no fim.
   if (await ping()) return 'ja rodando';
   const bin = fs.existsSync(LOGID) ? LOGID : 'logid';
-  child = spawn(bin, [], { stdio: 'ignore', detached: false });
+  // windowsHide: o daemon e console app, e sem isto uma janela preta
+  // pisca na tela a cada vez que a GUI o sobe.
+  child = spawn(bin, [], { stdio: 'ignore', detached: false, windowsHide: true });
   let died = false;
   child.on('exit', () => { died = true; child = null; });
   for (let i = 0; i < 25; i++) {

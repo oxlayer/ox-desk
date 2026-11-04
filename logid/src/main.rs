@@ -6,6 +6,17 @@
 //! troca de canal HID++. E superficie de privilegio, nao um site.
 //! Ver ../specs/008-security.md.
 
+// Sem console no Windows: isto e um daemon, e no Windows ele sobe por
+// tarefa agendada na sessao do usuario -- um app de console abriria uma
+// janela preta a cada login e a cada vez que a GUI o subisse.
+//
+// Nao afeta o JSON por SSH: o subsistema decide se um console e
+// ALOCADO, nao para onde o stdout vai. Quando o pai entrega um pipe (o
+// caso do SSH), a saida continua chegando. O que se perde e rodar o
+// binario a mao num cmd e ver texto -- e para isso existe o log em
+// %LOCALAPPDATA%\logid\logid.log.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 // Primeiro de todos: macro_rules tem escopo TEXTUAL, entao `say!` e
 // `gripe!` so existem para os modulos declarados depois deste.
 #[macro_use]

@@ -137,6 +137,67 @@ e a borda discordariam sobre qual máquina é "eu". A cópia foi removida e
 `quem_sou_eu_por_loopback_ou_por_flag` é o teste que impede ela de
 voltar.
 
+### Como ele sobe no Windows
+
+Não é serviço. Um serviço roda na sessão 0, onde `GetCursorPos` e
+`GetLastInputInfo` não veem nada — e a borda vai precisar da sessão do
+console. É **tarefa agendada** com `/IT` (*interativo apenas*), que roda
+na sessão do usuário no login e não pede senha guardada:
+
+```powershell
+schtasks /create /tn logid /tr "%LOCALAPPDATA%\logid\logid.exe" /sc onlogon /it /f
+```
+
+Verificado: `pid 2356 sessão 1`, escutando na 8787.
+
+Antes disso tentei `Start-Process` por SSH. Subiu, respondeu `healthz` —
+e morreu junto com a sessão SSH, porque o OpenSSH do Windows mata a
+árvore de processos ao desconectar. É o mesmo princípio da regra
+`long-running-jobs` do outro repo: trabalho residente não vive pendurado
+numa sessão que vai embora.
+
+O binário é `windows_subsystem = "windows"`: sem isso uma janela de
+console aparece a cada login e a cada vez que a GUI sobe o daemon. Não
+afeta o JSON por SSH — o subsistema decide se um console é *alocado*, não
+para onde o stdout vai; com um pipe do pai, a saída continua chegando
+(verificado com `Start-Process -RedirectStandardOutput`).
+
+A GUI é o mesmo Electron do Ubuntu, em `%LOCALAPPDATA%\logid\gui`, com
+dois atalhos — Menu Iniciar (fixável na taskbar) e `Startup` — apontando
+para `electron.exe .` com `icon.ico` multi-resolução. Os caminhos que
+mudam por SO estão em `paths()` em [`gui/main.js`](../gui/main.js), e têm
+de bater com `sys::config_dir`: divergir ali significa a GUI ler outra
+config e não achar o daemon.
+
+> O `npm install` **não** baixou o binário do Electron (13 pacotes em 5 s,
+> sem `dist/`), apesar de `ignore-scripts = false`. `node
+> node_modules/electron/install.js` na mão resolveu. Se a GUI de lá
+> parar de abrir depois de um `npm ci`, é o primeiro lugar a olhar.
+
+### A isolação de sessão também engana quem verifica
+
+Gastei várias rodadas convencido de que a janela da GUI não abria:
+`MainWindowHandle` vinha `0` para os quatro processos do Electron, e meu
+`EnumWindows` não achava janela nenhuma. A conclusão estava errada.
+
+`EnumWindows` só enumera janelas da **window station da sessão de quem
+chama**, e meu SSH está na sessão 0. `MainWindowHandle`, do .NET, usa o
+mesmo mecanismo. Não era a janela que não existia — era eu olhando do
+lugar errado, exatamente a armadilha que esta spec já documentava para o
+`GetCursorPos`, aplicada agora à *verificação*.
+
+O que de fato provou que a GUI funciona foi o stderr do renderer: um
+aviso de CSP vindo da **nossa** página, o que só acontece depois de ela
+carregar. E o aviso era achado real — o painel não declarava
+Content-Security-Policy, o que equivale a permitir `unsafe-eval`. A
+página não usa `eval` nenhum (conferido), então a política foi declarada
+e o aviso sumiu.
+
+Lição operacional: ao verificar algo da sessão interativa a partir de uma
+sessão não interativa, prefira sinais que atravessam a fronteira —
+arquivo de log, porta TCP, processo — a APIs de janela, que não
+atravessam.
+
 ### O que a simetria ainda exige
 
 `focus::plan` **bloqueia** a troca quando o alvo não tem `ssh` + `agent`,

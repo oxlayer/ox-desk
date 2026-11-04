@@ -1,5 +1,14 @@
 <!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">
+<!-- CSP explicita. O Electron avisava no console do renderer que a pagina
+     nao tinha politica, o que equivale a permitir `unsafe-eval` -- e esta
+     pagina nao usa eval nenhum (conferido: zero ocorrencias), entao
+     declarar custa nada e fecha a porta.
+     `unsafe-inline` fica porque o CSS e o JS sao inline de proposito: a
+     pagina e um arquivo unico embutido no binario do daemon.
+     `connect-src 'self'` limita o fetch a 127.0.0.1:porta, que e o unico
+     lugar de onde ela le. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Maquinas</title>
 <style>
