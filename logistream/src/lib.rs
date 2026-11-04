@@ -22,6 +22,7 @@ pub mod decode;
 pub mod decode_nv;
 pub mod encode;
 pub mod host_linux;
+pub mod host_mac;
 pub mod host_win;
 pub mod input;
 pub mod input_win;

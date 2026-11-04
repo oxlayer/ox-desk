@@ -313,13 +313,33 @@ impl Receiver {
         false
     }
 
+    /// Numero de hosts e canal atual (1-based).
+    ///
+    /// **Valida a faixa antes de devolver.** O 0x1814 responde lixo
+    /// durante reconexao: o monitor registrou um MX Keys -- que tem tres
+    /// hosts -- declarando `current_host = 5`. Numero impossivel, e
+    /// devolve-lo como fato fazia tudo que le o canal decidir sobre
+    /// ficcao. O reconciliador agia nele.
+    ///
+    /// Fora da faixa vira erro, nao numero: quem chama ja sabe lidar com
+    /// "nao sei" (o `survey` poe `None`), e nao sabe lidar com um canal
+    /// que nao existe.
     pub fn host_info(&self, slot: u8) -> Result<HostInfo, String> {
         let fi = self.feature_index(slot, FEATURE_CHANGE_HOST)?;
         let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0])?;
         if r.len() < 2 {
             return Err("resposta curta de getHostInfo".into());
         }
-        Ok(HostInfo { num_hosts: r[0], current: r[1] + 1 })
+        let num_hosts = r[0];
+        let current = r[1] + 1;
+        // Um dispositivo sem host nenhum nao existe, e canal acima do
+        // total que ele proprio declarou e resposta corrompida.
+        if num_hosts == 0 || num_hosts > 16 || current == 0 || current > num_hosts {
+            return Err(format!(
+                "getHostInfo incoerente: canal {current} de {num_hosts} host(s)"
+            ));
+        }
+        Ok(HostInfo { num_hosts, current })
     }
 
     /// Nome do dispositivo via feature 0x0005, lido em pedacos.
@@ -604,4 +624,42 @@ pub fn endpoints(api: &HidApi) -> Vec<(String, u16, u16, u16)> {
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod testes_host_info {
+    /// A validacao de faixa, isolada da leitura do hardware.
+    ///
+    /// Mesma conta que o `host_info` faz depois de ler os dois bytes.
+    /// Existe como funcao de teste porque o caminho real precisa de um
+    /// receptor na mesa, e a regra -- "canal dentro do total que o
+    /// dispositivo declarou" -- nao precisa.
+    fn coerente(num_hosts: u8, current_zero_based: u8) -> bool {
+        let current = current_zero_based + 1;
+        !(num_hosts == 0 || num_hosts > 16 || current == 0 || current > num_hosts)
+    }
+
+    #[test]
+    fn canal_dentro_da_faixa_passa() {
+        assert!(coerente(3, 0), "host 1 de 3");
+        assert!(coerente(3, 2), "host 3 de 3");
+        assert!(coerente(1, 0), "unico host");
+    }
+
+    #[test]
+    fn canal_acima_do_total_e_recusado() {
+        // O caso real: MX Keys com tres hosts respondeu canal 5 durante
+        // uma reconexao. Devolver isso como fato fazia o reconciliador
+        // decidir sobre um canal que nao existe.
+        assert!(!coerente(3, 4), "canal 5 de 3 hosts");
+        assert!(!coerente(3, 3), "canal 4 de 3 hosts");
+    }
+
+    #[test]
+    fn total_absurdo_e_recusado() {
+        // `num_hosts` tambem vem da mesma resposta corrompida: um
+        // dispositivo que declara 19 hosts leu lixo nos dois bytes.
+        assert!(!coerente(0, 0), "zero hosts");
+        assert!(!coerente(19, 3), "19 hosts");
+    }
 }

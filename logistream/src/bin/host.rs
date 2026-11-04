@@ -27,7 +27,15 @@ fn main() -> anyhow::Result<()> {
         logistream::host_win::executar(porta, monitor)
     }
 
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(target_os = "macos")]
+    {
+        // Indice da TELA no avfoundation, nao conector de video: a
+        // numeracao inclui cameras, entao a tela raramente e "0".
+        let indice = a.get(1).cloned().unwrap_or_else(|| "1".into());
+        logistream::host_mac::executar(porta, &indice)
+    }
+
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     {
         let _ = (porta, a);
         anyhow::bail!(

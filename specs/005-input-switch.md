@@ -1108,6 +1108,46 @@ medir em que porta o receptor estava. A ordem de investigacao no inicio
 desta secao agora comeca pelo fisico -- velocidade e barramento dos dois
 receptores -- porque custa um comando e elimina a classe inteira.
 
+### O dongle B esta defeituoso, e ele mentiu para nos o dia inteiro (04/11)
+
+Invertendo os dois dongles entre as maquinas, a cola seguiu o **dongle**,
+nao a maquina: os dispositivos foram para onde o dongle A estava, e
+ficaram la estaveis por minutos -- na mesma maquina e nas mesmas portas
+USB 3.0 que eu havia culpado. **Isso derrubou a hipotese de ruido de USB
+3.0**, que eu tinha construido com uma escada de bateria que parecia
+confirmar.
+
+Com o dongle B no Ubuntu, as leituras HID++ que passam por ele voltaram
+**corrompidas, de forma repetida**:
+
+```
+MX Keys WirelessMX Keys W    canal=5 de 19
+```
+
+O nome veio concatenado consigo mesmo e o canal veio **5 de 19** -- num
+teclado de tres hosts. Duas leituras seguidas, o mesmo lixo. Receptor que
+devolve payload malformado nao esta fraco, esta com defeito.
+
+**O que isso explica:** os dispositivos caiam do dongle B em dezenas de
+segundos; a escada bateria-duracao era real porque qualquer link ruim se
+comporta assim; e a convergencia "sempre no host 1" era convergencia no
+**dongle que funciona**.
+
+**Remedio:** usar so o dongle A, e alcancar a outra maquina pela tela
+remota (specs/010) em vez de mover os dispositivos. O KVM por troca de
+canal estava brigando com hardware defeituoso.
+
+### Dois instrumentos consertados por causa disto
+
+1. **`host_info` valida a faixa.** Canal acima do total que o proprio
+   dispositivo declarou virou erro, nao numero. Antes devolvia `5` como
+   fato e o reconciliador agia nisso. Tres testes cobrem a regra.
+2. **O cache de nomes pode se envenenar.** Uma leitura corrompida gravou
+   `MX Keys WirelessMX Keys W` em disco e o painel passou a repetir isso
+   mesmo com o dongle bom. Limpar resolve, mas a licao e que cache de
+   dado lido de hardware ruim precisa de validacao na ENTRADA -- hoje ele
+   aceita o que vier.
+
 ### A regra que sai disto
 
 **Interruptor que não desliga é pior que interruptor nenhum.** Um laço
