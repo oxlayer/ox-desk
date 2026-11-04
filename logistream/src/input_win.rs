@@ -32,6 +32,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
     MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSE_EVENT_FLAGS, VK_PAUSE, VIRTUAL_KEY,
 };
+use windows::Win32::System::Power::{
+    SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
     SM_YVIRTUALSCREEN,
@@ -204,5 +207,70 @@ fn virtual_screen() -> (i32, i32, i32, i32) {
             GetSystemMetrics(SM_CXVIRTUALSCREEN),
             GetSystemMetrics(SM_CYVIRTUALSCREEN),
         )
+    }
+}
+
+// --- tela apagada ----------------------------------------------------
+//
+// O host nao subia quando a maquina estava com a tela apagada: o
+// `DuplicateOutput` recusava as cinco tentativas e o processo morria com
+// a mensagem sobre tela bloqueada -- que estava errada. Nao havia
+// bloqueio: mover o mouse na maquina nao pedia senha. Era so a economia
+// de energia tendo desligado a saida de video, e sem saida ligada nao ha
+// o que duplicar.
+//
+// Isso so aparece no uso real, porque e justamente quando a maquina
+// ficou sozinha um tempo que voce quer alcanca-la de longe.
+
+/// Acorda a tela sem mexer o ponteiro nem apertar nada.
+///
+/// Um `MOUSEEVENTF_MOVE` relativo de (0,0) conta como atividade para o
+/// contador de ociosidade do Windows -- o bastante para religar a saida
+/// de video -- e nao desloca o cursor nem um pixel, entao e invisivel
+/// para quem estiver na frente da maquina.
+///
+/// Nao resolve o caso de sessao REALMENTE bloqueada: ali o desktop
+/// seguro esta na frente e o DXGI nao o captura por desenho. Isso
+/// continua precisando de outra arquitetura (processo na sessao do
+/// Winlogon), e segue como limite conhecido.
+pub fn acordar_tela() {
+    let mut e = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: 0,
+                dy: 0,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    unsafe { SendInput(std::slice::from_mut(&mut e), std::mem::size_of::<INPUT>() as i32) };
+}
+
+/// Enquanto existir, a tela nao apaga sozinha.
+///
+/// Economia de energia desligando a saida no meio de uma sessao derruba
+/// a duplicacao (`DXGI_ERROR_ACCESS_LOST`), entao nao basta acordar na
+/// partida: e preciso segurar enquanto estamos servindo. No `Drop` o
+/// estado volta ao normal, e o Windows retoma a contagem de ociosidade
+/// de onde estava -- nao prendemos a maquina acordada depois que o host
+/// sai.
+pub struct TelaAcesa;
+
+impl TelaAcesa {
+    pub fn nova() -> Self {
+        unsafe {
+            SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+        };
+        TelaAcesa
+    }
+}
+
+impl Drop for TelaAcesa {
+    fn drop(&mut self) {
+        unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
     }
 }

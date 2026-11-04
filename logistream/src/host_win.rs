@@ -46,6 +46,26 @@ const BATIDA: Duration = Duration::from_millis(500);
 const ESPERA_MS: u32 = 16;
 
 pub fn executar(porta: u16, monitor: u32) -> anyhow::Result<()> {
+    // PRIMEIRA COISA: acordar a tela, e segura-la acordada.
+    //
+    // Com a tela apagada por economia de energia nao ha saida de video
+    // ligada, e `DuplicateOutput` recusa as cinco tentativas -- o host
+    // morria dizendo "tela bloqueada", que era diagnostico errado: nao
+    // havia senha nenhuma, so o monitor desligado. E justamente quando a
+    // maquina ficou sozinha um tempo que voce quer alcanca-la de longe.
+    //
+    // Antes de QUALQUER coisa de DXGI, inclusive de enumerar a saida:
+    // acordar depois de uma chamada que ja falhou nao ajudaria. O guarda
+    // vive ate o fim da funcao porque a tela apagando no meio da sessao
+    // derrubaria a duplicacao com ACCESS_LOST -- nao basta acordar na
+    // partida. Sai no `Drop`, entao nao prendemos a maquina acordada
+    // depois que o host morre.
+    //
+    // NAO resolve sessao realmente bloqueada: ali o desktop seguro esta
+    // na frente e o DXGI nao o captura por desenho. Limite conhecido.
+    let _acesa = crate::input_win::TelaAcesa::nova();
+    crate::input_win::acordar_tela();
+
     // ORDEM IMPORTA: o encoder primeiro, a duplicacao depois.
     //
     // Segurar a duplicacao do DXGI enquanto o CUDA inicializa travava o
