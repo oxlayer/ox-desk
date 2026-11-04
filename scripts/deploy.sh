@@ -84,6 +84,18 @@ PS1
 else erro "$out"; fi
 rm -f "$ASSINADO"
 
+passo "windows: casca da GUI"
+# So o `main.js`: o resto da casca e `node_modules` (299 MB de Chromium)
+# e nao muda. O arquivo passou a importar porque e nele que mora o vigia
+# de build -- a pagina tambem sabe se recarregar, mas esse codigo VIAJA
+# NA PAGINA, e uma janela aberta antes de o recurso existir nunca o
+# recebe. Foi o que deixou o usuario olhando um painel de ontem.
+#
+# Vale no proximo lancamento do app; nao matamos a janela de ninguem.
+if out=$(timeout 60 scp -q gui/main.js \
+           'windows-host:C:/Users/user/AppData/Local/logid/gui/main.js' 2>&1); then ok
+else erro "$out"; fi
+
 passo "windows: agente"
 # O agente FICOU PARA TRAS por um dia inteiro: este script atualizava
 # `logid.exe` e esquecia `logid-agent.exe`, que e justamente quem o

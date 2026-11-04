@@ -248,6 +248,31 @@ async function refreshTray() {
   );
 }
 
+// --- recarregar quando o daemon mudar de build ----------------------------
+//
+// A pagina tambem sabe se recarregar, mas isso nao basta: o codigo que
+// recarrega VIAJA NA PAGINA. Uma janela aberta antes de o recurso existir
+// nunca o recebe -- foi o que aconteceu, e o usuario ficou olhando um
+// painel de ontem enquanto o daemon estava quinze builds adiante, com
+// razao de achar que o binario estava velho.
+//
+// Aqui, no processo principal, o relogio nao depende do que a pagina
+// carregou: ele e dono da janela e recarrega do servidor.
+let buildVisto = null;
+async function vigiaBuild() {
+  const h = await getJson('/healthz', 3000);
+  if (!h || !h.build) return;                 // daemon reiniciando
+  const atual = `${h.n ?? '?'} ${h.build}`;
+  if (buildVisto === null) { buildVisto = atual; return; }
+  if (atual === buildVisto) return;
+  buildVisto = atual;                         // marca ANTES, para nao virar laco
+  if (win && !win.isDestroyed()) {
+    // Ignorando cache: a pagina vem com `no-store`, mas um recarregamento
+    // que revalida ainda poderia servir o mesmo HTML de um proxy local.
+    win.webContents.reloadIgnoringCache();
+  }
+}
+
 function createTray() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
   tray = new Tray(img.resize({ width: 22, height: 22 }));
@@ -256,6 +281,9 @@ function createTray() {
   refreshTray();
   // A bandeja e lida de relance: manter fresca sem o usuario pedir.
   setInterval(refreshTray, 15000);
+  // Mesma ideia para o build: a janela nao pode ficar atras do daemon.
+  vigiaBuild();
+  setInterval(vigiaBuild, 5000);
 }
 
 // --- ciclo de vida ---------------------------------------------------------
