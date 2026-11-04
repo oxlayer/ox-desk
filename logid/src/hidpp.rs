@@ -229,6 +229,27 @@ pub fn hidraw_access() -> bool {
     false
 }
 
+/// Ping com retry.
+///
+/// Um ping perdido NAO significa ausencia -- dispositivo em economia de
+/// energia, ou com bateria baixa, estoura os 250 ms e responde na
+/// tentativa seguinte. O `survey` ja tinha retry; o `remap` e o
+/// `change_host` nao tinham, e falhavam com "nao responde" segundos
+/// depois de uma leitura bem-sucedida. Observado com os devices a 5%.
+fn ping_retry(rx: &hidpp::Receiver, slot: u8, attempts: u8) -> Result<f64, String> {
+    let mut last = String::from("sem tentativa");
+    for i in 0..attempts.max(1) {
+        if i > 0 {
+            std::thread::sleep(Duration::from_millis(180));
+        }
+        match rx.ping(slot) {
+            Ok(ms) => return Ok(ms),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
 fn no_access() -> Survey {
     Survey {
         hidraw_access: false,
@@ -411,10 +432,10 @@ pub fn change_host(slot: u8, host: u8) -> Result<String, String> {
     let api = hidpp::hidapi::HidApi::new().map_err(|e| format!("hidapi: {e}"))?;
     let rx = hidpp::Receiver::open(&api)?;
 
-    if rx.ping(slot).is_err() {
+    if ping_retry(&rx, slot, 3).is_err() {
         return Err(format!(
-            "slot {slot} nao responde neste receptor -- HID++ nao alcanca \
-             dispositivo em outro canal"
+            "slot {slot} nao responde neste receptor (3 tentativas) -- HID++ \
+             nao alcanca dispositivo em outro canal"
         ));
     }
 
@@ -483,7 +504,7 @@ pub fn controls() -> Controls {
 
     let mut out = Vec::new();
     for slot in 1..=MAX_SLOTS {
-        if rx.ping(slot).is_err() {
+        if ping_retry(&rx, slot, 2).is_err() {
             continue;
         }
         let name = remembered(slot)
@@ -520,13 +541,24 @@ pub fn controls() -> Controls {
 pub fn remap(slot: u8, cid: u16, to: u16) -> Result<String, String> {
     let api = hidpp::hidapi::HidApi::new().map_err(|e| format!("hidapi: {e}"))?;
     let rx = open_rx(&api)?;
-    if rx.ping(slot).is_err() {
-        return Err(format!("slot {slot} nao responde -- o dispositivo esta em outro canal"));
+    if ping_retry(&rx, slot, 4).is_err() {
+        return Err(format!(
+            "slot {slot} nao responde (4 tentativas) -- o dispositivo esta em \
+             outro canal, ou com bateria baixa demais para responder"
+        ));
     }
-    rx.set_control_remap(slot, cid, to)?;
+    // Restaurar o padrao e remapear o controle PARA ELE MESMO, nao para
+    // zero. Medido: com `to = 0` a escrita retorna ok e o dispositivo
+    // continua reportando o remapeamento antigo.
+    let target = if to == 0 { cid } else { to };
+    rx.set_control_remap(slot, cid, target)?;
     Ok(format!(
         "0x{cid:04x} ({}) -> {}",
         hidpp::control_name(cid),
-        if to == 0 { "padrao".to_string() } else { format!("0x{to:04x} ({})", hidpp::control_name(to)) }
+        if target == cid {
+            "padrao".to_string()
+        } else {
+            format!("0x{target:04x} ({})", hidpp::control_name(target))
+        }
     ))
 }

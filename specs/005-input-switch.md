@@ -790,18 +790,40 @@ testadas: sem `confirm` → 400, dispositivo em outro canal → 409, id
 inválido → 400. Dispositivo ausente não aparece em `/api/controls` —
 listar nome sem poder ler nem escrever seria enganoso.
 
-### ⚠️ A escrita ainda NÃO foi validada contra hardware
+### Escrita validada contra hardware
 
-A leitura está confirmada (`getCount` e `getControlIdInfo` acima). A
-escrita (`setControlReporting`, func 3) está implementada pela
-especificação e **não foi exercitada**, porque os dispositivos
-atravessaram de máquina 36 vezes em 5 minutos durante o
-desenvolvimento.
+Ciclo completo, com os dispositivos parados:
 
-Gravar remapeamento errado deixa um botão inútil até ser desfeito, então
-isto não conta como entregue. O teste seguro, quando houver uma janela
-com os dispositivos parados aqui: remapear **Avançar** (`0x0056`) para
-Meio (`0x0052`), ler de volta, e restaurar com `to: "0"`.
+```
+POST remap 0x0056 -> 0x0052    {"detail":"0x0056 (Avancar) -> 0x0052 (Botao do meio)","ok":true}
+GET  controls                   0x0056 Avancar -> 0x0052 (Botao do meio)
+POST remap 0x0056 -> padrao     {"detail":"0x0056 (Avancar) -> padrao","ok":true}
+GET  controls                   todos -> padrao
+```
+
+E o teste pegou dois bugs antes de o usuário sentir:
+
+**`to = 0` não restaura o padrão.** A escrita retornava `ok` e o
+dispositivo continuava reportando o remapeamento antigo. No 0x1B04 o
+padrão se restaura remapeando o controle **para ele mesmo**. Agora
+`to: "0"` é traduzido para o próprio `cid`.
+
+Se eu tivesse confiado no retorno `ok` em vez de ler de volta, teria
+deixado o botão Avançar do usuário alterado e reportado sucesso.
+
+**O gate de ping precisava de retry.** O `remap` falhou com
+`slot 1 nao responde` segundos depois de uma leitura bem-sucedida. Eu
+havia posto retry no `survey` e esquecido no `remap` e no `change_host`
+— com os dispositivos a 5% de bateria, um ping único perde. Os três
+agora tentam de novo (3 a 4 vezes, 180 ms de intervalo).
+
+### Limite observado: bateria baixa quebra enumeração longa
+
+O teclado tem 24 controles, e a 5% ele não sustenta as ~50 idas e
+voltas: `/api/controls` devolve
+`MX Keys Wireless Keyboard (erro: sem resposta)` enquanto o mouse, com
+7 controles, completa. O erro aparece por dispositivo em vez de
+derrubar a resposta inteira.
 
 ## Em aberto
 
