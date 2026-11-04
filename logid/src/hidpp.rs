@@ -14,6 +14,7 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
+use std::time::Instant;
 use std::time::Duration;
 
 /// Nome por slot, aprendido quando o dispositivo esta online.
@@ -328,9 +329,43 @@ pub fn survey_cached_or_fresh(max_age: Duration) -> Survey {
 }
 
 /// Mantem o cache curto quente, para a borda nao esperar varredura.
+/// Quando os dispositivos CHEGARAM nesta maquina.
+///
+/// Existe por causa de um bug que o usuario sentiu na pele: com borda
+/// nas duas maquinas apontando uma para a outra, chegar no Windows e
+/// mover o mouse para a esquerda -- o movimento natural, porque voce veio
+/// de la -- bate em x=0 e a borda manda tudo de volta na hora. O log
+/// mostrou o ciclo inteiro em segundos.
+///
+/// Nenhum dos dois lados estava errado isoladamente. O que faltava era
+/// **carencia**: depois de os dispositivos chegarem, a borda daqui
+/// precisa de um tempo calada para a pessoa sair da beirada.
+static ARRIVED_AT: Mutex<Option<Instant>> = Mutex::new(None);
+static WAS_PRESENT: Mutex<bool> = Mutex::new(false);
+
+/// Ha quanto tempo os dispositivos chegaram aqui, em ms. `None` = nao
+/// houve chegada registrada (ou eles nunca sairam).
+pub fn arrived_ms_ago() -> Option<u64> {
+    ARRIVED_AT.lock().ok()?.map(|t| t.elapsed().as_millis() as u64)
+}
+
+fn note_presence(survey: &Survey) {
+    let present = survey.receivers.iter().any(|r| r.devices.iter().any(|d| d.online));
+    let Ok(mut antes) = WAS_PRESENT.lock() else { return };
+    if present && !*antes {
+        if let Ok(mut g) = ARRIVED_AT.lock() {
+            *g = Some(Instant::now());
+        }
+    }
+    *antes = present;
+}
+
 pub fn spawn_refresher() {
     std::thread::spawn(|| loop {
-        let _ = survey_opts(false);
+        // A varredura periodica ja existia para manter o cache quente; e
+        // o lugar natural para notar chegada, em vez de um segundo
+        // poller falando com o mesmo radio.
+        note_presence(&survey_opts(false));
         std::thread::sleep(Duration::from_millis(1500));
     });
 }

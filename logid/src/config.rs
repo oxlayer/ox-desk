@@ -49,6 +49,9 @@ pub struct HostCfg {
     /// switch -- e sem dead-man's switch a rota fisica e de ida so.
     #[serde(default)]
     pub agent: Option<String>,
+    /// Onde esta maquina fica na grade da GUI. Ver `Config::neighbors`.
+    #[serde(default)]
+    pub layout: Option<Cell>,
     /// windows | linux | macos. Opcional: ver `HostCfg::os`.
     #[serde(default)]
     pub os: Option<String>,
@@ -106,6 +109,18 @@ impl HostCfg {
         }
         matches!(self.addr.as_str(), "127.0.0.1" | "::1" | "localhost")
     }
+}
+
+/// Posicao do host na grade.
+///
+/// Escrever `edge = "right"` e `target = "windows-host"` a mao sempre foi
+/// descrever uma relacao ESPACIAL em prosa. A grade diz a mesma coisa de
+/// um jeito que a pessoa ja pensa -- "o Windows fica a direita" -- e as
+/// bordas saem dela.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Cell {
+    pub col: i32,
+    pub row: i32,
 }
 
 /// Sistema operacional do host.
@@ -269,6 +284,67 @@ pub struct Config {
 pub const DEFAULT_TOML: &str = include_str!("../default-config.toml");
 
 impl Config {
+    /// Vizinhos da maquina local na grade: (borda, nome do host).
+    ///
+    /// "Imediatamente a direita" e o host mais PROXIMO com `col` maior na
+    /// mesma linha -- nao `col + 1`. Com buraco na grade (tres maquinas
+    /// em 0, 1 e 3, por exemplo) exigir adjacencia exata deixaria a borda
+    /// sem alvo, e a pessoa arrastou os quadrados justamente para dizer
+    /// quem fica de que lado.
+    ///
+    /// Hosts sem `layout` ficam de fora: nao da para derivar direcao de
+    /// quem nao tem posicao.
+    pub fn neighbors(&self) -> Vec<(&'static str, String)> {
+        let Some(eu) = self.hosts.iter().find(|h| h.is_local()) else { return Vec::new() };
+        let Some(meu) = eu.layout else { return Vec::new() };
+
+        let mut v = Vec::new();
+        for (borda, mesma_linha, maior) in [
+            ("right", true, true),
+            ("left", true, false),
+            ("bottom", false, true),
+            ("top", false, false),
+        ] {
+            let mut cands: Vec<(i32, &HostCfg)> = self
+                .hosts
+                .iter()
+                .filter(|h| !h.is_local())
+                .filter_map(|h| h.layout.map(|c| (c, h)))
+                .filter(|(c, _)| if mesma_linha { c.row == meu.row } else { c.col == meu.col })
+                .filter_map(|(c, h)| {
+                    let d = if mesma_linha { c.col - meu.col } else { c.row - meu.row };
+                    let ok = if maior { d > 0 } else { d < 0 };
+                    ok.then(|| (d.abs(), h))
+                })
+                .collect();
+            cands.sort_by_key(|(d, _)| *d);
+            if let Some((_, h)) = cands.first() {
+                v.push((borda, h.name.clone()));
+            }
+        }
+        v
+    }
+
+    /// As bordas a vigiar: `(borda, host alvo)`.
+    ///
+    /// A grade manda quando existe. Sem ela, vale o par `edge`/`target`
+    /// escrito a mao -- as configs anteriores a grade continuam valendo,
+    /// e quem quiser uma borda so continua podendo escreve-la.
+    pub fn border_edges(&self) -> Vec<(String, String)> {
+        let b = &self.input.border;
+        if !b.enabled {
+            return Vec::new();
+        }
+        let da_grade = self.neighbors();
+        if !da_grade.is_empty() {
+            return da_grade.into_iter().map(|(e, h)| (e.to_string(), h)).collect();
+        }
+        match &b.target {
+            Some(t) => vec![(b.edge.clone(), t.clone())],
+            None => Vec::new(),
+        }
+    }
+
     /// O primeiro host que nao e esta maquina.
     ///
     /// Quem usa e o dead-man's switch da borda do Windows, que precisa
@@ -397,6 +473,89 @@ mod tests {
         assert!(c.hosts[0].is_local(), "flag explicita tem de vencer o endereco");
         assert!(!c.hosts[1].is_local(), "local = false vence o loopback");
         assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("la"));
+    }
+
+    #[test]
+    fn vizinhos_saem_da_grade() {
+        let c: Config = toml::from_str(
+            r#"
+            [[hosts]]
+            name = "eu"
+            addr = "127.0.0.1"
+            layout = { col = 1, row = 1 }
+            [[hosts]]
+            name = "direita"
+            addr = "d.local"
+            layout = { col = 3, row = 1 }
+            [[hosts]]
+            name = "esquerda"
+            addr = "e.local"
+            layout = { col = 0, row = 1 }
+            [[hosts]]
+            name = "acima"
+            addr = "a.local"
+            layout = { col = 1, row = 0 }
+            [[hosts]]
+            name = "diagonal"
+            addr = "x.local"
+            layout = { col = 2, row = 2 }
+            [[hosts]]
+            name = "sem posicao"
+            addr = "s.local"
+            "#,
+        )
+        .unwrap();
+        let n = c.neighbors();
+        let acha = |b: &str| n.iter().find(|(e, _)| *e == b).map(|(_, h)| h.as_str());
+        // Coluna 3 com buraco no 2: ainda e o vizinho da direita.
+        assert_eq!(acha("right"), Some("direita"));
+        assert_eq!(acha("left"), Some("esquerda"));
+        assert_eq!(acha("top"), Some("acima"));
+        // Diagonal nao e vizinho de borda nenhuma.
+        assert_eq!(acha("bottom"), None);
+        assert_eq!(n.len(), 3, "so as tres bordas com vizinho");
+    }
+
+    #[test]
+    fn o_mais_proximo_ganha() {
+        let c: Config = toml::from_str(
+            r#"
+            [[hosts]]
+            name = "eu"
+            addr = "127.0.0.1"
+            layout = { col = 0, row = 0 }
+            [[hosts]]
+            name = "longe"
+            addr = "l.local"
+            layout = { col = 5, row = 0 }
+            [[hosts]]
+            name = "perto"
+            addr = "p.local"
+            layout = { col = 1, row = 0 }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            c.neighbors().iter().find(|(e, _)| *e == "right").map(|(_, h)| h.as_str()),
+            Some("perto")
+        );
+    }
+
+    #[test]
+    fn sem_grade_nenhuma_nao_ha_vizinho() {
+        // Config antiga, sem `layout`: a borda explicita continua valendo.
+        let c: Config = toml::from_str(
+            r#"
+            [[hosts]]
+            name = "eu"
+            addr = "127.0.0.1"
+            [[hosts]]
+            name = "outro"
+            addr = "o.local"
+            "#,
+        )
+        .unwrap();
+        assert!(c.neighbors().is_empty());
     }
 
     #[test]

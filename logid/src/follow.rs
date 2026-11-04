@@ -25,6 +25,10 @@ use std::time::Duration;
 /// Espera depois de agir, para nao brigar com a borda nem consigo mesmo.
 const AFTER_ACTION: Duration = Duration::from_secs(8);
 
+/// Carencia depois que os dispositivos chegam aqui: nao reconciliar
+/// sobre estado em transito. Mesmo numero da borda, pelo mesmo motivo.
+const SETTLE: u64 = 7_000;
+
 struct Seen {
     /// slot local, se estiver aqui
     local_slot: Option<u8>,
@@ -156,6 +160,19 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
 
         loop {
             std::thread::sleep(Duration::from_secs(interval));
+
+            // Logo depois de uma chegada o estado esta em transito, e o
+            // reconciliador leria uma foto ja velha. O log do usuario
+            // mostrou o estrago: `follow: pedi a windows-host que o
+            // mandasse para o canal 1` onze segundos antes de a borda
+            // mandar tudo para o canal 2, e os dois se desfazendo
+            // mutuamente enquanto ele tentava trabalhar.
+            if let Some(ms) = crate::hidpp::arrived_ms_ago() {
+                if ms < SETTLE {
+                    continue;
+                }
+            }
+
             let Ok(snap) = cfg.read().map(|g| g.clone()) else { continue };
             if !snap.input.follow.enabled {
                 continue;

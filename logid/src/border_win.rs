@@ -40,33 +40,46 @@ const COOLDOWN: Duration = Duration::from_secs(10);
 /// janela do dead-man's switch e de dezenas de segundos, 1 Hz basta.
 const PRESENCE_EVERY: Duration = Duration::from_secs(1);
 const GUARD_DEFAULT: u64 = 25;
+/// Carencia depois que os dispositivos chegam aqui.
+///
+/// Com borda nas duas maquinas apontando uma para a outra, sem isto um
+/// movimento natural logo apos a chegada devolve tudo na hora. Medido no
+/// log do usuario: chegada e volta em menos de um minuto, varias vezes.
+const GRACE: u64 = 7_000;
+
 
 pub fn spawn(cfg: Arc<RwLock<Config>>) {
     std::thread::spawn(move || run(cfg));
 }
 
 fn run(cfg: Arc<RwLock<Config>>) {
-    let (edge, target, hold) = {
+    let (edges, hold) = {
         let Ok(g) = cfg.read() else { return };
         let b = &g.input.border;
-        if !b.enabled {
-            return;
-        }
-        let Some(t) = b.target.clone() else {
-            gripe!("border: habilitado sem `target`; nada a fazer");
-            return;
-        };
         let hold = if b.hold_hits <= 1 {
             Duration::ZERO
         } else {
             Duration::from_millis(if b.hold_window_ms == 0 { 300 } else { b.hold_window_ms })
         };
-        (b.edge.clone(), t, hold)
+        // Vem da grade quando ela existe (ver `Config::border_edges`).
+        // Uma maquina no meio tem vizinho dos dois lados, entao sao
+        // varias bordas, nao uma.
+        let edges: Vec<(String, String)> = g
+            .border_edges()
+            .into_iter()
+            .filter(|(e, _)| {
+                let ok = matches!(e.as_str(), "left" | "right" | "top" | "bottom");
+                if !ok {
+                    gripe!("border: borda '{e}' invalida -- ignorada");
+                }
+                ok
+            })
+            .collect();
+        if edges.is_empty() {
+            return;
+        }
+        (edges, hold)
     };
-    if !matches!(edge.as_str(), "left" | "right" | "top" | "bottom") {
-        gripe!("border: edge '{edge}' invalido (left | right | top | bottom)");
-        return;
-    }
 
     // `GetCursorPos` e `GetLastInputInfo` sao POR SESSAO. Na sessao 0 --
     // o caso de lancar o daemon por SSH -- esta thread nao veria input
@@ -90,9 +103,10 @@ fn run(cfg: Arc<RwLock<Config>>) {
     }
 
     let (vx, vy, vw, vh) = winput::virtual_screen();
+    let resumo: Vec<String> = edges.iter().map(|(e, t)| format!("{e} -> {t}")).collect();
     say!(
-        "border: vigiando borda '{edge}' -> {target} (area {vx},{vy} {vw}x{vh}, \
-         permanencia {}ms)",
+        "border: vigiando {} (area {vx},{vy} {vw}x{vh}, permanencia {}ms)",
+        resumo.join(", "),
         hold.as_millis()
     );
 
@@ -102,10 +116,13 @@ fn run(cfg: Arc<RwLock<Config>>) {
     let mut last_presence = Instant::now() - PRESENCE_EVERY;
     // Ja comeca encostado? Entao nao conta como chegada. Sem isto, um
     // cursor estacionado na borda dispara no primeiro tick depois do
-    // boot.
-    let mut was_at_edge = winput::cursor().map(|p| winput::at_edge(&edge, p)).unwrap_or(false);
-    if was_at_edge {
-        say!("border: cursor ja esta na borda '{edge}' -- aguardando ele sair e voltar");
+    // boot. Por borda, porque sao varias.
+    let mut was_at: Vec<bool> = edges
+        .iter()
+        .map(|(e, _)| winput::cursor().map(|p| winput::at_edge(e, p)).unwrap_or(false))
+        .collect();
+    if was_at.iter().any(|v| *v) {
+        say!("border: cursor ja esta numa borda vigiada -- aguardando ele sair e voltar");
     }
 
     loop {
@@ -124,12 +141,28 @@ fn run(cfg: Arc<RwLock<Config>>) {
             guard.tick(&cfg);
         }
 
-        let Some(p) = winput::cursor() else { continue };
-        if !winput::at_edge(&edge, p) {
-            touching = None;
-            was_at_edge = false;
-            continue;
+        // Carencia pos-chegada: calado enquanto a pessoa ainda esta
+        // saindo da beirada por onde acabou de entrar.
+        if let Some(ms) = crate::hidpp::arrived_ms_ago() {
+            if ms < GRACE {
+                // Zera a chegada nas bordas: quando a carencia vencer, o
+                // cursor tera de SAIR e voltar, mesmo que ja esteja ali.
+                was_at.iter_mut().for_each(|v| *v = true);
+                touching = None;
+                continue;
+            }
         }
+
+        let Some(p) = winput::cursor() else { continue };
+        // Qual borda o cursor esta tocando? Nenhuma, uma -- nunca duas,
+        // porque sao lados opostos da mesma area.
+        let Some(i) = edges.iter().position(|(e, _)| winput::at_edge(e, p)) else {
+            touching = None;
+            was_at.iter_mut().for_each(|v| *v = false);
+            continue;
+        };
+        let (edge, target) = (&edges[i].0, &edges[i].1);
+        let was_at_edge = was_at[i];
 
         // Exige CHEGADA, nao presenca.
         //
@@ -146,7 +179,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
             continue;
         }
         if !was_at_edge {
-            was_at_edge = true;
+            was_at[i] = true;
             touching = Some(Instant::now());
         }
         let since = touching.unwrap_or_else(Instant::now);
@@ -155,8 +188,9 @@ fn run(cfg: Arc<RwLock<Config>>) {
         }
         touching = None;
         cooldown = Some(Instant::now() + COOLDOWN);
-        say!("border: borda '{edge}' alcancada em ({},{}) -- trocando", p.x, p.y);
-        switch_away(&cfg, &target);
+        say!("border: borda '{edge}' alcancada em ({},{}) -- trocando para {target}", p.x, p.y);
+        let alvo = target.clone();
+        switch_away(&cfg, &alvo);
     }
 }
 

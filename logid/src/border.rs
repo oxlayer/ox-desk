@@ -26,6 +26,13 @@ const OBJ: &str = "/org/gnome/Mutter/InputCapture";
 const IFACE: &str = "org.gnome.Mutter.InputCapture";
 const IFACE_SESSION: &str = "org.gnome.Mutter.InputCapture.Session";
 const CAP_POINTER: u32 = 2;
+/// Carencia depois que os dispositivos chegam aqui.
+///
+/// Com borda nas duas maquinas apontando uma para a outra, sem isto um
+/// movimento natural logo apos a chegada devolve tudo na hora. Medido no
+/// log do usuario: chegada e volta em menos de um minuto, varias vezes.
+const GRACE: u64 = 7_000;
+
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Quantos pixels para dentro devolver o ponteiro.
@@ -97,13 +104,23 @@ fn release(sp: &dbus::blocking::Proxy<'_, &Connection>) {
 struct Session {
     conn: Connection,
     path: Path<'static>,
+    /// id da barreira -> host alvo daquela borda.
+    alvos: std::collections::HashMap<u32, String>,
     /// Mantido vivo de proposito: fechar o fd pode derrubar a sessao.
     /// Ainda NAO foi medido se o Enable funciona sem ele -- entrou no
     /// prototipo para eliminar hipotese e ficou como ordem conhecida-boa.
     _eis: Option<OwnedFd>,
 }
 
-fn open(edge: &str) -> Result<Session, String> {
+/// Abre a sessao de captura com UMA barreira por borda vigiada.
+///
+/// Varias barreiras na mesma sessao: o mutter devolve um id por
+/// `AddBarrier` e entrega esse id no sinal `Activated`, entao o mapa
+/// `id -> alvo` e o que diz para onde mandar quando aquela borda
+/// especifica for tocada. Antes era uma so, porque a config tinha um
+/// `edge` unico; com a grade, uma maquina no meio tem vizinho dos dois
+/// lados.
+fn open(edges: &[(String, String)]) -> Result<Session, String> {
     let conn = Connection::new_session().map_err(|e| format!("barramento de sessao: {e}"))?;
 
     let root = conn.with_proxy(DEST, OBJ, TIMEOUT);
@@ -119,11 +136,23 @@ fn open(edge: &str) -> Result<Session, String> {
         .map_err(|e| format!("GetZones: {e}"))?;
     let zone = *zones.first().ok_or("o compositor nao reportou nenhuma zona")?;
 
-    let line = barrier_line(edge, zone)
-        .ok_or_else(|| format!("borda invalida: '{edge}' (use left/right/top/bottom)"))?;
-    let (bid,): (u32,) = sp
-        .method_call(IFACE_SESSION, "AddBarrier", (serial, line))
-        .map_err(|e| format!("AddBarrier em {line:?}: {e}"))?;
+    let mut alvos = std::collections::HashMap::new();
+    for (edge, target) in edges {
+        let Some(line) = barrier_line(edge, zone) else {
+            gripe!("border: borda invalida '{edge}' (use left/right/top/bottom) -- ignorada");
+            continue;
+        };
+        match sp.method_call::<(u32,), _, _, _>(IFACE_SESSION, "AddBarrier", (serial, line)) {
+            Ok((bid,)) => {
+                say!("border: barreira {bid} na borda {edge} {line:?} -> {target}");
+                alvos.insert(bid, target.clone());
+            }
+            Err(e) => gripe!("border: AddBarrier em {line:?} falhou: {e}"),
+        }
+    }
+    if alvos.is_empty() {
+        return Err("nenhuma barreira pode ser criada".into());
+    }
 
     let eis: Option<OwnedFd> = match sp.method_call::<(OwnedFd,), _, _, _>(
         IFACE_SESSION,
@@ -140,39 +169,34 @@ fn open(edge: &str) -> Result<Session, String> {
     sp.method_call::<(), _, _, _>(IFACE_SESSION, "Enable", ())
         .map_err(|e| format!("Enable: {e}"))?;
 
-    say!(
-        "border: barreira {bid} na borda {edge} {line:?}, zona {zone:?}, eis={}",
-        if eis.is_some() { "sim" } else { "nao" }
-    );
-    Ok(Session { conn, path, _eis: eis })
+    say!("border: {} barreira(s) na zona {zone:?}, eis={}", alvos.len(),
+         if eis.is_some() { "sim" } else { "nao" });
+    Ok(Session { conn, path, alvos, _eis: eis })
 }
 
 /// Sobe a vigilancia de borda numa thread. Erro aqui nao derruba o daemon:
 /// o resto do logid continua util sem a deteccao.
 pub fn spawn(cfg: Arc<RwLock<Config>>) {
     std::thread::spawn(move || {
-        let (edge, target, hold_hits, hold_window) = {
+        let (edges, hold_hits, hold_window) = {
             let Ok(g) = cfg.read() else { return };
             let b = &g.input.border;
-            if !b.enabled {
-                return;
-            }
             let hits = if b.hold_hits == 0 { HOLD_HITS_DEFAULT } else { b.hold_hits };
             let win = if b.hold_window_ms == 0 {
                 HOLD_WINDOW_DEFAULT
             } else {
                 Duration::from_millis(b.hold_window_ms)
             };
-            match &b.target {
-                Some(t) => (b.edge.clone(), t.clone(), hits, win),
-                None => {
-                    gripe!("border: habilitado sem `target`; nada a fazer");
-                    return;
-                }
+            // Vem da grade quando ela existe; senao do `edge`/`target`
+            // escrito a mao. Ver `Config::border_edges`.
+            let edges = g.border_edges();
+            if edges.is_empty() {
+                return;
             }
+            (edges, hits, win)
         };
 
-        let sess = match open(&edge) {
+        let sess = match open(&edges) {
             Ok(s) => s,
             Err(e) => {
                 gripe!("border: desligado -- {e}");
@@ -193,7 +217,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
 
         let cfg2 = Arc::clone(&cfg);
         let path2 = sess.path.clone();
-        let target2 = target.clone();
+        let alvos = sess.alvos.clone();
         let last2 = Arc::clone(&last);
         let hits2 = Arc::clone(&hits);
         let reenable2 = Arc::clone(&reenable);
@@ -210,6 +234,15 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
 
                 // Guarda: com a barreira desarmada nao deveria chegar evento.
                 if last2.read().ok().and_then(|g| *g).is_some_and(|t| t.elapsed() < COOLDOWN) {
+                    return true;
+                }
+
+                // Carencia pos-chegada. O mutter so emite em travessia,
+                // entao aqui nao ha cursor parado disparando -- mas
+                // chegar e imediatamente cruzar de volta e justamente o
+                // ciclo que o usuario viu.
+                if crate::hidpp::arrived_ms_ago().is_some_and(|ms| ms < GRACE) {
+                    say!("border: dispositivos acabaram de chegar -- ignorando a travessia");
                     return true;
                 }
 
@@ -247,7 +280,12 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                 // Rodar aqui bloqueava o loop do D-Bus: medido, 35 s sem
                 // processar sinal nenhum. Vai para uma thread.
                 let Ok(snap) = cfg2.read().map(|g| g.clone()) else { return true };
-                let target3 = target2.clone();
+                // QUAL borda foi tocada decide para onde vai. Com a
+                // grade, uma maquina no meio tem vizinho dos dois lados.
+                let Some(target3) = alvos.get(&barrier_id).cloned() else {
+                    gripe!("border: barreira {barrier_id} sem alvo conhecido");
+                    return true;
+                };
                 std::thread::spawn(move || {
                     // O pre-flight completo roda aqui dentro: config ruim nao
                     // pode te deixar sem teclado so porque o mouse encostou
@@ -315,9 +353,11 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             }),
         );
 
+        let resumo: Vec<String> =
+            edges.iter().map(|(e, t)| format!("{e} -> {t}")).collect();
         say!(
-            "border: vigiando borda '{edge}' -> {target} \
-             (permanencia {hold_hits} em {}ms)",
+            "border: vigiando {} (permanencia {hold_hits} em {}ms)",
+            resumo.join(", "),
             hold_window.as_millis()
         );
         let mut ticks: u64 = 0;
@@ -345,7 +385,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             // Prova de vida a cada ~60 s: sem isto, silencio no journal e
             // ambiguo entre "nada aconteceu" e "a thread morreu".
             if ticks % 120 == 0 {
-                say!("border: vivo, {} min vigiando '{}'", ticks / 120, edge);
+                say!("border: vivo, {} min vigiando {} borda(s)", ticks / 120, edges.len());
             }
         }
     });
