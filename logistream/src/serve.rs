@@ -13,7 +13,7 @@
 //! O que NAO esta aqui e o que de fato difere: de onde vem o quadro
 //! (PipeWire x DXGI) e como o input e aplicado (D-Bus x SendInput).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::net::{self, SliceHeader};
@@ -67,6 +67,13 @@ pub struct Sinais {
     idr: AtomicBool,
     /// Ha alguem assistindo.
     cliente: AtomicBool,
+    /// Quantos clientes de INPUT estao conectados (o KVM por LAN).
+    ///
+    /// Separado de `cliente` porque sao papeis diferentes: quem assiste
+    /// quer video, quem manda input nao. Sem esta contagem, o laco de
+    /// video encerraria o processo por ociosidade enquanto alguem ainda
+    /// esta digitando atraves dele -- derrubando o KVM junto.
+    entradas: AtomicUsize,
 }
 
 impl Sinais {
@@ -81,6 +88,20 @@ impl Sinais {
     /// do NVENC e do CUDA, e destruir isso do outro lado travava.
     pub fn encerrar(&self) {
         self.sair.store(true, Ordering::SeqCst);
+    }
+
+    /// Alguem conectou na porta de input.
+    pub fn entrou_input(&self) {
+        self.entradas.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Alguem saiu da porta de input.
+    pub fn saiu_input(&self) {
+        self.entradas.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    pub fn tem_input(&self) -> bool {
+        self.entradas.load(Ordering::SeqCst) > 0
     }
 
     /// Consome o pedido de quadro-chave. Devolve `true` uma vez por
@@ -140,6 +161,16 @@ pub async fn atender(
             // Endpoint fechado: nao ha mais o que aceitar.
             Ok(None) => break,
             Err(_) => {
+                // Ociosidade de VIDEO nao e ociosidade do host.
+                //
+                // Com o KVM conectado na porta de input, ninguem precisa
+                // estar assistindo -- a pessoa olha o monitor fisico da
+                // outra maquina. Encerrar aqui mataria o processo que
+                // esta recebendo as teclas dela, e o teclado voltaria
+                // sozinho no meio do uso.
+                if sinais.tem_input() {
+                    continue;
+                }
                 if houve_cliente {
                     println!("  ninguem voltou em {prazo}s; encerrando");
                 } else {
@@ -300,4 +331,70 @@ pub async fn atender(
     // meio da destruicao do NVENC.
     sinais.sair.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+/// Porta de input, separada da de video.
+///
+/// `porta + 1`. Existe porque o host serve **um cliente de video por
+/// vez**, em sequencia -- e o KVM por LAN competia por essa vaga com o
+/// visualizador.
+///
+/// O sintoma foi exatamente o que o usuario descreveu: clicou para
+/// mandar o input para a windows-host, o teclado e o mouse sumiram daqui
+/// (o grab pegou), e "no windows parece nao ter mexido". Tinha mexido:
+/// o log do host registrou cada `MouseRel`, e medindo o cursor dentro
+/// da sessao interativa ele andou 210 px para 200 pedidos. O que nao
+/// funcionou foi **ver**: o KVM ocupou a vaga unica e o visualizador
+/// nao conseguiu conectar, entao a janela que ele olhava ficou parada.
+///
+/// Separar as portas resolve dois problemas de uma vez:
+///
+/// - assistir e controlar deixam de competir;
+/// - a maquina alvo para de codificar video para um cliente que nunca
+///   vai desenhar nada. Para jogar no Windows com o KVM, isso era GPU
+///   queimada em nome de ninguem.
+///
+/// Varios clientes de input ao mesmo tempo sao permitidos e inofensivos
+/// -- os eventos se intercalam, que e o mesmo que acontece com dois
+/// teclados fisicos na mesma maquina.
+pub async fn atender_input(
+    ep: &quinn::Endpoint,
+    sinais: std::sync::Arc<Sinais>,
+    mut abrir_input: impl FnMut(&quinn::Connection) -> tokio::task::JoinHandle<()>,
+) {
+    while let Some(entrando) = ep.accept().await {
+        if sinais.deve_sair() {
+            break;
+        }
+        let conexao = match entrando.await {
+            Ok(c) => c,
+            Err(e) => {
+                // Handshake ruim nao derruba o laco: o proximo cliente
+                // merece a mesma chance. Mesma decisao de `atender`.
+                eprintln!("  input: handshake falhou: {e}");
+                continue;
+            }
+        };
+        println!("  input conectado: {}", conexao.remote_address());
+        sinais.entrou_input();
+        let tarefa = abrir_input(&conexao);
+
+        // Descontar na SAIDA, e por um vigia proprio.
+        //
+        // Sem isto a contagem so sobe, e `tem_input()` fica verdadeiro
+        // para sempre -- o host nunca mais encerraria por ociosidade e
+        // ficaria de pe segurando a GPU depois que todo mundo foi
+        // embora. O vigia espera a tarefa de leitura terminar, que e
+        // exatamente quando o stream fechou.
+        // `tokio::spawn` e nao `spawn_local`: o host do Windows roda
+        // num current_thread SEM LocalSet, e `spawn_local` entra em
+        // panico fora de um. O futuro aqui e Send (um JoinHandle e um
+        // Arc de atomicos), entao o spawn comum serve nos dois hosts.
+        let s = std::sync::Arc::clone(&sinais);
+        tokio::spawn(async move {
+            let _ = tarefa.await;
+            s.saiu_input();
+            println!("  input desconectado");
+        });
+    }
 }

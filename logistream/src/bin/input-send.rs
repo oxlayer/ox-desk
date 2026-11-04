@@ -39,6 +39,50 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
+    // `--rel N`: N deslocamentos relativos de +10 em X.
+    //
+    // Existe para medir o caminho do KVM sem agarrar o teclado de
+    // ninguem. "Parece que nao mexeu" nao e medida: com a posicao do
+    // cursor lida antes e depois, ou andou 10*N pixels ou nao andou.
+    let rel: usize = std::env::args()
+        .position(|a| a == "--rel")
+        .and_then(|i| std::env::args().nth(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if rel > 0 {
+        let mut buf = BytesMut::new();
+        for _ in 0..rel {
+            buf.clear();
+            Evento::MouseRel { dx: 10.0, dy: 0.0 }.escrever(&mut buf);
+            envio.write_all(&buf).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+        }
+        envio.finish()?;
+        println!("  {rel} MouseRel de +10 em X = {} px esperados", rel * 10);
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        return Ok(());
+    }
+
+    // `--capslock`: liga e desliga o Caps Lock da maquina alvo.
+    //
+    // Teclado precisava de um teste MEDIVEL. "Digitei e nao apareceu"
+    // depende de onde estava o foco; o estado do Caps Lock nao depende
+    // de nada e se le com uma chamada. Inofensivo: volta como estava.
+    if std::env::args().any(|a| a == "--capslock") {
+        let mut buf = BytesMut::new();
+        // 58 = KEY_CAPSLOCK no evdev, que e o que o protocolo carrega.
+        for apertado in [true, false] {
+            buf.clear();
+            Evento::Tecla { keycode: 58, apertado }.escrever(&mut buf);
+            envio.write_all(&buf).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        }
+        envio.finish()?;
+        println!("  caps lock alternado uma vez");
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        return Ok(());
+    }
+
     if rajada > 0 {
         // Movimento so, sem tecla nem botao: muda o cursor da maquina
         // alvo e nada mais. Um circulo pequeno para o cursor nao parar

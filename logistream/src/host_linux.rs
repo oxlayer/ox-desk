@@ -387,70 +387,113 @@ fn servir(
         let ep = crate::net::servidor(([0, 0, 0, 0], porta).into())?;
         println!("  escutando em 0.0.0.0:{porta}");
 
+        // Porta de input, ao lado da de video.
+        //
+        // O host serve um cliente de VIDEO por vez, e o KVM por LAN
+        // disputava essa vaga com o visualizador: o usuario mandava o
+        // input para a outra maquina e via a tela dela congelada,
+        // concluindo (com razao, pelo que via) que nada tinha mexido.
+        let porta_input = porta + 1;
+        let ep_in = crate::net::servidor(([0, 0, 0, 0], porta_input).into())?;
+        println!("  input em 0.0.0.0:{porta_input}");
+        {
+            let sinais_in = std::sync::Arc::clone(&sinais);
+            let dbus_in = Rc::clone(&dbus);
+            let rd_i = rd_path.clone();
+            let st_i = caminho_stream.clone();
+            tokio::task::spawn_local(async move {
+                serve::atender_input(&ep_in, std::sync::Arc::clone(&sinais_in), |conexao| {
+                    let conexao = conexao.clone();
+                    let dbus = Rc::clone(&dbus_in);
+                    let rd = rd_i.clone();
+                    let st = st_i.clone();
+                    tokio::task::spawn_local(
+                        async move { receber_input(conexao, dbus, rd, st).await },
+                    )
+                })
+                .await;
+            });
+        }
+
         serve::atender(&ep, &mut rx, &sinais, |conexao| {
             let conexao = conexao.clone();
             let dbus = Rc::clone(&dbus);
             let rd_in = rd_path.clone();
             let stream_in = caminho_stream.clone();
-            tokio::task::spawn_local(async move {
-                let Ok(mut recv) = conexao.accept_uni().await else { return };
-                let mut leitor = Leitor::default();
-                let mut buf = vec![0u8; 4096];
-                let mut n = 0u64;
-                let mut falhas = 0u64;
-                while let Ok(Some(lidos)) = recv.read(&mut buf).await {
-                    leitor.alimentar(&buf[..lidos]);
-                    let mut aplicados_agora = 0u32;
-                    while let Some(e) = leitor.proximo() {
-                        if let Err(err) = aplicar(&dbus, &rd_in, &stream_in, e) {
-                            falhas += 1;
-                            // Uma vez e as potencias de dez: injecao a 60 Hz
-                            // transformaria log em ruido, e o numero que
-                            // importa e "parou de funcionar", nao cada evento.
-                            if falhas == 1 || falhas % 100 == 0 {
-                                eprintln!("  input recusado ({falhas}): {err}");
-                            }
-                        }
-                        n += 1;
-                        // Os primeiros, um a um: "nao deu erro" e prova
-                        // fraca de que o input chegou. Depois so o
-                        // agregado, para nao encher o log a 60 Hz.
-                        if n <= 8 {
-                            println!("  input #{n}: {e:?}");
-                        } else if n % 500 == 0 {
-                            println!("  {n} eventos de input aplicados");
-                        }
-                        aplicados_agora += 1;
-                    }
-
-                    // ESVAZIAR A FILA. Sem isto o input nao sai daqui.
-                    //
-                    // `Channel::send` chama `dbus_connection_send` e
-                    // mais nada; quem escreve no socket e o
-                    // `dbus_connection_flush`, que mora em `flush()` --
-                    // separado. (A outra API do mesmo crate, `ffidisp`,
-                    // faz os dois juntos; a nossa nao.) Sem flush, cada
-                    // evento ficava na fila de saida do libdbus ate algo
-                    // mais provocar escrita.
-                    //
-                    // O sintoma nao era "input nao funciona", era pior:
-                    // funcionava em rajadas. Um key-up atrasado alem de
-                    // ~500 ms faz o Mutter entrar em auto-repeticao, e o
-                    // usuario escreveu "winddowsssss" e "nnnnnnnnnn" --
-                    // as letras repetidas da mensagem dele eram o bug.
-                    //
-                    // Uma vez por leitura de rede, nao por evento: um
-                    // `read` traz o lote inteiro de um movimento de
-                    // mouse, e flush por evento seria syscall a toa no
-                    // caminho quente. Nao espera resposta do Mutter --
-                    // so escreve o socket -- entao preserva o motivo de
-                    // `set_no_reply(true)`.
-                    if aplicados_agora > 0 {
-                        dbus.channel().flush();
-                    }
-                }
-            })
+            tokio::task::spawn_local(
+                async move { receber_input(conexao, dbus, rd_in, stream_in).await },
+            )
         })
         .await
     })
+}
+
+/// Le o stream de input de uma conexao e injeta ate ela fechar.
+///
+/// Um so para as duas portas: o visualizador manda input pela conexao
+/// de video, o KVM manda pela porta de input, e os dois merecem o
+/// mesmo tratamento. Duplicar isto seria convidar as duas copias a
+/// divergirem -- e uma delas e a que o usuario usa para digitar.
+async fn receber_input(
+    conexao: quinn::Connection,
+    dbus: Rc<Connection>,
+    rd_in: Path<'static>,
+    stream_in: String,
+) {
+    let Ok(mut recv) = conexao.accept_uni().await else { return };
+    let mut leitor = Leitor::default();
+    let mut buf = vec![0u8; 4096];
+    let mut n = 0u64;
+    let mut falhas = 0u64;
+    while let Ok(Some(lidos)) = recv.read(&mut buf).await {
+        leitor.alimentar(&buf[..lidos]);
+        let mut aplicados_agora = 0u32;
+        while let Some(e) = leitor.proximo() {
+            if let Err(err) = aplicar(&dbus, &rd_in, &stream_in, e) {
+                falhas += 1;
+                // Uma vez e as potencias de dez: injecao a 60 Hz
+                // transformaria log em ruido, e o numero que
+                // importa e "parou de funcionar", nao cada evento.
+                if falhas == 1 || falhas % 100 == 0 {
+                    eprintln!("  input recusado ({falhas}): {err}");
+                }
+            }
+            n += 1;
+            // Os primeiros, um a um: "nao deu erro" e prova
+            // fraca de que o input chegou. Depois so o
+            // agregado, para nao encher o log a 60 Hz.
+            if n <= 8 {
+                println!("  input #{n}: {e:?}");
+            } else if n % 500 == 0 {
+                println!("  {n} eventos de input aplicados");
+            }
+            aplicados_agora += 1;
+        }
+
+        // ESVAZIAR A FILA. Sem isto o input nao sai daqui.
+        //
+        // `Channel::send` chama `dbus_connection_send` e
+        // mais nada; quem escreve no socket e o
+        // `dbus_connection_flush`, que mora em `flush()` --
+        // separado. (A outra API do mesmo crate, `ffidisp`,
+        // faz os dois juntos; a nossa nao.) Sem flush, cada
+        // evento ficava na fila de saida do libdbus ate algo
+        // mais provocar escrita.
+        //
+        // O sintoma nao era "input nao funciona", era pior:
+        // funcionava em rajadas. Um key-up atrasado alem de
+        // ~500 ms faz o Mutter entrar em auto-repeticao, e o
+        // usuario escreveu "winddowsssss" e "nnnnnnnnnn" --
+        // as letras repetidas da mensagem dele eram o bug.
+        //
+        // Uma vez por leitura de rede, nao por evento: um
+        // `read` traz o lote inteiro de um movimento de
+        // mouse, e flush por evento seria syscall a toa no
+        // caminho quente. Nao espera resposta do Mutter --
+        // so escreve o socket -- entao preserva o motivo de
+        // `set_no_reply(true)`.
+        if aplicados_agora > 0 {
+            dbus.channel().flush();
+        }
+    }
 }

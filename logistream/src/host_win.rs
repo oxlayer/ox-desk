@@ -276,32 +276,62 @@ fn servir(
         let ep = crate::net::servidor(([0, 0, 0, 0], porta).into())?;
         println!("  escutando em 0.0.0.0:{porta}");
 
+        // Porta de input, ao lado da de video.
+        //
+        // O host serve um cliente de VIDEO por vez, e o KVM por LAN
+        // disputava essa vaga com o visualizador. Em portas separadas,
+        // assistir e controlar deixam de competir -- e a maquina para
+        // de codificar video para um cliente que nunca desenha nada.
+        let porta_input = porta + 1;
+        let ep_in = crate::net::servidor(([0, 0, 0, 0], porta_input).into())?;
+        println!("  input em 0.0.0.0:{porta_input}");
+        {
+            let sinais_in = Arc::clone(&sinais);
+            let origem_in = Arc::clone(&origem);
+            tokio::spawn(async move {
+                serve::atender_input(&ep_in, Arc::clone(&sinais_in), |conexao| {
+                    let conexao = conexao.clone();
+                    let origem = Arc::clone(&origem_in);
+                    tokio::spawn(async move { receber_input(conexao, origem).await })
+                })
+                .await;
+            });
+        }
+
         serve::atender(&ep, &mut rx, &sinais, |conexao| {
             let conexao = conexao.clone();
             let origem = Arc::clone(&origem);
-            tokio::spawn(async move {
-                let Ok(mut recv) = conexao.accept_uni().await else { return };
-                let mut teclado = Teclado::novo(origem);
-                let mut leitor = Leitor::default();
-                let mut buf = vec![0u8; 4096];
-                let mut n = 0u64;
-                while let Ok(Some(lidos)) = recv.read(&mut buf).await {
-                    leitor.alimentar(&buf[..lidos]);
-                    while let Some(e) = leitor.proximo() {
-                        teclado.aplicar(e);
-                        n += 1;
-                        // Os primeiros, um a um: "nao deu erro" e prova
-                        // fraca de que o input chegou. Depois so o
-                        // agregado, para nao encher o log a 60 Hz.
-                        if n <= 8 {
-                            println!("  input #{n}: {e:?}");
-                        } else if n % 500 == 0 {
-                            println!("  {n} eventos de input aplicados");
-                        }
-                    }
-                }
-            })
+            tokio::spawn(async move { receber_input(conexao, origem).await })
         })
         .await
     })
+}
+
+/// Le o stream de input de uma conexao e injeta ate ela fechar.
+///
+/// Um so para as duas portas: o visualizador manda input pela conexao
+/// de video, o KVM manda pela porta de input, e os dois merecem o
+/// mesmo tratamento. Duplicar isto seria convidar as duas copias a
+/// divergirem -- e uma delas e a que o usuario usa para digitar.
+async fn receber_input(conexao: quinn::Connection, origem: Arc<Mutex<(i32, i32)>>) {
+    let Ok(mut recv) = conexao.accept_uni().await else { return };
+    let mut teclado = Teclado::novo(origem);
+    let mut leitor = Leitor::default();
+    let mut buf = vec![0u8; 4096];
+    let mut n = 0u64;
+    while let Ok(Some(lidos)) = recv.read(&mut buf).await {
+        leitor.alimentar(&buf[..lidos]);
+        while let Some(e) = leitor.proximo() {
+            teclado.aplicar(e);
+            n += 1;
+            // Os primeiros, um a um: "nao deu erro" e prova fraca de
+            // que o input chegou. Depois so o agregado, para nao
+            // encher o log a 60 Hz.
+            if n <= 8 {
+                println!("  input #{n}: {e:?}");
+            } else if n % 500 == 0 {
+                println!("  {n} eventos de input aplicados");
+            }
+        }
+    }
 }

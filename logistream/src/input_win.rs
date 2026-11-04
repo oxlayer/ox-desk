@@ -224,7 +224,11 @@ impl Teclado {
     /// de ponteiro, que e o que a pessoa espera sentir. Jogo que le
     /// entrada bruta recebe o deslocamento direto.
     pub fn mover_relativo(&self, dx: f64, dy: f64) {
-        let mut e = INPUT {
+        // Por `envia()`, e nao `SendInput` na mao: aquele confere o
+        // retorno e grita quando o UIPI recusa (janela elevada em
+        // foco). Chamar direto, como esta funcao fazia, engolia
+        // exatamente o caso que a gente precisa ver no log.
+        envia(&[INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
                 mi: MOUSEINPUT {
@@ -236,8 +240,7 @@ impl Teclado {
                     dwExtraInfo: 0,
                 },
             },
-        };
-        unsafe { SendInput(std::slice::from_mut(&mut e), std::mem::size_of::<INPUT>() as i32) };
+        }]);
     }
 }
 

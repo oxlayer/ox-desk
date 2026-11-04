@@ -92,7 +92,15 @@ pub fn mandar(cfg: &Config, host: &str) -> Result<String, String> {
     crate::screen::acordar_host(h, sc.port)
         .map_err(|e| format!("nao consegui levantar o host de {host}: {e}"))?;
 
-    let destino = format!("{}:{}", h.addr, sc.port);
+    // `porta + 1`: a porta de INPUT do host, nao a de video.
+    //
+    // O host serve um cliente de video por vez. Enquanto o KVM
+    // conectava na porta de video, ele tomava a vaga do visualizador --
+    // o input chegava e era aplicado, mas a tela que a pessoa estava
+    // olhando congelava, e a conclusao obvia era "nao funcionou".
+    // Portas separadas tambem evitam a maquina alvo codificar video
+    // para um cliente que nunca desenha nada.
+    let destino = format!("{}:{}", h.addr, sc.port + 1);
 
     // Saida do filho num arquivo, nao em /dev/null.
     //
