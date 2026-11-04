@@ -52,6 +52,10 @@ fn main() {
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let observar = args.iter().any(|a| a == "--observar");
+    // Alvo que aplica a propria logica de repeticao (o Mutter faz isso
+    // com teclas injetadas) receberia repeticao dobrada se mandassemos
+    // a do kernel junto. Quem lanca o processo sabe o SO do destino.
+    let repetir = !args.iter().any(|a| a == "--sem-repeticao");
     // `--autoteste N`: conecta, NAO agarra, e empurra N movimentos pela
     // mesma ponte que um dispositivo usaria (thread -> canal -> laco
     // async -> QUIC). Existe porque o bug que isto pegou vivia
@@ -86,9 +90,10 @@ async fn main() -> anyhow::Result<()> {
     // --- escolher dispositivos -------------------------------------
     let todos = Dispositivo::listar();
     let mut escolhidos: Vec<Dispositivo> = Vec::new();
-    for d in todos {
+    for mut d in todos {
         if filtros.iter().any(|f| d.nome.contains(f.as_str())) {
             println!("  {} -> {}", d.caminho.display(), d.nome);
+            d.definir_repeticao(repetir);
             escolhidos.push(d);
         }
     }

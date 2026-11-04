@@ -134,8 +134,16 @@ pub fn mandar(cfg: &Config, host: &str) -> Result<String, String> {
         .try_clone()
         .map_err(|e| format!("nao consegui duplicar o descritor: {e}"))?;
 
-    let mut filho = crate::sys::child("logistream-kvm")
-        .arg(&destino)
+    // Alvo Linux aplica a propria repeticao de tecla (o Mutter repete
+    // teclas injetadas), entao mandar a do kernel junto dobraria. No
+    // Windows e o contrario: `SendInput` nao repete nada, e sem a do
+    // kernel segurar backspace apaga um caractere so.
+    let mut cmd = crate::sys::child("logistream-kvm");
+    cmd.arg(&destino);
+    if h.os.as_deref() == Some("linux") {
+        cmd.arg("--sem-repeticao");
+    }
+    let mut filho = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::from(saida))
         .stderr(Stdio::from(erro))

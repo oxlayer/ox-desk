@@ -34,12 +34,13 @@
 
 #![cfg(windows)]
 
+use crate::cursor::{desenhar, recorte, Forma, TipoForma};
 use windows::core::Interface;
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
-    D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ,
+    D3D11_CPU_ACCESS_READ, D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ_WRITE,
     D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
@@ -47,7 +48,7 @@ use windows::Win32::Graphics::Dxgi::Common::{
 };
 use windows::Win32::Graphics::Dxgi::{
     IDXGIDevice, IDXGIOutput1, IDXGIOutputDuplication, IDXGIResource, DXGI_ERROR_ACCESS_LOST,
-    DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO,
+    DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTDUPL_POINTER_SHAPE_INFO,
 };
 
 /// O que saiu de uma tentativa de pegar quadro.
@@ -169,7 +170,16 @@ impl Monitor {
             match unsafe { self.saida.DuplicateOutput(&self.dispositivo) } {
                 Ok(dup) => {
                     let staging = cria_staging(&self.dispositivo, self.w, self.h)?;
-                    return Ok(Tela { m: self, dup, staging, tem_imagem: false });
+                    return Ok(Tela {
+                        m: self,
+                        dup,
+                        staging,
+                        tem_imagem: false,
+                        forma: None,
+                        ponteiro: (0, 0),
+                        visivel: false,
+                        salvo: None,
+                    });
                 }
                 Err(e) => {
                     ultimo = e.to_string();
@@ -216,6 +226,19 @@ pub struct Tela {
     staging: ID3D11Texture2D,
     /// Houve ao menos um quadro: sem isto, mapear leria lixo.
     tem_imagem: bool,
+    /// Ultimo desenho de ponteiro que o DXGI mandou. Ele so reenvia
+    /// quando a forma MUDA, entao guardar e obrigatorio -- sem isto o
+    /// cursor apareceria num quadro e sumiria no seguinte.
+    forma: Option<Forma>,
+    ponteiro: (i32, i32),
+    visivel: bool,
+    /// O que estava sob o cursor antes de desenharmos, e onde.
+    ///
+    /// Compomos o cursor DENTRO da textura de staging, que nao e
+    /// recopiada quando so o ponteiro se move. Sem desfazer o desenho
+    /// anterior, cada movimento deixaria um cursor grudado para tras --
+    /// um rastro de setas pela tela.
+    salvo: Option<(u32, u32, u32, u32, Vec<u8>)>,
 }
 
 impl Tela {
@@ -248,17 +271,50 @@ impl Tela {
                 Err(e) => return Err(anyhow::anyhow!("AcquireNextFrame: {e}")),
             }
 
+            // Posicao e visibilidade do ponteiro, quando mudaram.
+            let mexeu = if info.LastMouseUpdateTime != 0 {
+                let pp = info.PointerPosition;
+                let novo = (pp.Position.x, pp.Position.y);
+                let vis = pp.Visible.as_bool();
+                let mudou = novo != self.ponteiro || vis != self.visivel;
+                self.ponteiro = novo;
+                self.visivel = vis;
+                mudou
+            } else {
+                false
+            };
+
+            // O desenho so vem quando MUDA de forma (seta -> mao ->
+            // barra de texto). Guardar e obrigatorio: sem isto o cursor
+            // apareceria num quadro e sumiria no seguinte.
+            if info.PointerShapeBufferSize > 0 {
+                self.ler_forma(info.PointerShapeBufferSize);
+            }
+
             // `LastPresentTime == 0` quer dizer que so o ponteiro se
-            // moveu -- a imagem do desktop e a mesma. Codificar de novo
-            // gastaria GPU para transmitir o quadro que o cliente ja tem.
+            // moveu -- a imagem do desktop e a mesma.
             let so_ponteiro = info.LastPresentTime == 0;
-            let estado = if so_ponteiro { Estado::Parado } else { Estado::Novo };
+
+            // Mas "so o ponteiro" deixou de ser motivo para nao mandar
+            // nada: desde que desenhamos o cursor no quadro, mover o
+            // mouse MUDA a imagem. Num KVM isso e o principal: a pessoa
+            // olha a tela remota para saber onde o cursor esta. O
+            // re-encode e barato -- a cena e identica fora do cursor, e
+            // sai um P-frame de poucos bytes.
+            let estado = if !so_ponteiro || (mexeu && self.tem_imagem) {
+                Estado::Novo
+            } else {
+                Estado::Parado
+            };
 
             if !so_ponteiro {
                 if let Some(r) = &recurso {
                     let tex: ID3D11Texture2D = r.cast()?;
                     self.m.contexto.CopyResource(&self.staging, &tex);
                     self.tem_imagem = true;
+                    // A copia nova apagou o cursor que tinhamos
+                    // desenhado, entao nao ha o que desfazer.
+                    self.salvo = None;
                 }
             }
             // Sempre: devolver o quadro e obrigacao, mesmo quando so o
@@ -269,18 +325,95 @@ impl Tela {
         }
     }
 
+    /// Le o desenho do ponteiro que o DXGI acabou de anunciar.
+    fn ler_forma(&mut self, tamanho: u32) {
+        let mut buf = vec![0u8; tamanho as usize];
+        let mut usado = 0u32;
+        let mut info = DXGI_OUTDUPL_POINTER_SHAPE_INFO::default();
+        let r = unsafe {
+            self.dup.GetFramePointerShape(
+                tamanho,
+                buf.as_mut_ptr() as *mut _,
+                &mut usado,
+                &mut info,
+            )
+        };
+        if r.is_err() {
+            return;
+        }
+        let tipo = match info.Type {
+            1 => TipoForma::Mono,
+            2 => TipoForma::Cor,
+            4 => TipoForma::CorMascarada,
+            // Tipo que nao conhecemos: melhor NENHUM cursor que um
+            // retangulo de lixo no meio da tela de alguem.
+            outro => {
+                eprintln!("  forma de ponteiro desconhecida: {outro}");
+                self.forma = None;
+                return;
+            }
+        };
+        buf.truncate(usado as usize);
+        self.forma = Some(Forma {
+            tipo,
+            w: info.Width,
+            h: info.Height,
+            pitch: info.Pitch as usize,
+            bytes: buf,
+            hot: (info.HotSpot.x, info.HotSpot.y),
+        });
+    }
+
     /// Mapeia a ultima imagem copiada para leitura pela CPU.
     ///
     /// Serve tanto para o quadro que acabou de chegar quanto para
     /// reenviar o ultimo com a tela parada -- o staging guarda a imagem,
     /// entao reenviar nao custa copia nova.
-    pub fn mapear(&self) -> anyhow::Result<Mapeado<'_>> {
+    pub fn mapear(&mut self) -> anyhow::Result<Mapeado<'_>> {
         unsafe {
             let recurso: ID3D11Resource = self.staging.cast()?;
             let mut m = D3D11_MAPPED_SUBRESOURCE::default();
-            self.m.contexto.Map(&recurso, 0, D3D11_MAP_READ, 0, Some(&mut m))?;
+            self.m.contexto.Map(&recurso, 0, D3D11_MAP_READ_WRITE, 0, Some(&mut m))?;
             let stride = m.RowPitch as usize;
-            let px = std::slice::from_raw_parts(m.pData as *const u8, stride * self.m.h as usize);
+            let (w, h) = (self.m.w, self.m.h);
+            let total = stride * h as usize;
+            let mut_px = std::slice::from_raw_parts_mut(m.pData as *mut u8, total);
+
+            // 1. Desfazer o cursor anterior. So existe quando nenhuma
+            //    copia nova passou por cima dele.
+            if let Some((rx, ry, rw, rh, dados)) = self.salvo.take() {
+                for ly in 0..rh as usize {
+                    let o = (ry as usize + ly) * stride + rx as usize * 4;
+                    let largura = rw as usize * 4;
+                    let fonte = ly * largura;
+                    if o + largura <= total && fonte + largura <= dados.len() {
+                        mut_px[o..o + largura].copy_from_slice(&dados[fonte..fonte + largura]);
+                    }
+                }
+            }
+
+            // 2. Guardar o que esta sob o cursor novo e desenhar.
+            if self.visivel {
+                if let Some(f) = &self.forma {
+                    let alt = if f.tipo == TipoForma::Mono { f.h / 2 } else { f.h };
+                    let x = self.ponteiro.0 - f.hot.0;
+                    let y = self.ponteiro.1 - f.hot.1;
+                    if let Some((rx, ry, rw, rh)) = recorte(w, h, f.w, alt, x, y) {
+                        let largura = rw as usize * 4;
+                        let mut dados = Vec::with_capacity(largura * rh as usize);
+                        for ly in 0..rh as usize {
+                            let o = (ry as usize + ly) * stride + rx as usize * 4;
+                            if o + largura <= total {
+                                dados.extend_from_slice(&mut_px[o..o + largura]);
+                            }
+                        }
+                        self.salvo = Some((rx, ry, rw, rh, dados));
+                        desenhar(mut_px, stride, w, h, f, x, y);
+                    }
+                }
+            }
+
+            let px = std::slice::from_raw_parts(m.pData as *const u8, total);
             Ok(Mapeado { contexto: &self.m.contexto, recurso, px, stride })
         }
     }
@@ -330,7 +463,7 @@ fn cria_staging(d: &ID3D11Device, w: u32, h: u32) -> anyhow::Result<ID3D11Textur
         SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
         Usage: D3D11_USAGE_STAGING,
         BindFlags: 0,
-        CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+        CPUAccessFlags: (D3D11_CPU_ACCESS_READ.0 | D3D11_CPU_ACCESS_WRITE.0) as u32,
         MiscFlags: 0,
     };
     let mut t: Option<ID3D11Texture2D> = None;

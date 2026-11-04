@@ -98,7 +98,9 @@ pub struct Cru {
 /// Mandar um evento de rede por eixo dobraria o trafego e faria o cursor
 /// andar em escada no outro lado, porque cada metade chegaria sozinha.
 /// Por isso os eixos somam dentro do lote e saem como UM `MouseRel`.
-pub fn traduzir(lote: &[Cru]) -> Vec<Evento> {
+/// `repetir`: repassar a auto-repeticao do kernel como novos
+/// key-downs. Ver a nota sobre `valor == 2` dentro da funcao.
+pub fn traduzir(lote: &[Cru], repetir: bool) -> Vec<Evento> {
     let mut saida = Vec::new();
     let (mut dx, mut dy) = (0.0f64, 0.0f64);
     let (mut rx, mut ry) = (0.0f64, 0.0f64);
@@ -116,13 +118,26 @@ pub fn traduzir(lote: &[Cru]) -> Vec<Evento> {
                 _ => {}
             },
             EV_KEY => {
-                // valor 2 = autorepeat do kernel. Descartado: o outro
-                // lado repete sozinho a partir do key-down, e reenviar
-                // produziria repeticao dupla.
-                if e.valor == 2 {
+                // valor 2 = auto-repeticao gerada pelo kernel.
+                //
+                // A primeira versao descartava, com o comentario "o
+                // outro lado repete sozinho a partir do key-down". Isso
+                // e FALSO no Windows: a repeticao de tecla la nasce no
+                // driver do teclado fisico, e nao se aplica a uma tecla
+                // sintetica do `SendInput`. Resultado: segurar backspace
+                // apagava um caractere so -- foi assim que apareceu.
+                //
+                // Repassar como key-down replica exatamente o que o
+                // teclado fisico faz, que e o trabalho de um KVM.
+                //
+                // Fica atras de `repetir` porque um alvo que TAMBEM
+                // repete sozinho (o Mutter aplica a propria logica a
+                // teclas injetadas) receberia repeticao dobrada. Quem
+                // sabe o SO do destino e quem lanca o processo.
+                if e.valor == 2 && !repetir {
                     continue;
                 }
-                let apertado = e.valor == 1;
+                let apertado = e.valor != 0;
                 match e.codigo {
                     EV_BTN_LEFT => saida.push(Evento::Botao { codigo: BTN_LEFT, apertado }),
                     EV_BTN_RIGHT => saida.push(Evento::Botao { codigo: BTN_RIGHT, apertado }),
@@ -155,13 +170,22 @@ pub struct Dispositivo {
     pub caminho: PathBuf,
     agarrado: bool,
     lote: Vec<Cru>,
+    /// Repassar a auto-repeticao do kernel. Ver `traduzir`.
+    repetir: bool,
 }
 
 impl Dispositivo {
     pub fn abrir(caminho: &Path) -> std::io::Result<Self> {
         let arquivo = File::open(caminho)?;
         let nome = nome_de(caminho).unwrap_or_else(|| "?".into());
-        Ok(Dispositivo { arquivo, nome, caminho: caminho.to_path_buf(), agarrado: false, lote: Vec::new() })
+        Ok(Dispositivo {
+            arquivo,
+            nome,
+            caminho: caminho.to_path_buf(),
+            agarrado: false,
+            lote: Vec::new(),
+            repetir: true,
+        })
     }
 
     /// Todos os `/dev/input/event*` que conseguimos abrir.
@@ -218,6 +242,11 @@ impl Dispositivo {
         Ok(())
     }
 
+    /// Liga ou desliga o repasse da auto-repeticao do kernel.
+    pub fn definir_repeticao(&mut self, r: bool) {
+        self.repetir = r;
+    }
+
     pub fn agarrado(&self) -> bool {
         self.agarrado
     }
@@ -236,7 +265,7 @@ impl Dispositivo {
             let codigo = u16::from_ne_bytes([pedaco[18], pedaco[19]]);
             let valor = i32::from_ne_bytes([pedaco[20], pedaco[21], pedaco[22], pedaco[23]]);
             if tipo == EV_SYN {
-                saida.extend(traduzir(&self.lote));
+                saida.extend(traduzir(&self.lote, self.repetir));
                 self.lote.clear();
             } else {
                 self.lote.push(Cru { tipo, codigo, valor });
@@ -282,33 +311,52 @@ mod testes {
 
     #[test]
     fn eixos_do_mesmo_lote_viram_um_movimento_so() {
-        let saida = traduzir(&[rel(REL_X, 5), rel(REL_Y, -3)]);
+        let saida = traduzir(&[rel(REL_X, 5), rel(REL_Y, -3)], true);
         assert_eq!(saida, vec![Evento::MouseRel { dx: 5.0, dy: -3.0 }]);
     }
 
     #[test]
     fn lote_sem_movimento_nao_manda_movimento() {
-        let saida = traduzir(&[tecla(30, 1)]);
+        let saida = traduzir(&[tecla(30, 1)], true);
         assert_eq!(saida, vec![Evento::Tecla { keycode: 30, apertado: true }]);
     }
 
+    /// Segurar uma tecla tem de apagar varios caracteres.
+    ///
+    /// O Windows nao repete tecla sintetica -- a repeticao de la nasce
+    /// no driver do teclado fisico. Descartar o `valor == 2` do kernel
+    /// fazia segurar backspace apagar UM caractere so, que foi como o
+    /// usuario encontrou o bug.
     #[test]
-    fn autorepeat_do_kernel_e_descartado() {
-        // valor 2 = repeticao. O outro lado repete sozinho a partir do
-        // key-down; reenviar daria repeticao dupla.
-        let saida = traduzir(&[tecla(30, 1), tecla(30, 2), tecla(30, 2), tecla(30, 0)]);
+    fn repeticao_do_kernel_e_repassada() {
+        let saida = traduzir(&[tecla(14, 1), tecla(14, 2), tecla(14, 2), tecla(14, 0)], true);
         assert_eq!(
             saida,
             vec![
-                Evento::Tecla { keycode: 30, apertado: true },
-                Evento::Tecla { keycode: 30, apertado: false },
+                Evento::Tecla { keycode: 14, apertado: true },
+                Evento::Tecla { keycode: 14, apertado: true },
+                Evento::Tecla { keycode: 14, apertado: true },
+                Evento::Tecla { keycode: 14, apertado: false },
+            ]
+        );
+    }
+
+    /// Alvo que repete sozinho recebe so o comeco e o fim.
+    #[test]
+    fn com_repeticao_desligada_so_passam_press_e_release() {
+        let saida = traduzir(&[tecla(14, 1), tecla(14, 2), tecla(14, 2), tecla(14, 0)], false);
+        assert_eq!(
+            saida,
+            vec![
+                Evento::Tecla { keycode: 14, apertado: true },
+                Evento::Tecla { keycode: 14, apertado: false },
             ]
         );
     }
 
     #[test]
     fn botoes_viram_botao_e_nao_tecla() {
-        let saida = traduzir(&[tecla(EV_BTN_LEFT, 1), tecla(EV_BTN_RIGHT, 0)]);
+        let saida = traduzir(&[tecla(EV_BTN_LEFT, 1), tecla(EV_BTN_RIGHT, 0)], true);
         assert_eq!(
             saida,
             vec![
@@ -324,20 +372,20 @@ mod testes {
         // Wayland) o eixo Y cresce para baixo, entao tem de sair
         // NEGATIVO -- inverter errado faz a pagina andar ao contrario,
         // que e o tipo de coisa que so se descobre usando.
-        let saida = traduzir(&[rel(REL_WHEEL, 1)]);
+        let saida = traduzir(&[rel(REL_WHEEL, 1)], true);
         assert_eq!(saida, vec![Evento::Rolagem { dx: 0.0, dy: -PASSO_RODA }]);
     }
 
     #[test]
     fn movimento_sai_antes_dos_cliques_do_lote() {
-        let saida = traduzir(&[tecla(EV_BTN_LEFT, 1), rel(REL_X, 2)]);
+        let saida = traduzir(&[tecla(EV_BTN_LEFT, 1), rel(REL_X, 2)], true);
         assert_eq!(saida[0], Evento::MouseRel { dx: 2.0, dy: 0.0 });
         assert_eq!(saida[1], Evento::Botao { codigo: BTN_LEFT, apertado: true });
     }
 
     #[test]
     fn lote_vazio_nao_produz_nada() {
-        assert!(traduzir(&[]).is_empty());
+        assert!(traduzir(&[], true).is_empty());
     }
 }
 
