@@ -218,6 +218,54 @@ pub fn cliente(bind: SocketAddr) -> Result<quinn::Endpoint> {
 mod tests {
     use super::*;
 
+    /// Prova que servidor e cliente desta crate trocam datagrama.
+    ///
+    /// Existe porque o host dizia "80 fps, 0 recusados" e o receptor
+    /// via zero. Com as duas pontas num processo so, sobra um suspeito
+    /// de cada vez.
+    #[tokio::test]
+    async fn datagrama_atravessa_de_verdade() {
+        let srv = servidor("127.0.0.1:0".parse().unwrap()).expect("servidor");
+        let addr = srv.local_addr().expect("porta");
+
+        let aceita = tokio::spawn(async move {
+            let conexao = srv.accept().await.expect("entrada").await.expect("handshake");
+            let max = conexao.max_datagram_size();
+            for i in 0..5u8 {
+                conexao.send_datagram(Bytes::from(vec![i; 100])).expect("enviar");
+            }
+            // Sem isto o endpoint pode fechar antes de o UDP sair.
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            max
+        });
+
+        let cli = cliente("127.0.0.1:0".parse().unwrap()).expect("cliente");
+        let conexao = cli
+            .connect(addr, "logistream")
+            .expect("connect")
+            .await
+            .expect("handshake cliente");
+
+        let mut vistos = 0;
+        for _ in 0..5 {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                conexao.read_datagram(),
+            )
+            .await
+            {
+                Ok(Ok(d)) => {
+                    assert_eq!(d.len(), 100);
+                    vistos += 1;
+                }
+                outro => panic!("nao chegou datagrama: {outro:?}"),
+            }
+        }
+        let max = aceita.await.expect("tarefa");
+        assert!(max.is_some(), "o par tem de aceitar datagramas");
+        assert_eq!(vistos, 5);
+    }
+
     fn cab() -> SliceHeader {
         SliceHeader { frame: 7, piece: 0, pieces: 1, keyframe: true, captured_at_ns: 123 }
     }

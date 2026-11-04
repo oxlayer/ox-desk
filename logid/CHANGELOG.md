@@ -6,6 +6,11 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Tela remota própria: a imagem já chega no Mac
+Capturada no Ubuntu, codificada pela GPU e transmitida por QUIC: 77 fps
+a 1440p, 1,7 Mbps, sem perder quadro. Falta desenhar na tela e mandar o
+teclado e o mouse de volta.
+
 ## 2026-11-04 · Tela remota própria: primeira metade pronta
 Captura do Wayland e codificação por GPU funcionando: 1440p a 75 fps em
 6,4 ms por quadro, 5,5 Mbps. Falta o transporte e o cliente do Mac.

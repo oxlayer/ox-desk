@@ -88,7 +88,7 @@ não pode significar reescrever o pipeline.
 | v | entrega | a incógnita que ela mata |
 |---|---|---|
 | **v1** | ✅ **FEITA** — tela capturada, NVENC, arquivo | captura no Wayland e NVENC funcionam mesmo |
-| **v2** | v1 por QUIC até o Mac, decodificada e exibida | transporte e decodificação |
+| **v2** | ✅ **transporte feito** · ⬜ decodificar e exibir | transporte e decodificação |
 | **v3** | input do Mac de volta (libei no Ubuntu) | o laço fecha: dá para usar |
 | **v4** | FEC, controle de taxa, Windows como host (DXGI) | qualidade e a segunda plataforma |
 | **v5** | áudio, pareamento com PIN, NAT | o resto |
@@ -213,3 +213,51 @@ porque o portal equivalente aceita `CreateSession` e nunca responde.
 Transporte já tem esqueleto e teste (`net.rs`: fatiamento, remontagem,
 fora de ordem, quadro incompleto contado). Falta ligar as pontas e
 escrever o cliente do Mac — decodificar com VideoToolbox e desenhar.
+
+## v2, metade feita: a tela chega ao Mac (04/11)
+
+`host` no Ubuntu, `sink` no Mac, pela LAN:
+
+```
+770 quadros inteiros em 10.0s = 77.0 fps
+1989 datagramas, 1.7 Mbps
+quadros perdidos (chegaram incompletos): 0
+```
+
+O arquivo que chegou lá tem 770 quadros `h264` High `2560x1440`, e um
+quadro extraído mostra a área de trabalho do Ubuntu. Em loopback, onde o
+relógio é o mesmo, a latência **captura → quadro remontado** é
+**p50 6,6 ms**.
+
+### Dois bugs, e o segundo era invisível
+
+**Família de endereço.** `ubuntu-host.local` resolve em IPv4 e IPv6, o
+Mac devolve o IPv6 primeiro, e o socket do cliente estava preso em
+`0.0.0.0` — o quinn recusa com *"invalid remote address"*. O socket local
+agora nasce da família do destino. É a terceira vez que nome com duas
+famílias morde este projeto (ver [`002`](002-ssh.md)).
+
+**O driver da conexão não rodava.** Este foi feio: o host anunciava
+*"80 fps, 0 recusados"* e o receptor via **zero**. `send_datagram` apenas
+**enfileira**; quem põe no fio é o driver da conexão, que é uma task do
+tokio. O laço de envio bloqueava a thread em `recv_timeout` de um canal
+da `std`, e numa runtime `current_thread` isso impede o driver de rodar.
+
+Dois aprendizados ficam: o canal entre captura e rede é do **tokio**, e a
+falha de `send_datagram` deixou de ser engolida — foi o `break` mudo que
+fez o host reportar sucesso enquanto nada saía. Mesmo padrão do
+`langfuse` e da `backfill_gate` no outro repo: o no-op silencioso é pior
+que o erro barulhento.
+
+### A medição de latência entre máquinas está errada, e isso é dito
+
+Entre Ubuntu e Mac o número sai `0,0 ms` porque os relógios diferem e a
+subtração satura. O rótulo avisa. Medir de verdade exige ida-e-volta
+(o receptor devolve o carimbo e o host calcula), e isso entra junto com
+o canal de input da v3 — que precisa do caminho de volta de qualquer
+forma.
+
+### Falta para fechar a v2
+
+Decodificar com VideoToolbox e desenhar numa janela no Mac. O transporte
+já entrega o quadro inteiro, em ordem, sem perda.
