@@ -6,6 +6,14 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Os interruptores de borda e reconciliador agora desligam
+Desligar a borda pela tela não desligava nada: as barreiras eram criadas
+no boot e a flag nunca era lida de novo. O reconciliador, por sua vez,
+pedia ao outro computador que devolvesse o mouse, acreditava sem
+conferir, e repetia — sete vezes em dois minutos. Agora ele confere se
+o dispositivo saiu mesmo e, em três tentativas sem efeito, se desliga e
+diz por quê no log.
+
 ## 2026-11-04 · "Ver a tela" do Mac já usa o nosso, não RDP
 Clicar acorda o host da outra máquina sozinho e abre nossa janela. A
 imagem foi corrigida (ela era redimensionada errado), ganhou taxa de

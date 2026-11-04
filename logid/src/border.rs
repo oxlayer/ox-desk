@@ -291,6 +291,18 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                 // Rodar aqui bloqueava o loop do D-Bus: medido, 35 s sem
                 // processar sinal nenhum. Vai para uma thread.
                 let Ok(snap) = cfg2.read().map(|g| g.clone()) else { return true };
+                // Interruptor lido AQUI, nao no boot.
+                //
+                // As barreiras sao criadas uma vez, com as bordas que a
+                // config tinha no boot. Sem esta linha, desligar a borda
+                // pela UI nao desligava nada: a thread seguia viva e
+                // seguia trocando de maquina a cada encostada, enquanto a
+                // tela mostrava o interruptor em "off". O usuario ficou
+                // sem conseguir trabalhar por isso -- um interruptor que
+                // mente e pior que nenhum.
+                if !snap.input.border.enabled {
+                    return true;
+                }
                 // QUAL borda foi tocada decide para onde vai. Com a
                 // grade, uma maquina no meio tem vizinho dos dois lados.
                 let Some(target3) = alvos.get(&barrier_id).cloned() else {

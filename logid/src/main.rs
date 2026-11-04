@@ -450,7 +450,7 @@ fn post_follow(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             ok_json(
                 req,
                 serde_json::json!({ "ok": true, "enabled": on, "leader": lider,
-                    "nota": "vale no proximo boot do daemon" })
+                    "nota": if on { "ligado agora; o laco le o estado a cada passada" } else { "desligado agora -- a proxima passada nao age" } })
                 .to_string(),
             )
         }
@@ -483,7 +483,11 @@ fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             ok_json(
                 req,
                 serde_json::json!({ "ok": true, "enabled": on,
-                    "nota": "vale no proximo boot do daemon" })
+                    "nota": if on {
+                        "ligada; se o daemon subiu sem borda, reinicie para criar as barreiras"
+                    } else {
+                        "desligada agora -- a proxima encostada nao troca mais"
+                    } })
                 .to_string(),
             )
         }
@@ -537,7 +541,7 @@ fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             ok_json(
                 req,
                 serde_json::json!({ "ok": true, "edges": bordas,
-                    "nota": "a borda so passa a valer no proximo boot do daemon" })
+                    "nota": "a grade vale agora; barreiras novas exigem reiniciar o daemon" })
                 .to_string(),
             )
         }
