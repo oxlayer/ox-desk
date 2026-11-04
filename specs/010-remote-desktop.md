@@ -87,8 +87,7 @@ não pode significar reescrever o pipeline.
 
 | v | entrega | a incógnita que ela mata |
 |---|---|---|
-| **v1** | Ubuntu → tela capturada, codificada em NVENC, gravada em arquivo | captura no Wayland e NVENC funcionam mesmo |
-| | ✅ **NVENC provado** (ver abaixo) · ⬜ captura pendente | |
+| **v1** | ✅ **FEITA** — tela capturada, NVENC, arquivo | captura no Wayland e NVENC funcionam mesmo |
 | **v2** | v1 por QUIC até o Mac, decodificada e exibida | transporte e decodificação |
 | **v3** | input do Mac de volta (libei no Ubuntu) | o laço fecha: dá para usar |
 | **v4** | FEC, controle de taxa, Windows como host (DXGI) | qualidade e a segunda plataforma |
@@ -166,3 +165,51 @@ projeto vai pedir.
 
 Alternativa sem sudo: começar pelo **Windows como host** (DXGI Desktop
 Duplication não precisa de biblioteca extra). Fica a escolher.
+
+## v1 fechada: tela real, 1440p, em 38% do orçamento (04/11)
+
+`cargo run --release --bin v1-record` captura o monitor, codifica em
+NVENC e grava `.h264`:
+
+```
+formato: 2560x1440 VideoFormat::BGRx
+180 quadros 2560x1440 em 2.38s = 75.5 fps
+copia:  p50 1.05ms  p95 1.41ms
+encode: p50 5.31ms  p95 5.40ms
+total:  p50 6.38ms  p95 7.03ms  (orçamento 16.6ms a 60fps)
+2.0 MB = 5.5 Mbps a 60fps
+```
+
+O `ffprobe` lê 180 quadros, `h264` High, `2560x1440`, e um quadro
+extraído mostra a área de trabalho de verdade — VS Code, terminal, dock.
+
+### O que os números dizem
+
+**6,38 ms de 16,6 ms.** Sobram 10 ms para empacotar, cifrar e mandar. O
+caminho quente não vai ser o gargalo; a rede vai.
+
+**5,5 Mbps contra os 39 Mbps do gradiente sintético.** Era a previsão:
+tela real tem texto parado e janela parada, e o encoder vive disso. O
+sintético muda cada pixel de cada quadro de propósito, para medir o pior
+caso — e o pior caso ficou sete vezes acima do real.
+
+**BGRx em toda a cadeia.** O Mutter entrega BGRx, o NVENC consome ARGB,
+e na memória são a mesma ordem de bytes — a cópia é crua, 1,05 ms, sem
+nenhuma conversão de cor na CPU. Se tivesse havido conversão, ela
+sozinha comeria o orçamento.
+
+### A captura não passa pelo portal
+
+`org.gnome.Mutter.ScreenCast`, a API privada que o próprio portal usa por
+baixo. O portal `ScreenCast` exige **aprovação interativa** — abriria um
+diálogo na tela da máquina capturada, que é exatamente a máquina onde
+pode não haver ninguém sentado.
+
+Mesmo precedente da borda, que fala com `Mutter.InputCapture` direto
+porque o portal equivalente aceita `CreateSession` e nunca responde.
+
+### Falta para a v2
+
+Transporte já tem esqueleto e teste (`net.rs`: fatiamento, remontagem,
+fora de ordem, quadro incompleto contado). Falta ligar as pontas e
+escrever o cliente do Mac — decodificar com VideoToolbox e desenhar.

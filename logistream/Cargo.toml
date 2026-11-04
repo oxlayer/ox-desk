@@ -20,12 +20,18 @@ anyhow = "1"
 
 # NVENC por CARREGAMENTO EM RUNTIME: nao precisa dos headers do SDK da
 # NVIDIA no build, so da `libnvidia-encode.so.1`, que ja vem com o
-# driver. Se a maquina nao tiver GPU NVIDIA, falha ao abrir e nao ao
-# compilar -- que e o comportamento certo para um binario que roda em
-# tres maquinas diferentes.
+# driver. A crate compila em qualquer SO (no macOS vira stub), por isso
+# fica aqui e nao num bloco por plataforma -- o cliente do Mac usa o
+# resto desta lib.
 moq-nvenc = "0.1.2"
 # Contexto CUDA para alimentar o NVENC. Tambem carregado em runtime.
 cudarc = { version = "0.19", default-features = false, features = ["driver", "dynamic-loading", "cuda-version-from-build-system"] }
+
+# Captura no Linux: o Mutter entrega o stream por PipeWire e a negociacao
+# acontece por D-Bus. Mesma crate de D-Bus que o logid usa.
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = "0.9.12"
+pipewire = "0.8"
 
 [lib]
 name = "logistream"
