@@ -1,0 +1,23 @@
+[package]
+name = "logistream"
+version = "0.1.0"
+edition = "2021"
+description = "Tela remota propria: captura, NVENC, QUIC. Ver specs/010."
+license = "MIT"
+
+[dependencies]
+# QUIC: datagramas para video (perda tolerada), streams para input,
+# TLS 1.3 para identidade e pareamento, congestionamento embutido.
+# Escrever UDP cru significaria reimplementar os quatro, pior.
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.13"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+bytes = "1"
+# FEC sobre os datagramas: perda de pacote nao pode virar quadro perdido.
+reed-solomon-erasure = "6"
+anyhow = "1"
+
+[lib]
+name = "logistream"
+path = "src/lib.rs"
