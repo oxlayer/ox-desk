@@ -84,6 +84,57 @@ PS1
 else erro "$out"; fi
 rm -f "$ASSINADO"
 
+passo "windows: host de tela (logistream)"
+# O Windows virou HOST do nosso protocolo (v4): DXGI -> NVENC -> QUIC.
+# Precisa de assinatura pelo mesmo motivo que o logid -- o Defender
+# apagou o .exe cru no instante da escrita, duas vezes (specs/008).
+#
+# E precisa de TAREFA AGENDADA, nao de lancamento por SSH: o SSH cai na
+# sessao 0, e la o Desktop Duplication nao existe e o SendInput nao
+# chega a desktop nenhum. `/it` faz a tarefa rodar na sessao interativa.
+if out=$(cargo build --release --target x86_64-pc-windows-gnu \
+           --manifest-path logistream/Cargo.toml --bin logistream-host 2>&1); then
+  HOSTEXE=logistream/target/x86_64-pc-windows-gnu/release/logistream-host.exe
+  HOSTSIG=$(mktemp -u /tmp/logistream-host-assinado-XXXX.exe)
+  if out=$(cp "$HOSTEXE" "$HOSTSIG" && bash scripts/sign-windows.sh "$HOSTSIG" 2>&1 &&
+           timeout 180 scp -q "$HOSTSIG" \
+             'windows-host:C:/Users/user/AppData/Local/logid/logistream-host.new.exe' 2>&1); then
+    out=$(cat <<'PS1' | psrun
+$dst = Join-Path $env:LOCALAPPDATA 'logid'
+$novo = Join-Path $dst 'logistream-host.new.exe'
+$alvo = Join-Path $dst 'logistream-host.exe'
+if (-not (Test-Path $novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $novo
+if ($v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + $v.Status); exit 1 }
+Get-Process -Name logistream-host -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 400
+Move-Item -Force $novo $alvo
+# Envelope .cmd: a tarefa agendada nao e um shell, entao redirecionar a
+# saida exige um. Um arquivo resolve sem aninhar aspas -- e aninhar
+# aspas nesta ponte ja quebrou tres vezes (specs/002).
+$log = Join-Path $dst 'logistream-host.log'
+$env1 = Join-Path $dst 'logistream-host.cmd'
+$corpo = @"
+@echo off
+"$alvo" 9777 > "$log" 2>&1
+"@
+Set-Content -Path $env1 -Value $corpo -Encoding ASCII
+# Tarefa que NAO roda sozinha: `once` as 00:00 ja passou, e so a
+# acordamos com `schtasks /run`. O `/it` e o ponto -- sem ele a captura
+# cai na sessao 0, onde nao ha desktop para duplicar nem desktop para o
+# SendInput alcancar.
+$r = schtasks /create /tn logistream-host /tr $env1 /sc once /st 00:00 /it /f 2>&1
+# O codigo de saida e 0 com AVISO sobre /ST estar no passado: isso e
+# esperado e desejado. Erro de verdade vem com codigo != 0.
+if ($LASTEXITCODE -ne 0) { Write-Output ('ERRO: schtasks ' + $r); exit 1 }
+exit 0
+PS1
+)
+    if echo "$out" | grep -q ERRO; then erro "$out"; else ok; fi
+  else erro "$out"; fi
+  rm -f "$HOSTSIG"
+else erro "$out"; fi
+
 # ---------- mac ----------
 if [ "$PULAR_MAC" -eq 1 ]; then
   echo "  mac: pulado"

@@ -6,6 +6,14 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · O Windows serve a própria tela pelo nosso protocolo
+Captura por DXGI, codificação na GPU, QUIC — o mesmo caminho do Ubuntu.
+Verificado daqui: 2560x1440, 174 quadros em 10s, zero perdido. No painel
+do Mac, "Ver a tela" do Windows já é o nosso, não RDP. No painel do
+Ubuntu continua RDP, porque o visualizador só compila no macOS por
+enquanto — e trocar um botão que funciona por um que diz "sem cliente"
+não seria progresso.
+
 ## 2026-11-04 · O painel mostra a borda e o reconciliador de cada máquina
 A borda é um comportamento de par: a do Windows apontada para cá
 devolvia mouse e teclado a cada encostada, enquanto esta tela dizia —

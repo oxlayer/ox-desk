@@ -308,38 +308,62 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
 /// Garante que o `logistream-host` esta rodando na outra maquina.
 ///
 /// Idempotente de proposito: o botao pode ser clicado duas vezes, e uma
-/// segunda instancia competiria pelo mesmo receptor de tela e pela mesma
-/// porta. O `pgrep` resolve antes de tentar.
+/// segunda instancia competiria pela mesma porta e pela mesma captura.
 ///
-/// `setsid` solta o processo da sessao SSH -- sem isso ele morreria
-/// junto com o comando que o criou, que e a mesma armadilha do Windows
-/// matando a arvore ao desconectar (specs/001).
+/// Como acordar depende do SO do alvo, e a diferenca nao e cosmetica:
+///
+/// - **Unix**: `setsid nohup` solta o processo da sessao SSH. Sem isso
+///   ele morre junto com o comando que o criou -- a mesma armadilha do
+///   Windows matando a arvore ao desconectar (specs/001).
+/// - **Windows**: tarefa agendada com `/it`, e **nao** lancamento direto.
+///   O SSH cai na sessao 0, e la o Desktop Duplication nao existe e o
+///   `SendInput` nao chega a desktop nenhum: o processo subiria, nao
+///   falharia, e entregaria uma tela que ninguem esta vendo. E a mesma
+///   fronteira de sessao que obriga o `logid` a subir por `schtasks`.
 fn acordar_host(h: &crate::config::HostCfg, porta: u16) -> Result<(), String> {
-    // `pgrep` antes: o botao pode ser clicado duas vezes, e uma segunda
-    // instancia competiria pela mesma porta e pela mesma captura.
-    //
-    // `setsid` solta o processo da sessao SSH. Sem isso ele morre junto
-    // com o comando que o criou -- a mesma armadilha do Windows matando
-    // a arvore ao desconectar (specs/001).
-    let cmd = format!(
+    let cmd = if crate::remote::is_powershell(h) {
+        // Sem aspas duplas em lugar nenhum: tres bugs de quoting nesta
+        // ponte ja custaram tempo (specs/002). Palavra nua vira string
+        // no PowerShell, e `-ErrorAction SilentlyContinue` evita que o
+        // "processo nao existe" vire erro.
         concat!(
-            r#"pgrep -x logistream-host >/dev/null 2>&1 || "#,
-            r#"(setsid nohup "$HOME/.local/bin/logistream-host" {} "#,
-            r#">"$HOME/.local/state/logistream-host.log" 2>&1 &); "#,
-            r#"sleep 1; pgrep -x logistream-host >/dev/null && echo vivo || echo morto"#
-        ),
-        porta
-    );
-    let saida = crate::remote::run(h, &cmd, 10)?;
+            "if (Get-Process -Name logistream-host -ErrorAction SilentlyContinue) ",
+            "{ Write-Output vivo } else { schtasks /run /tn logistream-host | Out-Null; ",
+            "Start-Sleep -Seconds 2; ",
+            "if (Get-Process -Name logistream-host -ErrorAction SilentlyContinue) ",
+            "{ Write-Output vivo } else { Write-Output morto } }"
+        )
+        .to_string()
+    } else {
+        format!(
+            concat!(
+                r#"pgrep -x logistream-host >/dev/null 2>&1 || "#,
+                r#"(setsid nohup "$HOME/.local/bin/logistream-host" {} "#,
+                r#">"$HOME/.local/state/logistream-host.log" 2>&1 &); "#,
+                r#"sleep 1; pgrep -x logistream-host >/dev/null && echo vivo || echo morto"#
+            ),
+            porta
+        )
+    };
+    let saida = crate::remote::run(h, &cmd, 12)?;
     if saida.contains("vivo") {
         say!("screen: host de tela de pe em {}", h.name);
-        Ok(())
+        return Ok(());
+    }
+    // A dica de onde olhar muda com o SO, e dar a errada manda a pessoa
+    // procurar arquivo que nao existe.
+    Err(if crate::remote::is_powershell(h) {
+        format!(
+            "o host de tela nao subiu em {}: confira `schtasks /query /tn logistream-host` \
+             la -- a tarefa precisa existir e a sessao estar aberta (ela roda com /it)",
+            h.name
+        )
     } else {
-        Err(format!(
+        format!(
             "o processo nao subiu em {} (veja ~/.local/state/logistream-host.log la)",
             h.name
-        ))
-    }
+        )
+    })
 }
 
 #[cfg(test)]

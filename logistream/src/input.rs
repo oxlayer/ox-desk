@@ -249,6 +249,53 @@ pub fn evdev_de_winit(code: winit::keyboard::KeyCode) -> Option<u32> {
     })
 }
 
+/// Traduz keycode do evdev para scancode do Set 1 do AT.
+///
+/// Devolve `(scancode, precisa do prefixo E0)`. Quem usa hoje e o host
+/// do Windows, que injeta por `KEYEVENTF_SCANCODE` -- mas a tabela mora
+/// AQUI, junto do seu inverso (`evdev_de_winit`), e nao no modulo de
+/// plataforma: ela e tabela pura, e no modulo `cfg(windows)` os testes
+/// dela nunca rodariam na maquina onde ela e escrita. Tabela sem teste
+/// que roda e tabela que erra uma tecla em silencio.
+///
+/// Quase identidade por um acidente feliz: os 83 primeiros codigos do
+/// evdev foram COPIADOS do Set 1 (evdev 30 = `A` = 0x1E = 30). O que a
+/// tabela trata e o que fugiu disso -- as teclas de prefixo `E0` (setas,
+/// Home, Ctrl direito, as duas de Windows) e as de layout ABNT2.
+pub fn scancode_de_evdev(keycode: u32) -> Option<(u16, bool)> {
+    Some(match keycode {
+        // Identidade: os codigos do evdev ate 88 sao os do Set 1.
+        // 84 e 85 nao existem em teclado comum e o cliente nao os manda.
+        1..=83 | 86..=88 => (keycode as u16, false),
+        // KEY_RO: a tecla a direita do `M` no ABNT2 e no japones.
+        89 => (0x73, false),
+        96 => (0x1C, true),  // Enter do teclado numerico
+        97 => (0x1D, true),  // Ctrl direito
+        98 => (0x35, true),  // / do numerico
+        99 => (0x37, true),  // PrintScreen
+        100 => (0x38, true), // Alt direito (AltGr)
+        102 => (0x47, true), // Home
+        103 => (0x48, true), // seta cima
+        104 => (0x49, true), // PageUp
+        105 => (0x4B, true), // seta esquerda
+        106 => (0x4D, true), // seta direita
+        107 => (0x4F, true), // End
+        108 => (0x50, true), // seta baixo
+        109 => (0x51, true), // PageDown
+        110 => (0x52, true), // Insert
+        111 => (0x53, true), // Delete
+        113 => (0x20, true), // mudo
+        114 => (0x2E, true), // volume -
+        115 => (0x30, true), // volume +
+        125 => (0x5B, true), // Windows esquerdo
+        126 => (0x5C, true), // Windows direito
+        127 => (0x5D, true), // menu de contexto
+        // 119 (Pause) sai por tecla virtual: o scancode dele e a
+        // sequencia de prefixo `E1 1D 45`, que o SendInput nao expressa.
+        _ => return None,
+    })
+}
+
 #[cfg(all(test, feature = "winit-keys"))]
 mod testes_teclas {
     use super::*;
@@ -278,5 +325,99 @@ mod testes_teclas {
         // Melhor ignorar que mandar codigo errado: codigo errado aperta
         // OUTRA tecla na maquina de alguem.
         assert_eq!(evdev_de_winit(K::Fn), None);
+    }
+}
+
+#[cfg(test)]
+mod testes_scancode {
+    use super::*;
+
+    #[test]
+    fn letras_e_digitos_sao_identidade() {
+        // O acidente historico que a tabela depende: evdev 1..83 == Set 1.
+        assert_eq!(scancode_de_evdev(30), Some((0x1E, false))); // A
+        assert_eq!(scancode_de_evdev(2), Some((0x02, false))); // 1
+        assert_eq!(scancode_de_evdev(57), Some((0x39, false))); // espaco
+        assert_eq!(scancode_de_evdev(28), Some((0x1C, false))); // Enter
+    }
+
+    #[test]
+    fn teclas_estendidas_pedem_prefixo() {
+        // Sem o E0, `seta cima` viraria `8` do numerico -- mesmo
+        // scancode, significado diferente.
+        assert_eq!(scancode_de_evdev(103), Some((0x48, true)));
+        assert_eq!(scancode_de_evdev(72), Some((0x48, false)));
+        assert_eq!(scancode_de_evdev(97), Some((0x1D, true))); // Ctrl dir
+        assert_eq!(scancode_de_evdev(29), Some((0x1D, false))); // Ctrl esq
+    }
+
+
+    /// Codigos do evdev que a tabela NAO traduz, e por que.
+    ///
+    /// Lista explicita de proposito: e ela que faz o teste de cobertura
+    /// falhar quando alguem ensinar o cliente a mandar uma tecla nova e
+    /// esquecer o lado do host. Sem a lista, o buraco seria "normal".
+    const SEM_TRADUCAO: &[(u32, &str)] = &[
+        (84, "nao existe em teclado comum"),
+        (85, "zenkaku/hankaku, teclado japones"),
+        (90, "katakana"),
+        (91, "hiragana"),
+        (92, "henkan"),
+        (93, "katakana/hiragana"),
+        (94, "muhenkan"),
+        (95, "ponto do numerico japones"),
+        (101, "linefeed, nao existe em teclado fisico atual"),
+        (112, "macro"),
+        (116, "power"),
+        (117, "= do numerico"),
+        (118, "+/- do numerico"),
+        (119, "Pause: o scancode dele e a sequencia E1 1D 45; vai por tecla virtual"),
+        (120, "scale"),
+        (121, "virgula do numerico"),
+        (122, "hangeul"),
+        (123, "hanja"),
+        (124, "yen"),
+    ];
+
+    #[test]
+    fn toda_tecla_que_o_cliente_manda_tem_traducao() {
+        // A invariante que importa: se o visualizador consegue mandar um
+        // codigo, o host do Windows tem de saber o que fazer com ele.
+        // Um buraco aqui nao da erro -- a tecla simplesmente nao faz
+        // nada, e descobrir isso e no teclado de alguem.
+        for c in 1u32..=127 {
+            let excecao = SEM_TRADUCAO.iter().find(|(k, _)| *k == c);
+            match (scancode_de_evdev(c), excecao) {
+                (Some(_), None) => {}
+                (None, Some(_)) => {}
+                (Some(_), Some((_, motivo))) => {
+                    panic!("evdev {c} esta traduzido mas listado como sem traducao ({motivo})")
+                }
+                (None, None) => panic!(
+                    "evdev {c} nao tem scancode e nao esta na lista de excecoes -- \
+                     se o cliente mandar essa tecla, ela nao faz nada no Windows"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn duas_teclas_nao_viram_a_mesma() {
+        // Colisao seria pior que buraco: a tecla errada aperta OUTRA
+        // tecla na maquina de alguem, e o sintoma nao aponta para aqui.
+        let mut visto: std::collections::BTreeMap<(u16, bool), u32> = Default::default();
+        for c in 1u32..=127 {
+            if let Some(par) = scancode_de_evdev(c) {
+                if let Some(antes) = visto.insert(par, c) {
+                    panic!("evdev {antes} e {c} geram o mesmo scancode {par:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pause_nao_tem_scancode() {
+        // Tratada por tecla virtual; devolver Some aqui injetaria outra.
+        assert_eq!(scancode_de_evdev(119), None);
     }
 }

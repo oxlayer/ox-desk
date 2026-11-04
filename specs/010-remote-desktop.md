@@ -364,3 +364,75 @@ que é como um teclado de verdade se comporta.
 Nada de protocolo: falta **costura**. O botão "Ver a tela" do painel
 ainda chama cliente de RDP; precisa chamar o nosso. E o host precisa
 subir sozinho, como serviço, em vez de ser lançado à mão.
+
+## v4, metade feita: o Windows virou host (04/11)
+
+O Windows serve a própria tela pelo nosso protocolo. Medido do Ubuntu,
+com o `logistream-sink` contra `windows-host.local:9777`:
+
+| | |
+|---|---|
+| resolução | 2560×1440, `yuv420p`, H.264 válido (`ffprobe`) |
+| quadros | 174 inteiros em 10 s, **zero** perdido |
+| banda | 1,8 Mbps com a tela quase parada |
+| keyframes | 3 em 159 quadros — um no connect, os do GOP depois |
+
+### A ordem de inicialização não é detalhe
+
+Segurar a duplicação do DXGI enquanto o CUDA inicializa **trava o
+processo**. O log parava em `DXGI: monitor 0, 2560x1440` com 0,2 s de CPU
+e ficava ali para sempre; a mesma sonda de NVENC, sozinha, rodava a
+111 fps na mesma sessão interativa. Duas sondas separadas (sessão 0 e
+sessão 1) descartaram "é a sessão" como explicação.
+
+Daí a divisão em `Monitor` (abre o display, lê tamanho e origem) e
+`Tela` (começa a duplicar): encoder primeiro, duplicação depois. De
+quebra é melhor desenho — se o NVENC não estiver disponível, falhamos
+antes de tomar a tela de alguém.
+
+### Sessão interativa: não é opcional
+
+`SSH` cai na sessão 0, e lá o Desktop Duplication não existe e o
+`SendInput` não alcança desktop nenhum. O processo **subiria sem
+falhar** e entregaria uma tela que ninguém está vendo. Por isso o host
+do Windows sobe por tarefa agendada com `/it`, acordada por
+`schtasks /run` — o mesmo mecanismo que levanta o `logid`.
+
+### O cursor não vem na imagem
+
+O DXGI entrega a tela sem cursor (ele vem em separado, como forma +
+posição). Não desenhamos por enquanto, e isso incomoda menos do que
+parece: como o cliente manda posição **absoluta**, o cursor da máquina
+de quem assiste fica exatamente sobre o ponto remoto, com zero latência.
+Falta a *forma* (barra de texto, setas de redimensionar). O Parsec faz
+igual, por este motivo.
+
+No Linux é diferente: pedimos ao Mutter `cursor-mode: 1` e ele embute o
+cursor no quadro. A inconsistência é conhecida e aceita.
+
+### A volta pela CPU é consciente
+
+O certo seria registrar a textura D3D11 direto no NVENC
+(`NV_ENC_DEVICE_TYPE_DIRECTX`) e nunca sair da GPU. Fazemos staging +
+`Map` + upload para CUDA porque é **exatamente** o caminho que o host do
+Linux já faz (o PipeWire entrega em memória de CPU) — então o
+codificador é um só. Trocar isto é otimização localizada, não mudança de
+arquitetura.
+
+### O que falta para aposentar o RDP
+
+Só o **visualizador** fora do macOS. O `logistream-view` decodifica com
+`ffmpeg-next`, e nem o Ubuntu nem o Windows têm `libavcodec` instalado.
+Enquanto isso:
+
+| de → para | protocolo hoje |
+|---|---|
+| Mac → Ubuntu | **nosso** |
+| Mac → Windows | **nosso** |
+| Ubuntu → Windows | RDP (falta visualizador aqui) |
+| Windows → Ubuntu | RDP (falta visualizador lá) |
+
+Dois caminhos para fechar: `libavcodec-dev` pelo apt, ou **NVDEC** —
+as duas máquinas têm GPU NVIDIA e a `moq-nvenc` já expõe os pontos de
+entrada do decodificador. NVDEC é mais trabalho e dispensa a
+dependência de sistema; é o caminho que combina com o resto.
