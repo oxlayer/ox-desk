@@ -29,7 +29,6 @@
 //! teclado nem o mouse chegam ao desktop local.
 
 use std::collections::HashSet;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use bytes::BytesMut;
@@ -53,6 +52,19 @@ fn main() {
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let observar = args.iter().any(|a| a == "--observar");
+    // `--autoteste N`: conecta, NAO agarra, e empurra N movimentos pela
+    // mesma ponte que um dispositivo usaria (thread -> canal -> laco
+    // async -> QUIC). Existe porque o bug que isto pegou vivia
+    // exatamente nessa ponte: `recv_timeout` bloqueando o executor
+    // impedia o driver do QUIC de transmitir. Testar com o teclado de
+    // verdade exigiria agarra-lo, e agarrar para testar e justamente o
+    // que nao se quer fazer na maquina de alguem.
+    let autoteste: usize = args
+        .iter()
+        .position(|a| a == "--autoteste")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let alvo = args
         .iter()
         .find(|a| !a.starts_with("--"))
@@ -80,6 +92,20 @@ async fn main() -> anyhow::Result<()> {
             escolhidos.push(d);
         }
     }
+    // Dizer qual filtro nao achou nada.
+    //
+    // Dispositivo Logitech some do receptor quando dorme ou e
+    // desligado, e o no de /dev/input some junto. Sem este aviso, o KVM
+    // levaria so o teclado e o mouse continuaria aqui -- e o sintoma
+    // seria "metade funciona", que e pior de entender que "nada
+    // funciona". Aconteceu num teste: o mouse estava dormindo e so o
+    // teclado entrou, em silencio.
+    for f in &filtros {
+        if !escolhidos.iter().any(|d| d.nome.contains(f.as_str())) {
+            eprintln!("  AVISO: nada casou com '{f}' -- dispositivo dormindo ou desligado?");
+        }
+    }
+
     if escolhidos.is_empty() {
         anyhow::bail!(
             "nenhum dispositivo casou com {filtros:?}. Sem permissao? \
@@ -117,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // --- agarrar ----------------------------------------------------
-    if !observar {
+    if !observar && autoteste == 0 {
         for d in &mut escolhidos {
             d.agarrar().map_err(|e| {
                 anyhow::anyhow!("nao agarrei {}: {e}", d.nome)
@@ -130,14 +156,47 @@ async fn main() -> anyhow::Result<()> {
     //
     // Uma thread por dispositivo porque `read` em evdev bloqueia, e o
     // teclado nao pode esperar o mouse se mexer.
-    let (tx, rx) = mpsc::channel::<Evento>();
+    // Canal do TOKIO, nao do std.
+    //
+    // A primeira versao usava `std::sync::mpsc` e `recv_timeout` no
+    // laco principal. `recv_timeout` BLOQUEIA a thread -- e num runtime
+    // `current_thread` a thread e o executor inteiro, incluindo o
+    // driver do QUIC, que e quem efetivamente poe os pacotes na rede.
+    //
+    // O resultado foi o pior tipo de bug: parecia funcionar. A captura
+    // lia, o `write_all` enfileirava, e de vez em quando um punhado de
+    // eventos escapava na janela em que o driver conseguia rodar. O
+    // host do outro lado registrava "input conectado" e logo "input
+    // desconectado", sem um unico evento aplicado no meio.
+    //
+    // As threads de dispositivo continuam sendo threads de verdade
+    // (`read` em evdev bloqueia mesmo) e falam com o laco por
+    // `blocking_send`, que e a ponte correta entre as duas metades.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Evento>(1024);
+
+    if autoteste > 0 {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            for _ in 0..autoteste {
+                if tx.blocking_send(Evento::MouseRel { dx: 10.0, dy: 0.0 }).is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(8));
+            }
+        });
+        println!("  autoteste: {autoteste} movimentos de +10 em X, sem agarrar");
+    }
+
     for mut d in escolhidos {
+        if autoteste > 0 {
+            break; // nao ler dispositivo de verdade no autoteste
+        }
         let tx = tx.clone();
         std::thread::spawn(move || loop {
             match d.ler() {
                 Ok(eventos) => {
                     for e in eventos {
-                        if tx.send(e).is_err() {
+                        if tx.blocking_send(e).is_err() {
                             return; // o main saiu; soltar vem do Drop
                         }
                     }
@@ -158,14 +217,22 @@ async fn main() -> anyhow::Result<()> {
     let motivo;
 
     loop {
-        let Ok(e) = rx.recv_timeout(Duration::from_millis(500)) else {
-            if let Some(c) = &conexao {
-                if let Some(r) = c.close_reason() {
-                    motivo = format!("conexao caiu: {r}");
-                    break;
-                }
+        let e = match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
+            Ok(Some(e)) => e,
+            // Todas as threads de dispositivo morreram.
+            Ok(None) => {
+                motivo = "os dispositivos pararam de responder".into();
+                break;
             }
-            continue;
+            Err(_) => {
+                if let Some(c) = &conexao {
+                    if let Some(r) = c.close_reason() {
+                        motivo = format!("conexao caiu: {r}");
+                        break;
+                    }
+                }
+                continue;
+            }
         };
 
         // Contabilidade de teclas presas. Tem de valer TAMBEM em
