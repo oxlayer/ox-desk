@@ -8,9 +8,14 @@ __pycache__/
 *.pyc
 *.log
 
-# Rust
-logid/target/
-agent/target/
+# Rust: `target/` em QUALQUER crate, nao um por nome.
+#
+# A lista por nome ficou defasada: `logistream`, `hidpp` e `winput`
+# nasceram depois e nao estavam nela, entao 3.893 arquivos de build
+# entraram no repo e todo `cargo build` passou a sujar a arvore -- o
+# proprio deploy marcava os binarios como `-sujo` por isso. Padrao sem
+# barra inicial casa em qualquer nivel.
+target/
 
 # Chaves de assinatura ficam em ~/.config/logi/signing, nunca aqui.
 *.pem
