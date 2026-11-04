@@ -81,6 +81,9 @@
     background:var(--inset);border:1px solid var(--line);color:var(--faint)}
   .u.active{color:var(--up);border-color:color-mix(in srgb,var(--up) 25%,var(--line))}
   .u.bad{color:var(--down);border-color:color-mix(in srgb,var(--down) 25%,var(--line))}
+  /* Ambar para KVM LIGADO, nao verde: aqui "ligado" e o estado que troca
+     seu teclado de maquina sozinho -- merece ser notado, nao celebrado. */
+  .u.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,var(--line))}
 
   .det{display:flex;flex-wrap:wrap;gap:4px 16px;color:var(--dim);font-size:12px;
     padding-top:2px;border-top:1px solid var(--line)}
@@ -386,6 +389,25 @@ function card(h){
     return `<span class="u ${c}">${esc(u.unit.replace('.service',''))} &middot; ${esc(u.state)}</span>`;
   }).join('');
 
+  // Borda e reconciliador DAQUELE host. A borda e comportamento de par:
+  // a do Windows apontada para ca devolvia tudo a cada encostada
+  // enquanto este painel dizia, com razao, que a daqui estava desligada.
+  // Ver o estado de um host so nao bastava para entender o que acontecia.
+  const k = h.kvm || {}, kvm = [];
+  if (k.error){
+    kvm.push(`<span class="u" title="${esc(k.error)}">KVM &middot; nao sei</span>`);
+  } else {
+    if (k.border != null){
+      const t = k.border ? (k.edges && k.edges.length ? k.edges.join(', ') : 'ligada')
+                         : 'desligada';
+      kvm.push(`<span class="u ${k.border ? 'warn' : ''}">borda &middot; ${esc(t)}</span>`);
+    }
+    if (k.follow != null){
+      const t = k.follow ? ('segue ' + (k.leader || '?')) : 'desligado';
+      kvm.push(`<span class="u ${k.follow ? 'warn' : ''}">reconciliador &middot; ${esc(t)}</span>`);
+    }
+  }
+
   const d = h.detail, det = [];
   if (d.uptime_min != null){
     const m = d.uptime_min, dd = Math.floor(m/1440), hh = Math.floor((m%1440)/60);
@@ -408,6 +430,7 @@ function card(h){
     </div>
     <div class="svc"><table>${h.services.map(svcRow).join('')}</table></div>
     ${units ? `<div class="units">${units}</div>` : ''}
+    ${kvm.length ? `<div class="units">${kvm.join('')}</div>` : ''}
     ${det.length ? `<div class="det">${det.join('')}</div>` : ''}
     <div class="scr" data-scr="${esc(h.name)}"></div>
   </div>`;

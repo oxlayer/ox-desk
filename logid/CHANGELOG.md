@@ -6,6 +6,13 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · O painel mostra a borda e o reconciliador de cada máquina
+A borda é um comportamento de par: a do Windows apontada para cá
+devolvia mouse e teclado a cada encostada, enquanto esta tela dizia —
+com razão — que a borda daqui estava desligada. Era invisível sem abrir
+o painel da outra máquina. Agora cada cartão mostra o estado dos dois
+interruptores daquele host, em âmbar quando ligados.
+
 ## 2026-11-04 · Os interruptores de borda e reconciliador agora desligam
 Desligar a borda pela tela não desligava nada: as barreiras eram criadas
 no boot e a flag nunca era lida de novo. O reconciliador, por sua vez,

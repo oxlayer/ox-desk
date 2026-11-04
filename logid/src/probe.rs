@@ -37,6 +37,30 @@ pub struct Detail {
     pub ram_total_gb: Option<f64>,
 }
 
+/// Estado de KVM **daquele** host: borda e reconciliador.
+///
+/// Existe porque o painel mostrava so os interruptores desta maquina, e
+/// a borda e um comportamento de PAR: a do Windows apontada para ca
+/// devolvia tudo a cada encostada enquanto esta tela dizia, com razao,
+/// que a borda daqui estava desligada. O usuario nao tinha como ver isso
+/// de lugar nenhum -- precisava abrir o painel da outra maquina.
+#[derive(Debug, Default, Serialize)]
+pub struct Kvm {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub follow: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leader: Option<String>,
+    /// As bordas ativas la, como "left -> ubuntu-host".
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<String>,
+    /// Por que nao sabemos. Melhor dizer que nao sabemos do que mostrar
+    /// "desligado" sobre um host que nao respondeu.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct HostState {
     pub name: String,
@@ -46,6 +70,7 @@ pub struct HostState {
     pub services: Vec<ServiceState>,
     pub units: Vec<UnitState>,
     pub detail: Detail,
+    pub kvm: Kvm,
 }
 
 #[derive(Debug, Serialize)]
@@ -226,7 +251,7 @@ pub fn ssh_detail(h: &HostCfg) -> Detail {
     }
 }
 
-fn check_host(h: &HostCfg) -> HostState {
+fn check_host(h: &HostCfg, cfg: &Config) -> HostState {
     let services: Vec<ServiceState> = std::thread::scope(|s| {
         let handles: Vec<_> = h
             .services
@@ -274,6 +299,10 @@ fn check_host(h: &HostCfg) -> HostState {
         _ => Detail::default(),
     };
 
+    // So quando esta no ar: uma chamada SSH para host desligado custa o
+    // timeout inteiro e devolve o que ja sabemos.
+    let kvm = if h.is_local() || online { kvm_state(h, cfg) } else { Kvm::default() };
+
     HostState {
         name: h.name.clone(),
         addr: h.addr.clone(),
@@ -282,12 +311,81 @@ fn check_host(h: &HostCfg) -> HostState {
         services,
         units,
         detail,
+        kvm,
+    }
+}
+
+/// Le borda e reconciliador de um host.
+///
+/// Local: direto da config em memoria, que e a verdade corrente.
+/// Remoto: pelo `/api/layout` do daemon DELE, por SSH. O daemon escuta
+/// so em 127.0.0.1 -- de proposito -- entao o tunel do SSH e o caminho,
+/// e nao abrir a porta na LAN.
+fn kvm_state(h: &HostCfg, cfg: &Config) -> Kvm {
+    if h.is_local() {
+        let b = &cfg.input.border;
+        let f = &cfg.input.follow;
+        return Kvm {
+            border: Some(b.enabled),
+            follow: Some(f.enabled),
+            leader: f.leader.clone(),
+            edges: cfg
+                .border_edges()
+                .into_iter()
+                .map(|(e, t)| format!("{e} -> {t}"))
+                .collect(),
+            error: None,
+        };
+    }
+    if h.ssh.is_none() {
+        return Kvm::default();
+    }
+    // `curl` no Unix, `curl.exe` no Windows: la o shell do SSH e o
+    // PowerShell, e `curl` e APELIDO de `Invoke-WebRequest`, que rejeita
+    // a URL como argumento posicional. Medido -- o apelido engana.
+    let prog = if crate::remote::is_powershell(h) { "curl.exe" } else { "curl" };
+    let cmd = format!(
+        "{prog} -s --max-time 4 http://127.0.0.1:{}/api/layout",
+        cfg.port
+    );
+    let texto = match crate::remote::run(h, &cmd, 6) {
+        Ok(t) => t,
+        Err(e) => return Kvm { error: Some(e), ..Default::default() },
+    };
+    let Some(linha) = texto.lines().find(|l| l.trim_start().starts_with('{')) else {
+        return Kvm { error: Some("o daemon de la nao respondeu JSON".into()), ..Default::default() };
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(linha) else {
+        return Kvm { error: Some("JSON ilegivel".into()), ..Default::default() };
+    };
+    Kvm {
+        border: v.get("border_enabled").and_then(|x| x.as_bool()),
+        follow: v.get("follow_enabled").and_then(|x| x.as_bool()),
+        leader: v.get("follow_leader").and_then(|x| x.as_str()).map(String::from),
+        edges: v
+            .get("edges")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter(|e| e.get("ativa").and_then(|x| x.as_bool()) != Some(false))
+                    .filter_map(|e| {
+                        Some(format!(
+                            "{} -> {}",
+                            e.get("edge")?.as_str()?,
+                            e.get("target")?.as_str()?
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        error: None,
     }
 }
 
 pub fn snapshot(cfg: &Config) -> Snapshot {
     let hosts = std::thread::scope(|s| {
-        let handles: Vec<_> = cfg.hosts.iter().map(|h| s.spawn(|| check_host(h))).collect();
+        let handles: Vec<_> =
+            cfg.hosts.iter().map(|h| s.spawn(|| check_host(h, cfg))).collect();
         handles.into_iter().filter_map(|x| x.join().ok()).collect()
     });
     Snapshot { generated: crate::sys::hhmmss(), hosts }
