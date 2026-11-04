@@ -327,8 +327,25 @@ else
              ~/.cargo/bin/cargo build --release --bin logistream-view --bin logistream-host 2>&1 | tail -3 &&
              mkdir -p ~/.local/bin ~/.local/state &&
              install -m755 target/release/logistream-view ~/.local/bin/ &&
-             install -m755 target/release/logistream-host ~/.local/bin/ &&
-             ~/.local/bin/assinar.sh ~/.local/bin/logistream-host" 2>&1); then ok; else erro "$out"; fi
+             install -m755 target/release/logistream-host ~/.local/bin/" 2>&1); then ok; else erro "$out"; fi
+
+  passo "mac: assinar o host (sessao grafica)"
+  # Por `launchctl kickstart`, nao direto: o `codesign` precisa do
+  # chaveiro de LOGIN destrancado, e numa sessao SSH ele esta trancado
+  # -- falha com `errSecInternalComponent`, erro que nao menciona
+  # chaveiro nenhum. Terceira vez que a mesma fronteira aparece:
+  # Gravacao de Tela, Acessibilidade e agora o chaveiro.
+  #
+  # Assinatura estavel e o que faz a permissao de tela sobreviver ao
+  # rebuild: binario ad-hoc amarra o TCC no cdhash, que muda sempre.
+  if out=$(scp -q -o BatchMode=yes mac/ai.logi.assinar.plist mac:Library/LaunchAgents/ 2>&1 &&
+           ssh -n -o BatchMode=yes mac \
+            "launchctl bootout gui/\$(id -u)/ai.logi.assinar 2>/dev/null;
+             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.assinar.plist 2>/dev/null;
+             : > ~/.local/state/assinar.log;
+             launchctl kickstart gui/\$(id -u)/ai.logi.assinar;
+             sleep 3; cat ~/.local/state/assinar.log;
+             codesign -dv ~/.local/bin/logistream-host 2>&1 | grep -q adhoc && echo 'AVISO: segue ad-hoc' || true" 2>&1); then ok; else erro "$out"; fi
 
   passo "mac: scripts de assinatura"
   # Assinar o host com identidade ESTAVEL e o que faz a permissao de

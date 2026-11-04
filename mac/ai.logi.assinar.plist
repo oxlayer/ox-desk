@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Assina o host de tela com a identidade local.
+
+  LaunchAgent pelo MESMO motivo do host: o `codesign` precisa do
+  chaveiro de LOGIN destrancado, e numa sessao SSH ele esta trancado --
+  a chamada falha com `errSecInternalComponent`, que nao diz nada sobre
+  chaveiro. Na sessao grafica o chaveiro ja esta aberto.
+
+  Terceira vez que a mesma fronteira aparece hoje: Gravacao de Tela,
+  Acessibilidade e agora o chaveiro. O que depende da sessao do usuario
+  nao nasce por SSH.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.logi.assinar</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/user/.local/bin/assinar.sh</string>
+    <string>/Users/user/.local/bin/logistream-host</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>StandardOutPath</key><string>/Users/user/.local/state/assinar.log</string>
+  <key>StandardErrorPath</key><string>/Users/user/.local/state/assinar.log</string>
+</dict>
+</plist>
