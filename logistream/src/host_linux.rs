@@ -194,8 +194,8 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
             let (w, h) = (info.size().width, info.size().height);
             match Codificador::novo(w, h) {
                 Ok(c) => {
+                    println!("  capturando {w}x{h}, NVENC a {:.1} Mbps", c.alvo_mbps());
                     *cod_fmt.borrow_mut() = Some(c);
-                    println!("  capturando {w}x{h}, NVENC pronto");
                 }
                 Err(err) => eprintln!("  NVENC: {err}"),
             }

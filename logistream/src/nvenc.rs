@@ -34,9 +34,19 @@ pub struct Codificador {
     idr: bool,
     /// O que saiu da ultima codificacao foi IDR.
     ultimo_foi_idr: bool,
+    /// Bitrate medio pedido, em bits/s. Guardado so para o host poder
+    /// anuncia-lo no log -- o alvo errado de 8 Mbps sobreviveu semanas
+    /// porque o host Windows nunca o imprimiu, e so apareceu no Mac,
+    /// que imprimia. Numero que ninguem ve e numero que ninguem confere.
+    alvo: u32,
 }
 
 impl Codificador {
+    /// Bitrate medio pedido, em Mbps.
+    pub fn alvo_mbps(&self) -> f64 {
+        self.alvo as f64 / 1_000_000.0
+    }
+
     pub fn novo(w: u32, h: u32) -> anyhow::Result<Self> {
         Encoder::load().map_err(|e| anyhow::anyhow!("NVENC: {e:?}"))?;
         let ctx = CudaContext::new(0).map_err(|e| anyhow::anyhow!("CUDA: {e:?}"))?;
@@ -75,9 +85,20 @@ impl Codificador {
         // Teto com folga: tela parada gasta quase nada, e quando a
         // imagem muda inteira (rolar uma pagina) e a hora de gastar.
         cfg.rcParams.maxBitRate = alvo * 2;
-        // VBV de um quadro: buffer grande deixa o encoder "dever" bits e
-        // entregar quadro atrasado, o oposto do que tela remota quer.
-        cfg.rcParams.vbvBufferSize = alvo / 60;
+        // VBV de um quadro, medido no teto e nao na media.
+        //
+        // Buffer grande deixa o encoder "dever" bits e entregar quadro
+        // atrasado, o oposto do que tela remota quer -- por isso um
+        // quadro, nao mais. Mas era `alvo / 60`, dimensionado pela
+        // media, o que tornava o `maxBitRate` acima pura ficcao: nenhum
+        // quadro podia passar de 16 KB, entao a folga do dobro nunca
+        // pode ser gasta. Na hora de rolar a tela, que e quando a pessoa
+        // esta olhando, o encoder nao tinha permissao de gastar e subia
+        // o QP ate `maxQP`. Era isso que aparecia como borrao.
+        //
+        // A prova estava no log o tempo todo: quadro-chave de 120 KB
+        // contra um VBV de 16 KB.
+        cfg.rcParams.vbvBufferSize = cfg.rcParams.maxBitRate / 60;
         // Piso de qualidade: `maxQP` limita o PIOR quadro. Sem ele, numa
         // cena que muda inteira o encoder joga a qualidade no chao para
         // caber no bitrate, e e justamente ali que a pessoa esta olhando.
@@ -119,6 +140,7 @@ impl Codificador {
             n: 0,
             idr: false,
             ultimo_foi_idr: false,
+            alvo,
         })
     }
 

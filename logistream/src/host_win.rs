@@ -60,7 +60,7 @@ pub fn executar(porta: u16, monitor: u32) -> anyhow::Result<()> {
     // monitor esta.
     let origem = Arc::new(Mutex::new(mon.origem()));
     let mut cod = Codificador::novo(w, h)?;
-    println!("  NVENC pronto para {w}x{h}");
+    println!("  NVENC pronto para {w}x{h}, {:.1} Mbps alvo", cod.alvo_mbps());
     let mut tela = mon.duplicar()?;
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Quadro>(CAPACIDADE);
