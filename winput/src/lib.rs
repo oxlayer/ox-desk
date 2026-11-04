@@ -277,3 +277,106 @@ pub fn clipboard_escrever(texto: &str) -> Result<(), String> {
         Ok(())
     })
 }
+
+// --- clipboard de arquivos -------------------------------------------
+//
+// Arquivos no clipboard do Windows sao `CF_HDROP`: um `DROPFILES`
+// seguido de uma lista de caminhos UTF-16, cada um terminado em zero e
+// a lista inteira terminada por um zero extra. Nao e texto, e nao da
+// para reaproveitar o caminho de `CF_UNICODETEXT`.
+
+const CF_HDROP: u32 = 15;
+
+#[repr(C)]
+struct DropFiles {
+    /// Offset do inicio da lista de nomes, a partir deste struct.
+    p_files: u32,
+    pt_x: i32,
+    pt_y: i32,
+    /// Coordenadas sao de area nao-cliente? Nao usamos; fica 0.
+    f_nc: i32,
+    /// Lista em UTF-16? Sempre 1 aqui -- a versao ANSI perderia acento.
+    f_wide: i32,
+}
+
+#[link(name = "shell32")]
+extern "system" {
+    fn DragQueryFileW(drop: isize, indice: u32, buf: *mut u16, tam: u32) -> u32;
+}
+
+/// Caminhos de arquivo no clipboard, ou `None` se nao houver arquivos.
+pub fn clipboard_ler_arquivos() -> Result<Option<Vec<String>>, String> {
+    if unsafe { IsClipboardFormatAvailable(CF_HDROP) } == 0 {
+        return Ok(None);
+    }
+    com_clipboard(|| {
+        let h = unsafe { GetClipboardData(CF_HDROP) };
+        if h == 0 {
+            return Ok(None);
+        }
+        // 0xFFFF_FFFF pede a CONTAGEM em vez de um nome.
+        let n = unsafe { DragQueryFileW(h, 0xFFFF_FFFF, std::ptr::null_mut(), 0) };
+        let mut v = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            // Primeiro o tamanho, depois o nome: pedir com buffer curto
+            // trunca em silencio, e caminho truncado aponta para outro
+            // arquivo -- ou para nenhum.
+            let tam = unsafe { DragQueryFileW(h, i, std::ptr::null_mut(), 0) };
+            if tam == 0 {
+                continue;
+            }
+            let mut buf = vec![0u16; tam as usize + 1];
+            let lidos = unsafe { DragQueryFileW(h, i, buf.as_mut_ptr(), buf.len() as u32) };
+            if lidos == 0 {
+                continue;
+            }
+            v.push(String::from_utf16_lossy(&buf[..lidos as usize]));
+        }
+        Ok(if v.is_empty() { None } else { Some(v) })
+    })
+}
+
+/// Poe uma lista de arquivos no clipboard.
+pub fn clipboard_escrever_arquivos(caminhos: &[String]) -> Result<(), String> {
+    if caminhos.is_empty() {
+        return Err("lista de arquivos vazia".into());
+    }
+    // DROPFILES + nomes UTF-16, cada um com \0, mais um \0 final.
+    let mut nomes: Vec<u16> = Vec::new();
+    for c in caminhos {
+        nomes.extend(c.encode_utf16());
+        nomes.push(0);
+    }
+    nomes.push(0);
+
+    let cab = std::mem::size_of::<DropFiles>();
+    let bytes = cab + nomes.len() * 2;
+
+    com_clipboard(|| {
+        let mem = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) };
+        if mem == 0 {
+            return Err("GlobalAlloc falhou".into());
+        }
+        let p = unsafe { GlobalLock(mem) } as *mut u8;
+        if p.is_null() {
+            unsafe { GlobalFree(mem) };
+            return Err("GlobalLock falhou".into());
+        }
+        unsafe {
+            let df = p as *mut DropFiles;
+            std::ptr::write(
+                df,
+                DropFiles { p_files: cab as u32, pt_x: 0, pt_y: 0, f_nc: 0, f_wide: 1 },
+            );
+            std::ptr::copy_nonoverlapping(nomes.as_ptr(), p.add(cab) as *mut u16, nomes.len());
+            GlobalUnlock(mem);
+            EmptyClipboard();
+        }
+        // Mesma regra do texto: depois do Set o bloco e do SISTEMA.
+        if unsafe { SetClipboardData(CF_HDROP, mem) } == 0 {
+            unsafe { GlobalFree(mem) };
+            return Err("SetClipboardData(CF_HDROP) falhou".into());
+        }
+        Ok(())
+    })
+}

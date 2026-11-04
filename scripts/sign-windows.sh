@@ -27,7 +27,13 @@ TMP="$(mktemp -u "${EXE%.exe}.assinado.XXXX.exe")"
 # `-t` carimba a hora: a assinatura sobrevive ao vencimento do
 # certificado, e e o que um binario normal tem. Se a TSA nao responder,
 # assina sem carimbo em vez de falhar o build.
-if osslsigncode sign \
+#
+# `timeout 25` e OBRIGATORIO, nao zelo. O fallback abaixo so dispara
+# quando a primeira tentativa FALHA -- e uma TSA que nao responde nao
+# falha, ela pendura. Sem o timeout o deploy ficou 13 minutos parado em
+# `osslsigncode` esperando o timestamp.digicert.com, sem uma linha de
+# log dizendo o que estava acontecendo.
+if timeout 25 osslsigncode sign \
       -certs "$DIR/cert.pem" -key "$DIR/key.pem" \
       -h sha256 -n "logi control plane" \
       -t http://timestamp.digicert.com \
@@ -38,7 +44,7 @@ else
       -certs "$DIR/cert.pem" -key "$DIR/key.pem" \
       -h sha256 -n "logi control plane" \
       -in "$EXE" -out "$TMP" >/dev/null
-  echo "  assinado SEM carimbo (a TSA nao respondeu)"
+  echo "  assinado SEM carimbo (a TSA nao respondeu em 25s)"
 fi
 mv "$TMP" "$EXE"
 osslsigncode verify "$EXE" 2>&1 | grep -E 'Signature verification|Subject|Timestamp' | sed 's/^/  /' || true
