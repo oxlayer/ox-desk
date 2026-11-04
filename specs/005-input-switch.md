@@ -756,6 +756,53 @@ energia: um dispositivo a 5% demora a responder.
 A bateria **não** entra no caminho quente (`survey_opts(false)`): custa
 duas idas e voltas por dispositivo e não influencia decisão de troca.
 
+## Remapeamento de botão (0x1B04)
+
+Lido do seu hardware, e os nomes conferem com o que o Solaar exibia:
+
+```
+slot 1 (MX Anywhere 3) -- 7 controles
+  0x0050 Botao esquerdo        flags=0x01   nao reprogramavel
+  0x0051 Botao direito         flags=0x01   nao reprogramavel
+  0x0052 Botao do meio         flags=0x31   reprogramavel + divertable
+  0x0053 Voltar                flags=0x31
+  0x0056 Avancar               flags=0x31
+  0x00c4 Smart Shift           flags=0x31
+  0x00d7 Botao de gesto        flags=0xa0
+
+slot 2 (MX Keys) -- 24 controles (teclas F e midia)
+```
+
+Os flags vêm do próprio dispositivo: `0x10` = reprogramável, `0x20` =
+divertable. Os botões esquerdo e direito reportam `0x01` — **sem** o bit
+`0x10`, e o `set_control_remap` recusa com essa justificativa em vez de
+tentar e falhar obscuro.
+
+### API
+
+| | |
+|---|---|
+| `GET /api/controls` | controles de cada dispositivo **online** |
+| `POST /api/controls/remap` | `{slot, cid, to, confirm}`; `to: "0"` volta ao padrão |
+
+Exige `confirm`, como as outras ações que mudam hardware. Recusas
+testadas: sem `confirm` → 400, dispositivo em outro canal → 409, id
+inválido → 400. Dispositivo ausente não aparece em `/api/controls` —
+listar nome sem poder ler nem escrever seria enganoso.
+
+### ⚠️ A escrita ainda NÃO foi validada contra hardware
+
+A leitura está confirmada (`getCount` e `getControlIdInfo` acima). A
+escrita (`setControlReporting`, func 3) está implementada pela
+especificação e **não foi exercitada**, porque os dispositivos
+atravessaram de máquina 36 vezes em 5 minutos durante o
+desenvolvimento.
+
+Gravar remapeamento errado deixa um botão inútil até ser desfeito, então
+isto não conta como entregue. O teste seguro, quando houver uma janela
+com os dispositivos parados aqui: remapear **Avançar** (`0x0056`) para
+Meio (`0x0052`), ler de volta, e restaurar com `to: "0"`.
+
 ## Em aberto
 
 - Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.

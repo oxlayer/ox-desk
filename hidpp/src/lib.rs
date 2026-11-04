@@ -54,6 +54,8 @@ pub const FEATURE_ROOT: u16 = 0x0000;
 pub const FEATURE_DEVICE_NAME: u16 = 0x0005;
 pub const FEATURE_CHANGE_HOST: u16 = 0x1814;
 /// Bateria moderna, em porcentagem. O MX Anywhere 3 tem esta.
+/// Controles reprogramaveis. E por ele que se remapeia botao.
+pub const FEATURE_REPROG_CONTROLS: u16 = 0x1B04;
 pub const FEATURE_UNIFIED_BATTERY: u16 = 0x1004;
 /// Bateria antiga, em faixas. O MX Keys tem esta -- por isso as duas.
 pub const FEATURE_BATTERY_STATUS: u16 = 0x1000;
@@ -356,6 +358,117 @@ impl Receiver {
                 },
             })
             .collect()
+    }
+}
+
+/// Nome legivel de um controlID. Tabela parcial, das familias MX.
+///
+/// Os numeros vem do hardware (0x1B04 func 1); os nomes conferem com o
+/// que o Solaar exibia para os mesmos dispositivos.
+pub fn control_name(cid: u16) -> &'static str {
+    match cid {
+        0x0050 => "Botao esquerdo",
+        0x0051 => "Botao direito",
+        0x0052 => "Botao do meio",
+        0x0053 => "Voltar",
+        0x0056 => "Avancar",
+        0x005b => "Gesto",
+        0x006e => "Mostrar area de trabalho",
+        0x00c3 => "Roda horizontal",
+        0x00c4 => "Smart Shift",
+        0x00c7 => "Easy-Switch 1",
+        0x00c8 => "Easy-Switch 2",
+        0x00d1 => "Brilho -",
+        0x00d2 => "Brilho +",
+        0x00d3 => "Mission Control / Task View",
+        0x00d7 => "Botao de gesto virtual",
+        0x00e0 => "Easy-Switch 3",
+        0x00e1 => "Backlight -",
+        0x00e2 => "Backlight +",
+        0x00e3 => "Faixa anterior",
+        _ => "desconhecido",
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Control {
+    pub cid: u16,
+    pub tid: u16,
+    pub flags: u8,
+    /// Pode receber outra funcao (flag 0x10).
+    pub reprogrammable: bool,
+    /// Pode ser desviado para software (flag 0x20).
+    pub divertable: bool,
+    /// Para que CID ele esta mapeado agora, se o dispositivo informar.
+    pub remapped_to: Option<u16>,
+}
+
+impl Receiver {
+    /// Lista os controles reprogramaveis do dispositivo.
+    pub fn controls(&self, slot: u8) -> Result<Vec<Control>, String> {
+        let fi = self.feature_index(slot, FEATURE_REPROG_CONTROLS)?;
+        let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0])?;
+        let count = *r.first().ok_or("getCount vazio")?;
+        let mut out = Vec::new();
+        for i in 0..count {
+            let (c, _) = self.request(slot, fi, 0x01, &[i, 0, 0])?;
+            if c.len() < 5 {
+                continue;
+            }
+            let cid = u16::from_be_bytes([c[0], c[1]]);
+            let tid = u16::from_be_bytes([c[2], c[3]]);
+            let flags = c[4];
+            // func 2 = getControlReporting. Nao todos respondem; ausencia
+            // nao e erro, so significa "sem remapeamento declarado".
+            let remapped_to = self
+                .request(slot, fi, 0x02, &[c[0], c[1], 0])
+                .ok()
+                .and_then(|(rr, _)| {
+                    (rr.len() >= 5).then(|| u16::from_be_bytes([rr[3], rr[4]]))
+                })
+                .filter(|&to| to != 0 && to != cid);
+            out.push(Control {
+                cid,
+                tid,
+                flags,
+                reprogrammable: flags & 0x10 != 0,
+                divertable: flags & 0x20 != 0,
+                remapped_to,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Remapeia um controle para agir como outro.
+    ///
+    /// `to` = 0 devolve o comportamento padrao. Recusa controle que o
+    /// proprio dispositivo diz nao ser reprogramavel -- o botao esquerdo,
+    /// por exemplo, reporta flags=0x01 sem o bit 0x10.
+    pub fn set_control_remap(&self, slot: u8, cid: u16, to: u16) -> Result<(), String> {
+        let ctl = self
+            .controls(slot)?
+            .into_iter()
+            .find(|c| c.cid == cid)
+            .ok_or_else(|| format!("controle 0x{cid:04x} nao existe neste dispositivo"))?;
+        if !ctl.reprogrammable {
+            return Err(format!(
+                "0x{cid:04x} ({}) nao e reprogramavel: o dispositivo reporta \
+                 flags=0x{:02x}, sem o bit 0x10",
+                control_name(cid),
+                ctl.flags
+            ));
+        }
+        let fi = self.feature_index(slot, FEATURE_REPROG_CONTROLS)?;
+        // func 3 = setControlReporting(cid, flags, remap)
+        // flags bit 1 (0x02) = aplicar o remap que vem a seguir.
+        let p = [
+            (cid >> 8) as u8,
+            (cid & 0xFF) as u8,
+            0x02,
+            (to >> 8) as u8,
+            (to & 0xFF) as u8,
+        ];
+        self.request(slot, fi, 0x03, &p).map(|_| ())
     }
 }
 

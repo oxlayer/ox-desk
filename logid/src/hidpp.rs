@@ -434,3 +434,99 @@ pub fn change_host(slot: u8, host: u8) -> Result<String, String> {
          para o canal {host} nao aconteceu"
     ))
 }
+
+
+#[derive(Debug, Serialize)]
+pub struct ControlInfo {
+    pub cid: String,
+    pub name: &'static str,
+    pub reprogrammable: bool,
+    pub divertable: bool,
+    pub flags: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remapped_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remapped_to_name: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceControls {
+    pub slot: u8,
+    pub device: String,
+    pub controls: Vec<ControlInfo>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Controls {
+    pub devices: Vec<DeviceControls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+fn open_rx<'a>(api: &'a hidpp::hidapi::HidApi) -> Result<hidpp::Receiver, String> {
+    hidpp::Receiver::open(api)
+}
+
+/// Controles de cada dispositivo ONLINE.
+///
+/// Dispositivo ausente nao aparece: HID++ nao alcanca quem esta em outro
+/// canal, e listar nome sem poder ler nem escrever seria enganoso.
+pub fn controls() -> Controls {
+    let api = match hidpp::hidapi::HidApi::new() {
+        Ok(a) => a,
+        Err(e) => return Controls { devices: vec![], error: Some(format!("hidapi: {e}")) },
+    };
+    let rx = match open_rx(&api) {
+        Ok(r) => r,
+        Err(e) => return Controls { devices: vec![], error: Some(e) },
+    };
+
+    let mut out = Vec::new();
+    for slot in 1..=MAX_SLOTS {
+        if rx.ping(slot).is_err() {
+            continue;
+        }
+        let name = remembered(slot)
+            .or_else(|| rx.device_name(slot).ok())
+            .unwrap_or_else(|| format!("slot {slot}"));
+        match rx.controls(slot) {
+            Ok(cs) => out.push(DeviceControls {
+                slot,
+                device: name,
+                controls: cs
+                    .into_iter()
+                    .map(|c| ControlInfo {
+                        cid: format!("0x{:04x}", c.cid),
+                        name: hidpp::control_name(c.cid),
+                        reprogrammable: c.reprogrammable,
+                        divertable: c.divertable,
+                        flags: format!("0x{:02x}", c.flags),
+                        remapped_to: c.remapped_to.map(|t| format!("0x{t:04x}")),
+                        remapped_to_name: c.remapped_to.map(hidpp::control_name),
+                    })
+                    .collect(),
+            }),
+            Err(e) => out.push(DeviceControls {
+                slot,
+                device: format!("{name} (erro: {e})"),
+                controls: vec![],
+            }),
+        }
+    }
+    Controls { devices: out, error: None }
+}
+
+/// Aplica um remapeamento. `to = 0` volta ao padrao.
+pub fn remap(slot: u8, cid: u16, to: u16) -> Result<String, String> {
+    let api = hidpp::hidapi::HidApi::new().map_err(|e| format!("hidapi: {e}"))?;
+    let rx = open_rx(&api)?;
+    if rx.ping(slot).is_err() {
+        return Err(format!("slot {slot} nao responde -- o dispositivo esta em outro canal"));
+    }
+    rx.set_control_remap(slot, cid, to)?;
+    Ok(format!(
+        "0x{cid:04x} ({}) -> {}",
+        hidpp::control_name(cid),
+        if to == 0 { "padrao".to_string() } else { format!("0x{to:04x} ({})", hidpp::control_name(to)) }
+    ))
+}

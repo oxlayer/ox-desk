@@ -236,6 +236,50 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
     }
 }
 
+/// POST /api/controls/remap -- remapeia um botao.
+///
+/// Exige `confirm`: escrever no dispositivo muda comportamento fisico, e
+/// um remapeamento errado deixa o botao inutil ate ser desfeito.
+fn post_remap(mut req: Request) {
+    #[derive(serde::Deserialize)]
+    struct Body {
+        slot: u8,
+        /// "0x0053" ou decimal.
+        cid: String,
+        /// Destino; "0x0" ou "0" volta ao padrao.
+        to: String,
+        #[serde(default)]
+        confirm: bool,
+    }
+    fn parse_id(s: &str) -> Option<u16> {
+        let t = s.trim();
+        if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+            u16::from_str_radix(h, 16).ok()
+        } else {
+            t.parse().ok()
+        }
+    }
+
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let b: Body = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(e) => return err_json(req, 400, &format!("JSON invalido: {e}")),
+    };
+    if !b.confirm {
+        return err_json(req, 400, "falta confirm: isto muda o comportamento fisico do botao");
+    }
+    let (Some(cid), Some(to)) = (parse_id(&b.cid), parse_id(&b.to)) else {
+        return err_json(req, 400, "cid/to invalidos (use 0x0053 ou decimal)");
+    };
+    match hidpp::remap(b.slot, cid, to) {
+        Ok(detail) => ok_json(req, serde_json::json!({ "ok": true, "detail": detail }).to_string()),
+        Err(e) => err_json(req, 409, &e),
+    }
+}
+
 fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
     let method = req.method().as_str().to_string();
@@ -245,6 +289,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     }
     if path == "/api/focus" && method == "POST" {
         return post_focus(req, cfg);
+    }
+    if path == "/api/controls/remap" && method == "POST" {
+        return post_remap(req);
     }
 
     // Snapshot curto da config para as rotas de leitura: nao segurar o
@@ -280,6 +327,11 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 Err(e) => err_json(req, 500, &format!("serializar: {e}")),
             }
         }
+
+        "/api/controls" => match serde_json::to_string(&hidpp::controls()) {
+            Ok(b) => ok_json(req, b),
+            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+        },
 
         "/api/devices" => match serde_json::to_string(&hidpp::survey()) {
             Ok(b) => ok_json(req, b),
