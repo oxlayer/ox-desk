@@ -6,6 +6,16 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · O painel pode perguntar ao dispositivo onde ficam os canais
+`logid hosts <slot>` lê os hosts do próprio teclado (0x1815), com nome e
+tipo de rádio: canal 1 `ubuntu-host` (unifying), canal 2 `windows-host`
+(unifying), canal 3 `mac-host` (bluetooth). Isso encerrou uma
+hora de investigação errada: eu deduzia o pareamento pelo que os
+receptores mostram, e receptor não sabe nomear dispositivo ausente. O
+inventário agora também diz `paired`, separando "slot vazio" de "pareado,
+mas o dispositivo está em outra máquina" — antes os dois eram o mesmo
+JSON.
+
 ## 2026-11-04 · Botão para pausar a leitura dos dispositivos
 Os dispositivos voltam ao canal 1 sozinhos, com borda e reconciliador
 desligados nas três e nenhuma linha de log reivindicando. Eliminado todo
