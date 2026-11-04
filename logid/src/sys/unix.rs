@@ -45,6 +45,20 @@ pub fn config_dir() -> PathBuf {
 }
 
 /// Ponto de partida do navegador de arquivos.
+/// Onde ficam logs de processos que lancamos.
+///
+/// `~/.local/state` e o mesmo lugar do log do `logistream-host`, entao
+/// quem for investigar uma sessao olha um diretorio so. Criado aqui
+/// porque o chamador vai abrir arquivo dentro dele em seguida.
+pub fn state_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        PathBuf::from(home).join(".local/state")
+    });
+    let _ = std::fs::create_dir_all(&base);
+    base
+}
+
 pub fn home_dir() -> PathBuf {
     std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| "/".into())
 }

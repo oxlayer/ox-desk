@@ -93,13 +93,50 @@ pub fn mandar(cfg: &Config, host: &str) -> Result<String, String> {
         .map_err(|e| format!("nao consegui levantar o host de {host}: {e}"))?;
 
     let destino = format!("{}:{}", h.addr, sc.port);
-    let filho = crate::sys::child("logistream-kvm")
+
+    // Saida do filho num arquivo, nao em /dev/null.
+    //
+    // A primeira versao jogava fora stdout e stderr, como o lancamento
+    // do cliente de tela faz. Mas aquele abre uma JANELA: se ele morre,
+    // a pessoa ve. Este nao abre nada -- o unico sinal de que falhou
+    // seria o teclado continuar aqui, sem uma linha dizendo por que.
+    let registro = crate::sys::state_dir().join("logistream-kvm.log");
+    let saida = std::fs::File::create(&registro)
+        .map_err(|e| format!("nao consegui abrir {}: {e}", registro.display()))?;
+    let erro = saida
+        .try_clone()
+        .map_err(|e| format!("nao consegui duplicar o descritor: {e}"))?;
+
+    let mut filho = crate::sys::child("logistream-kvm")
         .arg(&destino)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(saida))
+        .stderr(Stdio::from(erro))
         .spawn()
         .map_err(|e| format!("nao consegui executar logistream-kvm: {e}"))?;
+
+    // Confirmar que ele SOBREVIVEU, nao so que nasceu.
+    //
+    // `spawn` devolve Ok assim que o processo existe -- antes de ele
+    // conectar e antes de agarrar. Reportar sucesso ali faria a bandeja
+    // dizer "mandado para windows-host" enquanto o filho ja morreu porque
+    // o alvo recusou a conexao ou faltou ACL no /dev/input. O estado se
+    // corrigiria sozinho no proximo `alvo()`, mas o usuario ja teria
+    // lido a mentira e estaria esperando o teclado mudar de maquina.
+    //
+    // 500 ms cobrem conectar + agarrar numa LAN; o caminho feliz nao
+    // sente, e o caminho triste ganha a mensagem de erro de verdade.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    if let Ok(Some(status)) = filho.try_wait() {
+        let motivo = std::fs::read_to_string(&registro)
+            .unwrap_or_default()
+            .lines()
+            .last()
+            .unwrap_or("sem detalhe no log")
+            .trim()
+            .to_string();
+        return Err(format!("o KVM saiu ({status}) antes de agarrar: {motivo}"));
+    }
 
     match ATUAL.lock() {
         Ok(mut g) => *g = Some((host.to_string(), filho)),

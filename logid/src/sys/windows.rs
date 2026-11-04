@@ -189,6 +189,19 @@ pub fn config_dir() -> PathBuf {
     PathBuf::from(base).join("logi")
 }
 
+/// Onde ficam logs de processos que lancamos.
+///
+/// `%LOCALAPPDATA%\logid`, que e onde o `logistream-host` ja escreve o
+/// dele -- um diretorio so para investigar.
+pub fn state_dir() -> PathBuf {
+    let base = std::env::var("LOCALAPPDATA")
+        .or_else(|_| std::env::var("APPDATA"))
+        .unwrap_or_else(|_| ".".into());
+    let d = PathBuf::from(base).join("logid");
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+
 /// Ponto de partida do navegador de arquivos.
 pub fn home_dir() -> PathBuf {
     std::env::var("USERPROFILE")

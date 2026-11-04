@@ -59,12 +59,18 @@ passo "ubuntu: instalar e reiniciar"
 if out=$(install -m755 logid/target/release/logid ~/.local/bin/logid 2>&1 &&
          systemctl --user restart logid.service 2>&1); then ok; else erro "$out"; fi
 
-passo "ubuntu: host de tela (logistream)"
+passo "ubuntu: tela e KVM (logistream)"
 # O host roda nesta maquina quando alguem pede a tela dela; o cliente
 # tambem fica instalado para o caso de ela virar quem assiste.
+#
+# O `logistream-kvm` tem de estar aqui porque o `logid` o lanca por
+# nome quando a bandeja manda o input para outra maquina. Ele ficou de
+# fora na primeira versao e o botao falhava com "nao consegui executar
+# logistream-kvm" -- binario compilado, nunca instalado.
 if out=$(cargo build --release --manifest-path logistream/Cargo.toml 2>&1 &&
          install -m755 logistream/target/release/logistream-host ~/.local/bin/ 2>&1 &&
          install -m755 logistream/target/release/logistream-view ~/.local/bin/ 2>&1 &&
+         install -m755 logistream/target/release/logistream-kvm ~/.local/bin/ 2>&1 &&
          mkdir -p ~/.local/state 2>&1); then ok; else erro "$out"; fi
 
 # ---------- windows ----------
