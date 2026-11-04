@@ -43,6 +43,8 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_CPU_ACCESS_READ, D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ_WRITE,
     D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
 };
+use windows::Win32::Foundation::POINT;
+use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
 };
@@ -179,6 +181,7 @@ impl Monitor {
                         ponteiro: (0, 0),
                         visivel: false,
                         salvo: None,
+                        desenhou_uma_vez: false,
                     });
                 }
                 Err(e) => {
@@ -239,6 +242,8 @@ pub struct Tela {
     /// anterior, cada movimento deixaria um cursor grudado para tras --
     /// um rastro de setas pela tela.
     salvo: Option<(u32, u32, u32, u32, Vec<u8>)>,
+    /// So para o log dizer uma vez que a composicao esta de pe.
+    desenhou_uma_vez: bool,
 }
 
 impl Tela {
@@ -271,22 +276,35 @@ impl Tela {
                 Err(e) => return Err(anyhow::anyhow!("AcquireNextFrame: {e}")),
             }
 
-            // Posicao e visibilidade do ponteiro, quando mudaram.
-            let mexeu = if info.LastMouseUpdateTime != 0 {
-                let pp = info.PointerPosition;
-                let novo = (pp.Position.x, pp.Position.y);
-                let vis = pp.Visible.as_bool();
-                let mudou = novo != self.ponteiro || vis != self.visivel;
+            // Diagnostico cru dos primeiros quadros: e o unico jeito
+            // de saber o que o DXGI realmente reporta sobre o ponteiro.
+            // Posicao pelo `GetCursorPos`, nao pelo DXGI.
+            //
+            // O DXGI so reporta ponteiro quando existe um sendo
+            // DESENHADO. Nesta maquina nao existe: ela nao tem mouse
+            // fisico -- o dongle fica do outro lado --, e o Windows
+            // esconde o cursor quando nao ha dispositivo apontador.
+            // Medido com `GetCursorInfo`: flags=0, hCursor=0, e ainda
+            // assim a posicao correta. Por isso o hover respondia e
+            // nada aparecia.
+            //
+            // `GetCursorPos` devolve a posicao de qualquer jeito,
+            // visivel ou nao, que e exatamente o que precisamos.
+            let mut pt = POINT::default();
+            let mexeu = if GetCursorPos(&mut pt).is_ok() {
+                let novo = (pt.x, pt.y);
+                let mudou = novo != self.ponteiro;
                 self.ponteiro = novo;
-                self.visivel = vis;
                 mudou
             } else {
                 false
             };
+            self.visivel = true;
 
-            // O desenho so vem quando MUDA de forma (seta -> mao ->
-            // barra de texto). Guardar e obrigatorio: sem isto o cursor
-            // apareceria num quadro e sumiria no seguinte.
+            // Se o sistema TEM um cursor, ele manda a forma quando ela
+            // muda, e desenhar a dele e melhor que a nossa (mao, barra
+            // de texto, redimensionar). Quando nunca vem nada, usamos a
+            // seta embutida -- ver `cursor::seta_embutida`.
             if info.PointerShapeBufferSize > 0 {
                 self.ler_forma(info.PointerShapeBufferSize);
             }
@@ -354,6 +372,10 @@ impl Tela {
             }
         };
         buf.truncate(usado as usize);
+        println!(
+            "  forma de ponteiro: {:?} {}x{} pitch={} ({} bytes)",
+            tipo, info.Width, info.Height, info.Pitch, usado
+        );
         self.forma = Some(Forma {
             tipo,
             w: info.Width,
@@ -394,7 +416,16 @@ impl Tela {
 
             // 2. Guardar o que esta sob o cursor novo e desenhar.
             if self.visivel {
-                if let Some(f) = &self.forma {
+                let embutida;
+                let forma = match &self.forma {
+                    Some(f) => f,
+                    None => {
+                        embutida = crate::cursor::seta_embutida();
+                        &embutida
+                    }
+                };
+                {
+                    let f = forma;
                     let alt = if f.tipo == TipoForma::Mono { f.h / 2 } else { f.h };
                     let x = self.ponteiro.0 - f.hot.0;
                     let y = self.ponteiro.1 - f.hot.1;
@@ -409,6 +440,10 @@ impl Tela {
                         }
                         self.salvo = Some((rx, ry, rw, rh, dados));
                         desenhar(mut_px, stride, w, h, f, x, y);
+                        if !self.desenhou_uma_vez {
+                            self.desenhou_uma_vez = true;
+                            println!("  cursor desenhado em {x},{y} ({rw}x{rh})");
+                        }
                     }
                 }
             }

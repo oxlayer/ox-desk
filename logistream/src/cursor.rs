@@ -252,3 +252,117 @@ mod testes_cursor {
         assert_eq!(px[4], 100 ^ 0xFF, "mascara 0xFF inverte o fundo");
     }
 }
+
+// --- cursor proprio --------------------------------------------------
+//
+// O Windows **esconde o cursor quando a maquina nao tem mouse**, e no
+// KVM ela nunca tem: o dongle fica do outro lado. Medido com
+// `GetCursorInfo`: `flags=0` (escondido) e `hCursor=0` (nao existe
+// cursor), com a posicao correta -- por isso o hover respondia e nada
+// aparecia.
+//
+// Nessa situacao nao adianta pedir o desenho ao DXGI: ele reporta
+// `Visible=false` e nunca manda forma nenhuma, porque de fato nao ha
+// nada sendo desenhado. Quem precisa desenhar somos nos.
+
+/// Seta padrao, 12x19, no formato de mascaras do cursor monocromatico.
+///
+/// Desenhada a mao em vez de pedida ao sistema (`LoadCursorW` +
+/// `GetIconInfo` + `GetDIBits`) porque aqui ela e um FALLBACK: so entra
+/// quando o sistema nao tem cursor para dar. Pedir a quem nao tem seria
+/// circular, e o caminho de Win32 para extrair o bitmap tem mais
+/// chances de falhar do que estas dezenove linhas.
+///
+/// `K` preto, `W` branco, `.` transparente. O contorno branco existe
+/// para a seta nao sumir sobre fundo escuro -- e o mesmo motivo pelo
+/// qual o cursor do sistema tem um.
+const SETA: [&str; 19] = [
+    "W...........",
+    "WW..........",
+    "WKW.........",
+    "WKKW........",
+    "WKKKW.......",
+    "WKKKKW......",
+    "WKKKKKW.....",
+    "WKKKKKKW....",
+    "WKKKKKKKW...",
+    "WKKKKKKKKW..",
+    "WKKKKKKKKKW.",
+    "WKKKKKKWWWWW",
+    "WKKKWKKW....",
+    "WKKWWKKW....",
+    "WKW..WKKW...",
+    "WW...WKKW...",
+    "W.....WKKW..",
+    "......WKKW..",
+    ".......WWW..",
+];
+
+/// Monta a seta embutida como uma `Forma` monocromatica.
+///
+/// Reaproveita o caminho `Mono` do `desenhar`, que ja trata AND/XOR --
+/// um segundo caminho de desenho so para este caso seria mais codigo
+/// para a mesma figura.
+pub fn seta_embutida() -> Forma {
+    let w = SETA[0].len() as u32;
+    let h = SETA.len() as u32;
+    let pitch = w.div_ceil(8) as usize;
+    // AND e XOR empilhadas, nesta ordem, como o DXGI entrega.
+    let mut bytes = vec![0u8; pitch * h as usize * 2];
+    let meio = pitch * h as usize;
+
+    for (y, linha) in SETA.iter().enumerate() {
+        for (x, c) in linha.bytes().enumerate() {
+            let byte = y * pitch + x / 8;
+            let bit = 7 - (x % 8);
+            match c {
+                // transparente: and=1, xor=0 -> mantem o fundo
+                b'.' => bytes[byte] |= 1 << bit,
+                // preto: and=0, xor=0
+                b'K' => {}
+                // branco: and=0, xor=1
+                _ => bytes[meio + byte] |= 1 << bit,
+            }
+        }
+    }
+
+    Forma { tipo: TipoForma::Mono, w, h: h * 2, pitch, bytes, hot: (0, 0) }
+}
+
+#[cfg(test)]
+mod testes_seta {
+    use super::*;
+
+    #[test]
+    fn a_ponta_da_seta_e_branca_e_o_miolo_preto() {
+        let f = seta_embutida();
+        // Fundo cinza para distinguir "pintou" de "deixou passar".
+        let mut px = vec![100u8; 32 * 32 * 4];
+        desenhar(&mut px, 32 * 4, 32, 32, &f, 0, 0);
+
+        let em = |x: usize, y: usize| px[y * 32 * 4 + x * 4];
+        assert_eq!(em(0, 0), 0xFF, "a ponta e o contorno branco");
+        assert_eq!(em(1, 2), 0x00, "o miolo e preto");
+        assert_eq!(em(11, 0), 100, "fora da seta o fundo fica intacto");
+    }
+
+    #[test]
+    fn a_seta_cabe_no_proprio_buffer() {
+        let f = seta_embutida();
+        let alt = f.h / 2;
+        assert_eq!(f.bytes.len(), f.pitch * alt as usize * 2);
+        assert_eq!(alt, 19);
+        assert_eq!(f.w, 12);
+    }
+
+    /// Desenhar na borda nao pode estourar o buffer.
+    #[test]
+    fn na_borda_nao_escreve_fora() {
+        let f = seta_embutida();
+        let mut px = vec![0u8; 16 * 16 * 4];
+        // Quatro cantos, todos com a seta parcialmente para fora.
+        for (x, y) in [(-5, -5), (14, 14), (-5, 14), (14, -5)] {
+            desenhar(&mut px, 16 * 4, 16, 16, &f, x, y);
+        }
+    }
+}
