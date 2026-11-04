@@ -253,16 +253,20 @@ if ($tem -ne $esperado) {
   Write-Output ('ERRO: gravou mas tem ' + $tem + ' bytes, esperado ' + $esperado + ' -- antivirus revertendo? confira a exclusao de ' + $dst)
   exit 1
 }
-# Envelope .cmd: a tarefa agendada nao e um shell, entao redirecionar a
-# saida exige um. Um arquivo resolve sem aninhar aspas -- e aninhar
-# aspas nesta ponte ja quebrou tres vezes (specs/002).
-$log = Join-Path $dst 'logistream-host.log'
-$env1 = Join-Path $dst 'logistream-host.cmd'
-$corpo = @"
-@echo off
-"$alvo" 9777 > "$log" 2>&1
-"@
-Set-Content -Path $env1 -Value $corpo -Encoding ASCII
+# A tarefa roda o .exe DIRETO, sem envelope .cmd.
+#
+# Havia um .cmd aqui so para redirecionar a saida, porque schtasks nao
+# e shell. O preco era uma janela de console visivel na sessao
+# interativa -- bem no meio da tela que alguem esta assistindo. O
+# usuario reportou como "esse terminal que abre ao conectar a tela".
+#
+# Agora o host e `windows_subsystem = "windows"` (como o logid ja era) e
+# redireciona a propria saida para o mesmo arquivo de log antes da
+# primeira linha. Sem cmd.exe no caminho, sem janela, mesmo log.
+# Sem argumento: o host assume 9777 por padrao. Passar o numero aqui
+# exigiria aninhar aspas no /tr, que ja quebrou tres vezes nesta ponte.
+$env1 = $alvo
+Remove-Item (Join-Path $dst 'logistream-host.cmd') -ErrorAction SilentlyContinue
 # Tarefa que NAO roda sozinha: `once` as 00:00 ja passou, e so a
 # acordamos com `schtasks /run`. O `/it` e o ponto -- sem ele a captura
 # cai na sessao 0, onde nao ha desktop para duplicar nem desktop para o
