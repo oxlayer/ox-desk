@@ -229,14 +229,19 @@ mod visual {
         let tam: Arc<Mutex<(u32, u32)>> = Arc::new(Mutex::new((1280, 720)));
         let tam_rede = Arc::clone(&tam);
 
+        // O laco da janela tem de ser criado ANTES da thread de rede: e
+        // dele que sai o `proxy`, e e por ele que a rede acorda a
+        // interface quando chega quadro.
+        let ev = EventLoop::new()?;
+        let proxy = ev.create_proxy();
+
         std::thread::spawn(move || {
-            if let Err(e) = receber(&alvo, slot_rede, rx_in, tam_rede) {
+            if let Err(e) = receber(&alvo, slot_rede, rx_in, tam_rede, proxy) {
                 eprintln!("rede: {e}");
                 std::process::exit(1);
             }
         });
 
-        let ev = EventLoop::new()?;
         // `Wait` e nao `Poll`: acordamos quando chega quadro, nao a
         // 100% de CPU perguntando se chegou.
         ev.set_control_flow(ControlFlow::Wait);
@@ -353,9 +358,29 @@ mod visual {
             }
         }
 
+        /// A rede avisou que chegou quadro.
+        ///
+        /// Sem isto a imagem CONGELAVA. O laco usa `ControlFlow::Wait`,
+        /// que bloqueia esperando evento do sistema; a thread de rede
+        /// enchia o slot e nao acordava ninguem. O `about_to_wait` roda
+        /// ANTES de o laco dormir, entao o quadro que chegasse depois
+        /// esperava o proximo evento do sistema -- um movimento de mouse,
+        /// uma tecla. O usuario descreveu exatamente isso: "congela numa
+        /// mensagem do chat ate eu mexer o mouse".
+        ///
+        /// Pedir redesenho aqui e nao desenhar direto: desenhar fora do
+        /// `RedrawRequested` briga com o compositor em algumas
+        /// plataformas, e o caminho de pintura ja existe num lugar so.
+        fn user_event(&mut self, _: &ActiveEventLoop, _: ()) {
+            if let Some(j) = &self.janela {
+                j.request_redraw();
+            }
+        }
+
         fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-            // Acorda a janela so quando ha quadro novo. Comparar geracao
-            // evita redesenhar a mesma imagem e queimar GPU a toa.
+            // Rede de seguranca para o quadro que chegou entre o ultimo
+            // desenho e o laco dormir. O aviso do `user_event` e o
+            // caminho normal; esta comparacao cobre a corrida.
             let g = self.slot.lock().map(|s| s.geracao).unwrap_or(0);
             if g != self.desenhada {
                 if let Some(j) = &self.janela {
@@ -436,6 +461,11 @@ mod visual {
             self.n += 1;
             if self.n % 120 == 0 {
                 let seg = self.t0.elapsed().as_secs_f64();
+                // No log tambem, nao so no titulo: foi justamente esta
+                // taxa que ficou em zero enquanto a de decodificacao
+                // subia, e um numero que so existe no titulo da janela
+                // nao serve para medir nada remotamente.
+                println!("  {} quadros desenhados, {:.0} fps", self.n, self.n as f64 / seg);
                 janela.set_title(&format!(
                     "logistream — {:.0} fps desenhados",
                     self.n as f64 / seg
@@ -451,6 +481,7 @@ mod visual {
         slot: Arc<Mutex<Slot>>,
         mut rx_in: tokio::sync::mpsc::Receiver<Evento>,
         tam: Arc<Mutex<(u32, u32)>>,
+        proxy: winit::event_loop::EventLoopProxy<()>,
     ) -> anyhow::Result<()> {
         // Decodificador montado ANTES de conectar.
         //
@@ -555,6 +586,12 @@ mod visual {
                     s.jw = jw;
                     s.jh = jh;
                     s.geracao += 1;
+                }
+                // Acorda a interface. `Err` aqui significa que o laco da
+                // janela acabou -- a pessoa fechou -- e ai nao ha mais
+                // para quem desenhar.
+                if proxy.send_event(()).is_err() {
+                    return Ok(());
                 }
                 quadros += 1;
                 if quadros % 120 == 0 {

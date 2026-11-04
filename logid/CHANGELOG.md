@@ -6,6 +6,14 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · A imagem não congela mais até você mexer o mouse
+O laço da janela bloqueava esperando evento do sistema, e a thread de
+rede enchia o slot com o quadro novo sem acordar ninguém — então a
+imagem só atualizava quando você mexia o mouse ou digitava. Seu relato
+("congela numa mensagem do chat até eu mexer o mouse") descreveu o
+mecanismo exato. Agora a rede acorda a janela a cada quadro: medido, 720
+quadros desenhados a 59 fps com ninguém tocando em nada.
+
 ## 2026-11-04 · Input do Mac para o Ubuntu: tecla presa e lentidão
 Cada evento era uma chamada ao compositor **esperando resposta**, na
 mesma thread que bombeia o vídeo — então a tecla esperava o quadro e o
