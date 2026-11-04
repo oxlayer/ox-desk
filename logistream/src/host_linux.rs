@@ -400,6 +400,7 @@ fn servir(
                 let mut falhas = 0u64;
                 while let Ok(Some(lidos)) = recv.read(&mut buf).await {
                     leitor.alimentar(&buf[..lidos]);
+                    let mut aplicados_agora = 0u32;
                     while let Some(e) = leitor.proximo() {
                         if let Err(err) = aplicar(&dbus, &rd_in, &stream_in, e) {
                             falhas += 1;
@@ -419,6 +420,33 @@ fn servir(
                         } else if n % 500 == 0 {
                             println!("  {n} eventos de input aplicados");
                         }
+                        aplicados_agora += 1;
+                    }
+
+                    // ESVAZIAR A FILA. Sem isto o input nao sai daqui.
+                    //
+                    // `Channel::send` chama `dbus_connection_send` e
+                    // mais nada; quem escreve no socket e o
+                    // `dbus_connection_flush`, que mora em `flush()` --
+                    // separado. (A outra API do mesmo crate, `ffidisp`,
+                    // faz os dois juntos; a nossa nao.) Sem flush, cada
+                    // evento ficava na fila de saida do libdbus ate algo
+                    // mais provocar escrita.
+                    //
+                    // O sintoma nao era "input nao funciona", era pior:
+                    // funcionava em rajadas. Um key-up atrasado alem de
+                    // ~500 ms faz o Mutter entrar em auto-repeticao, e o
+                    // usuario escreveu "winddowsssss" e "nnnnnnnnnn" --
+                    // as letras repetidas da mensagem dele eram o bug.
+                    //
+                    // Uma vez por leitura de rede, nao por evento: um
+                    // `read` traz o lote inteiro de um movimento de
+                    // mouse, e flush por evento seria syscall a toa no
+                    // caminho quente. Nao espera resposta do Mutter --
+                    // so escreve o socket -- entao preserva o motivo de
+                    // `set_no_reply(true)`.
+                    if aplicados_agora > 0 {
+                        dbus.channel().flush();
                     }
                 }
             })
