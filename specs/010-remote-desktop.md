@@ -436,3 +436,45 @@ Dois caminhos para fechar: `libavcodec-dev` pelo apt, ou **NVDEC** —
 as duas máquinas têm GPU NVIDIA e a `moq-nvenc` já expõe os pontos de
 entrada do decodificador. NVDEC é mais trabalho e dispensa a
 dependência de sistema; é o caminho que combina com o resto.
+
+## O host do Mac: o desenho decidido por medicao (04/11)
+
+O Mac e o ultimo furo -- ele assiste as outras duas e nao serve a propria
+tela. Antes de escrever o pipeline, medi o que a maquina oferece:
+
+```
+libavdevice: linkado e registrado
+encoder h264_videotoolbox: existe
+encoder libx264: existe
+entrada avfoundation: existe
+```
+
+Isso decide o desenho: **captura por `avfoundation` e codificacao por
+`h264_videotoolbox`, sem FFI novo.** A alternativa era ScreenCaptureKit e
+VideoToolbox crus -- centenas de linhas de ponte com Objective-C para
+chegar no mesmo lugar, e o ffmpeg do brew ja esta instalado porque e ele
+que decodifica no visualizador de la.
+
+O `avdevice` entrou nas features do `ffmpeg-next` so no macOS. Linux e
+Windows nao precisam: eles capturam por PipeWire e DXGI.
+
+### O que ainda falta, e a friccao que vem com ele
+
+- Pipeline: `avfoundation` -> `h264_videotoolbox` -> `serve::atender`. O
+  laco de rede e o teto de taxa sao os mesmos dos outros dois hosts.
+- Input: `CGEvent` do Core Graphics, que **exige permissao de
+  Acessibilidade** concedida a mao nas Preferencias. Nao da para
+  contornar por codigo, e e o tipo de coisa que, sem aviso, aparece como
+  "o teclado nao funciona" sem erro nenhum.
+- O cursor: o `avfoundation` tem opcao de desenhar o cursor
+  (`capture_cursor`), ao contrario do DXGI. Entao o Mac pode ficar como o
+  Linux (cursor embutido) em vez de como o Windows.
+
+### Uma armadilha de API encontrada no caminho
+
+`format::list()` existia para enumerar demuxers e **foi removido no
+ffmpeg 5**; a crate so o expoe com `cfg(not(feature = "ffmpeg_5_0"))`. O
+caminho atual e procurar pelo nome com `av_find_input_format`, que e o
+que o proprio `ffmpeg -f avfoundation` faz. Ponteiro nao nulo prova duas
+coisas de uma vez: o dispositivo esta compilado na biblioteca e o
+`avdevice` foi registrado -- sem o registro, o nome nao resolve.

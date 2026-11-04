@@ -53,9 +53,16 @@ windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_
 #
 # `format` entra sem ser usada por nos: o modulo `codec` da propria crate
 # importa `crate::format`, entao `codec` sozinha nao compila.
+#
+# `device` entra para o Mac virar HOST: a captura de tela dele e o
+# dispositivo de entrada `avfoundation` do libavdevice, e a codificacao e
+# o `h264_videotoolbox` -- os dois ja presentes no ffmpeg do brew. A
+# alternativa era ScreenCaptureKit e VideoToolbox crus, centenas de
+# linhas de ponte com Objective-C para chegar no mesmo lugar.
 [target.'cfg(target_os = "macos")'.dependencies]
 ffmpeg-next = { version = "9.0", default-features = false, features = [
   "codec",
+  "device",
   "format",
   "software-scaling",
 ] }
@@ -92,6 +99,10 @@ path = "src/bin/view.rs"
 [[bin]]
 name = "logistream-probe-nvenc"
 path = "src/bin/nvenc-probe.rs"
+
+[[bin]]
+name = "logistream-probe-mac"
+path = "src/bin/mac-probe.rs"
 
 [[bin]]
 name = "logistream-probe-nvdec"
