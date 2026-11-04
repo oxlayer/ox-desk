@@ -193,10 +193,12 @@ async function focus(host) {
 
 async function refreshTray() {
   if (!tray) return;
-  const [devs, cfg] = await Promise.all([
+  const [devs, cfg, kvm] = await Promise.all([
     getJson('/api/devices'),
     getJson('/api/config'),
+    getJson('/api/kvm'),
   ]);
+  const porLan = kvm?.mode === 'lan';
 
   const items = [];
   const list = (devs?.receivers ?? []).flatMap((r) => r.devices ?? []);
@@ -219,10 +221,21 @@ async function refreshTray() {
   if (remotes.length) {
     items.push({ type: 'separator' });
     for (const h of remotes) {
-      items.push({ label: `Mandar para ${h.name}`, click: () => focus(h.name) });
+      const ativo = porLan && kvm?.target === h.name;
+      items.push({
+        label: (ativo ? '\u25cf ' : '') + `Mandar para ${h.name}`,
+        click: () => focus(h.name),
+      });
     }
-    // Trazer de volta so faz sentido se algum dispositivo esta fora.
-    if (aqui && list.some((d) => !d.online)) {
+    // Quando mostrar "trazer de volta" depende do MECANISMO.
+    //
+    // No HID++ o dispositivo troca de canal e some do nosso receptor,
+    // entao "algum dispositivo offline" e o sinal certo. No modo LAN
+    // ele nunca sai daqui -- continua online -- e esse teste nunca
+    // seria verdadeiro: o item sumiria justamente no modo em que ele e
+    // o unico caminho de volta pelo menu.
+    const fora = porLan ? Boolean(kvm?.target) : list.some((d) => !d.online);
+    if (aqui && fora) {
       items.push({ label: `Trazer para ${aqui.name}`, click: () => focus(aqui.name) });
     }
   }

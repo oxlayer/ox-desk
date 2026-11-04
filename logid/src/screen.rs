@@ -320,7 +320,7 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
 ///   `SendInput` nao chega a desktop nenhum: o processo subiria, nao
 ///   falharia, e entregaria uma tela que ninguem esta vendo. E a mesma
 ///   fronteira de sessao que obriga o `logid` a subir por `schtasks`.
-fn acordar_host(h: &crate::config::HostCfg, porta: u16) -> Result<(), String> {
+pub(crate) fn acordar_host(h: &crate::config::HostCfg, porta: u16) -> Result<(), String> {
     let cmd = if crate::remote::is_powershell(h) {
         // Sem aspas duplas em lugar nenhum: tres bugs de quoting nesta
         // ponte ja custaram tempo (specs/002). Palavra nua vira string

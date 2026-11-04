@@ -241,10 +241,32 @@ impl Default for FollowCfg {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InputCfg {
+    /// Como trocar o input de maquina: `"lan"` ou `"hidpp"`.
+    ///
+    /// - **`lan`** (padrao): captura aqui (`EVIOCGRAB`) e manda pelo
+    ///   stream de input da tela remota. O dispositivo nao sai do
+    ///   lugar, nao importa quem tem o dongle, e e reversivel na hora.
+    /// - **`hidpp`**: manda o PROPRIO dispositivo trocar de canal
+    ///   Easy-Switch (0x1814). Exige um receptor pareado na maquina de
+    ///   destino, e e irreversivel da origem -- depois do ChangeHost
+    ///   este receptor nao alcanca mais o dispositivo.
+    ///
+    /// O padrao virou `lan` quando ficamos com um dongle so: no
+    /// `hidpp`, "mandar para windows-host" fazia o teclado procurar um
+    /// receptor que nao existe la, nao achar, e voltar. Comportamento
+    /// correto do protocolo resolvendo o problema errado.
+    ///
+    /// A captura so existe no Linux por enquanto.
+    #[serde(default = "default_modo_input")]
+    pub mode: String,
     #[serde(default)]
     pub border: BorderCfg,
     #[serde(default)]
     pub follow: FollowCfg,
+}
+
+fn default_modo_input() -> String {
+    "lan".into()
 }
 
 fn default_port() -> u16 {

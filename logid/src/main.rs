@@ -33,6 +33,7 @@ mod files;
 mod focus;
 mod follow;
 mod hidpp;
+mod kvm;
 mod logs;
 mod peers;
 mod probe;
@@ -325,6 +326,41 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "estado da config corrompido"),
     };
+    // Modo LAN: captura aqui e manda pela rede. Nao passa pelo
+    // planejador do HID++ porque nao ha nada a planejar -- nenhum
+    // dispositivo troca de canal, nenhum receptor precisa existir do
+    // outro lado, e nao ha estado parcial possivel (ou o filho subiu
+    // com os dois dispositivos, ou nao subiu).
+    //
+    // E **nao exige `confirm`**. O dry-run existe porque o ChangeHost e
+    // irreversivel da origem: depois dele este receptor nao alcanca
+    // mais o dispositivo. O LAN se desfaz com os dois Ctrl ou mandando
+    // para a maquina local, entao pedir confirmacao seria cerimonia sem
+    // risco por tras.
+    if snap.input.mode == "lan" {
+        let resposta = match kvm::mandar(&snap, &fr.host) {
+            Ok(destino) => serde_json::json!({
+                "plan": { "host": fr.host, "route": "lan" },
+                "executed": true,
+                "results": [format!("input indo para {} ({destino})", fr.host)],
+            }),
+            Err(e) => serde_json::json!({
+                "plan": { "host": fr.host, "route": "lan" },
+                "executed": false,
+                "results": [],
+                "error": e,
+            }),
+        };
+        let code = if resposta.get("error").is_some() { 409 } else { 200 };
+        return respond(
+            req,
+            Response::from_string(resposta.to_string())
+                .with_status_code(code)
+                .with_header(json_header())
+                .with_header(nostore()),
+        );
+    }
+
     let outcome = focus::execute(&snap, &fr);
     let code = if outcome.error.is_some() { 409 } else { 200 };
     match serde_json::to_string(&outcome) {
@@ -666,6 +702,26 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             })
             .to_string(),
         ),
+
+        // Para onde o input esta indo, e por qual mecanismo.
+        //
+        // A bandeja PRECISA disto. Ela so mostrava "Trazer para aqui"
+        // quando algum dispositivo aparecia offline -- sinal que servia
+        // no HID++, onde o dispositivo some do nosso receptor ao trocar
+        // de canal. No modo LAN os dispositivos NUNCA saem daqui, que e
+        // o ponto: continuam online e o item nunca apareceria. O
+        // usuario ficaria sem caminho de volta pelo menu, dependendo de
+        // lembrar dos dois Ctrl.
+        "/api/kvm" => {
+            let modo = match cfg.read() {
+                Ok(g) => g.input.mode.clone(),
+                Err(_) => return err_json(req, 500, "config travada"),
+            };
+            ok_json(
+                req,
+                serde_json::json!({ "mode": modo, "target": kvm::alvo() }).to_string(),
+            )
+        }
 
         "/api/status" | "/api/hosts" => {
             let snap = cached(&snap_cfg, cache);
