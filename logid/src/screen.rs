@@ -336,6 +336,23 @@ pub(crate) fn acordar_host(h: &crate::config::HostCfg, porta: u16) -> Result<(),
             "{ Write-Output vivo } else { Write-Output morto } }"
         )
         .to_string()
+    } else if h.os.as_deref() == Some("macos") {
+        // macOS: LaunchAgent, nao `nohup`.
+        //
+        // A captura de tela depende de permissao TCC (Gravacao de
+        // Tela), concedida a quem LANCOU o processo. Vindo do SSH nao
+        // ha concessao nenhuma -- e o AVFoundation, em vez de falhar,
+        // **trava**. Medido: o proprio `ffmpeg -f avfoundation -i 1`
+        // pendura para sempre por SSH.
+        //
+        // Mesma fronteira que obriga o Windows a usar tarefa agendada
+        // com /IT em vez de servico.
+        concat!(
+            r#"pgrep -x logistream-host >/dev/null 2>&1 || "#,
+            r#"launchctl kickstart "gui/$(id -u)/ai.logi.logistream-host" >/dev/null 2>&1; "#,
+            r#"sleep 1; pgrep -x logistream-host >/dev/null && echo vivo || echo morto"#
+        )
+        .to_string()
     } else {
         format!(
             concat!(

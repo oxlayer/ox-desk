@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Host de tela do Mac.
+
+  LaunchAgent e nao lancamento por SSH, e a razao e dura: a captura de
+  tela do macOS depende de permissao TCC (Gravacao de Tela), que e
+  concedida a quem LANCOU o processo. Um processo vindo do SSH nao tem
+  concessao nenhuma -- e o AVFoundation, em vez de falhar, **trava**.
+  Medido: o proprio `ffmpeg -f avfoundation -i 1` pendura para sempre
+  quando chamado por SSH, e o mesmo comando na sessao grafica roda.
+
+  E a mesma fronteira que obriga o Windows a usar tarefa agendada com
+  /IT em vez de servico: o que depende da sessao do usuario nao enxerga
+  nada de fora dela.
+
+  RunAtLoad false: sobe so quando alguem pede a tela, por
+  `launchctl kickstart`. Capturar e codificar sem ninguem assistindo
+  gastaria bateria do laptop a toa.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.logi.logistream-host</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/user/.local/bin/logistream-host</string>
+    <string>9777</string>
+    <string>1</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>/Users/user/.local/state/logistream-host.log</string>
+  <key>StandardErrorPath</key><string>/Users/user/.local/state/logistream-host.log</string>
+</dict>
+</plist>

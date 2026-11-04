@@ -316,6 +316,16 @@ else
              mkdir -p ~/.local/bin ~/.local/state &&
              install -m755 target/release/logistream-view ~/.local/bin/ &&
              install -m755 target/release/logistream-host ~/.local/bin/" 2>&1); then ok; else erro "$out"; fi
+
+  passo "mac: LaunchAgent do host de tela"
+  # O host TEM de nascer na sessao grafica: a captura depende de
+  # permissao TCC concedida a quem lancou, e por SSH o AVFoundation
+  # trava em vez de falhar. `RunAtLoad false` -- sobe so quando alguem
+  # pede a tela, para nao gastar bateria capturando para ninguem.
+  if out=$(scp -q -o BatchMode=yes mac/ai.logi.logistream-host.plist mac:Library/LaunchAgents/ 2>&1 &&
+           ssh -n -o BatchMode=yes mac \
+            "launchctl bootout gui/\$(id -u)/ai.logi.logistream-host 2>/dev/null;
+             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.logistream-host.plist" 2>&1); then ok; else erro "$out"; fi
 fi
 
 # ---------- conferencia ----------
