@@ -413,6 +413,14 @@
       <select id="lyleader"></select></label>
     <span class="meta" id="lymeta"></span>
   </div>
+  <div class="lynote" id="pausawrap">
+    <button id="pausabtn">pausar leitura dos dispositivos</button>
+    <span id="pausamsg"></span>
+    <div>Para descobrir se somos NOS que estamos puxando os dispositivos
+    de volta: com a leitura pausada, troque de maquina. Se ficar de pe, o
+    problema e a nossa sondagem; se voltar sozinho, e o radio. Trocar de
+    canal continua funcionando durante a pausa.</div>
+  </div>
   <div class="lygrid" id="lygrid"></div>
   <div class="lytray" id="lytray"></div>
   <div class="lynote" id="lyedges"></div>
@@ -886,6 +894,8 @@ async function layout(){
     }
     if (d.follow_leader) sel.value = d.follow_leader;
     document.getElementById('lyfollowon').checked = !!d.follow_enabled;
+    PAUSA_S = d.hidpp_pausado_s ?? null;
+    pintaPausa();
   }catch(e){
     document.getElementById('lymeta').textContent = 'inacessivel: ' + e.message;
   }
@@ -1279,6 +1289,36 @@ document.querySelector('.side').addEventListener('click', ev => {
     }
   }
 });
+
+// --- pausa de diagnostico ---------------------------------------------
+// Pausa a sondagem HID++ para separar "nossa leitura perturba o radio"
+// de "o hardware troca sozinho". Ver `hidpp::PAUSA`.
+let PAUSA_S = null;
+async function pausaHidpp(minutos){
+  try{
+    const r = await fetch('/api/hidpp/pause', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ minutes: minutos })
+    });
+    const d = await r.json();
+    PAUSA_S = d.pausado_s ?? null;
+    pintaPausa();
+  }catch(e){ document.getElementById('pausamsg').textContent = e.message; }
+}
+function pintaPausa(){
+  const b = document.getElementById('pausabtn');
+  const m = document.getElementById('pausamsg');
+  if (PAUSA_S){
+    b.textContent = 'retomar leitura';
+    const min = Math.floor(PAUSA_S/60), seg = PAUSA_S%60;
+    m.textContent = `pausada — ${min}m${String(seg).padStart(2,'0')}s restantes`;
+  } else {
+    b.textContent = 'pausar leitura dos dispositivos';
+    m.textContent = '';
+  }
+}
+document.getElementById('pausabtn').addEventListener('click', () =>
+  pausaHidpp(PAUSA_S ? 0 : 10));
 
 mostra(guardado('sec', SEC_PADRAO));
 

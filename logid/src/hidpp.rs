@@ -215,6 +215,9 @@ pub struct Survey {
     pub receivers: Vec<Receiver>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Segundos restantes de pausa na leitura, quando pausada.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pausado_s: Option<u64>,
 }
 
 /// Temos acesso ao hardware HID?
@@ -247,6 +250,7 @@ fn no_access() -> Survey {
     Survey {
         hidraw_access: false,
         backend: "hidpp",
+        pausado_s: None,
         receivers: Vec::new(),
         error: Some(
             "sem acesso a /dev/hidraw: rode \
@@ -296,6 +300,7 @@ pub fn survey_cached_or_fresh(max_age: Duration) -> Survey {
         return Survey {
             hidraw_access: true,
             backend: "hidpp (cache)",
+            pausado_s: None,
             receivers: vec![Receiver {
                 name: "Receptor Logitech".into(),
                 hidraw: None,
@@ -402,7 +407,97 @@ pub fn spawn_refresher() {
 
 /// `with_battery = false` para o caminho quente: a bateria custa duas
 /// idas e voltas por dispositivo e nao influencia decisao de troca.
+/// Pausa da leitura HID++, para diagnostico.
+///
+/// ## Por que isto existe
+///
+/// Os dispositivos voltavam ao canal 1 poucos segundos depois de irem
+/// para o 2, com borda e reconciliador desligados nas tres maquinas e
+/// NENHUMA linha de log reivindicando a acao. Eliminado todo codigo
+/// nosso que troca canal (so a borda e a API chamam `focus::execute`),
+/// sobraram duas hipoteses: a nossa LEITURA perturbando o radio, ou o
+/// hardware.
+///
+/// Separar as duas exigiria tomar o mouse e o teclado do usuario por
+/// alguns minutos. Em vez de pedir isso, o botao fica com ele: pausada a
+/// leitura, se a troca ficar de pe a culpa e nossa; se continuar
+/// voltando, nao e.
+///
+/// A pausa vale so para a SONDAGEM periodica. `change_host` continua
+/// funcionando -- sem ele nao ha como fazer o teste.
+///
+/// Em memoria e nao na config: pausa e estado de diagnostico, e uma que
+/// sobrevivesse a um reinicio seria uma armadilha para o proximo mes.
+static PAUSA: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// Pausa por `minutos` (0 retoma). Devolve os segundos restantes.
+pub fn pausar(minutos: u64) -> Option<u64> {
+    let mut g = PAUSA.lock().unwrap_or_else(|e| e.into_inner());
+    *g = (minutos > 0)
+        .then(|| std::time::Instant::now() + Duration::from_secs(minutos * 60));
+    pausa_de(&g)
+}
+
+fn pausa_de(g: &Option<std::time::Instant>) -> Option<u64> {
+    let ate = (*g)?;
+    let agora = std::time::Instant::now();
+    (ate > agora).then(|| (ate - agora).as_secs())
+}
+
+/// Segundos restantes de pausa, ou `None` se a leitura esta livre.
+pub fn pausa_restante_s() -> Option<u64> {
+    let g = PAUSA.lock().unwrap_or_else(|e| e.into_inner());
+    pausa_de(&g)
+}
+
+/// O que devolver enquanto a leitura esta pausada: o ultimo retrato
+/// conhecido, sem tocar no radio.
+///
+/// Devolver vazio faria o painel dizer "nenhum dispositivo", que e
+/// mentira diferente da que estamos investigando.
+fn survey_pausado(restante: u64) -> Survey {
+    let devs = cached_devices(Duration::MAX).unwrap_or_default();
+    Survey {
+        hidraw_access: true,
+        backend: "hidpp (pausado)",
+        pausado_s: Some(restante),
+        error: None,
+        receivers: vec![Receiver {
+            name: "Receptor Logitech".into(),
+            hidraw: None,
+            usb_id: None,
+            serial: None,
+            devices: devs
+                .into_iter()
+                .map(|(slot, name, online, host)| Device {
+                    slot,
+                    name,
+                    kind: String::new(),
+                    wpid: String::new(),
+                    hidraw: None,
+                    online,
+                    ping_ms: None,
+                    current_host: host,
+                    num_hosts: None,
+                    battery_percent: None,
+                    battery_status: None,
+                    battery_next_level: None,
+                    charging: false,
+                    battery_source: None,
+                    battery_age_s: None,
+                })
+                .collect(),
+        }],
+    }
+}
+
 pub fn survey_opts(with_battery: bool) -> Survey {
+    // Pausa ANTES de qualquer acesso ao hardware: o ponto e nao tocar no
+    // radio, e todo caminho de leitura passa por aqui -- inclusive o
+    // painel aberto, que sozinho sonda a cada 10 s.
+    if let Some(restante) = pausa_restante_s() {
+        return survey_pausado(restante);
+    }
     if !hidraw_access() {
         return no_access();
     }
@@ -413,6 +508,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
                 hidraw_access: true,
                 backend: "hidpp",
                 receivers: Vec::new(),
+                pausado_s: None,
                 error: Some(format!("hidapi: {e}")),
             }
         }
@@ -424,6 +520,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
                 hidraw_access: true,
                 backend: "hidpp",
                 receivers: Vec::new(),
+                pausado_s: None,
                 error: Some(e),
             }
         }
@@ -538,6 +635,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
     Survey {
         hidraw_access: true,
         backend: "hidpp",
+        pausado_s: None,
         receivers: vec![Receiver {
             name: format!("Receptor Logitech {:04x}", rx.product_id),
             hidraw: Some(rx.path.clone()),
@@ -734,4 +832,32 @@ pub fn remap(slot: u8, cid: u16, to: u16) -> Result<String, String> {
             format!("0x{target:04x} ({})", hidpp::control_name(target))
         }
     ))
+}
+
+#[cfg(test)]
+mod testes_pausa {
+    use super::*;
+
+    #[test]
+    fn pausar_e_retomar() {
+        // Serializado com o teste abaixo pelo proprio estado global: os
+        // dois mexem no mesmo `PAUSA`, entao cada um limpa no fim.
+        assert!(pausar(1).is_some_and(|s| s > 0 && s <= 60));
+        assert!(pausa_restante_s().is_some());
+        assert_eq!(pausar(0), None, "zero retoma");
+        assert_eq!(pausa_restante_s(), None);
+    }
+
+    #[test]
+    fn pausa_vencida_nao_vale_mais() {
+        // Deadline no passado conta como livre: a pausa expira sozinha,
+        // sem ninguem precisar lembrar de retomar -- um diagnostico
+        // esquecido ligado seria pior que o bug que ele investiga.
+        {
+            let mut g = PAUSA.lock().unwrap_or_else(|e| e.into_inner());
+            *g = Some(std::time::Instant::now() - Duration::from_secs(1));
+        }
+        assert_eq!(pausa_restante_s(), None);
+        pausar(0);
+    }
 }

@@ -6,6 +6,15 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Botão para pausar a leitura dos dispositivos
+Os dispositivos voltam ao canal 1 sozinhos, com borda e reconciliador
+desligados nas três e nenhuma linha de log reivindicando. Eliminado todo
+código nosso que troca canal, sobraram duas hipóteses: a nossa leitura
+HID++ perturbando o rádio, ou o hardware. Em Disposição há agora um botão
+que pausa a sondagem por 10 minutos — troque de máquina durante a pausa:
+se ficar de pé, o problema é nosso; se voltar sozinho, é o rádio. Trocar
+de canal continua funcionando durante a pausa.
+
 ## 2026-11-04 · Uptime, RAM e CPU em todos os cartões, sempre
 A máquina que você está olhando ficava sem detalhe nenhum: a leitura ia
 por SSH e ninguém faz SSH para si mesmo — daí você ver a RAM do MacBook

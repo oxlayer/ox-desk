@@ -419,6 +419,36 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
     }
 }
 
+/// POST /api/hidpp/pause {"minutes": N}  (0 retoma)
+///
+/// Pausa a SONDAGEM periodica dos dispositivos, nao a troca de canal.
+/// Serve para separar "nossa leitura perturba o radio" de "o hardware
+/// faz isso sozinho" sem precisar tomar o mouse de ninguem para testar:
+/// pausada a leitura, se a troca ficar de pe a culpa e nossa.
+fn post_hidpp_pause(mut req: Request) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let min = v.get("minutes").and_then(|x| x.as_u64()).unwrap_or(10).min(60);
+    let restante = hidpp::pausar(min);
+    match restante {
+        Some(s) => say!("hidpp: leitura PAUSADA por {}s (diagnostico)", s),
+        None => say!("hidpp: leitura retomada"),
+    }
+    ok_json(
+        req,
+        serde_json::json!({ "ok": true, "pausado_s": restante,
+            "nota": if restante.is_some() {
+                "a sondagem parou; trocar de canal continua funcionando"
+            } else {
+                "sondagem retomada"
+            } })
+        .to_string(),
+    )
+}
+
 /// POST /api/follow {"enabled": bool, "leader": "<nome HID++>"}
 ///
 /// Qual dispositivo manda depende de COMO a pessoa troca de maquina:
@@ -602,6 +632,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     if path == "/api/follow" && method == "POST" {
         return post_follow(req, cfg, cache);
     }
+    if path == "/api/hidpp/pause" && method == "POST" {
+        return post_hidpp_pause(req);
+    }
     if path == "/api/focus" && method == "POST" {
         return post_focus(req, cfg);
     }
@@ -731,6 +764,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 "border_enabled": snap.input.border.enabled,
                 "follow_enabled": snap.input.follow.enabled,
                 "follow_leader": snap.input.follow.leader,
+                "hidpp_pausado_s": hidpp::pausa_restante_s(),
                 "devices": snap.devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>(),
             });
             ok_json(req, body.to_string())
