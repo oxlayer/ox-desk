@@ -4,6 +4,11 @@ Documentation=file:///home/user/dev/logi/specs/001-control-plane.md
 
 [Service]
 Type=simple
+# `process` e nao o padrao `control-group`: reiniciar o daemon NAO pode
+# derrubar o `logistream-kvm`, que pode estar segurando o teclado de
+# alguem que esta trabalhando na outra maquina. Com o padrao, cada
+# deploy arrancava o input de volta no meio de uma frase.
+KillMode=process
 ExecStart=%h/.local/bin/logid
 Restart=always
 RestartSec=5

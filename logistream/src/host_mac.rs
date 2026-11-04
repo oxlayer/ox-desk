@@ -158,6 +158,22 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     };
 
     println!("  host na porta {porta}; ctrl-c para parar");
+    // Avisar AGORA, nao quando o input nao funcionar.
+    //
+    // Sem permissao de Acessibilidade o `CGEventPost` aceita o evento e
+    // o descarta em silencio -- devolve sucesso e nada acontece. E o
+    // mesmo modo de falha da Gravacao de Tela, e foi ele que fez o
+    // usuario passar uma tarde achando que o KVM estava quebrado.
+    if crate::input_mac::tem_acessibilidade() {
+        println!("  acessibilidade concedida: teclado e mouse serao injetados");
+    } else {
+        println!(
+            "  AVISO: SEM permissao de Acessibilidade. O teclado e o mouse que \
+             chegarem serao DESCARTADOS em silencio pelo macOS. Conceda em \
+             Ajustes > Privacidade e Seguranca > Acessibilidade, para \
+             logistream-host."
+        );
+    }
     let mut proximo = Instant::now();
     let mut n = 0i64;
     let mut descartados = 0u64;
@@ -281,6 +297,9 @@ fn servir(
 
         serve::atender(&ep, &mut rx, &sinais, |conexao| {
             let conexao = conexao.clone();
+            // Canal por conexao: a thread morre quando o cliente sai, e
+            // um `Teclado` novo comeca com a posicao real do ponteiro.
+            let teclado = crate::input_mac::thread();
             tokio::spawn(async move {
                 let Ok(mut recv) = conexao.accept_uni().await else { return };
                 let mut leitor = crate::input::Leitor::default();
@@ -288,18 +307,19 @@ fn servir(
                 let mut n = 0u64;
                 while let Ok(Some(lidos)) = recv.read(&mut buf).await {
                     leitor.alimentar(&buf[..lidos]);
-                    while leitor.proximo().is_some() {
+                    while let Some(e) = leitor.proximo() {
+                        if teclado.send(e).is_err() {
+                            return; // a thread de injecao saiu
+                        }
                         n += 1;
-                        // A injecao ainda nao existe: `CGEvent` precisa de
-                        // permissao de Acessibilidade concedida a mao, e
-                        // nao da para pedir por codigo. Ate ela entrar, o
-                        // host do Mac e SO-LEITURA -- e diz isso, em vez
-                        // de aceitar input e descartar em silencio.
-                        if n == 1 {
-                            println!(
-                                "  input recebido mas IGNORADO: a injecao no macOS \\
-                                 (CGEvent) ainda nao esta implementada"
-                            );
+                        // Os primeiros, um a um: "nao deu erro" e prova
+                        // fraca de que o input chegou -- e no macOS e
+                        // prova NENHUMA, porque sem Acessibilidade o
+                        // CGEventPost devolve sucesso e descarta.
+                        if n <= 8 {
+                            println!("  input #{n}: {e:?}");
+                        } else if n % 500 == 0 {
+                            println!("  {n} eventos de input aplicados");
                         }
                     }
                 }

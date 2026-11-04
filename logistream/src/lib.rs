@@ -27,6 +27,7 @@ pub mod host_linux;
 pub mod host_mac;
 pub mod host_win;
 pub mod input;
+pub mod input_mac;
 pub mod input_win;
 pub mod net;
 pub mod nvenc;

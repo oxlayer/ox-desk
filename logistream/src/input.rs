@@ -516,3 +516,177 @@ mod testes_scancode {
         assert_eq!(scancode_de_evdev(119), None);
     }
 }
+
+// --- teclas no macOS -------------------------------------------------
+
+/// Keycode do evdev -> keycode virtual do macOS (`kVK_*`).
+///
+/// Terceira tabela do projeto, pelo mesmo motivo das outras duas: o
+/// protocolo carrega **evdev** em todos os caminhos (e o que o
+/// `NotifyKeyboardKeycode` do Mutter recebe), e cada sistema tem a sua
+/// numeracao. O Windows precisa de Set-1 (`scancode_de_evdev`); o
+/// macOS precisa de `kVK`, que nao tem relacao nenhuma com nenhum dos
+/// dois -- `A` e 30 no evdev, 0x1E no Set-1 e 0x00 no macOS.
+///
+/// Fica aqui, neutra de plataforma, e nao em `input_mac.rs`, porque
+/// aquele arquivo e `cfg(target_os = "macos")` e os testes desta
+/// tabela nunca rodariam na maquina que roda a suite. Mesma decisao
+/// que ja tirou `scancode_de_evdev` do `input_win.rs` e a composicao
+/// do cursor do `capture_win.rs`.
+pub fn tecla_mac_de_evdev(evdev: u32) -> Option<u16> {
+    Some(match evdev {
+        // Letras. A ordem do macOS nao e alfabetica nem de teclado --
+        // e a do hardware do Apple II em diante, entao a tabela e
+        // literal por necessidade.
+        30 => 0x00, // A
+        48 => 0x0B, // B
+        46 => 0x08, // C
+        32 => 0x02, // D
+        18 => 0x0E, // E
+        33 => 0x03, // F
+        34 => 0x05, // G
+        35 => 0x04, // H
+        23 => 0x22, // I
+        36 => 0x26, // J
+        37 => 0x28, // K
+        38 => 0x25, // L
+        50 => 0x2E, // M
+        49 => 0x2D, // N
+        24 => 0x1F, // O
+        25 => 0x23, // P
+        16 => 0x0C, // Q
+        19 => 0x0F, // R
+        31 => 0x01, // S
+        20 => 0x11, // T
+        22 => 0x20, // U
+        47 => 0x09, // V
+        17 => 0x0D, // W
+        45 => 0x07, // X
+        21 => 0x10, // Y
+        44 => 0x06, // Z
+
+        // Digitos da fileira de cima.
+        2 => 0x12,  // 1
+        3 => 0x13,  // 2
+        4 => 0x14,  // 3
+        5 => 0x15,  // 4
+        6 => 0x17,  // 5
+        7 => 0x16,  // 6
+        8 => 0x1A,  // 7
+        9 => 0x1C,  // 8
+        10 => 0x19, // 9
+        11 => 0x1D, // 0
+
+        // Pontuacao e controles basicos.
+        12 => 0x1B, // -
+        13 => 0x18, // =
+        14 => 0x33, // backspace (kVK_Delete no macOS)
+        15 => 0x30, // tab
+        26 => 0x21, // [
+        27 => 0x1E, // ]
+        28 => 0x24, // enter
+        39 => 0x29, // ;
+        40 => 0x27, // '
+        41 => 0x32, // `
+        43 => 0x2A, // backslash
+        51 => 0x2B, // ,
+        52 => 0x2F, // .
+        53 => 0x2C, // /
+        57 => 0x31, // espaco
+        1 => 0x35,  // esc
+        58 => 0x39, // caps lock
+        111 => 0x75, // delete (forward)
+
+        // Modificadores. O macOS separa esquerda e direita.
+        29 => 0x3B,  // ctrl esq
+        97 => 0x3E,  // ctrl dir
+        42 => 0x38,  // shift esq
+        54 => 0x3C,  // shift dir
+        56 => 0x3A,  // alt/option esq
+        100 => 0x3D, // alt/option dir
+        125 => 0x37, // meta esq -> command
+        126 => 0x36, // meta dir -> command dir
+
+        // Setas e navegacao.
+        103 => 0x7E, // cima
+        108 => 0x7D, // baixo
+        105 => 0x7B, // esquerda
+        106 => 0x7C, // direita
+        102 => 0x73, // home
+        107 => 0x77, // end
+        104 => 0x74, // page up
+        109 => 0x79, // page down
+
+        // Funcao. A numeracao do macOS salta de proposito -- F1 e 0x7A
+        // e F5 e 0x60; nao da para calcular, so listar.
+        59 => 0x7A, // F1
+        60 => 0x78, // F2
+        61 => 0x63, // F3
+        62 => 0x76, // F4
+        63 => 0x60, // F5
+        64 => 0x61, // F6
+        65 => 0x62, // F7
+        66 => 0x64, // F8
+        67 => 0x65, // F9
+        68 => 0x6D, // F10
+        87 => 0x67, // F11
+        88 => 0x6F, // F12
+
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod testes_tecla_mac {
+    use super::*;
+
+    /// Uma amostra que cobre letra, digito, modificador, seta e funcao.
+    #[test]
+    fn teclas_comuns_tem_traducao() {
+        let casos = [
+            (30u32, 0x00u16, "A"),
+            (17, 0x0D, "W"),
+            (2, 0x12, "1"),
+            (28, 0x24, "enter"),
+            (57, 0x31, "espaco"),
+            (14, 0x33, "backspace"),
+            (42, 0x38, "shift esq"),
+            (125, 0x37, "command"),
+            (103, 0x7E, "seta cima"),
+            (59, 0x7A, "F1"),
+            (63, 0x60, "F5"),
+        ];
+        for (evdev, mac, nome) in casos {
+            assert_eq!(tecla_mac_de_evdev(evdev), Some(mac), "{nome}");
+        }
+    }
+
+    /// Duas teclas de evdev nao podem cair no mesmo kVK.
+    ///
+    /// Uma colisao faria duas teclas diferentes digitarem a mesma coisa
+    /// na outra maquina -- e, por ser tabela escrita a mao, e o erro
+    /// mais provavel aqui.
+    #[test]
+    fn nenhuma_colisao_na_tabela() {
+        let mut visto: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
+        for evdev in 0u32..=130 {
+            let Some(mac) = tecla_mac_de_evdev(evdev) else { continue };
+            if let Some(antes) = visto.insert(mac, evdev) {
+                panic!("evdev {antes} e {evdev} caem no mesmo kVK {mac:#04x}");
+            }
+        }
+    }
+
+    /// Codigo que nao existe nao vira tecla.
+    #[test]
+    fn desconhecido_devolve_none() {
+        assert_eq!(tecla_mac_de_evdev(9999), None);
+    }
+
+    /// O socorro do KVM tem de ser traduzivel nos dois lados.
+    #[test]
+    fn os_dois_ctrl_existem() {
+        assert!(tecla_mac_de_evdev(29).is_some(), "ctrl esquerdo");
+        assert!(tecla_mac_de_evdev(97).is_some(), "ctrl direito");
+    }
+}

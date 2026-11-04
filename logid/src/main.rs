@@ -132,6 +132,10 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
         // Recebe o clipboard de outra maquina, por SSH. Entrega ao
         // daemon local -- ver `clip::cli_set` para o porque de nao
         // escrever direto.
+        Some("kvm-soltar") => {
+            let porta = Config::load().map(|c| c.port).unwrap_or(8787);
+            Some(crate::kvm::cli_soltar(porta))
+        }
         Some("clip-set") => {
             let porta = Config::load().map(|c| c.port).unwrap_or(8787);
             Some(crate::clip::cli_set(porta))
@@ -144,6 +148,8 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
   (sem comando)  sobe o daemon e serve a API em 127.0.0.1
   serve          idem, explicito
 
+  kvm-soltar     devolve o input desta maquina para ela mesma
+                 (usado por um par que quer o input de volta)
   clip-set       le o stdin e poe no clipboard desta maquina
                  (usado pelos pares por SSH)
 
@@ -229,8 +235,12 @@ fn main() -> std::process::ExitCode {
     peers::spawn(Arc::clone(&cfg));
     // Mantem o survey local quente: a borda nao pode pagar ~360 ms.
     hidpp::spawn_refresher();
-    // Nenhum KVM orfao segurando teclado de ninguem.
-    kvm::limpar_orfaos();
+    // Um KVM que sobreviveu ao reinicio continua valendo: adotar, nao
+    // matar. Matar arrancava o input de quem estava usando a outra
+    // maquina toda vez que um deploy reiniciava o daemon.
+    if let Ok(g) = cfg.read() {
+        kvm::adotar(&g);
+    }
 
     // Clipboard compartilhado. No Linux uma thread com sessao D-Bus
     // propria observa e publica; nos outros, amostragem.
@@ -705,6 +715,12 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 
     if path == "/api/config" && method == "PATCH" {
         return patch_config(req, cfg, cache);
+    }
+    if path == "/api/kvm/soltar" && method == "POST" {
+        return match kvm::soltar() {
+            Ok(()) => ok_json(req, "{\"ok\":true}".into()),
+            Err(e) => err_json(req, 500, &e),
+        };
     }
     if path == "/api/clipboard" && method == "POST" {
         return post_clipboard(req);
