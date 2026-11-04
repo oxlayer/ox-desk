@@ -18,6 +18,7 @@
 
 pub mod capture;
 pub mod capture_win;
+pub mod decode_nv;
 pub mod encode;
 pub mod host_linux;
 pub mod host_win;

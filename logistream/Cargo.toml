@@ -104,6 +104,10 @@ name = "logistream-probe-nvenc"
 path = "src/bin/nvenc-probe.rs"
 
 [[bin]]
+name = "logistream-probe-nvdec"
+path = "src/bin/nvdec-probe.rs"
+
+[[bin]]
 name = "logistream-probe-capture"
 path = "src/bin/capture-probe.rs"
 

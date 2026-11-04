@@ -6,6 +6,13 @@ aquela máquina está rodando — não o que o repositório tem.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-04 · Decodificação pela GPU, sem depender do ffmpeg
+O NVDEC decodifica o nosso fluxo: 2560x1440 a 250 fps, 4 ms por quadro
+contando a volta para a CPU. A conversão de cor foi conferida contra o
+ffmpeg no mesmo quadro (média R=60 G=60 B=61 contra R=60 G=59 B=61 — um
+ponto de arredondamento). É o que vai liberar o visualizador no Windows,
+onde não existe libavcodec, e com ele o último RDP do sistema.
+
 ## 2026-11-04 · O painel pode perguntar ao dispositivo onde ficam os canais
 `logid hosts <slot>` lê os hosts do próprio teclado (0x1815), com nome e
 tipo de rádio: canal 1 `ubuntu-host` (unifying), canal 2 `windows-host`
