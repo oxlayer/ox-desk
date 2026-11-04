@@ -54,3 +54,24 @@ interativa. É assim que `logid` e `logistream-host` sobem.
 - [[caminhos-de-tela]]
 - [[../.claude/rules/config-por-maquina]]
 - [[../.claude/rules/reiniciar-agente]]
+
+## Como o input troca de máquina
+
+`input.mode` na config:
+
+| Modo | Mecanismo | Precisa de quê |
+|---|---|---|
+| `lan` (padrão) | captura aqui (`EVIOCGRAB`) e manda pelo stream de input da tela remota | ACL no `/dev/input` ([[../.claude/skills/dar-acesso-a-input]]) e o host de tela de pé no destino |
+| `hidpp` | manda o dispositivo trocar de canal Easy-Switch (0x1814) | um receptor pareado **na máquina de destino** |
+
+O padrão virou `lan` quando ficamos com um dongle só: no `hidpp`,
+"mandar para windows-host" fazia o teclado procurar um receptor que não
+existe lá, não achar, e voltar.
+
+Diferença que importa na UI: no `hidpp` o dispositivo **some** do nosso
+receptor ao trocar, então "algum dispositivo offline" era o sinal de
+"está fora". No `lan` ele nunca sai daqui. Quem responde "para onde o
+input está indo" é `GET /api/kvm`.
+
+A captura só existe no Linux por enquanto. Log do processo:
+`~/.local/state/logistream-kvm.log`.

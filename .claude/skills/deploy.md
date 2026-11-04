@@ -37,3 +37,31 @@ arquivo que aterrissou, justamente porque isso já aconteceu
 O build id é o HEAD do git, então um commit só de documentação faz as
 máquinas reportarem "atrasadas" sem nada de funcional ter mudado. Não é
 problema; o próximo deploy sincroniza.
+
+## Reiniciar a casca Electron (bandeja)
+
+O menu da bandeja vive no **processo principal** do Electron. O
+`vigiaBuild()` recarrega a *página* quando o build muda, mas não o
+processo principal — então mudança em `gui/main.js` só entra
+reiniciando o app.
+
+```bash
+pkill -f 'electron \.$'
+cd ~/dev/logi/gui && (setsid nohup env -u ELECTRON_RUN_AS_NODE \
+  node ./node_modules/.bin/electron . > ~/.local/state/logi-gui.log 2>&1 &)
+```
+
+**`env -u ELECTRON_RUN_AS_NODE` não é opcional.** Com essa variável
+no ambiente, o electron roda como node puro, `app` vem `undefined` e
+morre em `app.requestSingleInstanceLock()` — mensagem que não diz nada
+sobre a variável. Já derrubei a GUI do usuário assim.
+
+Conferir que voltou, sempre — matar e não relançar deixa a pessoa sem
+bandeja:
+
+```bash
+pgrep -af electron | head -2
+tail -3 ~/.local/state/logi-gui.log
+```
+
+O aviso de Vulkan/ozone no log é cosmético.
