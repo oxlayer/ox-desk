@@ -28,6 +28,7 @@ mod border;
 #[cfg(windows)]
 mod border_win;
 mod config;
+mod files;
 mod focus;
 mod follow;
 mod hidpp;
@@ -344,6 +345,37 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or_else(logs::default_lines);
             match serde_json::to_string(&logs::tail(n)) {
+                Ok(b) => ok_json(req, b),
+                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            }
+        }
+
+        "/api/files" => {
+            // ?host=<nome>&path=<caminho>. O `path` vem percent-encoded:
+            // ele carrega `/`, `\\`, `:` e espaco, e nenhum deles pode
+            // ser confundido com separador da query.
+            let q = req.url().split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
+            let param = |k: &str| -> Option<String> {
+                q.split('&')
+                    .filter_map(|kv| kv.split_once('='))
+                    .find(|(name, _)| *name == k)
+                    .map(|(_, v)| files::percent_decode(v))
+            };
+            let snap = match cfg.read() {
+                Ok(g) => g.clone(),
+                Err(_) => return err_json(req, 500, "config travada"),
+            };
+            // Sem `host`: a propria maquina, que e o caso comum de abrir
+            // o painel e so olhar.
+            let host = param("host").unwrap_or_else(|| {
+                snap.hosts
+                    .iter()
+                    .find(|h| h.is_local())
+                    .map(|h| h.name.clone())
+                    .unwrap_or_default()
+            });
+            let path = param("path").unwrap_or_default();
+            match serde_json::to_string(&files::list(&snap, &host, &path)) {
                 Ok(b) => ok_json(req, b),
                 Err(e) => err_json(req, 500, &format!("serializar: {e}")),
             }

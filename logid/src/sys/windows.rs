@@ -189,3 +189,11 @@ pub fn config_dir() -> PathBuf {
         .unwrap_or_else(|_| ".".into());
     PathBuf::from(base).join("logi")
 }
+
+/// Ponto de partida do navegador de arquivos.
+pub fn home_dir() -> PathBuf {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("APPDATA"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| "C:\\".into())
+}

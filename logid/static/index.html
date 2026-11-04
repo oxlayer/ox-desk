@@ -113,6 +113,39 @@
   .ctlrow .st.ok{color:var(--up)} .ctlrow .st.no{color:var(--down)}
   .ctlnote{padding:8px 16px 12px;color:var(--faint);font-size:11.5px}
 
+  .fswrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .fshead{display:flex;align-items:center;gap:10px;padding:12px 16px;
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .fshead h2{font-size:13px;font-weight:650;margin:0}
+  .fshead .meta{color:var(--faint);font-size:11px;font-family:var(--mono);
+    margin-left:auto}
+  .fshost{display:flex;gap:4px}
+  .fshost button{font:11.5px inherit;padding:3px 9px;border-radius:999px;
+    border:1px solid var(--line);background:var(--bg);color:var(--dim);
+    cursor:pointer}
+  .fshost button.on{background:var(--fg);color:var(--card);
+    border-color:var(--fg)}
+  .fspath{padding:7px 16px;border-bottom:1px solid var(--line);
+    font:11.5px var(--mono);color:var(--dim);word-break:break-all;
+    background:var(--inset)}
+  .fsbody{max-height:320px;overflow-y:auto;padding:4px 0}
+  .fsrow{display:flex;align-items:center;gap:10px;padding:3px 16px;
+    font-size:12.5px}
+  .fsrow .ic{flex:none;width:1.1em;color:var(--faint);font:11px var(--mono)}
+  .fsrow .nm{flex:1;min-width:0;word-break:break-all}
+  .fsrow .sz{flex:none;font:11px var(--mono);color:var(--faint);
+    min-width:4.5em;text-align:right}
+  .fsrow .wh{flex:none;font:11px var(--mono);color:var(--faint);
+    min-width:8.5em;text-align:right}
+  .fsrow.dir{cursor:pointer}
+  .fsrow.dir .nm{font-weight:560}
+  .fsrow.dir:hover{background:var(--inset)}
+  .fsrow.up{cursor:pointer;color:var(--dim)}
+  .fsrow.up:hover{background:var(--inset)}
+  .fsnote{padding:8px 16px 12px;color:var(--faint);font-size:11.5px}
+  @media(max-width:560px){.fsrow .wh{display:none}}
+
   .logwrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
     border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
   .loghead{display:flex;align-items:center;gap:10px;padding:12px 16px;
@@ -157,6 +190,20 @@
     Escrever aqui muda o comportamento fisico do botao, no proprio
     dispositivo. &ldquo;padrao&rdquo; desfaz. Dispositivo em outra maquina nao
     aparece: o HID++ nao alcanca quem esta em outro canal.
+  </div>
+</div>
+
+<div class="fswrap">
+  <div class="fshead">
+    <h2>Arquivos</h2>
+    <div class="fshost" id="fshost"></div>
+    <span class="meta" id="fsmeta"></span>
+  </div>
+  <div class="fspath" id="fspath">...</div>
+  <div class="fsbody" id="fsbody"><div class="fsnote">carregando...</div></div>
+  <div class="fsnote">
+    Somente leitura: lista pastas, nao baixa nem apaga. A outra maquina vem
+    por SFTP no mesmo SSH que o daemon ja usa.
   </div>
 </div>
 
@@ -334,6 +381,7 @@ async function tick(){
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     grid.innerHTML = d.hosts.map(card).join('');
+    fsHosts(d.hosts);
     const on = d.hosts.filter(h => h.online).length;
     const bad = d.hosts.reduce((n,h) => n + h.services.filter(s => !s.ok).length, 0);
     document.getElementById('sum').innerHTML = bad
@@ -345,7 +393,101 @@ async function tick(){
     document.getElementById('stamp').textContent = '--:--:--';
   }
 }
+// --- arquivos ---------------------------------------------------------
+// Navegacao e explicita: sem timer. Um refresh automatico brigaria com
+// quem esta navegando -- voce clica numa pasta e o tick te joga de volta.
+const FS = {host:null, path:''};
+
+function fsSize(n){
+  if (n == null) return '';
+  if (n < 1024) return n + ' B';
+  const u = ['KB','MB','GB','TB'];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < u.length - 1){ v /= 1024; i++; }
+  return (v < 10 ? v.toFixed(1) : Math.round(v)) + ' ' + u[i];
+}
+
+function fsWhen(e){
+  // Local sabe dizer a epoca; o SFTP so entrega o texto do `ls`. Mostrar
+  // o que cada origem de fato sabe, em vez de inventar precisao.
+  if (e.mtime != null){
+    const d = new Date(e.mtime * 1000);
+    return d.toLocaleDateString([], {day:'2-digit', month:'short'}) + ' ' +
+           d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  }
+  return e.mtime_text || '';
+}
+
+function fsHosts(hosts){
+  const box = document.getElementById('fshost');
+  const want = hosts.map(h => h.name).join('|');
+  if (box.dataset.hosts === want) return;   // nao redesenha a cada tick
+  box.dataset.hosts = want;
+  box.innerHTML = hosts.map(h =>
+    `<button data-host="${esc(h.name)}">${esc(h.name)}</button>`).join('');
+}
+
+async function files(){
+  const body = document.getElementById('fsbody');
+  const q = new URLSearchParams();
+  if (FS.host) q.set('host', FS.host);
+  if (FS.path) q.set('path', FS.path);
+  try{
+    const r = await fetch('/api/files?' + q, {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    FS.host = d.host;
+    FS.path = d.path;
+    document.getElementById('fspath').textContent = d.display || d.path;
+    for (const b of document.querySelectorAll('#fshost button'))
+      b.classList.toggle('on', b.dataset.host === d.host);
+
+    if (d.error){
+      body.innerHTML = `<div class="fsnote">${esc(d.error)}</div>`;
+      document.getElementById('fsmeta').textContent = d.source;
+      return;
+    }
+    const up = d.parent
+      ? `<div class="fsrow up" data-go="${esc(d.parent)}">` +
+        `<span class="ic">..</span><span class="nm">voltar</span></div>`
+      : '';
+    const rows = d.entries.map(e => {
+      const icon = e.kind === 'dir' ? '&#9656;' : (e.kind === 'link' ? '&#8599;' : '&middot;');
+      const nav = e.kind === 'dir'
+        ? ` data-go="${esc(d.path.replace(/\/+$/, '') + '/' + e.name)}"` : '';
+      return `<div class="fsrow ${e.kind}"${nav}><span class="ic">${icon}</span>` +
+             `<span class="nm">${esc(e.name)}</span>` +
+             `<span class="sz">${fsSize(e.size)}</span>` +
+             `<span class="wh">${esc(fsWhen(e))}</span></div>`;
+    }).join('');
+    body.innerHTML = up + rows ||
+      '<div class="fsnote">pasta vazia</div>';
+    document.getElementById('fsmeta').textContent =
+      d.entries.length + ' item(ns) - ' + d.source +
+      (d.truncated ? ' - lista cortada' : '');
+  }catch(e){
+    body.innerHTML = `<div class="fsnote">inacessivel: ${esc(e.message)}</div>`;
+  }
+}
+
+// Delegacao: as linhas sao reescritas a cada navegacao, e listener por
+// linha vazaria handler em cada troca de pasta.
+document.getElementById('fsbody').addEventListener('click', ev => {
+  const row = ev.target.closest('[data-go]');
+  if (!row) return;
+  FS.path = row.dataset.go;
+  files();
+});
+document.getElementById('fshost').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-host]');
+  if (!b || b.dataset.host === FS.host) return;
+  FS.host = b.dataset.host;
+  FS.path = '';           // cada host comeca no proprio home
+  files();
+});
+
 tick(); setInterval(tick, RS*1000);
+files();
 logs(); setInterval(logs, RS*1000);
 // Controles mudam pouco e a leitura e caro (uma ida e volta HID++ por
 // controle): intervalo bem maior que o do painel.

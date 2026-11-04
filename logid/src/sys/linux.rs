@@ -121,3 +121,8 @@ pub fn config_dir() -> std::path::PathBuf {
         });
     base.join("logi")
 }
+
+/// Ponto de partida do navegador de arquivos.
+pub fn home_dir() -> std::path::PathBuf {
+    std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| "/".into())
+}
