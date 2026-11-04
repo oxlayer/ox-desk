@@ -108,6 +108,27 @@ fn find_program(name: &str) -> Option<PathBuf> {
 /// `{u_flag}` existe porque o freerdp quer `/u:nome` como UM argumento, e
 /// quando nao ha usuario o argumento tem de **desaparecer** -- passar
 /// `/u:` vazio faz ele pedir usuario em prompt e travar sem terminal.
+/// Escreve o `.rdp` num temporario e devolve o caminho.
+///
+/// Arquivo e nao argumento porque ha cliente que so aceita assim -- e
+/// porque e por ele que som e microfone passam. Nome fixo por host: um
+/// arquivo novo a cada clique encheria o temp sem necessidade.
+fn write_rdp(modelo: &str, host: &str, port: u16, user: Option<&str>, opts: Opts) -> Option<String> {
+    let user_line = user.map(|u| format!("username:s:{u}\n")).unwrap_or_default();
+    let corpo = modelo
+        .replace("{host}", host)
+        .replace("{port}", &port.to_string())
+        .replace("{user_line}", &user_line)
+        // 0 = tocar aqui, 2 = nao tocar em lugar nenhum.
+        .replace("{audiomode}", if opts.audio { "0" } else { "2" })
+        .replace("{audiocapture}", if opts.mic { "1" } else { "0" });
+    let seguro: String =
+        host.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let p = std::env::temp_dir().join(format!("logi-{seguro}.rdp"));
+    std::fs::write(&p, corpo).ok()?;
+    Some(p.to_string_lossy().into_owned())
+}
+
 fn render(args: &[&str], host: &str, port: u16, user: Option<&str>) -> Vec<String> {
     let user_at = user.map(|u| format!("{u}@")).unwrap_or_default();
     args.iter()
@@ -156,8 +177,17 @@ fn plan_for(cfg: &Config, name: &str, opts: Opts) -> Option<Plan> {
                 args.extend_from_slice(extra);
             }
         }
+        let arquivo = spec.file.and_then(|m| write_rdp(m, &h.addr, sc.port, user, opts));
         let mut cmd = vec![found.to_string_lossy().into_owned()];
-        cmd.extend(render(&args, &h.addr, sc.port, user));
+        cmd.extend(
+            render(&args, &h.addr, sc.port, user)
+                .into_iter()
+                .map(|a| match &arquivo {
+                    Some(f) => a.replace("{file}", f),
+                    None => a,
+                })
+                .collect::<Vec<_>>(),
+        );
         caps = Caps {
             audio: spec.audio.is_some(),
             mic: spec.mic.is_some(),

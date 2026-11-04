@@ -206,12 +206,16 @@ pub fn home_dir() -> PathBuf {
 pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
     use super::ClientSpec;
     match kind {
+        // Pelo ARQUIVO e nao por `/v:`: o `mstsc` aceita os dois, mas so
+        // o arquivo carrega som e microfone -- a linha de comando dele
+        // nao tem essas opcoes.
         "rdp" => vec![ClientSpec {
             prog: "mstsc.exe",
-            args: &["/v:{host}:{port}"],
-            audio: None,
-            mic: None,
+            args: &["{file}"],
+            audio: Some(&[]),
+            mic: Some(&[]),
             view_only: None,
+            file: Some("full address:s:{host}:{port}\\n{user_line}screen mode id:i:2\\nredirectclipboard:i:1\\naudiomode:i:{audiomode}\\naudiocapturemode:i:{audiocapture}\\n"),
         }],
         "vnc" => vec![
             ClientSpec {
@@ -220,6 +224,7 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 audio: None,
                 mic: None,
                 view_only: Some(&["-ViewOnly"]),
+                file: None,
             },
             ClientSpec {
                 prog: "tvnviewer.exe",
@@ -227,6 +232,7 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 audio: None,
                 mic: None,
                 view_only: Some(&["-viewonly"]),
+                file: None,
             },
         ],
         _ => vec![],

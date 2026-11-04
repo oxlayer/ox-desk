@@ -72,4 +72,17 @@ pub struct ClientSpec {
     /// Argumentos para entrar SEM teclado e mouse. `None` = o cliente
     /// sempre controla.
     pub view_only: Option<&'static [&'static str]>,
+    /// Conteudo de um arquivo `.rdp` que o cliente consome, quando ele
+    /// nao aceita opcoes por linha de comando.
+    ///
+    /// O `Windows App` do macOS **recusa** o esquema `rdp://`
+    /// (verificado: "Unable to interpret ... as a path or URL") mas abre
+    /// um `.rdp` sem reclamar. O `mstsc` do Windows aceita os dois, e
+    /// pelo arquivo ele ganha som e microfone, que a linha de comando
+    /// dele nao oferece.
+    ///
+    /// Marcadores: `{host}` `{port}` `{user_line}` `{audiomode}`
+    /// `{audiocapture}`. O caminho do arquivo entra nos `args` como
+    /// `{file}`.
+    pub file: Option<&'static str>,
 }

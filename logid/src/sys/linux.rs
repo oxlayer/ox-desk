@@ -111,6 +111,7 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 audio: Some(&["/sound"]),
                 mic: Some(&["/microphone"]),
                 view_only: None,
+                file: None,
             },
             ClientSpec {
                 prog: "xfreerdp",
@@ -118,6 +119,7 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 audio: Some(&["/sound"]),
                 mic: Some(&["/microphone"]),
                 view_only: None,
+                file: None,
             },
             ClientSpec {
                 prog: "gnome-connections",
@@ -125,6 +127,7 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 audio: None,
                 mic: None,
                 view_only: None,
+                file: None,
             },
             ClientSpec {
                 prog: "remmina",
@@ -132,6 +135,7 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 audio: None,
                 mic: None,
                 view_only: None,
+                file: None,
             },
         ],
         "vnc" => vec![
@@ -143,6 +147,7 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 audio: None,
                 mic: None,
                 view_only: Some(&["-ViewOnly"]),
+                file: None,
             },
             ClientSpec {
                 prog: "gnome-connections",
@@ -150,6 +155,7 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 audio: None,
                 mic: None,
                 view_only: None,
+                file: None,
             },
             ClientSpec {
                 prog: "remmina",
@@ -157,6 +163,7 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 audio: None,
                 mic: None,
                 view_only: None,
+                file: None,
             },
         ],
         _ => vec![],

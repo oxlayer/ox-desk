@@ -159,17 +159,22 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
             audio: None,
             mic: None,
             view_only: None,
+            file: None,
         }],
-        // O esquema `rdp://` com `full address` e o que o cliente da
-        // Microsoft registra. NAO verificado -- o app nao esta instalado;
-        // quando estiver, o blocker da UI muda de "sem cliente" para o
-        // que acontecer de fato.
+        // Arquivo `.rdp`, nao o esquema `rdp://`: o `Windows App`
+        // RECUSA a URL ("Unable to interpret ... as a path or URL") e
+        // abre o arquivo sem reclamar. Verificado nesta maquina.
+        //
+        // De brinde, o arquivo carrega som e microfone -- entao as
+        // opcoes da GUI valem aqui, o que a linha de comando nao daria.
+        // `-g` abre sem roubar o foco de quem estiver usando a maquina.
         "rdp" => vec![ClientSpec {
             prog: "open",
-            args: &["rdp://full%20address=s:{host}:{port}"],
-            audio: None,
-            mic: None,
+            args: &["-g", "{file}"],
+            audio: Some(&[]),
+            mic: Some(&[]),
             view_only: None,
+            file: Some("full address:s:{host}:{port}\\n{user_line}screen mode id:i:2\\nredirectclipboard:i:1\\naudiomode:i:{audiomode}\\naudiocapturemode:i:{audiocapture}\\n"),
         }],
         _ => vec![],
     }
