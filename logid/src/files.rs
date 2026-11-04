@@ -127,7 +127,7 @@ pub fn list(cfg: &Config, host: &str, path: &str) -> Listing {
     if h.is_local() {
         return list_local(host, path);
     }
-    let Some(alias) = &h.ssh else {
+    let Some(alias) = h.ssh.as_deref() else {
         return Listing::failed(
             host,
             path,
@@ -139,7 +139,7 @@ pub fn list(cfg: &Config, host: &str, path: &str) -> Listing {
             ),
         );
     };
-    list_sftp(host, alias, path)
+    list_sftp(host, alias, &h.addr, path)
 }
 
 // --- local -----------------------------------------------------------------
@@ -204,20 +204,25 @@ fn list_local(host: &str, path: &str) -> Listing {
 ///
 /// `-b -` le os comandos do stdin. Lote em vez de sessao interativa
 /// porque o daemon nao tem com quem conversar: um pedido, uma resposta.
-fn sftp_batch(alias: &str, script: &str) -> Result<String, String> {
+fn sftp_batch(alias: &str, addr: &str, script: &str) -> Result<String, String> {
+    let mut args: Vec<String> = vec![
+        "-q".into(),
+        "-b".into(),
+        "-".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        format!("ConnectTimeout={SFTP_TIMEOUT_SECS}"),
+        "-o".into(),
+        "LogLevel=ERROR".into(),
+    ];
+    // Mesmo contorno do `agent.rs`: resolvemos aqui, porque o resolvedor
+    // do ssh/sftp lancado pelo daemon no Windows nao enxerga o nome.
+    // Ver `probe::ssh_addr_opts`.
+    args.extend(crate::probe::ssh_addr_opts(addr));
+    args.push(alias.to_string());
     let mut child = Command::new("sftp")
-        .args([
-            "-q",
-            "-b",
-            "-",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            &format!("ConnectTimeout={SFTP_TIMEOUT_SECS}"),
-            "-o",
-            "LogLevel=ERROR",
-            alias,
-        ])
+        .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -241,7 +246,7 @@ fn sftp_batch(alias: &str, script: &str) -> Result<String, String> {
     Ok(stdout)
 }
 
-fn list_sftp(host: &str, alias: &str, path: &str) -> Listing {
+fn list_sftp(host: &str, alias: &str, addr: &str, path: &str) -> Listing {
     // UM lote, nao dois. A primeira versao chamava `pwd` e depois
     // `cd`+`ls`, pagando dois handshakes SSH -- 809 ms medidos para
     // listar uma pasta. O `pwd` no mesmo lote da o caminho canonico de
@@ -258,7 +263,7 @@ fn list_sftp(host: &str, alias: &str, path: &str) -> Listing {
     } else {
         format!("cd '{}'\npwd\nls -la\n", path.replace('\'', ""))
     };
-    let out = match sftp_batch(alias, &script) {
+    let out = match sftp_batch(alias, addr, &script) {
         Ok(o) => o,
         Err(e) => return Listing::failed(host, path, "sftp", e),
     };

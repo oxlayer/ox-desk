@@ -3,6 +3,7 @@
 //! Invocado por SSH de proposito: reaproveita a chave que ja temos, sem
 //! porta nova nem auth nova. Ver ../specs/002-ssh.md.
 
+use crate::config::{HostCfg, HostOs};
 use serde::Serialize;
 use std::process::Command;
 
@@ -29,18 +30,52 @@ pub struct AgentInfo {
     pub error: Option<String>,
 }
 
-/// Roda `logid-agent devices` no host remoto e interpreta a saida.
-pub fn devices(ssh_alias: &str, exe: &str) -> AgentInfo {
-    // PowerShell expande %VAR% so via $env:; montamos o comando la.
-    let ps = format!("& \"{}\" devices", exe.replace("%LOCALAPPDATA%", "$env:LOCALAPPDATA"));
-    let out = Command::new("ssh")
-        .args([
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=4",
-            "-o", "LogLevel=ERROR",
-            ssh_alias, &ps,
-        ])
-        .output();
+/// Monta a linha a executar NO par, respeitando o shell de lá.
+///
+/// No Windows o shell e o PowerShell, que expande `%VAR%` so via
+/// `$env:`, e precisa do operador `&` para executar um caminho entre
+/// aspas. No Unix e `sh`: aspas simples bastam, e `$HOME` ja e expandido
+/// pelo proprio shell.
+///
+/// Rodar a forma errada falha de um jeito chato: no Unix o `& "..."`
+/// viraria "comando em background" e devolveria sucesso vazio, que o
+/// chamador leria como "agente nao respondeu JSON".
+fn remote_cmd(os: HostOs, exe: &str, args: &str) -> String {
+    match os {
+        HostOs::Windows => {
+            format!("& \"{}\" {args}", exe.replace("%LOCALAPPDATA%", "$env:LOCALAPPDATA"))
+        }
+        // `Unknown` tratado como Unix: e o default seguro depois de o par
+        // deixar de ser sempre Windows, e um caminho com `%` ou `\` ja foi
+        // classificado como Windows por `HostCfg::os`.
+        _ => format!("'{}' {args}", exe.replace('\'', "")),
+    }
+}
+
+/// Roda `<agent> devices` no host remoto e interpreta a saida.
+///
+/// Recebe o host inteiro, e nao alias+exe+os soltos, porque precisa de
+/// quatro coisas dele: o alias, o caminho do agente, o SO (para montar o
+/// comando no shell certo) e o `addr` (para resolver aqui em vez de
+/// deixar o ssh resolver -- ver `probe::ssh_addr_opts`).
+pub fn devices(h: &HostCfg) -> AgentInfo {
+    let (Some(ssh_alias), Some(exe)) = (&h.ssh, &h.agent) else {
+        return AgentInfo {
+            reachable: false,
+            slots: vec![],
+            error: Some("host sem `ssh` e/ou `agent` na config".into()),
+        };
+    };
+    let ps = remote_cmd(h.os(), exe, "devices");
+    let mut args: Vec<String> = vec![
+        "-o".into(), "BatchMode=yes".into(),
+        "-o".into(), "ConnectTimeout=4".into(),
+        "-o".into(), "LogLevel=ERROR".into(),
+    ];
+    args.extend(crate::probe::ssh_addr_opts(&h.addr));
+    args.push(ssh_alias.clone());
+    args.push(ps);
+    let out = Command::new("ssh").args(&args).output();
 
     let Ok(out) = out else {
         return AgentInfo {
@@ -101,20 +136,20 @@ pub fn devices(ssh_alias: &str, exe: &str) -> AgentInfo {
 ///
 /// Usado pelo reconciliador: quem detem o dispositivo e quem pode
 /// empurra-lo, e as vezes nao somos nos.
-pub fn set_host(ssh_alias: &str, exe: &str, slot: u8, host: u8) -> Result<(), String> {
-    let ps = format!(
-        "& \"{}\" set-host {slot} {host} --confirm",
-        exe.replace("%LOCALAPPDATA%", "$env:LOCALAPPDATA")
-    );
-    let out = Command::new("ssh")
-        .args([
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=4",
-            "-o", "LogLevel=ERROR",
-            ssh_alias, &ps,
-        ])
-        .output()
-        .map_err(|e| format!("ssh: {e}"))?;
+pub fn set_host(h: &HostCfg, slot: u8, host: u8) -> Result<(), String> {
+    let (Some(ssh_alias), Some(exe)) = (&h.ssh, &h.agent) else {
+        return Err("host sem `ssh` e/ou `agent` na config".into());
+    };
+    let ps = remote_cmd(h.os(), exe, &format!("set-host {slot} {host} --confirm"));
+    let mut args: Vec<String> = vec![
+        "-o".into(), "BatchMode=yes".into(),
+        "-o".into(), "ConnectTimeout=4".into(),
+        "-o".into(), "LogLevel=ERROR".into(),
+    ];
+    args.extend(crate::probe::ssh_addr_opts(&h.addr));
+    args.push(ssh_alias.clone());
+    args.push(ps);
+    let out = Command::new("ssh").args(&args).output().map_err(|e| format!("ssh: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text
         .lines()
@@ -126,5 +161,34 @@ pub fn set_host(ssh_alias: &str, exe: &str, slot: u8, host: u8) -> Result<(), St
         Ok(())
     } else {
         Err(v.get("error").and_then(|e| e.as_str()).unwrap_or("falhou").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn comando_remoto_respeita_o_shell_do_par() {
+        // Windows: PowerShell precisa do `&` e expande %VAR% via $env:.
+        assert_eq!(
+            remote_cmd(HostOs::Windows, r"%LOCALAPPDATA%\logid\logid-agent.exe", "devices"),
+            "& \"$env:LOCALAPPDATA\\logid\\logid-agent.exe\" devices"
+        );
+        // Unix: aspas simples, sem `&` -- que ali significaria background
+        // e devolveria sucesso vazio, lido como "nao respondeu JSON".
+        assert_eq!(
+            remote_cmd(HostOs::Linux, "/home/user/.local/bin/logid", "devices"),
+            "'/home/user/.local/bin/logid' devices"
+        );
+        assert_eq!(
+            remote_cmd(HostOs::Macos, "/opt/homebrew/bin/logid", "set-host 1 2 --confirm"),
+            "'/opt/homebrew/bin/logid' set-host 1 2 --confirm"
+        );
+        // Desconhecido cai no Unix, que e o default seguro agora.
+        assert_eq!(
+            remote_cmd(HostOs::Unknown, "/usr/local/bin/logid", "devices"),
+            "'/usr/local/bin/logid' devices"
+        );
     }
 }

@@ -24,9 +24,16 @@ fn main() {
                           .unwrap_or_else(|| "canal ?".into());
             let bat = d.battery.as_ref().map(|b| {
                 let p = b.percent.map(|v| format!("{v}%")).unwrap_or_default();
-                let l = b.level.unwrap_or("");
-                format!("bateria {p} {l} ({}){}", b.source,
-                        if b.charging { " carregando" } else { "" })
+                // `status` e o que o DISPOSITIVO declara, nao nossa
+                // deducao -- o MX Keys diz "descarregando" no cabo com a
+                // carga subindo. Por isso vem rotulado.
+                let st = if b.charging {
+                    "carregando".to_string()
+                } else {
+                    b.status.map(|s| format!("diz: {s}")).unwrap_or_default()
+                };
+                let nx = b.next_level.map(|v| format!(" prox {v}%")).unwrap_or_default();
+                format!("bateria {p} {st}{nx} ({})", b.source)
             }).unwrap_or_else(|| "bateria ?".into());
             println!("  slot {}: ONLINE  {:?}  {h}  ping {:?}ms  {bat}",
                      d.slot, d.name.as_deref().unwrap_or("?"), d.reply_ms);

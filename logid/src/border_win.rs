@@ -100,6 +100,13 @@ fn run(cfg: Arc<RwLock<Config>>) {
     let mut cooldown: Option<Instant> = None;
     let mut guard = Guard::new(&cfg);
     let mut last_presence = Instant::now() - PRESENCE_EVERY;
+    // Ja comeca encostado? Entao nao conta como chegada. Sem isto, um
+    // cursor estacionado na borda dispara no primeiro tick depois do
+    // boot.
+    let mut was_at_edge = winput::cursor().map(|p| winput::at_edge(&edge, p)).unwrap_or(false);
+    if was_at_edge {
+        say!("border: cursor ja esta na borda '{edge}' -- aguardando ele sair e voltar");
+    }
 
     loop {
         std::thread::sleep(TICK);
@@ -120,15 +127,35 @@ fn run(cfg: Arc<RwLock<Config>>) {
         let Some(p) = winput::cursor() else { continue };
         if !winput::at_edge(&edge, p) {
             touching = None;
+            was_at_edge = false;
             continue;
         }
-        let since = *touching.get_or_insert_with(Instant::now);
+
+        // Exige CHEGADA, nao presenca.
+        //
+        // O mutter entrega travessia como evento, entao do lado Linux isso
+        // vem de graca. Aqui o polling le posicao: um cursor parado na
+        // borda pareceria "tocando" a cada 30 ms, para sempre. O custo
+        // disso nao e log repetido -- e que, no instante em que os
+        // dispositivos CHEGASSEM nesta maquina, a borda os mandaria de
+        // volta sem ninguem ter encostado em nada.
+        //
+        // Depois de disparar, `was_at_edge` fica `true`: so volta a valer
+        // quando o cursor sair da borda e voltar.
+        if was_at_edge && touching.is_none() {
+            continue;
+        }
+        if !was_at_edge {
+            was_at_edge = true;
+            touching = Some(Instant::now());
+        }
+        let since = touching.unwrap_or_else(Instant::now);
         if since.elapsed() < hold {
             continue;
         }
         touching = None;
         cooldown = Some(Instant::now() + COOLDOWN);
-        say!("border: borda '{edge}' tocada em ({},{}) -- trocando", p.x, p.y);
+        say!("border: borda '{edge}' alcancada em ({},{}) -- trocando", p.x, p.y);
         switch_away(&cfg, &target);
     }
 }

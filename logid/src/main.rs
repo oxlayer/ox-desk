@@ -106,7 +106,82 @@ fn cached(cfg: &Config, cache: &Mutex<Cache>) -> Arc<Snapshot> {
     fresh
 }
 
-fn main() {
+/// Subcomandos antes de servir.
+///
+/// O `logid` tambem e o "agente" do proprio host: o par o invoca por SSH
+/// com `devices` / `host-info` / `set-host` e le uma linha de JSON. Sem
+/// isto, o Windows nao conseguia sondar o Ubuntu como o Ubuntu ja sondava
+/// o Windows -- e, sem essa sondagem, `focus::plan` BLOQUEIA a troca,
+/// porque sem alguem do outro lado capaz de devolver o dispositivo a
+/// origem nao pode desfazer (specs/005).
+///
+/// O formato vem de `hidpp::protocol`, compartilhado com o `logid-agent`:
+/// e o contrato entre as maquinas, e duas copias divergiriam.
+fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
+    use std::process::ExitCode;
+    match args.first().map(String::as_str) {
+        None => None,
+        Some("serve") => None,
+        Some("-h") | Some("--help") | Some("help") => {
+            // stderr: stdout e reservado para o JSON do protocolo.
+            eprintln!(
+                "logid [comando]
+
+  (sem comando)  sobe o daemon e serve a API em 127.0.0.1
+  serve          idem, explicito
+
+  devices        inventario dos slots deste receptor (JSON)
+  host-info <slot>
+                 numero de hosts e canal atual (JSON)
+  set-host <slot> <host> --confirm
+                 troca o canal. 1-based. IRREVERSIVEL: o dispositivo
+                 sai deste receptor e nao responde mais aqui.
+
+Os tres ultimos existem para o PAR nos sondar por SSH; a saida e uma
+linha de JSON. Ver specs/002-ssh.md."
+            );
+            Some(ExitCode::SUCCESS)
+        }
+        Some(_) => {
+            // `::hidpp` e nao `hidpp`: este crate tem um modulo local com
+            // o mesmo nome (o adaptador em hidpp.rs), que sombreia a crate
+            // compartilhada aqui no raiz.
+            let api = match ::hidpp::hidapi::HidApi::new() {
+                Ok(a) => a,
+                Err(e) => {
+                    println!("{}", ::hidpp::protocol::fail(format!("hidapi: {e}")));
+                    return Some(ExitCode::FAILURE);
+                }
+            };
+            match ::hidpp::protocol::run(&api, args) {
+                ::hidpp::protocol::Handled::Json(v) => {
+                    let ok = v.get("ok").and_then(|b| b.as_bool()) == Some(true);
+                    println!("{v}");
+                    Some(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+                }
+                ::hidpp::protocol::Handled::Unknown => {
+                    println!(
+                        "{}",
+                        ::hidpp::protocol::fail(format!(
+                            "comando desconhecido: {:?} -- use --help",
+                            args[0]
+                        ))
+                    );
+                    Some(ExitCode::FAILURE)
+                }
+            }
+        }
+    }
+}
+
+fn main() -> std::process::ExitCode {
+    // Antes de qualquer coisa: se vier comando, responde e sai. Nao
+    // carrega config, nao abre porta -- o par so quer uma linha de JSON.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = run_cli(&args) {
+        return code;
+    }
+
     let cfg = match Config::load() {
         Ok(c) => c,
         Err(e) => {
@@ -155,6 +230,8 @@ fn main() {
     for w in workers {
         let _ = w.join();
     }
+    // So chegamos aqui se todas as threads morreram: o servidor caiu.
+    std::process::ExitCode::FAILURE
 }
 
 fn invalidate(cache: &Mutex<Cache>) {

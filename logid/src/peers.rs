@@ -49,8 +49,10 @@ fn store(host: &str, info: AgentInfo) {
 /// vazio, e por quem precisa de dado fresco.
 pub fn refresh(cfg: &Config) {
     for h in &cfg.hosts {
-        let (Some(alias), Some(exe)) = (&h.ssh, &h.agent) else { continue };
-        store(&h.name, agent::devices(alias, exe));
+        if h.ssh.is_none() || h.agent.is_none() {
+            continue;
+        }
+        store(&h.name, agent::devices(h));
     }
 }
 

@@ -49,6 +49,9 @@ pub struct HostCfg {
     /// switch -- e sem dead-man's switch a rota fisica e de ida so.
     #[serde(default)]
     pub agent: Option<String>,
+    /// windows | linux | macos. Opcional: ver `HostCfg::os`.
+    #[serde(default)]
+    pub os: Option<String>,
     /// Como controlar a tela deste host, quando der.
     #[serde(default)]
     pub screen: Option<ScreenCfg>,
@@ -66,12 +69,60 @@ pub struct HostCfg {
 }
 
 impl HostCfg {
+    /// SO deste host. A chave `os` manda; sem ela, inferimos.
+    ///
+    /// A inferencia existe para as configs que ja estao escritas: o host
+    /// local e o SO em que este binario roda, e um `agent` com `%VAR%` ou
+    /// `\\` so pode ser caminho de Windows. Quando nao da para saber,
+    /// `Unknown` -- e quem usa degrada em vez de chutar e rodar o comando
+    /// errado na maquina de outra pessoa.
+    pub fn os(&self) -> HostOs {
+        if let Some(v) = &self.os {
+            return match v.to_ascii_lowercase().as_str() {
+                "windows" | "win" => HostOs::Windows,
+                "linux" => HostOs::Linux,
+                "macos" | "mac" | "darwin" => HostOs::Macos,
+                _ => HostOs::Unknown,
+            };
+        }
+        if self.is_local() {
+            return if cfg!(windows) {
+                HostOs::Windows
+            } else if cfg!(target_os = "macos") {
+                HostOs::Macos
+            } else {
+                HostOs::Linux
+            };
+        }
+        match &self.agent {
+            Some(a) if a.contains('%') || a.contains('\\') => HostOs::Windows,
+            _ => HostOs::Unknown,
+        }
+    }
+
     pub fn is_local(&self) -> bool {
         if let Some(v) = self.local {
             return v;
         }
         matches!(self.addr.as_str(), "127.0.0.1" | "::1" | "localhost")
     }
+}
+
+/// Sistema operacional do host.
+///
+/// Passou a importar quando o par deixou de ser sempre Windows. Dois
+/// lugares montam comando para rodar NO par, e os dois sao especificos:
+/// `agent::devices` monta PowerShell (`& "exe" devices`) e
+/// `probe::ssh_detail` roda um one-liner de PowerShell com CIM. Contra
+/// Ubuntu ou macOS os dois falhariam -- e falhariam em silencio, porque
+/// o detalhe e enfeite e o probe do agente ja degrada para "nao
+/// respondeu".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostOs {
+    Windows,
+    Linux,
+    Macos,
+    Unknown,
 }
 
 /// Protocolo de tela do host, e em que porta.

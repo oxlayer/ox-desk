@@ -31,6 +31,8 @@
 //! idx=1), nao em 0xFF. Como o no do receptor atende todos os slots, e ele
 //! que abrimos.
 
+pub mod protocol;
+
 /// Reexportado para quem consome este crate nao precisar declarar a
 /// dependencia de novo -- e para garantir a MESMA versao em todos.
 pub use hidapi;

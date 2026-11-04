@@ -42,6 +42,7 @@ name = "hidpp"
 version = "0.1.0"
 dependencies = [
  "hidapi",
+ "serde_json",
 ]
 
 [[package]]

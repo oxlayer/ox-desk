@@ -198,20 +198,59 @@ sessão não interativa, prefira sinais que atravessam a fronteira —
 arquivo de log, porta TCP, processo — a APIs de janela, que não
 atravessam.
 
-### O que a simetria ainda exige
+### A simetria fechou (03/11)
 
 `focus::plan` **bloqueia** a troca quando o alvo não tem `ssh` + `agent`,
 porque sem alguém do outro lado capaz de devolver o dispositivo a origem
 não pode desfazer ([`005`](005-input-switch.md)). O `watch-edge`
-escapava disso por não passar pelo `focus`.
+escapava disso por não passar pelo `focus` — funcionava, mas sem os gates.
 
-Então para o Windows virar origem de verdade faltam duas peças, e
-nenhuma delas é afrouxar o check:
+Faltavam duas peças, e nenhuma era afrouxar o check:
 
-1. O `logid` ganhar os subcomandos de CLI que o `agent` tem (`devices`,
-   `host-info`, `set-host`), para o Ubuntu ser sondável do mesmo jeito.
-2. `sshd` no Ubuntu — hoje `inactive`, nada escutando na 22 — e uma
-   chave do Windows para cá.
+1. **O `logid` virou também o "agente" do próprio host.** `logid devices`,
+   `host-info`, `set-host` respondem uma linha de JSON, igual ao
+   `logid-agent`. O formato vive em
+   [`hidpp/src/protocol.rs`](../hidpp/src/protocol.rs), compartilhado
+   pelos dois binários: é o contrato *entre as máquinas*, o pior lugar
+   possível para duas cópias. (Era `survey()` dentro do agente; a segunda
+   cópia ia divergir e aparecer como "agente nao respondeu JSON" num log,
+   longe da causa.)
+2. **`sshd` no Ubuntu**, por [`scripts/enable-sshd.sh`](../scripts/enable-sshd.sh),
+   só por chave e só para um usuário.
+
+Verificado no ensaio (`POST /api/focus` com `confirm: false`) **do lado
+Windows**:
+
+```
+[ok  ] dead-man's switch no alvo
+       agente responde; dispositivos la: slot 1 (canal 1/3), slot 2 (canal 1/3)
+[BLOQ] posse do dispositivo
+       'MX Anywhere 3' esta offline aqui -- ja esta em outro canal
+```
+
+Os bloqueios restantes são os **certos**: só quem detém o dispositivo pode
+empurrá-lo, e naquele momento ele estava no Ubuntu.
+
+Com isso o `watch-edge` foi aposentado — atalho removido do
+`shell:startup`, processos encerrados — e `[input.border]` ligada no
+Windows. O reconciliador (`[input.follow]`) ficou **desligado** lá de
+propósito: é um reconciliador, não dois. O do Ubuntu já cobre as duas
+máquinas, agindo direto quando o dispositivo está lá e pedindo por SSH
+quando está aqui; ligar ambos faria os dois chegarem à mesma conclusão e
+agirem em dobro.
+
+### O host precisa declarar o SO
+
+Dois lugares montam comando para rodar **no par**, e os dois eram
+específicos de Windows: `agent::devices` monta PowerShell (`& "exe"
+devices`) e `probe::ssh_detail` roda um one-liner com CIM. Contra Ubuntu
+ou macOS os dois falhariam — e falhariam **em silêncio**, porque o
+detalhe é enfeite e o probe do agente já degrada para "não respondeu".
+
+Daí `os = "windows" | "linux" | "macos"` em `[[hosts]]`, com inferência
+para as configs que já existiam. No Unix o comando vai com aspas simples
+e sem o `&` — que ali significaria *background* e devolveria sucesso
+vazio, lido como "agente nao respondeu JSON".
 
 ## API
 

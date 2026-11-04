@@ -209,9 +209,12 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                 )
             } else {
                 let r = std::thread::scope(|sc| {
-                    let h = sc.spawn(|| match (&target.ssh, &target.agent) {
-                        (Some(alias), Some(exe)) => Some(agent::devices(alias, exe)),
-                        _ => None,
+                    let h = sc.spawn(|| {
+                        if target.ssh.is_some() && target.agent.is_some() {
+                            Some(agent::devices(target))
+                        } else {
+                            None
+                        }
                     });
                     let survey = hidpp::survey_opts(false);
                     (survey, h.join().ok().flatten())

@@ -69,49 +69,6 @@ fn usage() -> ExitCode {
 }
 
 /// Varre os slots 1..6 colhendo host info de quem responder.
-fn survey(api: &HidApi) -> serde_json::Value {
-    let interfaces: Vec<_> = hidpp::endpoints(api)
-        .into_iter()
-        .map(|(path, pid, usage_page, usage)| {
-            json!({ "path": path, "product_id": format!("{pid:04x}"),
-                    "usage_page": format!("{usage_page:#06x}"), "usage": usage })
-        })
-        .collect();
-
-    let link = match hidpp::Receiver::open(api) {
-        Ok(l) => l,
-        Err(e) => {
-            return json!({ "ok": false, "error": e, "interfaces": interfaces });
-        }
-    };
-
-    // Usa o caminho eficiente do crate: ping de 250 ms primeiro, e
-    // host_info (mais caro) so para quem respondeu. Antes chamavamos
-    // host_info nos 6 slots -- medido, 6,4 s por probe.
-    // Com nomes: o reconciliador do logid casa dispositivo por NOME, nao
-    // por canal -- canal e ambiguo quando mouse e teclado declaram o mesmo.
-    let slots: Vec<_> = link
-        .devices(6, true, false)
-        .into_iter()
-        .map(|d| {
-            if d.online {
-                json!({
-                    "slot": d.slot,
-                    "name": d.name,
-                    "online": true,
-                    "num_hosts": d.host.map(|h| h.num_hosts),
-                    // Ja 1-based: o crate converte do protocolo.
-                    "current_host": d.host.map(|h| h.current),
-                    "ping_ms": d.reply_ms,
-                })
-            } else {
-                json!({ "slot": d.slot, "online": false })
-            }
-        })
-        .collect();
-    json!({ "ok": true, "interfaces": interfaces, "slots": slots })
-}
-
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(cmd) = args.first().map(String::as_str) else {
@@ -130,8 +87,16 @@ fn main() -> ExitCode {
         Err(e) => return fail(format!("hidapi: {e}")),
     };
 
+    // Os comandos que o PAR consome -- devices, host-info, set-host -- vem
+    // da crate compartilhada. O formato deles e o contrato entre as duas
+    // maquinas, e duas copias dele divergiriam (ver hidpp/src/protocol.rs).
+    if let hidpp::protocol::Handled::Json(v) = hidpp::protocol::run(&api, &args) {
+        let ok = v.get("ok").and_then(|b| b.as_bool()) == Some(true);
+        println!("{v}");
+        return if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE };
+    }
+
     match cmd {
-        "devices" => out(survey(&api)),
 
         // Sondagem: imprime os bytes crus para eu confirmar layout de
         // feature antes de escrever parser em cima de suposicao.
@@ -152,47 +117,6 @@ fn main() -> ExitCode {
                     "hex": r.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "),
                     "ascii": r.iter().map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' }).collect::<String>(),
                     "bytes": r })),
-                Err(e) => fail(e),
-            }
-        }
-
-        "host-info" => {
-            let Some(slot) = args.get(1).and_then(|s| s.parse::<u8>().ok()) else {
-                return fail("uso: host-info <slot 1..6>");
-            };
-            let link = match hidpp::Receiver::open(&api) {
-                Ok(l) => l,
-                Err(e) => return fail(e),
-            };
-            match link.host_info(slot) {
-                Ok(hi) => out(json!({ "ok": true, "slot": slot,
-                                      "num_hosts": hi.num_hosts,
-                                      "current_host": hi.current })),
-                Err(e) => fail(e),
-            }
-        }
-
-        "set-host" => {
-            let slot = args.get(1).and_then(|s| s.parse::<u8>().ok());
-            let host = args.get(2).and_then(|s| s.parse::<u8>().ok());
-            let (Some(slot), Some(host)) = (slot, host) else {
-                return fail("uso: set-host <slot> <host 1-based> --confirm");
-            };
-            if host == 0 {
-                return fail("host e 1-based");
-            }
-            // Mesma postura do /api/focus: acao irreversivel nao acontece
-            // por acidente nem por digitacao distraida.
-            if !args.iter().any(|a| a == "--confirm") {
-                return fail("falta --confirm: esta acao e irreversivel \
-                             (o dispositivo sai deste receptor)");
-            }
-            let link = match hidpp::Receiver::open(&api) {
-                Ok(l) => l,
-                Err(e) => return fail(e),
-            };
-            match link.set_host(slot, host) {
-                Ok(()) => out(json!({ "ok": true, "slot": slot, "host": host })),
                 Err(e) => fail(e),
             }
         }
@@ -254,7 +178,6 @@ fn main() -> ExitCode {
                 .unwrap_or(25);
             let mut presente_antes = false;
             let mut chegou_em: Option<std::time::Instant> = None;
-            let mut idle_na_chegada: u64 = 0;
             // O loop gira a cada 30 ms para o cursor responder rapido, mas
             // a checagem de presenca e HID++: a 33 Hz seria martelar o
             // radio sem motivo. Uma vez por segundo basta -- a janela do
@@ -277,7 +200,7 @@ fn main() -> ExitCode {
                 if let Ok(link) = hidpp::Receiver::open(&api) {
                     let presente = slots.iter().any(|s| link.present(*s, 2));
                     if presente && !presente_antes {
-                        idle_na_chegada = input::idle_ms().unwrap_or(0);
+                        let idle_na_chegada = input::idle_ms().unwrap_or(0);
                         chegou_em = Some(std::time::Instant::now());
                         logline(&format!(
                             "dispositivos CHEGARAM -- vigiando input por {guard_secs}s \

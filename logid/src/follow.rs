@@ -64,8 +64,9 @@ fn locate(cfg: &Config) -> std::collections::BTreeMap<String, Seen> {
     // por isso casamos por canal, nao por nome: se o par ve um dispositivo
     // no canal dele, e aquele que esta la.
     for h in cfg.hosts.iter().filter(|h| !h.is_local()) {
-        let (Some(alias), Some(exe)) = (&h.ssh, &h.agent) else { continue };
-        let info = agent::devices(alias, exe);
+        // So faz sentido perguntar a quem tem canal e agente declarados.
+        if h.ssh.is_none() || h.agent.is_none() { continue }
+        let info = agent::devices(h);
         if !info.reachable {
             continue;
         }
@@ -118,8 +119,8 @@ fn reconcile(cfg: &Config) -> Vec<String> {
         } else if let (Some(holder), Some(hslot)) = (&s.holder, s.holder_slot) {
             // Um par detem: pedimos a ele.
             let Some(hc) = cfg.hosts.iter().find(|h| &h.name == holder) else { continue };
-            let (Some(alias), Some(exe)) = (&hc.ssh, &hc.agent) else { continue };
-            match agent::set_host(alias, exe, hslot, target_channel) {
+            if hc.ssh.is_none() || hc.agent.is_none() { continue }
+            match agent::set_host(hc, hslot, target_channel) {
                 Ok(()) => acted.push(format!(
                     "{name}: pedi a {holder} que o mandasse para o canal {target_channel}"
                 )),
