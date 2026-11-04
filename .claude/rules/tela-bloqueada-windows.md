@@ -1,33 +1,69 @@
-# O DXGI não captura a tela de bloqueio, e isso não é bug nosso
+# `E_ACCESSDENIED` no DXGI: quatro causas, e a mais comum é o protetor de tela
 
 `DuplicateOutput` devolve `E_ACCESSDENIED (0x80070005)` quando o
-**desktop seguro** está na frente — tela de bloqueio ou diálogo de UAC.
-É por desenho do Windows: aquele desktop é outro objeto, e um processo
-do desktop `Default` não o enxerga.
+processo **não está no desktop de input corrente**. O Windows tem
+vários desktops por sessão, e o DXGI só duplica para quem está no que
+está recebendo input.
 
-## Diagnóstico: três causas, mesmo código de erro
+## O protetor de tela é a causa número um, e custou três diagnósticos
 
-Antes de culpar a tela bloqueada, descarte as outras duas. O erro é
-idêntico nos três casos.
+Em 04/11 o usuário não conseguia alcançar o Windows. Diagnostiquei
+"tela bloqueada"; depois "driver de vídeo pela metade". As duas
+erradas: `LogonUI` **ausente**, RTX 3050 com status OK e `cfg=0`, e
+mesmo assim recusa.
+
+Era o `Bubbles.scr` rodando. O protetor vive num desktop próprio
+("Screen-saver"), que vira o desktop de input — e o nosso processo, no
+`Default`, perde acesso.
+
+O que me tirou do buraco foi **listar processos** em vez de testar mais
+uma hipótese:
 
 ```powershell
-# 1. tela de bloqueio / UAC na frente?
+Get-Process | Where-Object { $_.Path -like '*.scr' }
+```
+
+Duas armadilhas que gastaram tempo:
+
+- `SendInput` **não** dispensa o protetor. A injeção vai para o desktop
+  da thread que chama (`Default`); o protetor, noutro desktop, nem fica
+  sabendo. Por isso `acordar_tela()` resolve tela apagada e não resolve
+  esta — são dois problemas que pareciam um.
+- `SPI_GETSCREENSAVERRUNNING` consultado pelo SSH devolve `False`
+  mesmo com o protetor no ar, porque a sessão 0 não enxerga o desktop
+  da sessão 1. A lista de processos enxerga.
+
+Hoje o host encerra qualquer `*.scr` na partida
+(`encerrar_protetor_de_tela()`), que é o que as ferramentas de acesso
+remoto fazem. Protetor de tela não tem estado a perder.
+
+## Diagnóstico: quatro causas, mesmo código de erro
+
+Em ordem de frequência medida.
+
+```powershell
+# 1. protetor de tela rodando?  (a causa mais comum)
+Get-Process | Where-Object { $_.Path -like '*.scr' }
+
+# 2. tela de bloqueio / UAC na frente?
 Get-Process -Name LogonUI -ErrorAction SilentlyContinue   # presente = bloqueada
 Get-Process -Name consent -ErrorAction SilentlyContinue   # presente = UAC
 
-# 2. pilha de vídeo meio instalada?
+# 3. pilha de vídeo meio instalada?
 Get-CimInstance Win32_VideoController |
   ForEach-Object { $_.Name + " [" + $_.Status + "] cfg=" + $_.ConfigManagerErrorCode }
 # um "Microsoft Basic Display Adapter" com status != OK = driver pela metade
 
-# 3. reinício pendente?
+# 4. reinício pendente?
 Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
 ```
 
-Em 04/11 o caso 2 era real (o driver virtual do Parsec saiu e deixou um
-adaptador em estado `Unknown`) e depois se resolveu sozinho. Quando o
-usuário reportou de novo, o adaptador estava **OK** e a causa era a
-tela de bloqueio. Mesmo erro, causa diferente — por isso o roteiro.
+O driver pela metade foi real de manhã (o adaptador virtual do Parsec
+saiu e deixou um `Microsoft Basic Display Adapter` em `Unknown`) e
+depois se resolveu sozinho. À tarde o adaptador estava OK e a causa era
+o protetor. **Mesmo erro, causa diferente, no mesmo dia** — por isso o
+roteiro existe, e por isso ele começa pela lista de processos em vez de
+pela hipótese favorita.
 
 ## Tela APAGADA é outra coisa, e essa nós resolvemos
 
