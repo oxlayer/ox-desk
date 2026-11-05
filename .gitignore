@@ -21,3 +21,15 @@ target/
 *.pem
 *.pfx
 *.cer
+
+# macOS
+.DS_Store
+
+# Segredos
+.env
+.env.*
+*.key
+*.p12
+
+# Config pessoal do Claude Code
+.claude/settings.local.json
