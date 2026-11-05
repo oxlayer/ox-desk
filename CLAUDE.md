@@ -10,7 +10,7 @@ remota própria, e o controle de tudo num painel só.
 | [`.claude/rules/`](.claude/rules/) | Regras invioláveis — armadilhas que já custaram tempo | Antes de mexer em qualquer máquina |
 | [`.claude/skills/`](.claude/skills/) | Procedimentos — receitas que funcionaram | Quando a tarefa for "como faço X de novo" |
 | [`docs/`](docs/) | Conhecimento de domínio com [[wikilinks]] | Para entender como as peças se encaixam |
-| [`specs/`](specs/) | Especificações, de `000-overview` a `013-ci-cd` | Para entender *por que* o sistema é assim |
+| [`specs/`](specs/) | Especificações, de `000-overview` a `014-tela-de-bloqueio` | Para entender *por que* o sistema é assim |
 | [`README.md`](README.md) | Runbook histórico — o que testei e falhou | Antes de reintroduzir algo que já saiu |
 
 ## Regras (resumo executivo)
