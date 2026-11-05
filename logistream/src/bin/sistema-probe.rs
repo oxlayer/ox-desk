@@ -37,8 +37,9 @@
 //! agendada `/ru SYSTEM`, que o administrador cria e apaga sem deixar
 //! resíduo.
 
-#![cfg(windows)]
 
+#[cfg(windows)]
+mod win {
 use std::ffi::c_void;
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID};
@@ -313,7 +314,7 @@ fn lancar(resto: &[String]) {
     }
 }
 
-fn main() {
+pub fn executar() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let modo = a.first().map(String::as_str).unwrap_or("--quem");
     diga!("== logistream-probe-sistema {modo} ==");
@@ -337,4 +338,19 @@ fn chrono_simples() -> String {
     use windows::Win32::System::SystemInformation::GetLocalTime;
     let t = unsafe { GetLocalTime() };
     format!("{:02}:{:02}:{:02}", t.wHour, t.wMinute, t.wSecond)
+}
+}
+
+#[cfg(windows)]
+fn main() {
+    win::executar();
+}
+
+// Mesmo padrao do mac-probe: no SO errado o binario existe e diz o que
+// e, em vez de nao compilar. O deploy constroi TODOS os bins do crate
+// no Ubuntu, entao um bin que so compila no Windows quebraria o deploy
+// inteiro -- foi o que aconteceu.
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("este probe e do Windows: ele mede o que um processo SYSTEM alcanca na tela de bloqueio");
 }

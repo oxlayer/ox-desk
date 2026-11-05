@@ -97,8 +97,30 @@ fn identidade() -> Medida {
     if !kc.exists() {
         return Medida::falta("identidade", format!("sem o chaveiro {}", kc.display()));
     }
-    match rodar("/usr/bin/security", &["find-identity", "-v", &kc.to_string_lossy()], 8) {
-        Ok(s) if s.contains(IDENTIDADE) => Medida::ok("identidade", format!("\"{IDENTIDADE}\" no chaveiro próprio")),
+    // Destrancar antes de perguntar. Por SSH o chaveiro esta trancado e
+    // `security` responde "User interaction is not allowed" -- que nao
+    // e "nao existe". A senha nao e segredo de proposito (ver
+    // mac/criar-identidade.sh): o chaveiro guarda UMA chave
+    // auto-assinada cujo unico poder e assinar os nossos binarios.
+    let _ = rodar("/usr/bin/security", &["unlock-keychain", "-p", "logi", &kc.to_string_lossy()], 8);
+
+    // `find-identity` SEM `-v`.
+    //
+    // Com `-v` o `security` lista so identidades **validas**, e valido
+    // ali significa confiada pelo sistema. Um certificado auto-assinado
+    // nunca e: ele sai como `CSSMERR_TP_NOT_TRUSTED` e o `-v` devolve
+    // "0 valid identities found". Medido no MacBook, com a identidade
+    // presente e o binario assinado por ela no mesmo minuto.
+    //
+    // Isso importa porque o diagnostico errado mandava recriar a
+    // identidade -- e recriar gera chave nova, muda o designated
+    // requirement, e o TCC DESCARTA a concessao de Gravacao de Tela.
+    // O conserto teria causado exatamente o estrago que o
+    // `criar-identidade.sh` e idempotente para evitar.
+    match rodar("/usr/bin/security", &["find-identity", &kc.to_string_lossy()], 8) {
+        Ok(s) if s.contains(IDENTIDADE) => {
+            Medida::ok("identidade", format!("\"{IDENTIDADE}\" no chaveiro próprio"))
+        }
         Ok(_) => Medida::falta("identidade", format!("o chaveiro existe mas não tem \"{IDENTIDADE}\"")),
         Err(e) => Medida::erro("identidade", format!("security: {e}")),
     }
@@ -109,11 +131,17 @@ fn assinatura() -> Medida {
     if !alvo.exists() {
         return Medida::falta("assinatura", "o host de tela não está instalado");
     }
-    // `codesign -dv` escreve tudo em STDERR, inclusive em caso de
-    // sucesso -- e foi isso que fez a primeira versão disto achar que
-    // nenhum binário estava assinado.
+    // `codesign -dvvv`, nao `-dv`.
+    //
+    // Dois achados na mesma linha. (1) O `codesign` escreve tudo em
+    // STDERR, inclusive no sucesso -- a primeira versao disto lia so o
+    // stdout e achava que nada estava assinado. (2) `-dv` **nao
+    // imprime a linha `Authority`**; ela so aparece a partir de
+    // `-dvv`. Com `-dv` a saida nao tem nem "Authority", nem "adhoc",
+    // nem "not signed", e o passo caia no ramo "nao reconheci" --
+    // sobre um binario corretamente assinado.
     let saida = crate::sys::child("/usr/bin/codesign")
-        .args(["-dv", &alvo.to_string_lossy()])
+        .args(["-dvvv", &alvo.to_string_lossy()])
         .output();
     let Ok(o) = saida else {
         return Medida::erro("assinatura", "não consegui executar o codesign");

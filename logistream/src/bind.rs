@@ -71,27 +71,54 @@ impl Modo {
 pub fn achar_overlay(interfaces: &[(String, IpAddr)]) -> Result<IpAddr, String> {
     let candidatos: Vec<&(String, IpAddr)> =
         interfaces.iter().filter(|(nome, ip)| e_do_overlay(nome, ip)).collect();
-
-    match candidatos.len() {
-        1 => Ok(candidatos[0].1),
-        0 => Err(
+    if candidatos.is_empty() {
+        return Err(
             "não achei endereço de overlay nesta máquina. O Tailscale está conectado? \
              (`tailscale status`). NÃO vou escutar em 0.0.0.0 no lugar."
                 .into(),
-        ),
-        // Duas interfaces de overlay é estado que não devia existir, e
-        // escolher uma em silêncio seria escolher errado metade das
-        // vezes.
-        _ => Err(format!(
-            "achei {} endereços de overlay ({}); use --bind <endereço> para decidir",
-            candidatos.len(),
-            candidatos
-                .iter()
-                .map(|(n, ip)| format!("{n}={ip}"))
-                .collect::<Vec<_>>()
-                .join(", ")
+        );
+    }
+
+    // IPv4 primeiro, e isto NÃO é preferência estética.
+    //
+    // A primeira versão exigia um candidato só e errava em toda
+    // máquina real: o Tailscale dá v4 **e** v6 na mesma interface, e
+    // "achei 2 endereços de overlay" me chegou do Windows de verdade
+    // (Tailscale=fd7a:115c:a1e0::ab12:cd34 e Tailscale=100.88.10.20).
+    // Ou seja, `--bind overlay` nunca teria funcionado em lugar nenhum
+    // -- e os testes não pegaram porque eu escrevi os dois casos com
+    // duas INTERFACES, que é o caso raro, em vez de uma interface com
+    // as duas famílias, que é o caso normal.
+    //
+    // v4 porque um socket UDP ligado a um endereço v6 não recebe
+    // tráfego v4, e os pares vão falar v4 por padrão.
+    let v4: Vec<&&(String, IpAddr)> = candidatos.iter().filter(|(_, ip)| ip.is_ipv4()).collect();
+    match v4.len() {
+        1 => return Ok(v4[0].1),
+        // Dois v4 de overlay é estado que não devia existir, e escolher
+        // em silêncio seria escolher errado metade das vezes.
+        n if n > 1 => {
+            return Err(format!(
+                "achei {n} endereços IPv4 de overlay ({}); use --bind <endereço> para decidir",
+                lista(&v4.iter().map(|x| **x).collect::<Vec<_>>())
+            ))
+        }
+        _ => {}
+    }
+
+    // Só IPv6: tailnet sem v4 é possível. Um candidato serve; vários,
+    // não dá para adivinhar.
+    match candidatos.len() {
+        1 => Ok(candidatos[0].1),
+        n => Err(format!(
+            "achei {n} endereços IPv6 de overlay ({}); use --bind <endereço> para decidir",
+            lista(&candidatos)
         )),
     }
+}
+
+fn lista(v: &[&(String, IpAddr)]) -> String {
+    v.iter().map(|(n, ip)| format!("{n}={ip}")).collect::<Vec<_>>().join(", ")
 }
 
 /// Esta interface é o overlay?
@@ -193,15 +220,29 @@ mod testes {
     }
 
     #[test]
-    fn duas_interfaces_de_overlay_pedem_decisao() {
-        let ifs = [i("tailscale0", "100.1.1.1"), i("utun5", "100.2.2.2")];
-        assert!(achar_overlay(&ifs).is_err());
+    fn v4_e_v6_na_mesma_interface_e_o_caso_NORMAL() {
+        // O caso que a primeira versao tratava como erro, e que chegou
+        // do Windows de verdade: o Tailscale da as duas familias na
+        // mesma interface. Exigir "um candidato so" fazia
+        // `--bind overlay` falhar em TODA maquina.
+        let ifs = [
+            i("Tailscale", "fd7a:115c:a1e0::ab12:cd34"),
+            i("Tailscale", "100.88.10.20"),
+            i("Ethernet", "192.168.1.42"),
+        ];
+        assert_eq!(achar_overlay(&ifs).unwrap(), "100.88.10.20".parse::<IpAddr>().unwrap());
     }
 
     #[test]
-    fn ipv6_do_tailscale_conta() {
+    fn so_ipv6_ainda_serve() {
         let ifs = [i("tailscale0", "fd7a:115c:a1e0::1234")];
-        assert!(achar_overlay(&ifs).is_ok());
+        assert_eq!(achar_overlay(&ifs).unwrap(), "fd7a:115c:a1e0::1234".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn dois_v4_de_overlay_pedem_decisao() {
+        let ifs = [i("tailscale0", "100.1.1.1"), i("utun5", "100.2.2.2")];
+        assert!(achar_overlay(&ifs).is_err());
     }
 
     #[test]
