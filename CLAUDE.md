@@ -10,7 +10,7 @@ remota própria, e o controle de tudo num painel só.
 | [`.claude/rules/`](.claude/rules/) | Regras invioláveis — armadilhas que já custaram tempo | Antes de mexer em qualquer máquina |
 | [`.claude/skills/`](.claude/skills/) | Procedimentos — receitas que funcionaram | Quando a tarefa for "como faço X de novo" |
 | [`docs/`](docs/) | Conhecimento de domínio com [[wikilinks]] | Para entender como as peças se encaixam |
-| [`specs/`](specs/) | Especificações, de `000-overview` a `011-onboarding` | Para entender *por que* o sistema é assim |
+| [`specs/`](specs/) | Especificações, de `000-overview` a `012-fora-da-lan` | Para entender *por que* o sistema é assim |
 | [`README.md`](README.md) | Runbook histórico — o que testei e falhou | Antes de reintroduzir algo que já saiu |
 
 ## Regras (resumo executivo)
@@ -33,6 +33,7 @@ remota própria, e o controle de tudo num painel só.
 - [Clipboard entre as máquinas](.claude/skills/clipboard.md)
 - [Verificar tela, mouse e teclado no Mac](.claude/skills/verificar-o-mac.md)
 - [Configurar uma máquina (wizard de setup)](.claude/skills/configurar-maquina.md)
+- [Alcançar as máquinas fora da LAN](specs/012-fora-da-lan.md)
 
 ## Docs
 

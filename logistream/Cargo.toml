@@ -31,6 +31,7 @@ cudarc = { version = "0.19", default-features = false, features = ["driver", "dy
 # visualizador deixou de ser so do Mac quando o NVDEC passou a
 # decodificar aqui e no Windows.
 softbuffer = "0.4"
+if-addrs = "0.13"
 
 # Captura no Linux: o Mutter entrega o stream por PipeWire e a negociacao
 # acontece por D-Bus. Mesma crate de D-Bus que o logid usa.

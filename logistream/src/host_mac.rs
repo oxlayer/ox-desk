@@ -110,7 +110,8 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     enc.set_frame_rate(Some(ffmpeg_next::Rational::new(60, 1)));
     // Mesma escala dos outros dois hosts (ver `nvenc::Codificador::novo`):
     // 4 bits por pixel por segundo a 60 fps.
-    let alvo = ((w as u64) * (h as u64) * 4).clamp(8_000_000, 60_000_000);
+    // Mesma formula do NVENC, do mesmo lugar: esta era a SEGUNDA copia.
+    let alvo = crate::qualidade::alvo(w, h) as u64;
     enc.set_bit_rate(alvo as usize);
     enc.set_max_bit_rate((alvo * 2) as usize);
     // IDR a cada 2s: perdeu quadro, o erro cicatriza em 2s em vez de
@@ -303,8 +304,12 @@ fn servir(
 ) -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     rt.block_on(async move {
-        let ep = crate::net::servidor(([0, 0, 0, 0], porta).into())?;
-        println!("  escutando em 0.0.0.0:{porta}");
+        let escuta = crate::bind::escuta();
+        let ep = crate::net::servidor((escuta, porta).into())?;
+        // O endereco REAL, nao "0.0.0.0" fixo: com --bind overlay o
+        // host escuta em outro lugar, e um log que diz 0.0.0.0
+        // mandaria quem diagnostica procurar no lugar errado.
+        println!("  escutando em {escuta}:{porta}");
 
         // Porta de input, ao lado da de video.
         //
@@ -313,8 +318,8 @@ fn servir(
         // timeout. Sem ela, assistir e controlar disputam a vaga unica
         // de cliente de video.
         let porta_input = porta + 1;
-        let ep_in = crate::net::servidor(([0, 0, 0, 0], porta_input).into())?;
-        println!("  input em 0.0.0.0:{porta_input}");
+        let ep_in = crate::net::servidor((escuta, porta_input).into())?;
+        println!("  input em {escuta}:{porta_input}");
         {
             let sinais_in = Arc::clone(&sinais);
             tokio::spawn(async move {

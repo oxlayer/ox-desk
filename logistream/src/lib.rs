@@ -16,6 +16,7 @@
 //! errado compilam VAZIOS em vez de dar erro -- o Mac compila esta
 //! biblioteca inteira para gerar so o visualizador.
 
+pub mod bind;
 pub mod capture;
 pub mod capture_input;
 pub mod capture_win;
@@ -31,4 +32,5 @@ pub mod input_mac;
 pub mod input_win;
 pub mod net;
 pub mod nvenc;
+pub mod qualidade;
 pub mod serve;

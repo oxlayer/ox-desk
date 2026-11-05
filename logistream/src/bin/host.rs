@@ -96,17 +96,64 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let porta: u16 = a.first().and_then(|v| v.parse().ok()).unwrap_or(9777);
+    // `--bind` decide em QUAL endereco escutar, e o padrao continua
+    // sendo 0.0.0.0 -- nenhuma maquina muda de comportamento sem
+    // alguem pedir.
+    //
+    // `--bind overlay` existe para a maquina que SAI DE CASA. O canal
+    // de tela cifra e nao autentica (ver net.rs), entao em 0.0.0.0 num
+    // Wi-Fi de hotel ele serve a tela e o teclado para a rede inteira.
+    // Ver specs/012.
+    let bind = match a.iter().position(|v| v == "--bind") {
+        Some(i) => match a.get(i + 1).map(|v| logistream::bind::Modo::parse(v)) {
+            Some(Ok(m)) => m,
+            Some(Err(e)) => anyhow::bail!("{e}"),
+            None => anyhow::bail!("--bind precisa de um valor: todas | overlay | <endereco>"),
+        },
+        None => logistream::bind::Modo::Todas,
+    };
+    match logistream::bind::resolver(&bind, &logistream::bind::locais()) {
+        Ok(ip) => logistream::bind::definir(ip),
+        // Falhar aqui e o desenho, nao um acidente: quem pediu overlay
+        // prefere host que nao sobe a host aberto para a rede errada.
+        Err(e) => anyhow::bail!("{e}"),
+    }
+
+    // Teto de banda. Existe para a sessao que sai de casa: o gargalo
+    // deixa de ser a LAN e passa a ser o UPLOAD da casa, e 15 Mbps por
+    // um upload de 10 nao da imagem ruim -- da fila no roteador,
+    // latencia subindo e tela desmontando. Ver specs/012.
+    match logistream::qualidade::teto_de_args(&a) {
+        Ok(Some(bits)) => logistream::qualidade::limitar(bits),
+        Ok(None) => {}
+        Err(e) => anyhow::bail!("{e}"),
+    }
+
+    // Posicionais ficam depois do parse das flags, e filtrados: sem
+    // isto `--bind` viraria "porta" e o host subiria na 9777 por
+    // acidente de parsing.
+    let pos: Vec<&String> = {
+        let mut v = Vec::new();
+        let mut pular = false;
+        for x in &a {
+            if pular { pular = false; continue; }
+            if x == "--bind" || x == "--mbps" { pular = true; continue; }
+            if x.starts_with("--") { continue; }
+            v.push(x);
+        }
+        v
+    };
+    let porta: u16 = pos.first().and_then(|v| v.parse().ok()).unwrap_or(9777);
 
     #[cfg(target_os = "linux")]
     {
-        let conector = a.get(1).cloned().unwrap_or_else(|| "DP-1".into());
+        let conector = pos.get(1).map(|s| s.to_string()).unwrap_or_else(|| "DP-1".into());
         logistream::host_linux::executar(porta, &conector)
     }
 
     #[cfg(windows)]
     {
-        let monitor: u32 = a.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+        let monitor: u32 = pos.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
         logistream::host_win::executar(porta, monitor)
     }
 
@@ -114,13 +161,13 @@ fn main() -> anyhow::Result<()> {
     {
         // Indice da TELA no avfoundation, nao conector de video: a
         // numeracao inclui cameras, entao a tela raramente e "0".
-        let indice = a.get(1).cloned().unwrap_or_else(|| "1".into());
+        let indice = pos.get(1).map(|s| s.to_string()).unwrap_or_else(|| "1".into());
         logistream::host_mac::executar(porta, &indice)
     }
 
     #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     {
-        let _ = (porta, a);
+        let _ = (porta, pos);
         anyhow::bail!(
             "este sistema ainda nao sabe servir a propria tela; aqui ele e o \
              cliente -- use `logistream-view`"

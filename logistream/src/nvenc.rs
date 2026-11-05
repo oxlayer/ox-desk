@@ -66,7 +66,10 @@ impl Codificador {
         // O preset sozinho escolhia ~2 Mbps a 1440p, e o usuario viu o
         // resultado: "a imagem esta meio bugada, sem muita qualidade".
         // Numa LAN isso e banda sobrando na mesa -- o Parsec usa 20-50.
-        let pixels = (w as u64) * (h as u64);
+        // A conta mora em `qualidade.rs`, nao aqui: ela estava
+        // duplicada no host do Mac e duas copias da mesma formula e
+        // como o alvo errado de 8 Mbps sobreviveu semanas.
+        let alvo = crate::qualidade::alvo(w, h);
         // ~8 Mbps em 1080p, ~15 em 1440p, ~33 em 4K: escala com a area,
         // porque 1440p e 4K nao cabem no mesmo teto.
         //
@@ -79,7 +82,7 @@ impl Codificador {
         //
         // 4 bits por pixel por segundo a 60 fps e o que produz os numeros
         // que o comentario sempre afirmou.
-        let alvo = (pixels * 4).clamp(8_000_000, 60_000_000) as u32;
+
         cfg.rcParams.rateControlMode = NV_ENC_PARAMS_RC_MODE::NV_ENC_PARAMS_RC_VBR;
         cfg.rcParams.averageBitRate = alvo;
         // Teto com folga: tela parada gasta quase nada, e quando a

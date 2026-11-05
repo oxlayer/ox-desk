@@ -384,8 +384,12 @@ fn servir(
             .method_call::<(), _, _, _>(RD_SESSION, "Start", ())?;
         println!("  input ligado (stream {caminho_stream})");
 
-        let ep = crate::net::servidor(([0, 0, 0, 0], porta).into())?;
-        println!("  escutando em 0.0.0.0:{porta}");
+        let escuta = crate::bind::escuta();
+        let ep = crate::net::servidor((escuta, porta).into())?;
+        // O endereco REAL, nao "0.0.0.0" fixo: com --bind overlay o
+        // host escuta em outro lugar, e um log que diz 0.0.0.0
+        // mandaria quem diagnostica procurar no lugar errado.
+        println!("  escutando em {escuta}:{porta}");
 
         // Porta de input, ao lado da de video.
         //
@@ -394,8 +398,8 @@ fn servir(
         // input para a outra maquina e via a tela dela congelada,
         // concluindo (com razao, pelo que via) que nada tinha mexido.
         let porta_input = porta + 1;
-        let ep_in = crate::net::servidor(([0, 0, 0, 0], porta_input).into())?;
-        println!("  input em 0.0.0.0:{porta_input}");
+        let ep_in = crate::net::servidor((escuta, porta_input).into())?;
+        println!("  input em {escuta}:{porta_input}");
         {
             let sinais_in = std::sync::Arc::clone(&sinais);
             let dbus_in = Rc::clone(&dbus);
