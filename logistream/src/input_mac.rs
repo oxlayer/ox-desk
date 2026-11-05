@@ -352,9 +352,14 @@ pub fn tem_gravacao_de_tela() -> bool {
 pub fn pedir_permissoes() -> (bool, bool) {
     let tela = unsafe { CGRequestScreenCaptureAccess() };
     let input = unsafe {
+        // Byte string com NUL explícito, e não o literal `c"..."`: o
+        // literal exige rustc 1.77+, e este arquivo só compila NO MAC,
+        // onde a versão do toolchain é outra e eu não tenho como
+        // conferir antes de mandar. Um `\0` à mão compila em qualquer
+        // versão e custa um comentário.
         let chave = CFStringCreateWithCString(
             std::ptr::null(),
-            c"AXTrustedCheckOptionPrompt".as_ptr(),
+            b"AXTrustedCheckOptionPrompt\0".as_ptr() as *const std::ffi::c_char,
             0x0800_0100, // kCFStringEncodingUTF8
         );
         let opcoes = CFDictionaryCreate(
@@ -378,6 +383,8 @@ type CFDictionaryRef = *const std::ffi::c_void;
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
+    // O nome é o do símbolo da Apple; renomear quebraria o link.
+    #[allow(non_upper_case_globals)]
     static kCFBooleanTrue: *const std::ffi::c_void;
     fn CFStringCreateWithCString(
         aloc: *const std::ffi::c_void,
