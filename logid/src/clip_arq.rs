@@ -648,13 +648,33 @@ pub enum Area {
 
 #[cfg(target_os = "macos")]
 pub fn ler_area() -> Area {
-    let Ok(js) = script_em_disco("ler-pb.js", LER_PB_JS) else { return Area::Nada };
-    let Ok(o) = crate::sys::child("osascript").args(["-l", "JavaScript"]).arg(&js).output() else {
-        return Area::Nada;
+    // Cada caminho de falha **anota** antes de devolver `Nada`.
+    //
+    // Sem isso "o clipboard está vazio" e "o osascript não roda" saem
+    // daqui com o mesmo valor, e o segundo caso -- que é o que acontece
+    // quando falta permissão ou o script não pôde ser escrito -- viraria
+    // um no-op calado. Quem lê a anotação é o wizard de setup.
+    let js = match script_em_disco("ler-pb.js", LER_PB_JS) {
+        Ok(js) => js,
+        Err(e) => {
+            crate::clip::anotar_vigia(false, format!("não pude escrever o script de leitura: {e}"));
+            return Area::Nada;
+        }
+    };
+    let o = match crate::sys::child("osascript").args(["-l", "JavaScript"]).arg(&js).output() {
+        Ok(o) => o,
+        Err(e) => {
+            crate::clip::anotar_vigia(false, format!("osascript não executou: {e}"));
+            return Area::Nada;
+        }
     };
     if !o.status.success() {
+        let err = String::from_utf8_lossy(&o.stderr);
+        let linha = err.lines().find(|l| !l.trim().is_empty()).unwrap_or("sem mensagem");
+        crate::clip::anotar_vigia(false, format!("osascript recusou: {linha}"));
         return Area::Nada;
     }
+    crate::clip::anotar_vigia(true, "osascript lê a área de transferência");
     let saida = String::from_utf8_lossy(&o.stdout);
     let mut linhas = saida.lines();
     match linhas.next() {

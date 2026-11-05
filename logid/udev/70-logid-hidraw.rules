@@ -1,0 +1,29 @@
+# Acesso ao receptor Logitech por HID++ (troca de canal Easy-Switch).
+#
+# O logid fala HID++ 2.0 sobre HID cru em /dev/hidraw* para mandar o
+# teclado e o mouse trocarem de canal (feature 0x1814). Sem acesso a
+# esses nos o painel nao acha dispositivo nenhum -- e o sintoma nao
+# menciona permissao.
+#
+# Mesma escolha da regra de input, e pelo mesmo motivo: TAG+="uaccess"
+# da ACL ao usuario da SESSAO ATIVA, pelo systemd-logind, e o acesso
+# some quando a sessao acaba. Grupo (`plugdev`, `input`) daria acesso
+# permanente a qualquer processo da conta, inclusive deslogado.
+#
+# Restrito ao vendor 046d de proposito. Escrever num hidraw permite
+# atualizar firmware do dispositivo; isto nao e para abrir o resto do
+# barramento HID da maquina.
+#
+# O pacote do Solaar instala uma regra equivalente em
+# /usr/lib/udev/rules.d/60-solaar.rules. Esta existe para a maquina que
+# nunca teve Solaar instalado -- que e o caso de qualquer maquina nova,
+# porque o Solaar saiu do nosso setup (ele competia pelo receptor).
+ACTION=="remove", GOTO="logid_hidraw_fim"
+SUBSYSTEM!="hidraw", GOTO="logid_hidraw_fim"
+
+# Receptor ou dispositivo Logitech por USB.
+ATTRS{idVendor}=="046d", TAG+="uaccess"
+# O mesmo por Bluetooth, onde o vendor nao aparece como atributo USB.
+KERNELS=="0005:046D:*", TAG+="uaccess"
+
+LABEL="logid_hidraw_fim"

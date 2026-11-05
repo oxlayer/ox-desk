@@ -315,3 +315,86 @@ pub fn thread() -> std::sync::mpsc::Sender<Evento> {
     });
     tx
 }
+
+// ------------------------------------------------- permissões, sem adivinhar
+//
+// O TCC amarra a concessão ao BINÁRIO (ao designated requirement dele),
+// não ao usuário nem ao app que pergunta. Então só este executável pode
+// responder se ELE tem permissão: o `logid` perguntando pela própria
+// conta daria uma resposta certa sobre o programa errado.
+//
+// É o que torna `--conferir` necessário em vez de uma função no daemon.
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    /// Diz se há permissão de Gravação de Tela. **Não** mostra diálogo.
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    /// Pede a permissão. Mostra o diálogo do sistema UMA vez na vida do
+    /// binário; depois disso devolve o que já foi decidido, calado.
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+pub fn tem_gravacao_de_tela() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+/// Pede as duas permissões que o host precisa.
+///
+/// Roda no processo do HOST de propósito, e tem de ser lançado da sessão
+/// gráfica: pelo SSH não há diálogo nenhum para mostrar, e a chamada
+/// volta `false` sem que ninguém tenha visto nada
+/// ([[../../.claude/rules/sessao-grafica]]).
+///
+/// A de Acessibilidade usa a variante com `kAXTrustedCheckOptionPrompt`,
+/// que é o que faz o macOS abrir o painel certo em vez de só responder
+/// "não". Sem o prompt a pessoa teria de encontrar o item na lista à
+/// mão, e o nome que aparece lá é `logistream-host`, não "logi".
+pub fn pedir_permissoes() -> (bool, bool) {
+    let tela = unsafe { CGRequestScreenCaptureAccess() };
+    let input = unsafe {
+        let chave = CFStringCreateWithCString(
+            std::ptr::null(),
+            c"AXTrustedCheckOptionPrompt".as_ptr(),
+            0x0800_0100, // kCFStringEncodingUTF8
+        );
+        let opcoes = CFDictionaryCreate(
+            std::ptr::null(),
+            [chave].as_ptr(),
+            [kCFBooleanTrue].as_ptr(),
+            1,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
+        let r = AXIsProcessTrustedWithOptions(opcoes);
+        CFRelease(opcoes as CFTypeRef);
+        CFRelease(chave as CFTypeRef);
+        r
+    };
+    (tela, input)
+}
+
+type CFStringRef = *const std::ffi::c_void;
+type CFDictionaryRef = *const std::ffi::c_void;
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    static kCFBooleanTrue: *const std::ffi::c_void;
+    fn CFStringCreateWithCString(
+        aloc: *const std::ffi::c_void,
+        cstr: *const std::ffi::c_char,
+        enc: u32,
+    ) -> CFStringRef;
+    fn CFDictionaryCreate(
+        aloc: *const std::ffi::c_void,
+        chaves: *const CFStringRef,
+        valores: *const *const std::ffi::c_void,
+        n: isize,
+        kcb: *const std::ffi::c_void,
+        vcb: *const std::ffi::c_void,
+    ) -> CFDictionaryRef;
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrustedWithOptions(opcoes: CFDictionaryRef) -> bool;
+}

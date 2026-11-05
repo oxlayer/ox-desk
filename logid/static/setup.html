@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<!-- Mesma CSP do painel, e pelo mesmo motivo: a pagina e um arquivo
+     unico embutido no binario do daemon, nao usa eval, e o unico lugar
+     de onde le e 127.0.0.1:porta. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Configurar esta maquina</title>
+<style>
+  /* Tokens iguais aos do painel: as duas paginas sao a mesma casa, e
+     divergir aqui faria a configuracao parecer de outro programa. */
+  :root{
+    color-scheme:light dark;
+    --bg:#f4f5f7; --card:#fff; --fg:#111317; --dim:#666d78; --faint:#99a0ab;
+    --line:#e5e8ec; --inset:#f8f9fb;
+    --up:#0f7a3d; --down:#c02626; --warn:#8a6100;
+    --upbg:#e6f6ec; --downbg:#fdeaea; --warnbg:#fdf3e3;
+    --shadow:0 1px 2px rgba(16,20,28,.05), 0 8px 24px rgba(16,20,28,.05);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --accent:#2563eb;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0c0e12; --card:#15181e; --fg:#e9ebee; --dim:#949aa4; --faint:#5f6670;
+    --line:#242932; --inset:#1b1f26;
+    --up:#45d483; --down:#ff6b6b; --warn:#f0b429;
+    --upbg:#0c2c1a; --downbg:#2d1113; --warnbg:#2b2210;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.3);
+    --accent:#60a5fa;
+  }}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    background-image:radial-gradient(1200px 600px at 12% -10%,
+      color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%);
+    font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:720px;margin:0 auto;padding:40px 16px 72px}
+
+  /* ---- cabecalho ---- */
+  header{margin-bottom:26px}
+  .eyebrow{font:11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+    color:var(--faint);margin-bottom:10px}
+  h1{font-size:26px;font-weight:660;margin:0 0 6px;letter-spacing:-.02em}
+  .lead{color:var(--dim);margin:0;font-size:14px}
+  .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:18px}
+  .bar i{display:block;height:100%;background:var(--up);border-radius:3px;
+    transition:width .45s ease;width:0}
+  .barlbl{display:flex;justify-content:space-between;margin-top:7px;
+    font-size:12px;color:var(--dim)}
+  .barlbl b{color:var(--fg);font-weight:620}
+
+  /* ---- faixa de "pronto" ---- */
+  .pronto{display:none;margin:0 0 22px;padding:16px 18px;border-radius:12px;
+    background:var(--upbg);border:1px solid color-mix(in srgb,var(--up) 28%,var(--line));
+    color:var(--fg)}
+  .pronto.on{display:block}
+  .pronto b{color:var(--up)}
+
+  /* ---- passos ---- */
+  ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+  li{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    box-shadow:var(--shadow);overflow:hidden}
+  /* O passo em que agir faz diferenca AGORA ganha o anel. Um wizard que
+     destaca tudo nao destaca nada. */
+  li.agora{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));
+    box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 22%,transparent), var(--shadow)}
+  /* Passo pronto ocupa MENOS espaco. Numa maquina quase montada a
+     lista e nove verdes e um vermelho, e com todos do mesmo tamanho o
+     unico que pede acao sai da tela. */
+  li.ok{background:color-mix(in srgb,var(--card) 92%,var(--upbg))}
+  li.ok .head{padding:9px 16px}
+  li.ok .tit .n{font-size:13.5px}
+  li.ok .tit .d{font-size:12px}
+  li.ok .marca{width:19px;height:19px;font-size:11px}
+  li.espera{opacity:.62}
+  li.fora{opacity:.5}
+
+  .head{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;
+    cursor:pointer;user-select:none}
+  .head:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .marca{flex:none;width:22px;height:22px;border-radius:50%;margin-top:1px;
+    display:grid;place-items:center;font-size:12px;font-weight:700;
+    background:var(--inset);border:1px solid var(--line);color:var(--faint)}
+  .marca.ok{background:var(--upbg);border-color:color-mix(in srgb,var(--up) 30%,var(--line));color:var(--up)}
+  .marca.falta{background:var(--downbg);border-color:color-mix(in srgb,var(--down) 30%,var(--line));color:var(--down)}
+  .marca.erro{background:var(--warnbg);border-color:color-mix(in srgb,var(--warn) 32%,var(--line));color:var(--warn)}
+  .tit{min-width:0;flex:1}
+  .tit .n{font-weight:620;font-size:14.5px;letter-spacing:-.01em}
+  .tit .n .op{font-weight:460;color:var(--faint);font-size:12px;margin-left:7px}
+  .tit .d{color:var(--dim);font-size:12.5px;margin-top:2px;overflow-wrap:anywhere}
+  .tit .d.falta{color:var(--down)}
+  .tit .d.erro{color:var(--warn)}
+  .chev{flex:none;color:var(--faint);font-size:11px;margin-top:5px;
+    transition:transform .18s ease}
+  li.aberto .chev{transform:rotate(90deg)}
+
+  .corpo{display:none;padding:0 16px 16px 50px;border-top:1px solid var(--line);
+    margin-top:-1px;padding-top:14px}
+  li.aberto .corpo{display:block}
+  .porque{color:var(--dim);font-size:13px;margin:0 0 14px}
+  .onde{font-size:12.5px;color:var(--dim);margin:0 0 12px}
+  .onde b{font-weight:600;color:var(--fg)}
+
+  pre{margin:0 0 12px;background:var(--inset);border:1px solid var(--line);
+    border-radius:9px;padding:11px 12px;font:12px/1.6 var(--mono);
+    white-space:pre-wrap;overflow-wrap:anywhere;color:var(--fg)}
+
+  .acoes{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  button{font:inherit;font-size:13px;font-weight:550;padding:7px 13px;
+    border-radius:8px;border:1px solid var(--line);background:var(--card);
+    color:var(--fg);cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--faint)}
+  button:disabled{opacity:.55;cursor:default}
+  button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.pri:hover:not(:disabled){filter:brightness(1.07)}
+  .msg{font-size:12.5px;overflow-wrap:anywhere}
+  .msg.ok{color:var(--up)} .msg.no{color:var(--warn)}
+
+  /* ---- rodape ---- */
+  footer{margin-top:26px;display:flex;gap:12px;align-items:center;
+    flex-wrap:wrap;color:var(--faint);font-size:12px}
+  footer .stamp{font-family:var(--mono)}
+  a{color:var(--accent)}
+  .vazio{padding:40px 0;text-align:center;color:var(--dim)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head><body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow" id="eyebrow">configurando</div>
+    <h1 id="maquina">Configurar esta máquina</h1>
+    <p class="lead" id="lead">Medindo o que falta…</p>
+    <div class="bar"><i id="barra"></i></div>
+    <div class="barlbl">
+      <span><b id="prontos">0</b> de <b id="total">0</b> essenciais prontos</span>
+      <span id="opcionais"></span>
+    </div>
+  </header>
+
+  <div class="pronto" id="pronto">
+    <b>Esta máquina está pronta.</b>
+    <span id="prontotxt"></span>
+    <a href="/">Abrir o painel</a>
+  </div>
+
+  <ol id="lista"><li class="vazio" style="box-shadow:none;border:0;background:none">
+    <div class="vazio">medindo…</div></li></ol>
+
+  <footer>
+    <button id="remedir">Medir de novo</button>
+    <span>medido às <span class="stamp" id="hora">--:--:--</span></span>
+    <span class="stamp" id="build"></span>
+    <span style="flex:1"></span>
+    <a href="/">painel</a>
+  </footer>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const ROTULO = { linux:'Ubuntu', mac:'macOS', windows:'Windows' };
+
+// Qual passo esta aberto. Guardado FORA do desenho: a lista e
+// redesenhada depois de cada reparo, e sem isto o passo em que a pessoa
+// esta trabalhando fecharia na cara dela a cada medicao.
+let aberto = null;
+let mexeu = false;   // a pessoa ja abriu algo na mao?
+let ultimoProximo = null;
+
+function marca(estado){
+  if (estado === 'ok')   return ['ok','✓'];
+  if (estado === 'erro') return ['erro','?'];
+  if (estado === 'fora') return ['','–'];
+  return ['falta','!'];
+}
+
+function copiar(texto, botao){
+  const feito = () => { botao.textContent = 'copiado'; setTimeout(()=>botao.textContent='Copiar',1400); };
+  if (navigator.clipboard) { navigator.clipboard.writeText(texto).then(feito, ()=>{}); return; }
+  // Sem a API (http em origem nao segura, dependendo do navegador):
+  // seleciona num textarea e deixa a pessoa dar Ctrl+C. Melhor que um
+  // botao que nao faz nada.
+  const t = document.createElement('textarea');
+  t.value = texto; document.body.appendChild(t); t.select();
+  try { document.execCommand('copy'); feito(); } catch(e) {}
+  t.remove();
+}
+
+function linha(p, ehAgora){
+  const li = document.createElement('li');
+  const [cls, sinal] = marca(p.estado);
+  const esperando = p.esperando && p.estado !== 'ok';
+  li.className = [
+    p.estado === 'ok' ? 'ok' : '',
+    p.estado === 'fora' ? 'fora' : '',
+    esperando ? 'espera' : '',
+    ehAgora ? 'agora' : '',
+    aberto === p.id ? 'aberto' : '',
+  ].filter(Boolean).join(' ');
+
+  const cab = document.createElement('div');
+  cab.className = 'head';
+  cab.tabIndex = 0;
+  cab.setAttribute('role','button');
+  cab.setAttribute('aria-expanded', aberto === p.id ? 'true' : 'false');
+
+  const m = document.createElement('div');
+  m.className = 'marca ' + cls;
+  m.textContent = sinal;
+  m.setAttribute('aria-hidden','true');
+
+  const tit = document.createElement('div');
+  tit.className = 'tit';
+  const n = document.createElement('div');
+  n.className = 'n';
+  n.textContent = p.titulo;
+  if (!p.essencial) {
+    const op = document.createElement('span');
+    op.className = 'op';
+    op.textContent = 'opcional';
+    n.appendChild(op);
+  }
+  const d = document.createElement('div');
+  d.className = 'd ' + (p.estado === 'falta' ? 'falta' : p.estado === 'erro' ? 'erro' : '');
+  d.textContent = esperando ? ('espera por: ' + p.esperando) : p.detalhe;
+  tit.append(n, d);
+
+  const ch = document.createElement('div');
+  ch.className = 'chev';
+  ch.textContent = '▶';
+  ch.setAttribute('aria-hidden','true');
+
+  cab.append(m, tit, ch);
+
+  const corpo = document.createElement('div');
+  corpo.className = 'corpo';
+  const porque = document.createElement('p');
+  porque.className = 'porque';
+  porque.textContent = p.porque;
+  corpo.appendChild(porque);
+
+  const a = p.arrumo || {};
+  if (a.onde) {
+    const o = document.createElement('p');
+    o.className = 'onde';
+    const b = document.createElement('b');
+    b.textContent = a.onde;
+    o.append(document.createTextNode('Na interface do sistema: '), b);
+    corpo.appendChild(o);
+  }
+  if (a.linha) {
+    const pre = document.createElement('pre');
+    pre.textContent = a.linha;
+    corpo.appendChild(pre);
+  }
+
+  const acoes = document.createElement('div');
+  acoes.className = 'acoes';
+  const msg = document.createElement('span');
+  msg.className = 'msg';
+
+  if (p.estado !== 'ok' && p.estado !== 'fora' && !esperando) {
+    if (a.tipo === 'sozinho' || a.tipo === 'clique') {
+      const bt = document.createElement('button');
+      bt.className = 'pri';
+      bt.textContent = a.rotulo || 'Arrumar';
+      bt.onclick = async () => {
+        bt.disabled = true;
+        const antes = bt.textContent;
+        bt.textContent = 'fazendo…';
+        msg.className = 'msg';
+        msg.textContent = '';
+        try {
+          const r = await fetch('/api/setup/arrumar', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({id: p.id}),
+          });
+          const j = await r.json().catch(()=>({}));
+          msg.className = 'msg ' + (r.ok ? 'ok' : 'no');
+          msg.textContent = r.ok ? (j.detalhe || 'feito') : (j.error || j.detalhe || 'não resolveu');
+        } catch (e) {
+          msg.className = 'msg no';
+          msg.textContent = 'o daemon não respondeu: ' + e;
+        }
+        bt.disabled = false;
+        bt.textContent = antes;
+        // Mede de novo sempre, inclusive quando o reparo diz que falhou:
+        // "nao resolveu" e uma afirmacao sobre o comando, e o que vale e
+        // o estado do mundo depois dele.
+        await medir({manter: msg.textContent, idmsg: p.id, classe: msg.className});
+      };
+      acoes.appendChild(bt);
+    }
+    if (a.linha) {
+      const cp = document.createElement('button');
+      cp.textContent = 'Copiar';
+      cp.onclick = () => copiar(a.linha, cp);
+      acoes.appendChild(cp);
+    }
+    const rm = document.createElement('button');
+    rm.textContent = 'Medir este';
+    rm.onclick = () => medir();
+    acoes.appendChild(rm);
+  }
+  acoes.appendChild(msg);
+  corpo.appendChild(acoes);
+
+  const alterna = () => {
+    mexeu = true;
+    aberto = (aberto === p.id) ? null : p.id;
+    // Fecha os outros no DOM, nao so na variavel.
+    //
+    // A primeira versao marcava `aberto = p.id` e trocava a classe
+    // apenas do item clicado: o estado dizia "um aberto" e a tela
+    // mostrava dois. Quem pegou foi o check-setup.js contando
+    // `li.aberto` -- de olho eu teria lido como "ele mantem o anterior
+    // aberto, vai ver e de proposito".
+    for (const outro of document.querySelectorAll('#lista li.aberto')) {
+      if (outro !== li) {
+        outro.classList.remove('aberto');
+        const c = outro.querySelector('.head');
+        if (c) c.setAttribute('aria-expanded', 'false');
+      }
+    }
+    li.classList.toggle('aberto', aberto === p.id);
+    cab.setAttribute('aria-expanded', aberto === p.id ? 'true' : 'false');
+  };
+  cab.onclick = alterna;
+  cab.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); alterna(); } };
+
+  li.append(cab, corpo);
+  return li;
+}
+
+function desenhar(d, extra){
+  const r = d.resumo || {};
+  // O papel ja diz o sistema ("Ubuntu 26.04 - este PC"); repetir o
+  // rotulo so enchia a linha. O rotulo so entra quando nao ha papel.
+  $('#eyebrow').textContent = d.papel || ROTULO[d.sistema] || d.sistema || '';
+  $('#maquina').textContent = d.maquina || 'Esta máquina';
+  $('#hora').textContent = d.medido || '--:--:--';
+  $('#build').textContent = d.build ? ('build ' + d.build) : '';
+  $('#prontos').textContent = r.prontos ?? 0;
+  $('#total').textContent = r.total ?? 0;
+  const pct = r.total ? Math.round(100 * r.prontos / r.total) : 0;
+  $('#barra').style.width = pct + '%';
+
+  const passos = d.passos || [];
+  const opcionaisRuins = passos.filter(p => !p.essencial && p.estado !== 'ok' && p.estado !== 'fora');
+  $('#opcionais').textContent = opcionaisRuins.length
+    ? (opcionaisRuins.length + ' opcional(is) pendente(s)') : '';
+
+  const falta = passos.filter(p => p.estado !== 'ok' && p.estado !== 'fora').length;
+  $('#lead').textContent = r.pronto
+    ? (falta ? 'O essencial está de pé. O que sobra é opcional.' : 'Nada pendente.')
+    : (falta === 1 ? 'Falta uma coisa.' : 'Faltam ' + falta + ' coisas.');
+  $('#pronto').classList.toggle('on', !!r.pronto);
+  $('#prontotxt').textContent = r.pronto
+    ? (falta ? 'Os ' + falta + ' itens abaixo são opcionais. ' : '') : '';
+
+  // Abre o proximo acionavel ATE a pessoa abrir algo na mao. Depois
+  // disso, respeita a escolha dela: mexer na tela de quem esta lendo e
+  // a maneira mais rapida de perder a confianca da pessoa.
+  if (!mexeu) aberto = r.proximo || null;
+
+  const lista = $('#lista');
+  lista.textContent = '';
+  if (!passos.length) {
+    const li = document.createElement('li');
+    li.className = 'vazio';
+    li.textContent = 'nada a configurar';
+    lista.appendChild(li);
+    return;
+  }
+  for (const p of passos) lista.appendChild(linha(p, p.id === r.proximo));
+
+  // Leva o passo ativo para a vista QUANDO ELE MUDA, nao a cada
+  // medicao: uma tela que rola sozinha enquanto a pessoa le e pior que
+  // uma que nao rola. Mudou = ou e a primeira carga, ou o anterior
+  // acabou de ficar verde -- os dois casos em que ela quer ver o
+  // proximo.
+  if (r.proximo && r.proximo !== ultimoProximo) {
+    const alvo = lista.querySelector('li.agora');
+    if (alvo && alvo.scrollIntoView) {
+      const quieto = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      alvo.scrollIntoView({ block: 'center', behavior: quieto ? 'auto' : 'smooth' });
+    }
+  }
+  ultimoProximo = r.proximo || null;
+
+  // Reinstala a mensagem do ultimo reparo depois do redesenho: ela e a
+  // unica coisa na tela que a medicao nao sabe reproduzir.
+  if (extra && extra.idmsg) {
+    const i = passos.findIndex(p => p.id === extra.idmsg);
+    if (i >= 0) {
+      const alvo = lista.children[i].querySelector('.msg');
+      if (alvo) { alvo.className = extra.classe || 'msg'; alvo.textContent = extra.manter || ''; }
+    }
+  }
+}
+
+async function medir(extra){
+  const bt = $('#remedir');
+  bt.disabled = true;
+  const antes = bt.textContent;
+  bt.textContent = 'medindo…';
+  try {
+    const r = await fetch('/api/setup');
+    const d = await r.json();
+    desenhar(d, extra);
+  } catch (e) {
+    $('#lead').textContent = 'não consegui falar com o daemon local: ' + e;
+  }
+  bt.disabled = false;
+  bt.textContent = antes;
+}
+
+$('#remedir').onclick = () => medir();
+medir();
+// Sem refresh automatico, de proposito: medir `pares` abre SSH para cada
+// maquina, e um temporizador transformaria uma pergunta mensal numa
+// tempestade de conexoes.
+</script>
+</body></html>

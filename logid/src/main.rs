@@ -42,6 +42,14 @@ mod probe;
 mod procs;
 mod remote;
 mod screen;
+mod setup;
+mod setup_comum;
+#[cfg(target_os = "linux")]
+mod setup_linux;
+#[cfg(target_os = "macos")]
+mod setup_mac;
+#[cfg(windows)]
+mod setup_win;
 mod sys;
 #[cfg(target_os = "linux")]
 mod tray;
@@ -53,6 +61,7 @@ use std::time::{Duration, Instant};
 use tiny_http::{Header, Request, Response, Server};
 
 const PAGE: &str = include_str!("../static/index.html");
+const SETUP: &str = include_str!("../static/setup.html");
 
 /// Cache do snapshot. Existe porque /api/status faz rede e SSH -- medido
 /// em 2.09 s na versao Python, contra 0.6 ms do /healthz. Reusar e o que
@@ -780,6 +789,94 @@ fn post_kill(mut req: Request, cfg: &RwLock<Config>) {
     }
 }
 
+/// GET /api/setup -- o que falta nesta maquina.
+///
+/// Mede sob demanda, e NAO entra no ciclo de refresh do painel: o passo
+/// `pares` abre SSH para cada host, e um painel que repete isso a cada
+/// 10 s seria uma tempestade de conexoes para responder uma pergunta que
+/// muda uma vez por mes. A pagina mostra a hora da medicao e um botao.
+fn get_setup(req: Request, cfg: &RwLock<Config>) {
+    let snap = match cfg.read() {
+        Ok(g) => g.clone(),
+        Err(_) => return err_json(req, 500, "config travada"),
+    };
+    let passos = setup::catalogo_local();
+    let medidas = setup::medir(&snap);
+    let resumo = setup::resumo(&passos, &medidas);
+
+    // Junta catalogo e medida num objeto so: a pagina nao deveria ter de
+    // casar duas listas por id para desenhar uma linha.
+    let linhas: Vec<serde_json::Value> = passos
+        .iter()
+        .map(|p| {
+            let m = medidas.iter().find(|m| m.id == p.id);
+            serde_json::json!({
+                "id": p.id,
+                "titulo": p.titulo,
+                "porque": p.porque,
+                "arrumo": p.arrumo,
+                "essencial": p.essencial,
+                "depende": p.depende,
+                "estado": m.map(|m| m.estado).unwrap_or(setup::Estado::Erro),
+                "detalhe": m.map(|m| m.detalhe.clone()).unwrap_or_else(|| "nao medido".into()),
+                "esperando": setup::bloqueado_por(p, &medidas),
+            })
+        })
+        .collect();
+
+    let eu = snap.hosts.iter().find(|h| h.is_local());
+    let corpo = serde_json::json!({
+        "sistema": setup::Sistema::desta_maquina(),
+        "maquina": eu.map(|h| h.name.clone()),
+        "papel": eu.map(|h| h.role.clone()),
+        "build": env!("LOGI_BUILD"),
+        "medido": sys::hhmmss(),
+        "passos": linhas,
+        "resumo": resumo,
+    });
+    match serde_json::to_string(&corpo) {
+        Ok(b) => ok_json(req, b),
+        Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+    }
+}
+
+/// POST /api/setup/arrumar {"id":"<passo>"}
+///
+/// Devolve 409, nao 500, quando o reparo nao resolve: nao e defeito do
+/// servidor, e o caso normal de "abri a janela, agora e com voce". A
+/// pagina mostra a mensagem como instrucao, e nao como erro.
+fn post_setup_arrumar(mut req: Request, cfg: &RwLock<Config>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let Some(id) = v.get("id").and_then(|i| i.as_str()) else {
+        return err_json(req, 400, "informe {\"id\": \"<passo>\"}");
+    };
+    // So ids do catalogo DESTA maquina. Sem isto, um id qualquer cairia
+    // direto no `match` do modulo de plataforma -- que hoje recusa, mas
+    // nada garantiria isso no proximo passo adicionado.
+    if !setup::catalogo_local().iter().any(|p| p.id == id) {
+        return err_json(req, 404, &format!("'{id}' nao e um passo desta maquina"));
+    }
+    let snap = match cfg.read() {
+        Ok(g) => g.clone(),
+        Err(_) => return err_json(req, 500, "config travada"),
+    };
+    say!("setup: arrumando '{id}'");
+    match setup::arrumar(id, &snap) {
+        Ok(detalhe) => {
+            say!("setup: '{id}' ok -- {detalhe}");
+            ok_json(req, serde_json::json!({"ok": true, "detalhe": detalhe}).to_string())
+        }
+        Err(e) => {
+            say!("setup: '{id}' nao resolveu -- {e}");
+            err_json(req, 409, &e)
+        }
+    }
+}
+
 fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
     let method = req.method().as_str().to_string();
@@ -792,6 +889,12 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             Ok(()) => ok_json(req, "{\"ok\":true}".into()),
             Err(e) => err_json(req, 500, &e),
         };
+    }
+    if path == "/api/setup/arrumar" && method == "POST" {
+        return post_setup_arrumar(req, cfg);
+    }
+    if path == "/api/setup" && method == "GET" {
+        return get_setup(req, cfg);
     }
     if path == "/api/clipboard" && method == "POST" {
         return post_clipboard(req);
@@ -1013,6 +1116,11 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             Ok(b) => ok_json(req, b),
             Err(e) => err_json(req, 500, &format!("serializar: {e}")),
         },
+
+        "/setup" | "/setup.html" => respond(
+            req,
+            Response::from_string(SETUP).with_header(html_header()).with_header(nostore()),
+        ),
 
         "/" | "/index.html" => {
             // Renderizado por requisicao: se refresh_seconds mudar por

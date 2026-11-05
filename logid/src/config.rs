@@ -615,6 +615,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn o_default_parseia_e_tem_as_tres_maquinas() {
+        // O `DEFAULT_TOML` e escrito na primeira execucao E pelo botao
+        // "Escrever a config padrao" do wizard -- entao um erro aqui so
+        // aparece na maquina nova, que e exatamente onde ninguem tem
+        // como diagnosticar.
+        //
+        // Este teste nasceu de um defeito real: o MacBook ficou de fora
+        // deste arquivo por meses. Como as tres configs vivas o tinham,
+        // nada acusou -- ate alguem reescrever a config padrao e perder
+        // uma maquina inteira sem aviso.
+        let c: Config = toml::from_str(DEFAULT_TOML).expect("o default tem de parsear");
+        assert_eq!(c.hosts.len(), 3, "o default descreve as tres maquinas");
+        assert_eq!(c.hosts.iter().filter(|h| h.is_local()).count(), 1, "exatamente um local");
+
+        let mut nomes: Vec<&str> = c.hosts.iter().map(|h| h.name.as_str()).collect();
+        nomes.sort_unstable();
+        let antes = nomes.len();
+        nomes.dedup();
+        assert_eq!(nomes.len(), antes, "nome de host repetido");
+
+        // Grade sem colisao: duas maquinas na mesma celula fazem a borda
+        // apontar para a errada.
+        let mut celulas: Vec<(i32, i32)> =
+            c.hosts.iter().filter_map(|h| h.layout).map(|l| (l.col, l.row)).collect();
+        assert_eq!(celulas.len(), 3, "todo host no default tem posicao na grade");
+        celulas.sort_unstable();
+        celulas.dedup();
+        assert_eq!(celulas.len(), 3, "duas maquinas na mesma celula da grade");
+
+        // Nenhum IP literal: ja quebrou tudo uma vez quando o do Windows
+        // mudou.
+        for h in &c.hosts {
+            let ip = h.addr.split('.').count() == 4
+                && h.addr.split('.').all(|p| p.parse::<u8>().is_ok());
+            assert!(!ip || h.is_local(), "{} tem IP literal: {}", h.name, h.addr);
+        }
+    }
+
+    #[test]
     fn expect_default_e_up() {
         // Importa: um servico sem `expect` declarado tem de alarmar se cair.
         assert_eq!(Expect::default(), Expect::Up);

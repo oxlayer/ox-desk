@@ -203,6 +203,14 @@ impl ksni::Tray for Bandeja {
             }
             .into(),
         );
+        itens.push(
+            StandardItem {
+                label: "Configurar esta máquina".into(),
+                activate: Box::new(|b: &mut Bandeja| b.abrir("/setup")),
+                ..Default::default()
+            }
+            .into(),
+        );
         itens
     }
 }
@@ -252,9 +260,18 @@ impl Bandeja {
     }
 
     fn abrir_painel(&self) {
+        self.abrir("/");
+    }
+
+    /// Abre uma rota do painel no navegador padrão.
+    ///
+    /// `xdg-open` e não a janela do Electron: a bandeja nativa vive
+    /// dentro do daemon e não tem como falar com a casca -- ela pode
+    /// nem estar rodando. O navegador sempre está.
+    fn abrir(&self, rota: &str) {
         let porta = self.cfg.read().map(|g| g.port).unwrap_or(8787);
         let _ = crate::sys::child("xdg-open")
-            .arg(format!("http://127.0.0.1:{porta}/"))
+            .arg(format!("http://127.0.0.1:{porta}{rota}"))
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();

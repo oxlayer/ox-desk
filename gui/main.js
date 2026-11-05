@@ -53,6 +53,21 @@ const PORT = readPort();
 const URL = `http://127.0.0.1:${PORT}/`;
 const LOGID = PATHS.logid;
 
+/// Caminho de uma URL nossa, sem usar a classe `URL`.
+///
+/// `const URL = 'http://127.0.0.1:...'` ali em cima **sombreia** a
+/// classe global com mesmo nome: `new URL(x)` aqui dentro morre com
+/// "URL is not a constructor". Foi o que aconteceu, e o erro virou
+/// `UnhandledPromiseRejectionWarning` no log -- a janela abria, so a
+/// tela cheia nunca acontecia. Sintoma mudo, causa a dois arquivos de
+/// distancia do nome.
+///
+/// `globalThis.URL` resolveria, mas uma funcao nomeada deixa o motivo
+/// escrito onde a proxima pessoa vai olhar.
+function caminhoDe(u) {
+  return new globalThis.URL(String(u)).pathname;
+}
+
 let win = null;
 let tray = null;
 let child = null;      // backend que NOS subimos (se subimos)
@@ -115,7 +130,7 @@ async function ensureBackend() {
 
 // --- janela ----------------------------------------------------------------
 
-function createWindow() {
+function createWindow(rota = '/') {
   win = new BrowserWindow({
     width: 1000,
     height: 780,
@@ -133,7 +148,31 @@ function createWindow() {
     },
   });
 
-  win.loadURL(URL);
+  win.loadURL(URL.slice(0, -1) + rota);
+
+  // Tela cheia so na configuracao, e so enquanto ela estiver aberta.
+  //
+  // Quem decide e a ROTA, por `did-navigate`, e nao a chamada: o link
+  // "painel" no pe da pagina e a saida natural, e ele teria de tirar a
+  // tela cheia por conta propria -- coisa que uma pagina nao pode
+  // fazer. Amarrando no evento, voltar para `/` devolve a janela
+  // normal sozinho, e ir para `/setup` pelo menu da bandeja entra em
+  // tela cheia sem caminho especial.
+  //
+  // Tela cheia sem saida visivel seria sequestro de tela; a pagina
+  // sempre mostra o link do painel, e o Esc continua valendo.
+  const ajustarTela = (url) => {
+    const cheia = caminhoDe(url).startsWith('/setup');
+    if (win.isFullScreen() === cheia) return;
+    win.setFullScreen(cheia);
+    // Uma linha no log por troca: sem ela, "a tela cheia nao
+    // aconteceu" nao se distingue de "a navegacao nao chegou aqui" --
+    // e a primeira versao disto falhava calada, por sombreamento de
+    // nome.
+    console.log(`janela: ${cheia ? 'tela cheia' : 'normal'} (${caminhoDe(url)})`);
+  };
+  win.webContents.on('did-navigate', (_e, url) => ajustarTela(url));
+  ajustarTela(URL.slice(0, -1) + rota);
 
   // Link externo abre no navegador, nunca dentro do app.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -151,6 +190,14 @@ function createWindow() {
   win.on('close', (e) => {
     if (!quitting && !BANDEJA_NATIVA) { e.preventDefault(); win.hide(); }
   });
+}
+
+/// Abre uma rota do painel na janela, criando-a se preciso.
+function abrir(rota) {
+  if (!win || win.isDestroyed()) return createWindow(rota);
+  win.loadURL(URL.slice(0, -1) + rota);
+  win.show();
+  win.focus();
 }
 
 function toggle() {
@@ -253,6 +300,7 @@ async function refreshTray() {
   items.push(
     { type: 'separator' },
     { label: 'Mostrar / esconder', click: toggle },
+    { label: 'Configurar esta maquina', click: () => abrir('/setup') },
     { label: 'Recarregar', click: () => win && win.reload() },
     { label: 'Abrir no navegador', click: () => shell.openExternal(URL) },
     { type: 'separator' },
@@ -296,6 +344,25 @@ async function vigiaBuild() {
   }
 }
 
+/// Mede o setup e leva para a configuracao se faltar algo local.
+async function conferirSetup() {
+  // Se o daemon nao responder, nao abre nada: um wizard que aparece
+  // porque a medicao falhou e pior que nenhum wizard.
+  const d = await getJson('/api/setup', 90000);
+  if (!d || !d.passos) return;
+  const local = d.passos.filter(
+    (p) => p.essencial && p.id !== 'pares' && p.estado !== 'ok' && p.estado !== 'fora'
+  );
+  if (!local.length) return;
+  console.log(`setup: falta ${local.map((p) => p.id).join(', ')} -- abrindo a configuracao`);
+  // So se a pessoa ainda estiver na pagina inicial: se ela ja navegou,
+  // mandar a janela para outro lugar seria tirar a tela da mao dela.
+  if (!win || win.isDestroyed()) return;
+  const onde = caminhoDe(win.webContents.getURL() || URL);
+  if (onde !== '/' && onde !== '/index.html') return;
+  abrir('/setup');
+}
+
 function createTray() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
   tray = new Tray(img.resize({ width: 22, height: 22 }));
@@ -319,7 +386,25 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     const how = await ensureBackend();
     console.log(`backend em ${URL}: ${how}`);
-    createWindow();
+    // `--setup` abre direto na configuracao. Serve para quem chamou o
+    // app de proposito para configurar, e e como esta tela se testa
+    // sem depender de clicar na bandeja.
+    const direto = process.argv.includes('--setup');
+    createWindow(direto ? '/setup' : '/');
+    if (direto) return;
+    // A configuracao se abre sozinha quando falta algo nesta maquina --
+    // DEPOIS da janela, nunca antes.
+    //
+    // `/api/setup` mede SSH para cada par e leva segundos; esperar por
+    // ela para so entao abrir a janela faria o app parecer travado toda
+    // vez. A janela nasce no painel e troca se for o caso.
+    //
+    // E `pares` NAO conta para abrir sozinho. Ele fala das OUTRAS
+    // maquinas: com o MacBook dormindo, uma maquina perfeitamente
+    // montada cairia na tela de configuracao a cada login -- e a
+    // segunda vez que isso acontece a pessoa ja aprendeu a fechar sem
+    // ler. Falta de verdade e o que esta errado AQUI.
+    conferirSetup();
     // Bandeja so onde nao ha nativa. No Linux o logid registra a dele
     // por StatusNotifierItem; criar a do Electron junto poria DOIS
     // icones iguais na barra, cada um com um menu que o outro nao

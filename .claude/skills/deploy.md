@@ -46,10 +46,18 @@ processo principal — então mudança em `gui/main.js` só entra
 reiniciando o app.
 
 ```bash
-pkill -f 'electron \.$'
+pkill -f 'logi/gui/node_modules/electron/dist/electron'
 cd ~/dev/logi/gui && (setsid nohup env -u ELECTRON_RUN_AS_NODE \
   node ./node_modules/.bin/electron . > ~/.local/state/logi-gui.log 2>&1 &)
 ```
+
+**O padrão era `electron \.$` e isso falhava calado.** Com qualquer
+argumento (`electron . --setup`) a linha de comando não termina em `.`
+— e o próprio binário reordena os argumentos para `electron --setup .`.
+O `pkill` não casava, a instância velha continuava viva, a nova batia
+no `requestSingleInstanceLock()` e saía, e o log vinha vazio porque o
+`>` acabara de truncá-lo. Sintoma: "não subiu", com o app rodando o
+tempo todo. O caminho do binário casa sempre.
 
 **`env -u ELECTRON_RUN_AS_NODE` não é opcional.** Com essa variável
 no ambiente, o electron roda como node puro, `app` vem `undefined` e
@@ -60,8 +68,20 @@ Conferir que voltou, sempre — matar e não relançar deixa a pessoa sem
 bandeja:
 
 ```bash
-pgrep -af electron | head -2
+# `pgrep -af electron` casa com o PRÓPRIO comando que você digitou
+# (a string "electron" está nele) e sempre "acha" algo. Filtrar por
+# `comm` olha o executável, não a linha de comando.
+ps -eo pid,comm --no-headers | awk '$2 ~ /electron/' | head -3
 tail -3 ~/.local/state/logi-gui.log
 ```
 
 O aviso de Vulkan/ozone no log é cosmético.
+
+## Abrir direto na configuração
+
+```bash
+node ./node_modules/.bin/electron . --setup
+```
+
+Abre em tela cheia na página de setup. É o mesmo que a bandeja faz em
+"Configurar esta máquina" — ver [[configurar-maquina]].

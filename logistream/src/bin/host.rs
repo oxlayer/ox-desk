@@ -62,6 +62,40 @@ fn main() -> anyhow::Result<()> {
     redirecionar_saida();
 
     let a: Vec<String> = std::env::args().skip(1).collect();
+
+    // `--conferir` e `--pedir` existem NESTE binario e nao no daemon
+    // porque o TCC do macOS amarra a concessao ao binario -- ao
+    // designated requirement dele. O `logid` perguntando "tenho
+    // permissao de tela?" receberia uma resposta correta sobre o
+    // programa errado, e o wizard de setup pintaria verde uma permissao
+    // que o host nao tem.
+    //
+    // A saida e de UMA linha por permissao, `chave: ok|falta`, porque
+    // quem le e codigo. Ver logid/src/setup_mac.rs.
+    #[cfg(target_os = "macos")]
+    if a.first().is_some_and(|v| v == "--conferir" || v == "--pedir") {
+        let pedir = a[0] == "--pedir";
+        if pedir {
+            // Mostra o dialogo do sistema. So funciona lancado da
+            // sessao grafica: por SSH nao ha dialogo para mostrar e a
+            // chamada volta `false` sem ninguem ter visto nada.
+            let _ = logistream::input_mac::pedir_permissoes();
+        }
+        // Medir DEPOIS de pedir, e sempre pelo preflight: o retorno do
+        // pedido e o que o usuario acabou de clicar, e no caso comum
+        // (dialogo ja respondido um dia) nem dialogo ha. Quem responde
+        // a pergunta "da para capturar agora?" e o preflight.
+        println!(
+            "gravacao-de-tela: {}",
+            if logistream::input_mac::tem_gravacao_de_tela() { "ok" } else { "falta" }
+        );
+        println!(
+            "acessibilidade: {}",
+            if logistream::input_mac::tem_acessibilidade() { "ok" } else { "falta" }
+        );
+        return Ok(());
+    }
+
     let porta: u16 = a.first().and_then(|v| v.parse().ok()).unwrap_or(9777);
 
     #[cfg(target_os = "linux")]

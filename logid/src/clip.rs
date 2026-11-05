@@ -50,6 +50,30 @@ static ULTIMO: Mutex<Option<String>> = Mutex::new(None);
 /// cópia transformaria uma conveniência num engasgo.
 pub const LIMITE: usize = 256 * 1024;
 
+/// A vigilância está de pé? `None` = ainda não se sabe.
+///
+/// Existe porque "a thread subiu" e "a vigilância funciona" são coisas
+/// diferentes, e a diferença é invisível: no Linux a `spawn` devolve o
+/// canal na hora e a thread pode morrer depois, no `EnableClipboard`;
+/// no macOS e no Windows o laço de amostragem sobrevive a um erro de
+/// leitura com um `continue` calado. Nos dois casos o clipboard para de
+/// atravessar e nada no painel muda de cor.
+///
+/// Quem pergunta é o wizard de setup, que precisa de uma resposta
+/// medida -- não da existência de um canal
+/// ([[../../.claude/rules/verificar-o-que-chegou]]).
+static VIGIA: Mutex<Option<(bool, String)>> = Mutex::new(None);
+
+pub fn anotar_vigia(ok: bool, detalhe: impl Into<String>) {
+    if let Ok(mut g) = VIGIA.lock() {
+        *g = Some((ok, detalhe.into()));
+    }
+}
+
+pub fn vigia() -> Option<(bool, String)> {
+    VIGIA.lock().ok().and_then(|g| g.clone())
+}
+
 pub fn ultimo() -> Option<String> {
     ULTIMO.lock().ok().and_then(|g| g.clone())
 }
@@ -265,8 +289,14 @@ pub mod linux {
     pub fn spawn(cfg: Arc<std::sync::RwLock<crate::config::Config>>) -> std::sync::mpsc::Sender<super::Pedido> {
         let (tx, rx) = std::sync::mpsc::channel::<super::Pedido>();
         std::thread::spawn(move || {
-            if let Err(e) = rodar(&cfg, &rx) {
-                crate::say!("clip: desliguei ({e})");
+            match rodar(&cfg, &rx) {
+                Err(e) => {
+                    crate::say!("clip: desliguei ({e})");
+                    super::anotar_vigia(false, e.to_string());
+                }
+                // Sair sem erro também é sair: o canal fechou e daqui
+                // para frente nada atravessa.
+                Ok(()) => super::anotar_vigia(false, "a thread do clipboard encerrou"),
             }
         });
         tx
@@ -286,6 +316,7 @@ pub mod linux {
         c.with_proxy(RD, sess.clone(), T)
             .method_call::<(), _, _, _>(RDS, "EnableClipboard", (vazio,))?;
         crate::say!("clip: observando o clipboard (sessao {sess})");
+        super::anotar_vigia(true, format!("sessão {sess} do Mutter aceita"));
 
         // Alguem copiou algo nesta maquina.
         let dono = {
@@ -505,9 +536,23 @@ pub fn vigiar(cfg: std::sync::Arc<std::sync::RwLock<crate::config::Config>>) {
                     continue;
                 }
                 match winput::clipboard_ler() {
-                    Ok(Some(t)) => t,
-                    Ok(None) => continue,
-                    Err(_) => continue,
+                    Ok(Some(t)) => {
+                        anotar_vigia(true, "a area de transferencia responde");
+                        t
+                    }
+                    // Vazio e saudavel: abrir deu certo, nao havia nada.
+                    Ok(None) => {
+                        anotar_vigia(true, "a area de transferencia responde (vazia)");
+                        continue;
+                    }
+                    // Aqui estava um `continue` calado. Erro de leitura
+                    // no Windows e quase sempre fronteira de sessao -- o
+                    // daemon na sessao 0 enxerga uma area sempre vazia
+                    // -- e isso tem de aparecer no painel, nao sumir.
+                    Err(e) => {
+                        anotar_vigia(false, e.to_string());
+                        continue;
+                    }
                 }
             }
             #[cfg(not(windows))]

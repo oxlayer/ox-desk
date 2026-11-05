@@ -10,6 +10,7 @@ refresh_seconds = 10
 name = "ubuntu-host"
 addr = "127.0.0.1"
 role = "Ubuntu 26.04 - este PC"
+layout = { col = 1, row = 1 }
 # O gnome-remote-desktop saiu junto com o RDP: nossa tela usa as APIs
 # privadas do Mutter (ScreenCast/RemoteDesktop), servidas pelo proprio
 # gnome-shell, e nao aquele daemon.
@@ -29,12 +30,41 @@ addr = "windows-host.local"  # mDNS, nunca IP
 role = "Windows 10 Pro"
 ssh = "windows-host"
 agent = "%LOCALAPPDATA%\\logid\\logid-agent.exe"
+layout = { col = 2, row = 1 }
 
   [[hosts.services]]
   label = "SSH"
   port = 22
 
+  # Tela NOSSA (DXGI -> NVENC -> QUIC), nao RDP. O host sobe por tarefa
+  # agendada com /IT: servico cairia na sessao 0, onde nao ha desktop
+  # para duplicar.
+  [hosts.screen]
+  kind = "logistream"
+  port = 9777
 
+# O MacBook ficou de FORA deste arquivo por meses, e so as tres configs
+# vivas o tinham. Quem escrevesse a config padrao -- inclusive o botao
+# "Escrever a config padrao" do wizard -- perdia a terceira maquina sem
+# aviso nenhum.
+[[hosts]]
+name = "mac-host"
+addr = "mac-host.local"   # mDNS, nunca IP
+os = "macos"
+role = "macOS - MacBook Air"
+ssh = "mac"
+layout = { col = 0, row = 1 }
+
+  [[hosts.services]]
+  label = "SSH"
+  port = 22
+
+  # Sobe por LaunchAgent (`ai.logi.logistream-host`), nunca por SSH: a
+  # captura depende de permissao TCC dada a quem lancou, e por SSH o
+  # AVFoundation trava em vez de falhar.
+  [hosts.screen]
+  kind = "logistream"
+  port = 9777
 
 
 # Canal Easy-Switch de cada dispositivo em cada host.
