@@ -1,0 +1,145 @@
+# Compila os binarios das tres maquinas. Por que e assim: specs/012.
+name: binarios
+
+on:
+  push:
+    branches: [main, 'ci/**']
+    tags: ['v*']
+    paths:
+      - 'logid/**'
+      - 'logistream/**'
+      - 'hidpp/**'
+      - 'agent/**'
+      - 'winput/**'
+      - 'scripts/construir-binarios.sh'
+      - '.github/workflows/binarios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binarios-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # A mesma versao do Ubuntu, de onde saem os binarios de hoje.
+  RUST_VERSION: '1.99.1'
+
+jobs:
+  construir:
+    name: ${{ matrix.alvo }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - alvo: linux
+            runner: ubuntu-24.04
+          # Cruzado, como no deploy: e o binario que ja roda no Windows, e
+          # o minuto de runner Linux custa metade do de Windows.
+          - alvo: windows
+            runner: ubuntu-24.04
+            rust_target: x86_64-pc-windows-gnu
+          - alvo: mac
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # LOGI_BUILD_N e `rev-list --count`: clone raso daria sempre 1.
+          fetch-depth: 0
+
+      - name: Dependencias (linux)
+        if: matrix.alvo == 'linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends \
+            clang libclang-dev libdbus-1-dev libpipewire-0.3-dev libudev-dev pkg-config
+
+      - name: Dependencias (windows)
+        if: matrix.alvo == 'windows'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends gcc-mingw-w64-x86-64
+
+      - name: Dependencias (mac)
+        if: matrix.alvo == 'mac'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: |
+          brew install ffmpeg pkgconf
+          echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig" >> "$GITHUB_ENV"
+          ffmpeg -version | head -1
+
+      - name: Rust
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          if [ -n "$RUST_TARGET" ]; then rustup target add "$RUST_TARGET"; fi
+          rustc --version
+
+      - name: Carimbo do build
+        run: |
+          echo "LOGI_BUILD=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "LOGI_BUILD_N=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.alvo }}
+          workspaces: |
+            logid
+            logistream
+            agent
+
+      - name: Compilar, conferir e empacotar
+        run: bash scripts/construir-binarios.sh "${{ matrix.alvo }}"
+
+      - name: Testes
+        if: matrix.alvo == 'linux'
+        run: |
+          cargo test --release --locked --manifest-path hidpp/Cargo.toml
+          cargo test --release --locked --manifest-path logid/Cargo.toml
+          cargo test --release --locked --manifest-path logistream/Cargo.toml --lib
+
+      # Tar, nao os binarios soltos: upload-artifact perde o bit de execucao.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logi-${{ matrix.alvo }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publicar:
+    name: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: construir
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publicar e conferir
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          test "$(ls *.tar.gz | wc -l)" -eq 3
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$TAG" *.tar.gz SHA256SUMS --verify-tag --generate-notes
+          chegaram=$(gh release view "$TAG" --json assets --jq '.assets | length')
+          echo "anexos na release: $chegaram"
+          test "$chegaram" -eq 4

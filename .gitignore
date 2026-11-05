@@ -17,6 +17,9 @@ __pycache__/
 # barra inicial casa em qualquer nivel.
 target/
 
+# Saida do scripts/construir-binarios.sh
+dist/
+
 # Chaves de assinatura ficam em ~/.config/logi/signing, nunca aqui.
 *.pem
 *.pfx
