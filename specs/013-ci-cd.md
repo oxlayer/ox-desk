@@ -113,8 +113,24 @@ está em `target/`.
   segue rodando e imprimindo o número, sem decidir. Como o `check.sh`
   também não testa o `logistream`, **hoje nada automático barra essa
   regressão**: quem mexer na conversão roda o teste aqui.
+- **Sem runner de Mac não há release.** No teste da tag, o job ficou 15
+  minutos sem runner e foi cancelado (`The job was not acquired by
+  Runner`, com aviso de falta de capacidade em macOS arm64). Não é erro
+  nosso e não deixa log. A release espera os três, de propósito: o
+  conserto é `gh run rerun <id> --failed`, testado, e o Mac passou em
+  1min10.
 - **Teste em runner sem GPU não cobre captura nem NVENC.** O que depende
   de sessão gráfica continua sendo verificado nas máquinas.
+
+## Publicar uma versão
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+A tag precisa começar com `v`. Testado de ponta a ponta com uma tag
+descartável: quatro anexos na release, conferidos pelo próprio job e de
+novo pelo `sha256sum -c` no pacote baixado.
 
 ## Custo
 
@@ -130,8 +146,18 @@ Medido no primeiro run, sem cache (05/11):
 | mac | 2min24 | 3 × 10 = 30 |
 | **total** | | **40** |
 
-São cerca de 50 pushes de código por mês no pior caso. O Mac é três
-quartos da conta. Se o orçamento apertar, o primeiro corte é tirá-lo do
+Com cache, medido no run de `37c4983`:
+
+| Job | Duração | Minutos cobrados |
+|---|---|---|
+| linux, com testes | 5min30 | 6 |
+| windows | 1min10 | 2 |
+| mac | 1min35 | 2 × 10 = 20 |
+| **total** | | **28** |
+
+São de 50 a 70 pushes de código por mês. O job do Linux quase não ganha
+com o cache: os testes recompilam em release. O Mac é mais de dois terços
+da conta. Se o orçamento apertar, o primeiro corte é tirá-lo do
 push e deixá-lo em tag e `workflow_dispatch`.
 
 ## Veja também
