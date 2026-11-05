@@ -161,6 +161,39 @@ impl ksni::Tray for Bandeja {
             }
         }
 
+        // Seleção grande de arquivos esperando destino.
+        //
+        // Acima do teto não mandamos para todo mundo sozinhos: copiar
+        // 1,4 GB para duas máquinas que ninguém está olhando gasta
+        // banda e disco alheio. Então o menu pergunta para onde, um
+        // destino por vez. Ver [`crate::clip_arq::ao_copiar`].
+        if let Some((caminhos, bytes)) = crate::clip_arq::oferta() {
+            itens.push(MenuItem::Separator);
+            itens.push(
+                StandardItem {
+                    label: format!(
+                        "{} arquivo(s) copiado(s), {}",
+                        caminhos.len(),
+                        crate::clip_arq::humano(bytes)
+                    ),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            );
+            for nome in &f.remotos {
+                let alvo = nome.clone();
+                itens.push(
+                    StandardItem {
+                        label: format!("Mandar arquivos para {nome}"),
+                        activate: Box::new(move |b: &mut Bandeja| b.mandar_arquivos(&alvo)),
+                        ..Default::default()
+                    }
+                    .into(),
+                );
+            }
+        }
+
         itens.push(MenuItem::Separator);
         itens.push(
             StandardItem {
@@ -175,6 +208,22 @@ impl ksni::Tray for Bandeja {
 }
 
 impl Bandeja {
+    /// Manda a seleção grande de arquivos para um destino escolhido.
+    ///
+    /// Numa thread porque pode ser 1,4 GB: bloquear aqui travaria o
+    /// menu inteiro -- e a bandeja roda na mesma thread que responde o
+    /// DBusMenu, então o menu pararia de abrir.
+    fn mandar_arquivos(&self, host: &str) {
+        let Ok(g) = self.cfg.read() else { return };
+        let snap = g.clone();
+        drop(g);
+        let alvo = host.to_string();
+        std::thread::spawn(move || match crate::clip_arq::mandar_oferta(&snap, &alvo) {
+            Ok(m) => crate::say!("bandeja: {m}"),
+            Err(e) => crate::say!("bandeja: {e}"),
+        });
+    }
+
     fn mandar(&self, host: &str) {
         let snap = match self.cfg.read() {
             Ok(g) => g.clone(),
@@ -246,12 +295,18 @@ pub fn vigiar(handle: ksni::blocking::Handle<Bandeja>, cfg: Arc<std::sync::RwLoc
         loop {
             let nova = montar(&cfg);
             // Assinatura simples: o que o menu mostra, concatenado.
+            // A oferta de arquivos entra na assinatura, e nao so na
+            // montagem do menu: o host da bandeja CACHEIA o menu que a
+            // gente empurra. Sem isso o item "Mandar arquivos" so
+            // apareceria na proxima vez que outra coisa mudasse -- ou
+            // nunca, numa maquina parada.
             let chave = format!(
-                "{}|{}|{:?}|{:?}",
+                "{}|{}|{:?}|{:?}|{:?}",
                 nova.dispositivos.join(","),
                 nova.remotos.join(","),
                 nova.aqui,
-                nova.alvo
+                nova.alvo,
+                crate::clip_arq::oferta().map(|(c, b)| (c.len(), b))
             );
             if chave != anterior {
                 anterior = chave;

@@ -34,6 +34,7 @@ mod focus;
 mod follow;
 mod hidpp;
 mod clip;
+mod clip_arq;
 mod kvm;
 mod logs;
 mod peers;
@@ -139,6 +140,26 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
         Some("clip-set") => {
             let porta = Config::load().map(|c| c.port).unwrap_or(8787);
             Some(crate::clip::cli_set(porta))
+        }
+        #[cfg(target_os = "linux")]
+        Some("clip-sonda") => Some(crate::clip_arq::cli_sonda()),
+        // Recebe arquivos de outra maquina. `clip-arq-set` le um tar do
+        // stdin; os outros dois servem ao caminho do rsync, que copia
+        // antes e avisa depois.
+        Some("clip-arq-set") => {
+            let porta = Config::load().map(|c| c.port).unwrap_or(8787);
+            Some(crate::clip_arq::cli_set(porta))
+        }
+        Some("clip-arq-dir") => Some(crate::clip_arq::cli_dir()),
+        Some("clip-arq-prontos") => {
+            let porta = Config::load().map(|c| c.port).unwrap_or(8787);
+            match args.get(1) {
+                Some(d) => Some(crate::clip_arq::cli_prontos(porta, d)),
+                None => {
+                    eprintln!("clip-arq-prontos: informe a pasta");
+                    Some(ExitCode::FAILURE)
+                }
+            }
         }
         Some("-h") | Some("--help") | Some("help") => {
             // stderr: stdout e reservado para o JSON do protocolo.
@@ -482,6 +503,56 @@ fn post_clipboard(mut req: Request) {
     }
 }
 
+/// POST /api/clipboard-arquivos {"paths":[...]} -- arquivos recebidos.
+///
+/// JSON aqui, ao contrario do clipboard de texto, porque o corpo e uma
+/// LISTA: separar caminhos por quebra de linha falharia no primeiro
+/// arquivo com quebra de linha no nome, que e legal no Linux.
+fn post_clipboard_arquivos(mut req: Request) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let caminhos: Vec<String> = v
+        .get("paths")
+        .and_then(|p| p.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    if caminhos.is_empty() {
+        return err_json(req, 400, "informe {\"paths\": [...]}");
+    }
+    match clip_arq::aplicar_local(&caminhos) {
+        Ok(()) => ok_json(req, "{\"ok\":true}".into()),
+        Err(e) => err_json(req, 500, &e),
+    }
+}
+
+/// POST /api/clipboard-arquivos/enviar {"host":"<nome>"} -- manda a
+/// selecao grande pendente para UM destino.
+///
+/// Existe porque acima do teto nao mandamos sozinhos: 1,4 GB para duas
+/// maquinas que ninguem esta olhando gasta banda e disco alheio. A
+/// bandeja chama isto com o host escolhido.
+fn post_clipboard_enviar(mut req: Request, cfg: &RwLock<Config>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let Some(host) = v.get("host").and_then(|h| h.as_str()).map(String::from) else {
+        return err_json(req, 400, "informe {\"host\": \"<nome>\"}");
+    };
+    let snap = match cfg.read() {
+        Ok(g) => g.clone(),
+        Err(_) => return err_json(req, 500, "estado da config corrompido"),
+    };
+    match clip_arq::mandar_oferta(&snap, &host) {
+        Ok(d) => ok_json(req, serde_json::json!({ "ok": true, "detail": d }).to_string()),
+        Err(e) => err_json(req, 409, &e),
+    }
+}
+
 /// POST /api/screen {"host": "<nome>"} -- lanca o cliente de tela.
 ///
 /// Separado do GET de proposito: o GET responde "da para clicar?" e a UI
@@ -724,6 +795,12 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     }
     if path == "/api/clipboard" && method == "POST" {
         return post_clipboard(req);
+    }
+    if path == "/api/clipboard-arquivos" && method == "POST" {
+        return post_clipboard_arquivos(req);
+    }
+    if path == "/api/clipboard-arquivos/enviar" && method == "POST" {
+        return post_clipboard_enviar(req, cfg);
     }
     if path == "/api/screen" && method == "POST" {
         return post_screen(req, cfg);

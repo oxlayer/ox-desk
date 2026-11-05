@@ -65,3 +65,35 @@ pub fn run(h: &HostCfg, cmd: &str, timeout_s: u32) -> Result<String, String> {
 pub fn is_powershell(h: &HostCfg) -> bool {
     h.os() == HostOs::Windows
 }
+
+/// Linha de comando para invocar o NOSSO `logid` no par, por SSH.
+///
+/// Parece detalhe e não é: no Windows o `logid.exe` é
+/// `windows_subsystem = "windows"` (sem console, para o daemon não
+/// piscar janela), e **o PowerShell não espera executável GUI**. Sem
+/// esperar, dois estragos:
+///
+/// 1. `$LASTEXITCODE` nunca é setado, então o SSH volta 0 e a origem
+///    anuncia "recebeu" com o outro lado vazio.
+/// 2. A sessão SSH fecha enquanto o processo ainda está lendo o stdin,
+///    e o que sobra é uma corrida.
+///
+/// Medido: três envios de texto sem redirecionar a saída chegaram
+/// **duas** vezes; com redirecionamento, três de três. Payload pequeno
+/// costuma ganhar a corrida, e foi por isso que o clipboard de texto
+/// parecia funcionar -- um `tar` é maior e perde mais.
+///
+/// `| Out-String | Write-Output` obriga o PowerShell a consumir a saída
+/// do processo, e consumir implica esperar o fim. `; exit $LASTEXITCODE`
+/// devolve o código de verdade para o SSH.
+pub fn comando_logid(h: &HostCfg, sub: &str) -> String {
+    if is_powershell(h) {
+        format!(
+            r#"& "$env:LOCALAPPDATA\logid\logid.exe" {sub} | Out-String | Write-Output; exit $LASTEXITCODE"#
+        )
+    } else {
+        // `~` expande no shell remoto; caminho absoluto exigiria saber
+        // o nome do usuário de cada máquina.
+        format!("~/.local/bin/logid {sub}")
+    }
+}

@@ -26,6 +26,18 @@
 
 use std::sync::Mutex;
 
+/// O que pedimos à thread do clipboard para publicar.
+///
+/// Texto e arquivo não são a mesma coisa com tamanhos diferentes: o
+/// texto **é** o conteúdo e vai no corpo do POST; o arquivo é uma
+/// referência, e o clipboard do destino tem de apontar para arquivos
+/// que existem no disco dele. Ver [`crate::clip_arq`].
+#[derive(Debug, Clone)]
+pub enum Pedido {
+    Texto(String),
+    Arquivos(Vec<String>),
+}
+
 /// Último texto que passou por aqui, em qualquer direção.
 ///
 /// Guardado inteiro e não só o hash porque o Linux precisa dele para
@@ -66,15 +78,7 @@ pub fn registrar(texto: &str) -> bool {
 ///
 /// Entao: o caminho que o proprio deploy instala, por sistema.
 fn comando_remoto(h: &crate::config::HostCfg) -> String {
-    if h.os.as_deref() == Some("windows") {
-        // `&` porque o caminho vem entre aspas; sem ele o PowerShell
-        // trataria a string como texto e nao executaria nada.
-        r#"& "$env:LOCALAPPDATA\logid\logid.exe" clip-set"#.into()
-    } else {
-        // `~` expande no shell remoto; caminho absoluto exigiria saber
-        // o nome do usuario de cada maquina.
-        "~/.local/bin/logid clip-set".into()
-    }
+    crate::remote::comando_logid(h, "clip-set")
 }
 
 /// Empurra o texto para os outros hosts, por SSH.
@@ -157,6 +161,10 @@ pub mod linux {
     const RD_OBJ: &str = "/org/gnome/Mutter/RemoteDesktop";
     const RDS: &str = "org.gnome.Mutter.RemoteDesktop.Session";
     const MIME: &str = "text/plain;charset=utf-8";
+    /// Arquivos: a lista de URIs, o que o Wayland e o GTK falam.
+    const URI: &str = "text/uri-list";
+    /// O que o Nautilus lê ao colar. Primeira linha `copy` ou `cut`.
+    const GNOME: &str = "x-special/gnome-copied-files";
     const T: Duration = Duration::from_secs(5);
 
     /// Le um fd que o Mutter entregou, tirando o O_NONBLOCK antes.
@@ -175,10 +183,78 @@ pub mod linux {
         Ok(v)
     }
 
-    fn tipos() -> HashMap<&'static str, Variant<Box<dyn RefArg>>> {
+    fn tipos(quais: &[&str]) -> HashMap<&'static str, Variant<Box<dyn RefArg>>> {
         let mut m: HashMap<&str, Variant<Box<dyn RefArg>>> = HashMap::new();
-        m.insert("mime-types", Variant(Box::new(vec![MIME.to_string()])));
+        let v: Vec<String> = quais.iter().map(|s| s.to_string()).collect();
+        m.insert("mime-types", Variant(Box::new(v)));
         m
+    }
+
+    /// O que estamos publicando agora, para responder a transferência.
+    ///
+    /// Quem é dono da seleção tem de conseguir entregá-la quando
+    /// pedirem, e o pedido vem por MIME: o Nautilus pede
+    /// `x-special/gnome-copied-files`, um terminal pede `text/uri-list`,
+    /// um editor pede `text/plain`. Sem guardar o que publicamos, a
+    /// colagem chega e não há o que responder.
+    static PUBLICADO: std::sync::Mutex<Option<super::Pedido>> = std::sync::Mutex::new(None);
+
+    /// Os bytes que respondem o MIME pedido, se soubermos respondê-lo.
+    fn servir(mime: &str) -> Option<Vec<u8>> {
+        let g = PUBLICADO.lock().ok()?;
+        match g.as_ref()? {
+            super::Pedido::Texto(t) => {
+                if mime.starts_with("text/plain") || mime == "UTF8_STRING" {
+                    Some(t.as_bytes().to_vec())
+                } else {
+                    None
+                }
+            }
+            super::Pedido::Arquivos(v) => {
+                if mime == GNOME {
+                    Some(crate::clip_arq::gnome_copied_files(v).into_bytes())
+                } else if mime == URI {
+                    Some(crate::clip_arq::uris_de_caminhos(v).into_bytes())
+                } else if mime.starts_with("text/plain") {
+                    // Colar arquivo num editor dá os caminhos. É o que
+                    // o GTK faz, e é o que a pessoa espera.
+                    Some(v.join("\n").into_bytes())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Lê a seleção atual num MIME, ou `None`.
+    ///
+    /// O fd vem **não-bloqueante** do Mutter, e `read_to_end` nele
+    /// devolve `WouldBlock` na hora -- quem engolir esse erro lê zero
+    /// bytes e conclui que o clipboard está vazio. Foi o que aconteceu
+    /// na primeira sonda; `ler_fd` tira o O_NONBLOCK.
+    fn ler_selecao(c: &Connection, sess: &Path<'static>, mime: &str) -> Option<Vec<u8>> {
+        let r: Result<(dbus::arg::OwnedFd,), _> = c
+            .with_proxy(RD, sess.clone(), T)
+            .method_call(RDS, "SelectionRead", (mime,));
+        let (fd,) = r.ok()?;
+        ler_fd(fd.as_raw_fd()).ok()
+    }
+
+    /// Desce num `RefArg` recolhendo toda string.
+    ///
+    /// `as_iter` desce **um** nível e a lista vem como `(as)` dentro de
+    /// variante, dois níveis abaixo. A primeira versão disto imprimiu
+    /// lista vazia e me fez duvidar do Mutter em vez do meu código.
+    fn colher(a: &dyn RefArg, fora: &mut Vec<String>) {
+        if let Some(s) = a.as_str() {
+            fora.push(s.to_string());
+            return;
+        }
+        if let Some(it) = a.as_iter() {
+            for x in it {
+                colher(&x, fora);
+            }
+        }
     }
 
     /// Thread do clipboard: observa, publica e responde transferencias.
@@ -186,8 +262,8 @@ pub mod linux {
     /// Tudo numa thread so porque a conexao D-Bus **nao e Send** e a
     /// sessao pertence a conexao que a criou -- a mesma restricao que
     /// moldou o host de tela. Quem quer escrever manda pelo canal.
-    pub fn spawn(cfg: Arc<std::sync::RwLock<crate::config::Config>>) -> std::sync::mpsc::Sender<String> {
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
+    pub fn spawn(cfg: Arc<std::sync::RwLock<crate::config::Config>>) -> std::sync::mpsc::Sender<super::Pedido> {
+        let (tx, rx) = std::sync::mpsc::channel::<super::Pedido>();
         std::thread::spawn(move || {
             if let Err(e) = rodar(&cfg, &rx) {
                 crate::say!("clip: desliguei ({e})");
@@ -198,7 +274,7 @@ pub mod linux {
 
     fn rodar(
         cfg: &Arc<std::sync::RwLock<crate::config::Config>>,
-        rx: &std::sync::mpsc::Receiver<String>,
+        rx: &std::sync::mpsc::Receiver<super::Pedido>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let c = Connection::new_session()?;
         let (sess,): (Path,) =
@@ -225,12 +301,26 @@ pub mod linux {
 
         loop {
             // Escrita pedida por um par, se houver.
-            while let Ok(texto) = rx.try_recv() {
-                if super::registrar(&texto) {
-                    let _ = c
-                        .with_proxy(RD, sess.clone(), T)
-                        .method_call::<(), _, _, _>(RDS, "SetSelection", (tipos(),));
+            while let Ok(pedido) = rx.try_recv() {
+                let quais: &[&str] = match &pedido {
+                    super::Pedido::Texto(t) => {
+                        if !super::registrar(t) {
+                            continue;
+                        }
+                        &[MIME]
+                    }
+                    // Os dois tipos juntos: o Nautilus só cola pelo
+                    // `gnome-copied-files`, e quem não é GTK só entende
+                    // `uri-list`. Publicar um dos dois deixa metade dos
+                    // programas sem colar.
+                    super::Pedido::Arquivos(_) => &[GNOME, URI, MIME],
+                };
+                if let Ok(mut g) = PUBLICADO.lock() {
+                    *g = Some(pedido);
                 }
+                let _ = c
+                    .with_proxy(RD, sess.clone(), T)
+                    .method_call::<(), _, _, _>(RDS, "SetSelection", (tipos(quais),));
             }
 
             // Uma volta do D-Bus. 300 ms e compromisso: menos que isso
@@ -241,13 +331,50 @@ pub mod linux {
             let membro = m.member().map(|s| s.to_string()).unwrap_or_default();
 
             if membro == "SelectionOwnerChanged" {
+                // O sinal diz QUAIS tipos o dono publicou, e se o dono
+                // somos nós. Medido com `logid clip-sonda`:
+                //
+                //   texto:   ["text/plain;charset=utf-8", "UTF8_STRING", "TARGETS"]
+                //   arquivo: ["text/uri-list", "TARGETS"]
+                //
+                // Usar essa lista é o único jeito honesto de saber o que
+                // foi copiado: `SelectionRead("text/uri-list")` devolve
+                // **OK mesmo numa cópia de texto**, então "a leitura
+                // funcionou" não distingue nada.
+                let opts: HashMap<String, Variant<Box<dyn RefArg>>> =
+                    m.read1().unwrap_or_default();
+                if opts
+                    .get("session-is-owner")
+                    .and_then(|v| v.0.as_u64())
+                    .is_some_and(|x| x == 1)
+                {
+                    continue; // é nossa; publicamos nós mesmos
+                }
+                let mut oferecidos: Vec<String> = Vec::new();
+                if let Some(v) = opts.get("mime-types") {
+                    colher(&*v.0, &mut oferecidos);
+                }
+                let tem = |t: &str| oferecidos.iter().any(|x| x == t);
+
                 // Ler na hora: a selecao e do dono ATUAL, e se ele sair
                 // antes de lermos o conteudo some.
-                let r: Result<(dbus::arg::OwnedFd,), _> = c
-                    .with_proxy(RD, sess.clone(), T)
-                    .method_call(RDS, "SelectionRead", (MIME,));
-                let Ok((fd,)) = r else { continue };
-                let Ok(bytes) = ler_fd(fd.as_raw_fd()) else { continue };
+                if tem(URI) {
+                    let Some(bytes) = ler_selecao(&c, &sess, URI) else { continue };
+                    let Ok(lista) = String::from_utf8(bytes) else { continue };
+                    let caminhos = crate::clip_arq::caminhos_de_uris(&lista);
+                    if caminhos.is_empty() {
+                        continue;
+                    }
+                    if let Ok(g) = cfg.read() {
+                        crate::clip_arq::ao_copiar(&g, &caminhos);
+                    }
+                    continue;
+                }
+                if !oferecidos.is_empty() && !oferecidos.iter().any(|t| t.starts_with("text/plain"))
+                {
+                    continue; // imagem, HTML, coisa que não tratamos
+                }
+                let Some(bytes) = ler_selecao(&c, &sess, MIME) else { continue };
                 if bytes.is_empty() || bytes.len() > super::LIMITE {
                     continue;
                 }
@@ -259,11 +386,15 @@ pub mod linux {
                 }
             } else if membro == "SelectionTransfer" {
                 // (mime, serial) -- quem quer colar o que publicamos.
-                let (_mime, serial): (String, u32) = match m.read2() {
+                let (mime, serial): (String, u32) = match m.read2() {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                let texto = super::ultimo().unwrap_or_default();
+                // Responder pelo MIME PEDIDO, e não sempre o mesmo: o
+                // Nautilus pede `gnome-copied-files` e um editor pede
+                // `text/plain`, da mesma seleção.
+                let conteudo = servir(&mime)
+                    .unwrap_or_else(|| super::ultimo().unwrap_or_default().into_bytes());
                 let r: Result<(dbus::arg::OwnedFd,), _> = c
                     .with_proxy(RD, sess.clone(), T)
                     .method_call(RDS, "SelectionWrite", (serial,));
@@ -272,7 +403,7 @@ pub mod linux {
                         use std::io::Write;
                         let copia = unsafe { libc::dup(fd.as_raw_fd()) };
                         let mut f = unsafe { std::fs::File::from_raw_fd(copia) };
-                        f.write_all(texto.as_bytes()).is_ok()
+                        f.write_all(&conteudo).is_ok()
                     }
                     Err(_) => false,
                 };
@@ -295,8 +426,10 @@ pub mod linux {
 /// clipboard por API nativa seria codigo nosso para fazer o que o
 /// sistema ja faz igual.
 #[cfg(target_os = "linux")]
-pub fn definir_local(canal: &std::sync::mpsc::Sender<String>, texto: &str) -> Result<(), String> {
-    canal.send(texto.to_string()).map_err(|_| "a thread do clipboard saiu".to_string())
+pub fn definir_local(canal: &std::sync::mpsc::Sender<Pedido>, texto: &str) -> Result<(), String> {
+    canal
+        .send(Pedido::Texto(texto.to_string()))
+        .map_err(|_| "a thread do clipboard saiu".to_string())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -348,13 +481,29 @@ pub fn vigiar(cfg: std::sync::Arc<std::sync::RwLock<crate::config::Config>>) {
         // intervalo isso virou "o windows ta abrindo um powershell a
         // cada 5s" na tela do usuario -- um processo invisivel que
         // pisca 30 vezes por minuto.
-        // Windows le por Win32 direto (`winput::clipboard_ler`), sem
-        // processo nenhum. macOS ainda usa `pbpaste`: um binario
-        // pequeno que nao abre janela, e escrever NSPasteboard por FFI
-        // exigiria objc dentro de um daemon que nao tem runtime objc.
+        // Arquivo ANTES de texto, e nao depois.
+        //
+        // Os dois convivem no clipboard: o Explorer publica `CF_HDROP`
+        // junto com o nome do arquivo como texto, e o Finder faz o
+        // equivalente. Olhando texto primeiro, copiar um arquivo
+        // mandaria o CAMINHO como string para os pares -- um caminho
+        // que nao existe la -- e o arquivo nunca iria.
+        //
+        // No Windows sao duas chamadas Win32, sem processo nenhum. No
+        // macOS e UMA chamada que devolve as duas coisas, porque la o
+        // custo e o processo: `osascript` custa 55 ms contra 11 ms de
+        // `pbpaste` (medido), e rodar os dois a cada 2 s seria 3,3% de
+        // um nucleo para sempre num laptop.
         let texto = {
             #[cfg(windows)]
             {
+                let arquivos = crate::clip_arq::ler_local();
+                if !arquivos.is_empty() {
+                    if let Ok(g) = cfg.read() {
+                        crate::clip_arq::ao_copiar(&g, &arquivos);
+                    }
+                    continue;
+                }
                 match winput::clipboard_ler() {
                     Ok(Some(t)) => t,
                     Ok(None) => continue,
@@ -363,11 +512,16 @@ pub fn vigiar(cfg: std::sync::Arc<std::sync::RwLock<crate::config::Config>>) {
             }
             #[cfg(not(windows))]
             {
-                let Ok(o) = crate::sys::child("pbpaste").output() else { continue };
-                if !o.status.success() {
-                    continue;
+                match crate::clip_arq::ler_area() {
+                    crate::clip_arq::Area::Arquivos(v) => {
+                        if let Ok(g) = cfg.read() {
+                            crate::clip_arq::ao_copiar(&g, &v);
+                        }
+                        continue;
+                    }
+                    crate::clip_arq::Area::Texto(t) => t,
+                    crate::clip_arq::Area::Nada => continue,
                 }
-                String::from_utf8_lossy(&o.stdout).to_string()
             }
         };
         let texto = texto.trim_end_matches(['\r', '\n']).to_string();
@@ -438,10 +592,10 @@ pub fn cli_set(porta: u16) -> std::process::ExitCode {
 // hoje leva apenas config e cache.
 
 #[cfg(target_os = "linux")]
-static CANAL: Mutex<Option<std::sync::mpsc::Sender<String>>> = Mutex::new(None);
+static CANAL: Mutex<Option<std::sync::mpsc::Sender<Pedido>>> = Mutex::new(None);
 
 #[cfg(target_os = "linux")]
-pub fn guardar_canal(c: std::sync::mpsc::Sender<String>) {
+pub fn guardar_canal(c: std::sync::mpsc::Sender<Pedido>) {
     if let Ok(mut g) = CANAL.lock() {
         *g = Some(c);
     }
@@ -459,4 +613,17 @@ pub fn aplicar_local(texto: &str) -> Result<(), String> {
     {
         definir_local(&(), texto)
     }
+}
+
+/// Publica arquivos no clipboard local (Linux).
+///
+/// Passa pela thread do D-Bus porque a sessão pertence à conexão que a
+/// criou, e porque quem publica tem de continuar vivo para responder
+/// `SelectionTransfer` na hora da colagem.
+#[cfg(target_os = "linux")]
+pub fn pedir_arquivos(caminhos: &[String]) -> Result<(), String> {
+    let g = CANAL.lock().map_err(|_| "canal travado".to_string())?;
+    let c = g.as_ref().ok_or("a thread do clipboard nao subiu")?;
+    c.send(Pedido::Arquivos(caminhos.to_vec()))
+        .map_err(|_| "a thread do clipboard saiu".to_string())
 }
