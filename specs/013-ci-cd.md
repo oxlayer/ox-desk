@@ -106,6 +106,13 @@ está em `target/`.
   não foi conferido.
 - **Os testes rodam só no Linux**, e do `logistream` só `--lib`. No Mac
   custaria dez vezes mais por minuto.
+- **O orçamento de conversão não barra a CI.** O
+  `conversao_cabe_no_orcamento` passou no primeiro run e caiu no terceiro
+  com 12,18 ms contra o teto de 12, sem mudança no código medido: runner
+  compartilhado não é o hardware para o qual o teto foi escrito. Ele
+  segue rodando e imprimindo o número, sem decidir. Como o `check.sh`
+  também não testa o `logistream`, **hoje nada automático barra essa
+  regressão**: quem mexer na conversão roda o teste aqui.
 - **Teste em runner sem GPU não cobre captura nem NVENC.** O que depende
   de sessão gráfica continua sendo verificado nas máquinas.
 
