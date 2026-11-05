@@ -32,6 +32,12 @@ arquivo que aterrissou, justamente porque isso já aconteceu
 - **Config.** Ver [[mudar-config-nas-tres]].
 - **Regras de udev.** Ver [[dar-acesso-a-input]].
 
+## Binários da CI não substituem o deploy
+
+A CI compila os três sistemas a cada push de código, mas **não assina
+nem instala**. Pacote `unsigned` não vai direto para o Windows nem para
+o Mac. Ver [`specs/013`](../../specs/013-ci-cd.md).
+
 ## Commits de docs não precisam de deploy
 
 O build id é o HEAD do git, então um commit só de documentação faz as

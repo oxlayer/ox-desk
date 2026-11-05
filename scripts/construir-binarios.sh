@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compila os binarios de UM sistema, confere o que saiu e empacota em dist/.
 #
-# E o que a CI roda (specs/012), e roda igual aqui: a logica de "quais
+# E o que a CI roda (specs/013), e roda igual aqui: a logica de "quais
 # binarios existem" nao pode morar so num YAML que ninguem executa local.
 #
 #   uso:  bash scripts/construir-binarios.sh <linux|windows|mac> [--sem-compilar]
