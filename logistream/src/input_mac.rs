@@ -54,6 +54,8 @@ const BTN_MEIO: u32 = 2;
 const DELTA_X: u32 = 4;
 const DELTA_Y: u32 = 5;
 
+type CGDisplayModeRef = *mut std::ffi::c_void;
+
 /// `kCGHIDEventTap`: entra na fila como se viesse do hardware.
 const TAP_HID: u32 = 0;
 
@@ -85,6 +87,13 @@ extern "C" {
     fn CGDisplayPixelsWide(display: u32) -> usize;
     fn CGDisplayPixelsHigh(display: u32) -> usize;
     fn CGMainDisplayID() -> u32;
+    // O modo de video e o unico lugar que conta os DOIS tamanhos da
+    // mesma tela. `CGDisplayPixelsWide`, apesar do nome, devolve
+    // PONTOS (medido: 1680 num display cujo modo tem 3360 pixels).
+    fn CGDisplayCopyDisplayMode(display: u32) -> CGDisplayModeRef;
+    fn CGDisplayModeGetPixelWidth(modo: CGDisplayModeRef) -> usize;
+    fn CGDisplayModeGetWidth(modo: CGDisplayModeRef) -> usize;
+    fn CGDisplayModeRelease(modo: CGDisplayModeRef);
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -105,6 +114,32 @@ pub fn tem_acessibilidade() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
+/// Pixels de captura por ponto, lido do modo de video do display.
+///
+/// `CGDisplayPixelsWide` NAO serve para isto: apesar do nome ela
+/// devolve pontos. Medido no MacBook Air -- 1680 num display cujo modo
+/// declara 3360 pixels. Foi essa confusao de nome que deixou o bug
+/// passar: o clamp de borda usa a funcao certa por acidente, e so o
+/// caminho absoluto quebrou.
+///
+/// Devolve 1.0 quando nao da para saber. Ver `ponto_de_pixel`.
+pub fn escala_do_display() -> f64 {
+    unsafe {
+        let modo = CGDisplayCopyDisplayMode(CGMainDisplayID());
+        if modo.is_null() {
+            return 1.0;
+        }
+        let px = CGDisplayModeGetPixelWidth(modo) as f64;
+        let pt = CGDisplayModeGetWidth(modo) as f64;
+        CGDisplayModeRelease(modo);
+        if px > 0.0 && pt > 0.0 {
+            px / pt
+        } else {
+            1.0
+        }
+    }
+}
+
 pub struct Teclado {
     fonte: CGEventSourceRef,
     /// Ultima posicao conhecida do ponteiro.
@@ -117,6 +152,11 @@ pub struct Teclado {
     /// Botoes apertados, para o arraste sair como arraste.
     esq: bool,
     dir: bool,
+    /// Pixels de captura por ponto do CoreGraphics. 2.0 num Retina.
+    ///
+    /// Lido uma vez: trocar de modo de video no meio de uma sessao
+    /// derrubaria a captura de qualquer forma, e o host sobe de novo.
+    escala: f64,
 }
 
 impl Teclado {
@@ -135,7 +175,7 @@ impl Teclado {
                 p
             }
         };
-        Teclado { fonte, pos, esq: false, dir: false }
+        Teclado { fonte, pos, esq: false, dir: false, escala: escala_do_display() }
     }
 
     pub fn aplicar(&mut self, e: Evento) {
@@ -194,6 +234,9 @@ impl Teclado {
     }
 
     fn mover_absoluto(&mut self, x: f64, y: f64) {
+        // O quadro vem em pixel; o CGEvent quer ponto. Ver
+        // `ponto_de_pixel` e o porque em logistream/src/input.rs.
+        let (x, y) = crate::input::ponto_de_pixel(x, y, self.escala);
         self.pos = CGPoint { x, y };
         let ev = unsafe { CGEventCreateMouseEvent(self.fonte, MOUSE_MOVED, self.pos, BTN_ESQ) };
         self.postar(ev);

@@ -171,6 +171,12 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     // usuario passar uma tarde achando que o KVM estava quebrado.
     if crate::input_mac::tem_acessibilidade() {
         println!("  acessibilidade concedida: teclado e mouse serao injetados");
+        // Dito no log porque "a posicao do cursor nao bateu" e um
+        // sintoma que nao da para diagnosticar sem este numero: ele
+        // diz em que espaco o ponteiro e injetado contra o espaco em
+        // que a tela e capturada.
+        let e = crate::input_mac::escala_do_display();
+        println!("  {e:.0} pixel(s) de captura por ponto de ponteiro");
     } else {
         println!(
             "  AVISO: SEM permissao de Acessibilidade. O teclado e o mouse que \

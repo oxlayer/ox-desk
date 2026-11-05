@@ -22,6 +22,7 @@ remota própria, e o controle de tudo num painel só.
 5. [Windows sem mouse não tem cursor, e desenhar no stream não ajuda quem olha o monitor](.claude/rules/cursor-sem-mouse.md)
 6. [O que depende da sessão gráfica não nasce por SSH](.claude/rules/sessao-grafica.md)
 7. [Mandar não é ter chegado; número que ninguém imprime ninguém confere](.claude/rules/verificar-o-que-chegou.md)
+8. [Pixel de captura ≠ ponto de injeção](.claude/rules/espaco-de-coordenadas.md)
 
 ## Skills (procedimentos)
 
@@ -31,6 +32,7 @@ remota própria, e o controle de tudo num painel só.
 - [Testar o host de tela com a tela apagada](.claude/skills/testar-tela-apagada.md)
 - [Clipboard entre as máquinas](.claude/skills/clipboard.md)
 - [Verificar tela, mouse e teclado no Mac](.claude/skills/verificar-o-mac.md)
+XXTMP(.claude/skills/verificar-o-mac.md)
 
 ## Docs
 

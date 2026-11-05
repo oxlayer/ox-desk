@@ -63,6 +63,30 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // `--abs X Y`: posicao ABSOLUTA, em pixel do quadro.
+    //
+    // E o caminho que o visualizador usa quando voce move o mouse
+    // dentro da janela, e era o unico quebrado no Mac: o quadro vem em
+    // pixel e o CGEvent injeta em ponto, fator 2 num Retina. O `--rel`
+    // nao pega isso -- ele acumula deltas e nunca passa pela conversao.
+    // Medi "+200 px exatos" com o bug em pe.
+    //
+    // Para conferir, mande o MEIO do quadro: o cursor tem de parar no
+    // meio da tela. Com o bug ele vai para o canto inferior direito,
+    // porque o dobro de tudo e maior que a tela e o sistema prende na
+    // borda.
+    if let Some(i) = std::env::args().position(|a| a == "--abs") {
+        let x: f64 = std::env::args().nth(i + 1).and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let y: f64 = std::env::args().nth(i + 2).and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let mut buf = BytesMut::new();
+        Evento::Mouse { x, y }.escrever(&mut buf);
+        envio.write_all(&buf).await?;
+        envio.finish()?;
+        println!("  Mouse absoluto para ({x}, {y}) em pixel de quadro");
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        return Ok(());
+    }
+
     // `--capslock`: liga e desliga o Caps Lock da maquina alvo.
     //
     // Teclado precisava de um teste MEDIVEL. "Digitei e nao apareceu"

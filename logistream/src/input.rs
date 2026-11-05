@@ -517,6 +517,37 @@ mod testes_scancode {
     }
 }
 
+// --- pixel de captura -> ponto de injecao ----------------------------
+
+/// Converte posicao ABSOLUTA do quadro para o espaco em que o sistema
+/// de destino injeta input.
+///
+/// O protocolo carrega `Evento::Mouse` em **pixel do quadro**: o
+/// visualizador sabe o tamanho do que recebe e mapeia a janela para
+/// ele (`ponto_remoto`, em bin/view.rs). Mas nem todo sistema injeta
+/// nesse mesmo espaco.
+///
+/// No macOS a diferenca e de fator 2 e e visivel: o `CGEvent` trabalha
+/// em **pontos**, e num Retina a tela de 1680x1050 pontos e capturada
+/// com 3360x2100 pixels. Mandar o pixel direto leva o ponteiro ao
+/// dobro da posicao -- apontar no meio da janela joga o cursor no
+/// canto inferior direito. Chegou como "a posicao do cursor no mac nao
+/// bateu".
+///
+/// Fica aqui, neutra de plataforma, pelo mesmo motivo de
+/// `tecla_mac_de_evdev`: em `input_mac.rs` o teste nunca rodaria na
+/// maquina que roda a suite.
+///
+/// `escala` = pixels de captura por ponto. `1.0` em tela comum, `2.0`
+/// num Retina. Zero ou negativo nao converte nada: devolve o ponto
+/// como veio, porque chutar um fator seria pior que nao escalar.
+pub fn ponto_de_pixel(x: f64, y: f64, escala: f64) -> (f64, f64) {
+    if escala <= 0.0 {
+        return (x, y);
+    }
+    (x / escala, y / escala)
+}
+
 // --- teclas no macOS -------------------------------------------------
 
 /// Keycode do evdev -> keycode virtual do macOS (`kVK_*`).
@@ -688,5 +719,34 @@ mod testes_tecla_mac {
     fn os_dois_ctrl_existem() {
         assert!(tecla_mac_de_evdev(29).is_some(), "ctrl esquerdo");
         assert!(tecla_mac_de_evdev(97).is_some(), "ctrl direito");
+    }
+}
+
+#[cfg(test)]
+mod testes_ponto_de_pixel {
+    use super::*;
+
+    #[test]
+    fn retina_divide_por_dois() {
+        // O caso real: MacBook Air capturado em 3360x2100, injetando
+        // num espaco de 1680x1050 pontos. O canto tem de virar canto.
+        assert_eq!(ponto_de_pixel(3359.0, 2099.0, 2.0), (1679.5, 1049.5));
+        // E o meio tem de virar meio -- era aqui que o cursor ia para o
+        // canto inferior direito.
+        assert_eq!(ponto_de_pixel(1680.0, 1050.0, 2.0), (840.0, 525.0));
+    }
+
+    #[test]
+    fn tela_comum_nao_mexe() {
+        assert_eq!(ponto_de_pixel(1920.0, 1080.0, 1.0), (1920.0, 1080.0));
+    }
+
+    #[test]
+    fn escala_invalida_devolve_como_veio() {
+        // Se a consulta ao display falhar, escalar por 0 mandaria o
+        // ponteiro para o infinito (ou para NaN). Passar reto e pior
+        // num Retina, mas e previsivel e nao quebra tela comum.
+        assert_eq!(ponto_de_pixel(100.0, 200.0, 0.0), (100.0, 200.0));
+        assert_eq!(ponto_de_pixel(100.0, 200.0, -2.0), (100.0, 200.0));
     }
 }

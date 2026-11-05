@@ -441,7 +441,13 @@ mod testes {
     /// 12 ms e folgado de proposito: medimos 2.8 numa maquina de 12
     /// nucleos, e quem roda os testes pode estar ocupado. O que importa
     /// e nao voltar para a casa dos 28.
+    ///
+    /// **So em release.** Em `cargo test` sem `--release` o mesmo laco
+    /// mede 24 ms e o teste falha sempre -- um alarme falso que custa
+    /// tempo de quem for investigar (custou o meu). O que ele vigia e o
+    /// codigo otimizado, que e o unico que o usuario roda.
     #[test]
+    #[cfg_attr(debug_assertions, ignore = "orcamento de tempo so vale em --release")]
     fn conversao_cabe_no_orcamento() {
         use std::time::Instant;
         let (sw, sh) = (2560usize, 1440usize);

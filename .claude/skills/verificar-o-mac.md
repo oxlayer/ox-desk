@@ -73,6 +73,38 @@ echo "depois: $(ssh mac /tmp/cursor)"
 `--rel 20` = 20 × +10 px. Passar é X exatamente +200 e Y intacto.
 Porta **9778**: vídeo e input são portas separadas (`porta + 1`).
 
+## 3b. O mouse chega no lugar CERTO?
+
+`--rel` não responde isso: ele acumula deltas e nunca passa pela
+conversão de espaço. Ele já disse "+200 px exatos" com o caminho
+absoluto quebrado — ver [[../rules/espaco-de-coordenadas]].
+
+O caso que revela é o **meio** do quadro. O canto não serve: o sistema
+prende o ponteiro na borda e o erro fica escondido atrás do clamp.
+
+```bash
+for p in "0 0" "3359 2099" "1680 1050" "840 525"; do
+  ssh mac 'pgrep -x logistream-host >/dev/null || launchctl kickstart "gui/$(id -u)/ai.logi.logistream-host"; sleep 2'
+  cargo run --release --bin logistream-input-send -- mac-host.local:9778 --abs $p
+  echo "quadro ($p) -> cursor $(ssh mac /tmp/cursor)"
+done
+```
+
+Esperado num Retina de 3360×2100 pixels / 1680×1050 pontos — metade de
+tudo:
+
+```
+quadro (0 0)         -> cursor 0 0
+quadro (3359 2099)   -> cursor 1679 1049
+quadro (1680 1050)   -> cursor 840 525
+quadro (840 525)     -> cursor 420 262
+```
+
+> **Acorde o host dentro do laço.** Sem isso ele morre por idle no meio
+> da bateria de testes e as leituras seguintes repetem o último valor
+> parado na tela — quatro linhas idênticas que parecem resultado e não
+> são. Aconteceu comigo nesta mesma receita.
+
 ## 4. O teclado chega?
 
 ```bash
