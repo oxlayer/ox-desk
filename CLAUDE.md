@@ -30,6 +30,7 @@ remota própria, e o controle de tudo num painel só.
 - [Dar acesso aos dispositivos de input (KVM)](.claude/skills/dar-acesso-a-input.md)
 - [Testar o host de tela com a tela apagada](.claude/skills/testar-tela-apagada.md)
 - [Clipboard entre as máquinas](.claude/skills/clipboard.md)
+- [Verificar tela, mouse e teclado no Mac](.claude/skills/verificar-o-mac.md)
 
 ## Docs
 
