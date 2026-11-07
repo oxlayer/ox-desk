@@ -184,6 +184,55 @@ fn capturar() {
     }
 }
 
+/// Acompanha a mesa de entrada por N segundos, capturando a cada volta.
+///
+/// Existe porque a primeira medição se contradisse: o `LogonUI` estava
+/// na tela (ou seja, bloqueado) e o probe leu a mesa de entrada como
+/// `Default`. Uma foto só não distingue "a leitura está errada" de "o
+/// bloqueio ainda não tinha trocado a mesa quando eu olhei". Um filme
+/// distingue -- e de quebra mostra QUANTO tempo a troca leva, que é
+/// exatamente o que o serviço vai precisar tolerar.
+#[cfg(windows)]
+fn seguir(segundos: u64) {
+    for i in 0..segundos {
+        let (mesa, dup) = unsafe {
+            match OpenInputDesktop(
+                DESKTOP_CONTROL_FLAGS(0),
+                false,
+                DESKTOP_ACCESS_FLAGS(DESKTOP_READOBJECTS.0 | DESKTOP_SWITCHDESKTOP.0),
+            ) {
+                Ok(h) => {
+                    let nome = nome_do_objeto(h.0 as *mut c_void);
+                    // Reanexar A CADA VOLTA: a duplicação do DXGI é
+                    // por mesa, e quem não reanexa continua olhando a
+                    // mesa antiga -- que é como um capturador "funciona"
+                    // e entrega quadro velho.
+                    let _ = SetThreadDesktop(h);
+                    let r = match logistream::capture_win::Monitor::abrir(0) {
+                        Ok(m) => match m.duplicar() {
+                            Ok(t) => {
+                                let (w, h2) = t.tamanho();
+                                format!("duplicou {w}x{h2}")
+                            }
+                            Err(e) => format!("NAO duplicou: {}", primeira_linha(&e.to_string())),
+                        },
+                        Err(e) => format!("sem monitor: {}", primeira_linha(&e.to_string())),
+                    };
+                    (nome, r)
+                }
+                Err(e) => ("<nao abri>".to_string(), format!("OpenInputDesktop: {e}")),
+            }
+        };
+        diga!("  [{i:02}s] mesa de entrada={mesa:12} {dup}");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
+#[cfg(windows)]
+fn primeira_linha(s: &str) -> String {
+    s.lines().next().unwrap_or(s).chars().take(90).collect()
+}
+
 /// Acha um processo pelo nome e devolve o pid na sessão pedida.
 fn pid_de(nome: &str, sessao: u32) -> Option<u32> {
     unsafe {
@@ -329,6 +378,11 @@ pub fn executar() {
             capturar();
         }
         "--lancar" => lancar(if a.len() > 1 { &a[1..] } else { &[] }),
+        "--seguir" => {
+            quem();
+            let n = a.get(1).and_then(|v| v.parse().ok()).unwrap_or(15);
+            seguir(n);
+        }
         outro => diga!("  modo desconhecido: {outro}"),
     }
 }
