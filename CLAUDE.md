@@ -87,7 +87,10 @@ segue o dongle, não a máquina. Ver [`specs/005`](specs/005-input-switch.md).
    semanas sobreviveram por falta de uma linha de log.
 3. **Registre as falhas, não só os sucessos.** Vale mais que o que
    funciona, porque evita repetir a tarde perdida.
-4. **UI em pt-BR, código e commits em inglês.**
+4. **UI em pt-BR; código, commits e nomes de arquivo em inglês.** Script,
+   binário, módulo, variável de ambiente e chave de config também
+   (`sign.sh`, e não `assinar.sh`). Os nomes antigos em português saem
+   junto com a troca para oxdesk ([`specs/017`](specs/017-produto.md)).
 5. **Telemetria mínima e desligável; nuvem opcional; LAN sempre.** Desde
    07/11 o ox-desk é produto ([`specs/017`](specs/017-produto.md)): a
    confiança vem da chave de cada máquina, o servidor é nosso ou da
