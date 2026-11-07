@@ -1,14 +1,14 @@
 <!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">
-<!-- Mesma CSP do painel, e pelo mesmo motivo: a pagina e um arquivo
-     unico embutido no binario do daemon, nao usa eval, e o unico lugar
-     de onde le e 127.0.0.1:porta. -->
+<!-- Same CSP as the panel, for the same reason: the page is a single
+     file embedded in the daemon binary, uses no eval, and the only place
+     it reads from is 127.0.0.1:port. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Configurar esta maquina</title>
 <style>
-  /* Tokens iguais aos do painel: as duas paginas sao a mesma casa, e
-     divergir aqui faria a configuracao parecer de outro programa. */
+  /* Same tokens as the panel: the two pages are the same house, and
+     diverging here would make setup look like another program. */
   :root{
     color-scheme:light dark;
     --bg:#f4f5f7; --card:#fff; --fg:#111317; --dim:#666d78; --faint:#99a0ab;
@@ -36,7 +36,7 @@
     -webkit-font-smoothing:antialiased}
   .wrap{max-width:720px;margin:0 auto;padding:40px 16px 72px}
 
-  /* ---- cabecalho ---- */
+  /* ---- header ---- */
   header{margin-bottom:26px}
   .eyebrow{font:11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;
     color:var(--faint);margin-bottom:10px}
@@ -49,24 +49,24 @@
     font-size:12px;color:var(--dim)}
   .barlbl b{color:var(--fg);font-weight:620}
 
-  /* ---- faixa de "pronto" ---- */
+  /* ---- "ready" banner ---- */
   .pronto{display:none;margin:0 0 22px;padding:16px 18px;border-radius:12px;
     background:var(--upbg);border:1px solid color-mix(in srgb,var(--up) 28%,var(--line));
     color:var(--fg)}
   .pronto.on{display:block}
   .pronto b{color:var(--up)}
 
-  /* ---- passos ---- */
+  /* ---- steps ---- */
   ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
   li{background:var(--card);border:1px solid var(--line);border-radius:12px;
     box-shadow:var(--shadow);overflow:hidden}
-  /* O passo em que agir faz diferenca AGORA ganha o anel. Um wizard que
-     destaca tudo nao destaca nada. */
+  /* The step where acting makes a difference NOW gets the ring. A wizard
+     that highlights everything highlights nothing. */
   li.agora{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));
     box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 22%,transparent), var(--shadow)}
-  /* Passo pronto ocupa MENOS espaco. Numa maquina quase montada a
-     lista e nove verdes e um vermelho, e com todos do mesmo tamanho o
-     unico que pede acao sai da tela. */
+  /* A done step takes LESS space. On an almost-set-up machine the list
+     is nine greens and one red, and with all the same size the only one
+     asking for action falls off the screen. */
   li.ok{background:color-mix(in srgb,var(--card) 92%,var(--upbg))}
   li.ok .head{padding:9px 16px}
   li.ok .tit .n{font-size:13.5px}
@@ -116,7 +116,7 @@
   .msg{font-size:12.5px;overflow-wrap:anywhere}
   .msg.ok{color:var(--up)} .msg.no{color:var(--warn)}
 
-  /* ---- rodape ---- */
+  /* ---- footer ---- */
   footer{margin-top:26px;display:flex;gap:12px;align-items:center;
     flex-wrap:wrap;color:var(--faint);font-size:12px}
   footer .stamp{font-family:var(--mono)}
@@ -157,59 +157,59 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const ROTULO = { linux:'Ubuntu', mac:'macOS', windows:'Windows' };
+const OS_LABEL = { linux:'Ubuntu', mac:'macOS', windows:'Windows' };
 
-// Qual passo esta aberto. Guardado FORA do desenho: a lista e
-// redesenhada depois de cada reparo, e sem isto o passo em que a pessoa
-// esta trabalhando fecharia na cara dela a cada medicao.
-let aberto = null;
-let mexeu = false;   // a pessoa ja abriu algo na mao?
-let ultimoProximo = null;
+// Which step is open. Kept OUTSIDE the render: the list is redrawn after
+// every fix, and without this the step the person is working on would
+// close in their face on every measurement.
+let openId = null;
+let touched = false;   // has the person opened something by hand?
+let lastNext = null;
 
-function marca(estado){
-  if (estado === 'ok')   return ['ok','✓'];
-  if (estado === 'erro') return ['erro','?'];
-  if (estado === 'fora') return ['','–'];
+function badge(state){
+  if (state === 'ok')   return ['ok','✓'];
+  if (state === 'erro') return ['erro','?'];
+  if (state === 'fora') return ['','–'];
   return ['falta','!'];
 }
 
-function copiar(texto, botao){
-  const feito = () => { botao.textContent = 'copiado'; setTimeout(()=>botao.textContent='Copiar',1400); };
-  if (navigator.clipboard) { navigator.clipboard.writeText(texto).then(feito, ()=>{}); return; }
-  // Sem a API (http em origem nao segura, dependendo do navegador):
-  // seleciona num textarea e deixa a pessoa dar Ctrl+C. Melhor que um
-  // botao que nao faz nada.
+function copyText(text, button){
+  const done = () => { button.textContent = 'copiado'; setTimeout(()=>button.textContent='Copiar',1400); };
+  if (navigator.clipboard) { navigator.clipboard.writeText(text).then(done, ()=>{}); return; }
+  // Without the API (http on a non-secure origin, depending on the browser):
+  // select in a textarea and let the person press Ctrl+C. Better than a
+  // button that does nothing.
   const t = document.createElement('textarea');
-  t.value = texto; document.body.appendChild(t); t.select();
-  try { document.execCommand('copy'); feito(); } catch(e) {}
+  t.value = text; document.body.appendChild(t); t.select();
+  try { document.execCommand('copy'); done(); } catch(e) {}
   t.remove();
 }
 
-function linha(p, ehAgora){
+function row(p, isCurrent){
   const li = document.createElement('li');
-  const [cls, sinal] = marca(p.estado);
-  const esperando = p.esperando && p.estado !== 'ok';
+  const [cls, sign] = badge(p.estado);
+  const waiting = p.esperando && p.estado !== 'ok';
   li.className = [
     p.estado === 'ok' ? 'ok' : '',
     p.estado === 'fora' ? 'fora' : '',
-    esperando ? 'espera' : '',
-    ehAgora ? 'agora' : '',
-    aberto === p.id ? 'aberto' : '',
+    waiting ? 'espera' : '',
+    isCurrent ? 'agora' : '',
+    openId === p.id ? 'aberto' : '',
   ].filter(Boolean).join(' ');
 
-  const cab = document.createElement('div');
-  cab.className = 'head';
-  cab.tabIndex = 0;
-  cab.setAttribute('role','button');
-  cab.setAttribute('aria-expanded', aberto === p.id ? 'true' : 'false');
+  const head = document.createElement('div');
+  head.className = 'head';
+  head.tabIndex = 0;
+  head.setAttribute('role','button');
+  head.setAttribute('aria-expanded', openId === p.id ? 'true' : 'false');
 
   const m = document.createElement('div');
   m.className = 'marca ' + cls;
-  m.textContent = sinal;
+  m.textContent = sign;
   m.setAttribute('aria-hidden','true');
 
-  const tit = document.createElement('div');
-  tit.className = 'tit';
+  const title = document.createElement('div');
+  title.className = 'tit';
   const n = document.createElement('div');
   n.className = 'n';
   n.textContent = p.titulo;
@@ -221,51 +221,51 @@ function linha(p, ehAgora){
   }
   const d = document.createElement('div');
   d.className = 'd ' + (p.estado === 'falta' ? 'falta' : p.estado === 'erro' ? 'erro' : '');
-  d.textContent = esperando ? ('espera por: ' + p.esperando) : p.detalhe;
-  tit.append(n, d);
+  d.textContent = waiting ? ('espera por: ' + p.esperando) : p.detalhe;
+  title.append(n, d);
 
   const ch = document.createElement('div');
   ch.className = 'chev';
   ch.textContent = '▶';
   ch.setAttribute('aria-hidden','true');
 
-  cab.append(m, tit, ch);
+  head.append(m, title, ch);
 
-  const corpo = document.createElement('div');
-  corpo.className = 'corpo';
-  const porque = document.createElement('p');
-  porque.className = 'porque';
-  porque.textContent = p.porque;
-  corpo.appendChild(porque);
+  const body = document.createElement('div');
+  body.className = 'corpo';
+  const why = document.createElement('p');
+  why.className = 'porque';
+  why.textContent = p.porque;
+  body.appendChild(why);
 
-  const a = p.arrumo || {};
-  if (a.onde) {
+  const fix = p.arrumo || {};
+  if (fix.onde) {
     const o = document.createElement('p');
     o.className = 'onde';
     const b = document.createElement('b');
-    b.textContent = a.onde;
+    b.textContent = fix.onde;
     o.append(document.createTextNode('Na interface do sistema: '), b);
-    corpo.appendChild(o);
+    body.appendChild(o);
   }
-  if (a.linha) {
+  if (fix.linha) {
     const pre = document.createElement('pre');
-    pre.textContent = a.linha;
-    corpo.appendChild(pre);
+    pre.textContent = fix.linha;
+    body.appendChild(pre);
   }
 
-  const acoes = document.createElement('div');
-  acoes.className = 'acoes';
+  const actions = document.createElement('div');
+  actions.className = 'acoes';
   const msg = document.createElement('span');
   msg.className = 'msg';
 
-  if (p.estado !== 'ok' && p.estado !== 'fora' && !esperando) {
-    if (a.tipo === 'sozinho' || a.tipo === 'clique') {
+  if (p.estado !== 'ok' && p.estado !== 'fora' && !waiting) {
+    if (fix.tipo === 'sozinho' || fix.tipo === 'clique') {
       const bt = document.createElement('button');
       bt.className = 'pri';
-      bt.textContent = a.rotulo || 'Arrumar';
+      bt.textContent = fix.rotulo || 'Arrumar';
       bt.onclick = async () => {
         bt.disabled = true;
-        const antes = bt.textContent;
+        const before = bt.textContent;
         bt.textContent = 'fazendo…';
         msg.className = 'msg';
         msg.textContent = '';
@@ -282,60 +282,60 @@ function linha(p, ehAgora){
           msg.textContent = 'o daemon não respondeu: ' + e;
         }
         bt.disabled = false;
-        bt.textContent = antes;
-        // Mede de novo sempre, inclusive quando o reparo diz que falhou:
-        // "nao resolveu" e uma afirmacao sobre o comando, e o que vale e
-        // o estado do mundo depois dele.
-        await medir({manter: msg.textContent, idmsg: p.id, classe: msg.className});
+        bt.textContent = before;
+        // Always measure again, even when the fix says it failed:
+        // "did not fix it" is a claim about the command, and what counts
+        // is the state of the world after it.
+        await measure({keep: msg.textContent, msgId: p.id, msgClass: msg.className});
       };
-      acoes.appendChild(bt);
+      actions.appendChild(bt);
     }
-    if (a.linha) {
+    if (fix.linha) {
       const cp = document.createElement('button');
       cp.textContent = 'Copiar';
-      cp.onclick = () => copiar(a.linha, cp);
-      acoes.appendChild(cp);
+      cp.onclick = () => copyText(fix.linha, cp);
+      actions.appendChild(cp);
     }
     const rm = document.createElement('button');
     rm.textContent = 'Medir este';
-    rm.onclick = () => medir();
-    acoes.appendChild(rm);
+    rm.onclick = () => measure();
+    actions.appendChild(rm);
   }
-  acoes.appendChild(msg);
-  corpo.appendChild(acoes);
+  actions.appendChild(msg);
+  body.appendChild(actions);
 
-  const alterna = () => {
-    mexeu = true;
-    aberto = (aberto === p.id) ? null : p.id;
-    // Fecha os outros no DOM, nao so na variavel.
+  const toggle = () => {
+    touched = true;
+    openId = (openId === p.id) ? null : p.id;
+    // Close the others in the DOM, not just in the variable.
     //
-    // A primeira versao marcava `aberto = p.id` e trocava a classe
-    // apenas do item clicado: o estado dizia "um aberto" e a tela
-    // mostrava dois. Quem pegou foi o check-setup.js contando
-    // `li.aberto` -- de olho eu teria lido como "ele mantem o anterior
-    // aberto, vai ver e de proposito".
-    for (const outro of document.querySelectorAll('#lista li.aberto')) {
-      if (outro !== li) {
-        outro.classList.remove('aberto');
-        const c = outro.querySelector('.head');
+    // The first version set `openId = p.id` and toggled the class only
+    // on the clicked item: the state said "one open" and the screen
+    // showed two. check-setup.js caught it by counting `li.aberto` --
+    // by eye I would have read it as "it keeps the previous one open,
+    // maybe on purpose".
+    for (const other of document.querySelectorAll('#lista li.aberto')) {
+      if (other !== li) {
+        other.classList.remove('aberto');
+        const c = other.querySelector('.head');
         if (c) c.setAttribute('aria-expanded', 'false');
       }
     }
-    li.classList.toggle('aberto', aberto === p.id);
-    cab.setAttribute('aria-expanded', aberto === p.id ? 'true' : 'false');
+    li.classList.toggle('aberto', openId === p.id);
+    head.setAttribute('aria-expanded', openId === p.id ? 'true' : 'false');
   };
-  cab.onclick = alterna;
-  cab.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); alterna(); } };
+  head.onclick = toggle;
+  head.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } };
 
-  li.append(cab, corpo);
+  li.append(head, body);
   return li;
 }
 
-function desenhar(d, extra){
+function render(d, extra){
   const r = d.resumo || {};
-  // O papel ja diz o sistema ("Ubuntu 26.04 - este PC"); repetir o
-  // rotulo so enchia a linha. O rotulo so entra quando nao ha papel.
-  $('#eyebrow').textContent = d.papel || ROTULO[d.sistema] || d.sistema || '';
+  // The role already names the OS ("Ubuntu 26.04 - este PC"); repeating
+  // the label only padded the line. The label shows only when there is no role.
+  $('#eyebrow').textContent = d.papel || OS_LABEL[d.sistema] || d.sistema || '';
   $('#maquina').textContent = d.maquina || 'Esta máquina';
   $('#hora').textContent = d.medido || '--:--:--';
   $('#build').textContent = d.build ? ('build ' + d.build) : '';
@@ -344,80 +344,80 @@ function desenhar(d, extra){
   const pct = r.total ? Math.round(100 * r.prontos / r.total) : 0;
   $('#barra').style.width = pct + '%';
 
-  const passos = d.passos || [];
-  const opcionaisRuins = passos.filter(p => !p.essencial && p.estado !== 'ok' && p.estado !== 'fora');
-  $('#opcionais').textContent = opcionaisRuins.length
-    ? (opcionaisRuins.length + ' opcional(is) pendente(s)') : '';
+  const steps = d.passos || [];
+  const pendingOptional = steps.filter(p => !p.essencial && p.estado !== 'ok' && p.estado !== 'fora');
+  $('#opcionais').textContent = pendingOptional.length
+    ? (pendingOptional.length + ' opcional(is) pendente(s)') : '';
 
-  const falta = passos.filter(p => p.estado !== 'ok' && p.estado !== 'fora').length;
+  const missing = steps.filter(p => p.estado !== 'ok' && p.estado !== 'fora').length;
   $('#lead').textContent = r.pronto
-    ? (falta ? 'O essencial está de pé. O que sobra é opcional.' : 'Nada pendente.')
-    : (falta === 1 ? 'Falta uma coisa.' : 'Faltam ' + falta + ' coisas.');
+    ? (missing ? 'O essencial está de pé. O que sobra é opcional.' : 'Nada pendente.')
+    : (missing === 1 ? 'Falta uma coisa.' : 'Faltam ' + missing + ' coisas.');
   $('#pronto').classList.toggle('on', !!r.pronto);
   $('#prontotxt').textContent = r.pronto
-    ? (falta ? 'Os ' + falta + ' itens abaixo são opcionais. ' : '') : '';
+    ? (missing ? 'Os ' + missing + ' itens abaixo são opcionais. ' : '') : '';
 
-  // Abre o proximo acionavel ATE a pessoa abrir algo na mao. Depois
-  // disso, respeita a escolha dela: mexer na tela de quem esta lendo e
-  // a maneira mais rapida de perder a confianca da pessoa.
-  if (!mexeu) aberto = r.proximo || null;
+  // Open the next actionable step UNTIL the person opens something by hand.
+  // After that, respect their choice: changing the screen under someone
+  // who is reading is the fastest way to lose their trust.
+  if (!touched) openId = r.proximo || null;
 
-  const lista = $('#lista');
-  lista.textContent = '';
-  if (!passos.length) {
+  const list = $('#lista');
+  list.textContent = '';
+  if (!steps.length) {
     const li = document.createElement('li');
     li.className = 'vazio';
     li.textContent = 'nada a configurar';
-    lista.appendChild(li);
+    list.appendChild(li);
     return;
   }
-  for (const p of passos) lista.appendChild(linha(p, p.id === r.proximo));
+  for (const p of steps) list.appendChild(row(p, p.id === r.proximo));
 
-  // Leva o passo ativo para a vista QUANDO ELE MUDA, nao a cada
-  // medicao: uma tela que rola sozinha enquanto a pessoa le e pior que
-  // uma que nao rola. Mudou = ou e a primeira carga, ou o anterior
-  // acabou de ficar verde -- os dois casos em que ela quer ver o
-  // proximo.
-  if (r.proximo && r.proximo !== ultimoProximo) {
-    const alvo = lista.querySelector('li.agora');
-    if (alvo && alvo.scrollIntoView) {
-      const quieto = matchMedia('(prefers-reduced-motion: reduce)').matches;
-      alvo.scrollIntoView({ block: 'center', behavior: quieto ? 'auto' : 'smooth' });
+  // Scroll the active step into view WHEN IT CHANGES, not on every
+  // measurement: a screen that scrolls by itself while the person reads
+  // is worse than one that does not. Changed = either the first load, or
+  // the previous one just turned green -- the two cases where they want
+  // to see the next one.
+  if (r.proximo && r.proximo !== lastNext) {
+    const target = list.querySelector('li.agora');
+    if (target && target.scrollIntoView) {
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      target.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
     }
   }
-  ultimoProximo = r.proximo || null;
+  lastNext = r.proximo || null;
 
-  // Reinstala a mensagem do ultimo reparo depois do redesenho: ela e a
-  // unica coisa na tela que a medicao nao sabe reproduzir.
-  if (extra && extra.idmsg) {
-    const i = passos.findIndex(p => p.id === extra.idmsg);
+  // Put back the last fix's message after the redraw: it is the only
+  // thing on screen that the measurement cannot reproduce.
+  if (extra && extra.msgId) {
+    const i = steps.findIndex(p => p.id === extra.msgId);
     if (i >= 0) {
-      const alvo = lista.children[i].querySelector('.msg');
-      if (alvo) { alvo.className = extra.classe || 'msg'; alvo.textContent = extra.manter || ''; }
+      const target = list.children[i].querySelector('.msg');
+      if (target) { target.className = extra.msgClass || 'msg'; target.textContent = extra.keep || ''; }
     }
   }
 }
 
-async function medir(extra){
+async function measure(extra){
   const bt = $('#remedir');
   bt.disabled = true;
-  const antes = bt.textContent;
+  const before = bt.textContent;
   bt.textContent = 'medindo…';
   try {
     const r = await fetch('/api/setup');
     const d = await r.json();
-    desenhar(d, extra);
+    render(d, extra);
   } catch (e) {
     $('#lead').textContent = 'não consegui falar com o daemon local: ' + e;
   }
   bt.disabled = false;
-  bt.textContent = antes;
+  bt.textContent = before;
 }
 
-$('#remedir').onclick = () => medir();
-medir();
-// Sem refresh automatico, de proposito: medir `pares` abre SSH para cada
-// maquina, e um temporizador transformaria uma pergunta mensal numa
-// tempestade de conexoes.
+$('#remedir').onclick = () => measure();
+measure();
+// No auto-refresh, on purpose: measuring `pares` opens SSH to every
+// machine, and a timer would turn a monthly question into a storm of
+// connections.
 </script>
 </body></html>
