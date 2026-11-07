@@ -32,6 +32,39 @@ identidade só, que serve a própria tela e abre a dos outros. A lista de
 quem pode entrar (`autorizados`) é de cada máquina, e autorizar A a ver B
 não autoriza B a ver A.
 
+## O nome: oxdesk
+
+"logi" e "logistream" vêm de Logitech, do tempo em que o projeto era trocar
+teclado e mouse entre PCs. No produto, o Logitech é **um recurso** (a troca
+de canal Easy-Switch para quem tem teclado e mouse deles e vários PCs), e o
+nome passa a ser **oxdesk**.
+
+| Hoje | Depois |
+|---|---|
+| `logid` | `oxdesk` (daemon e CLI) |
+| `logistream-host`, `-view`, `-ponte`, `-kvm` | `oxdesk-host`, `-view`, `-ponte`, `-kvm` |
+| `logi-ota` | `oxdesk-ota` |
+| `~/.config/logi`, `%APPDATA%\logi` | `~/.config/oxdesk`, `%APPDATA%\oxdesk` |
+| `%LOCALAPPDATA%\logid` | `%LOCALAPPDATA%\oxdesk` |
+| `ai.logi.*` (launchd), tarefa `logid`, `logid.service` | `app.oxdesk.*`, tarefa `oxdesk`, `oxdesk.service` |
+| `LOGI_*` | `OXDESK_*`, aceitando `LOGI_*` por um tempo |
+| crate `hidpp` | fica: é o protocolo da Logitech, e o nome é dele |
+
+É uma troca de dois lados, e tem três armadilhas medidas antes:
+- **O OTA instalado só conhece os nomes antigos.** Uma versão de transição
+  tem de saber instalar a nova e trocar o próprio supervisor. Sem ela, a
+  máquina que atualiza sozinha (Windows, Mac) para na versão antiga.
+- **No Mac, a permissão de Gravação de Tela e de Acessibilidade é do
+  binário.** Com o nome novo, a pessoa concede de novo, à mão.
+- **No Windows, a exclusão do Defender é do caminho** `%LOCALAPPDATA%\logid`.
+  A pasta nova precisa da exclusão antes de o binário chegar, ou ele é
+  apagado na escrita (spec 008).
+
+A config e a identidade migram na primeira partida: se a pasta nova não
+existe e a antiga existe, ela é movida, e o log diz isso.
+
+Vai num PR próprio, depois de a fase A do pareamento estar no ar.
+
 ## A ordem
 
 1. **Pareamento por chave.** Ele vale em todos os cenários, inclusive no
