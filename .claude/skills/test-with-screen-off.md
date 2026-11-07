@@ -2,7 +2,7 @@
 
 Regressão que já quebrou: com a saída de vídeo desligada por economia
 de energia, o host subia, aceitava cliente e **nunca mandava quadro**.
-Ver [[../rules/tela-bloqueada-windows]].
+Ver [[../rules/windows-locked-screen]].
 
 O caso só aparece quando a máquina ficou sozinha um tempo — que é
 justamente quando você quer alcançá-la. Por isso vale forçar.

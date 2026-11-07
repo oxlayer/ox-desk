@@ -1,6 +1,6 @@
 //! Quantos bits por segundo o encoder pode gastar.
 //!
-//! Spec: ../../specs/012-fora-da-lan.md
+//! Spec: ../../specs/012-outside-the-lan.md
 //!
 //! ## Por que virou módulo
 //!

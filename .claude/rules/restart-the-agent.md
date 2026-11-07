@@ -37,5 +37,5 @@ Se o painel ainda mostra o estado velho, o agente não reiniciou.
 
 ## Veja também
 
-- [[config-por-maquina]] — por que você está reiniciando
-- [[powershell-remoto]] — como mandar isso sem quebrar nas aspas
+- [[config-per-machine]] — por que você está reiniciando
+- [[remote-powershell]] — como mandar isso sem quebrar nas aspas

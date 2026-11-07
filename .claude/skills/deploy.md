@@ -25,7 +25,7 @@ Qualquer `FORA DE SINCRONIA` significa que aquela máquina ficou para
 trás — normalmente porque um passo falhou mais acima e o `ok` dele era
 mentira. Todo passo do Windows captura stderr e confere o tamanho do
 arquivo que aterrissou, justamente porque isso já aconteceu
-([[../rules/verificar-o-que-chegou]]).
+([[../rules/verify-what-arrived]]).
 
 ## Não edite a árvore enquanto o deploy roda
 
@@ -43,8 +43,8 @@ com a árvore limpa o carimbo volta a valer.
 
 ## O que o deploy NÃO leva
 
-- **Config.** Ver [[mudar-config-nas-tres]].
-- **Regras de udev.** Ver [[dar-acesso-a-input]].
+- **Config.** Ver [[change-config-on-all-three]].
+- **Regras de udev.** Ver [[grant-input-access]].
 
 ## O deploy não é mais o único caminho
 
@@ -52,7 +52,7 @@ Desde a [`015`](../../specs/015-ota.md) as máquinas também se atualizam
 sozinhas pelas Releases, e o `deploy.sh` leva o `logi-ota` e o token
 junto. O deploy continua sendo o caminho **de dentro de casa** — e o
 único que troca binário no Windows, porque a chave do Authenticode não
-sai do Ubuntu. Ver [[ligar-o-ota]].
+sai do Ubuntu. Ver [[enable-ota]].
 
 ## Binários da CI não substituem o deploy
 
@@ -135,4 +135,4 @@ node ./node_modules/.bin/electron . --setup
 ```
 
 Abre em tela cheia na página de setup. É o mesmo que a bandeja faz em
-"Configurar esta máquina" — ver [[configurar-maquina]].
+"Configurar esta máquina" — ver [[configure-a-machine]].

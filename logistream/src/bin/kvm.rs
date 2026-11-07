@@ -114,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
     if escolhidos.is_empty() {
         anyhow::bail!(
             "nenhum dispositivo casou com {filtros:?}. Sem permissao? \
-             Veja .claude/skills/dar-acesso-a-input.md -- sem a regra de \
+             Veja .claude/skills/grant-input-access.md -- sem a regra de \
              udev os nos existem mas nao abrem, e a lista sai vazia \
              exatamente como se o dispositivo nao estivesse conectado."
         );

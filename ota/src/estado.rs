@@ -6,7 +6,7 @@
 //! esta olhando quando ele roda. Sem este arquivo a unica forma de
 //! saber se a maquina esta se atualizando seria ler log -- e numero que
 //! ninguem imprime, ninguem confere
-//! ([[../../.claude/rules/verificar-o-que-chegou]]). O passo `ota` do
+//! ([[../../.claude/rules/verify-what-arrived]]). O passo `ota` do
 //! wizard le daqui.
 //!
 //! So `quando_unix`, sem data formatada: o que o painel mostra e "ha

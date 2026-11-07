@@ -39,5 +39,5 @@ por código nenhum.
 
 ## Veja também
 
-- [[powershell-remoto]] — como mandar sem quebrar
-- [[reiniciar-agente]] — reiniciar sem conferir é meio trabalho
+- [[remote-powershell]] — como mandar sem quebrar
+- [[restart-the-agent]] — reiniciar sem conferir é meio trabalho

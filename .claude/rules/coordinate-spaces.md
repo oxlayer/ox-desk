@@ -79,7 +79,7 @@ logistream-input-send <host>:<porta+1> --abs 1680 1050   # meio do quadro
 
 ## Veja também
 
-- [[../skills/verificar-o-mac]] — a receita com os quatro pontos
-- [[cursor-sem-mouse]] — o outro problema de cursor, sem relação com este
-- [[verificar-o-que-chegou]] — por que `--rel` dizer "+200 exatos" não
+- [[../skills/verify-the-mac]] — a receita com os quatro pontos
+- [[cursor-without-mouse]] — o outro problema de cursor, sem relação com este
+- [[verify-what-arrived]] — por que `--rel` dizer "+200 exatos" não
   provava nada aqui

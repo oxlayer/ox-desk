@@ -14,7 +14,7 @@ Mac como host, que ainda não produz quadro.
 
 O host do Mac sobe por **LaunchAgent**, não por SSH: a captura depende
 de permissão TCC concedida a quem lançou, e por SSH o AVFoundation
-trava em vez de falhar ([[../.claude/rules/sessao-grafica]]).
+trava em vez de falhar ([[../.claude/rules/graphical-session]]).
 
 O Mac decodifica por ffmpeg porque não tem NVDEC. Isso deixou de ser
 detalhe quando virou **grupo de controle**: o caminho do Mac usava
@@ -46,7 +46,7 @@ Dois tipos de movimento de ponteiro:
 
 ## Veja também
 
-- [[maquinas]]
+- [[machines]]
 - [[../specs/010-remote-desktop.md]] — o stack completo
 - [[../specs/005-input-switch.md]] — troca de máquina e KVM
 

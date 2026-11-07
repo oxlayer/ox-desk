@@ -1,5 +1,5 @@
 //! Bridge between a screen host and a panel tab: QUIC on one side, a local
-//! WebSocket on the other. See specs/016-sessao-e-visual.md.
+//! WebSocket on the other. See specs/016-session-and-visuals.md.
 //!
 //!   LOGI_PONTE_TOKEN=<token> logistream-ponte <host:port>
 //!

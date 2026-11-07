@@ -81,4 +81,4 @@ aplicar um update no meio da requisição que o instalou.
 ## Veja também
 
 - [[deploy]] — o caminho de dentro de casa, que assina e troca tudo
-- [[configurar-maquina]] — o wizard onde o passo vive
+- [[configure-a-machine]] — o wizard onde o passo vive

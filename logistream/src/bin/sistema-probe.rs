@@ -1,6 +1,6 @@
 //! O que o Windows deixa um processo SYSTEM fazer na tela de bloqueio.
 //!
-//! Spec: ../../../specs/014-tela-de-bloqueio.md
+//! Spec: ../../../specs/014-lock-screen.md
 //!
 //! Mesmo espírito do `mac-probe`: provar as peças antes de montar o
 //! pipeline. Aqui a pergunta que decide o desenho é uma só e **varia

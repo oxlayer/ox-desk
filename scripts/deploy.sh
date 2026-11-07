@@ -67,7 +67,7 @@ passo "ubuntu: instalar e reiniciar"
 # que o systemd criou. Um `logid` orfao (a GUI subia um filho dela numa
 # corrida de boot) fica com a porta, o daemon novo morre com
 # `Address already in use` e a maquina serve binario velho dizendo `ok`.
-# Ver .claude/rules/um-supervisor-por-daemon.md.
+# Ver .claude/rules/one-supervisor-per-daemon.md.
 if out=$( { install -m755 logid/target/release/logid ~/.local/bin/logid &&
             { pkill -x logid || true; } &&
             systemctl --user restart logid.service &&
@@ -437,7 +437,7 @@ else
   #    launchd; o filho orfao da GUI segue com a porta e o daemon novo
   #    morre com `Address already in use`.
   # 2. Conferir o `/healthz`. Mandar reiniciar nao e ter reiniciado --
-  #    ver .claude/rules/verificar-o-que-chegou.md.
+  #    ver .claude/rules/verify-what-arrived.md.
   if out=$(timeout 420 ssh -n -o BatchMode=yes mac \
             "cd ~/logi/logid && LOGI_BUILD='$BUILD' LOGI_BUILD_N='$LOGI_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
              install -m755 target/release/logid ~/.local/bin/logid || exit 1

@@ -58,6 +58,6 @@ sessão gráfica" sobre um daemon que não subia desde o boot.
 
 ## Veja também
 
-- [[verificar-o-que-chegou]] — mandar reiniciar não é ter reiniciado
-- [[reiniciar-agente]] — a mesma lição no lado do Windows
-- [[sessao-grafica]] — por que `launchctl` precisa do `gui/<uid>/`
+- [[verify-what-arrived]] — mandar reiniciar não é ter reiniciado
+- [[restart-the-agent]] — a mesma lição no lado do Windows
+- [[graphical-session]] — por que `launchctl` precisa do `gui/<uid>/`

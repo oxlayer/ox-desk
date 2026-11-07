@@ -211,7 +211,7 @@ impl Monitor {
         //    pendente.
         //
         // O roteiro para distinguir esta em
-        // .claude/rules/tela-bloqueada-windows.md.
+        // .claude/rules/windows-locked-screen.md.
         anyhow::bail!(
             "DuplicateOutput recusou {TENTATIVAS} vezes ({ultimo}). \
              Quatro causas dao este mesmo erro; confira nesta ordem: \

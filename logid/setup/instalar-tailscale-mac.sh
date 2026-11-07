@@ -1,7 +1,7 @@
 #!/bin/bash
 # Puts this Mac in the overlay without the Tailscale app.
 #
-# Spec: ../specs/012-fora-da-lan.md
+# Spec: ../specs/012-outside-the-lan.md
 #
 #   brew install tailscale
 #   sudo bash logid/setup/instalar-tailscale-mac.sh

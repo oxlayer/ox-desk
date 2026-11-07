@@ -10,7 +10,7 @@ mostra. Os instaladores vão dentro do binário, então não precisa do repo.
 2. No wizard, aperte os passos em ordem. As permissões vêm depois de
    `Assinar`.
 3. No passo **Tailscale**, o Terminal abre: digite a senha e abra o link
-   de login. **Não instale o app** ([`specs/012`](../specs/012-fora-da-lan.md)).
+   de login. **Não instale o app** ([`specs/012`](../specs/012-outside-the-lan.md)).
 
 ## Windows
 
@@ -30,4 +30,4 @@ mostra. Os instaladores vão dentro do binário, então não precisa do repo.
 - As permissões do macOS: a Apple não deixa dar de fora.
 - O token do OTA, que se cria uma vez e se distribui com
   `scripts/distribuir-token-ota.sh`
-  ([skill](../.claude/skills/ligar-o-ota.md)).
+  ([skill](../.claude/skills/enable-ota.md)).

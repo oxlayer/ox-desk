@@ -1,6 +1,6 @@
 # 008 — Segurança e trust model
 
-> **Mudou em 07/11:** a [`017`](017-produto.md) troca "nenhuma telemetria"
+> **Mudou em 07/11:** a [`017`](017-product.md) troca "nenhuma telemetria"
 > por telemetria mínima e desligável, e a confiança da LAN pela chave de
 > cada máquina. O resto desta spec continua valendo.
 

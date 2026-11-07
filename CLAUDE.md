@@ -10,39 +10,39 @@ remota própria, e o controle de tudo num painel só.
 | [`.claude/rules/`](.claude/rules/) | Regras invioláveis — armadilhas que já custaram tempo | Antes de mexer em qualquer máquina |
 | [`.claude/skills/`](.claude/skills/) | Procedimentos — receitas que funcionaram | Quando a tarefa for "como faço X de novo" |
 | [`docs/`](docs/) | Conhecimento de domínio com [[wikilinks]] | Para entender como as peças se encaixam |
-| [`specs/`](specs/) | Especificações, de `000-overview` a `017-produto` | Para entender *por que* o sistema é assim |
+| [`specs/`](specs/) | Especificações, de `000-overview` a `017-product` | Para entender *por que* o sistema é assim |
 | [`README.md`](README.md) | Runbook histórico — o que testei e falhou | Antes de reintroduzir algo que já saiu |
 
 ## Regras (resumo executivo)
 
-1. [Cada máquina tem a própria config, e nada sincroniza](.claude/rules/config-por-maquina.md)
-2. [Reiniciar agente: o nome do processo não é o nome do binário](.claude/rules/reiniciar-agente.md)
-3. [PowerShell remoto: sempre `-EncodedCommand` a partir de arquivo](.claude/rules/powershell-remoto.md)
-4. [`E_ACCESSDENIED` no DXGI: quatro causas, e a mais comum é o protetor de tela](.claude/rules/tela-bloqueada-windows.md)
-5. [Windows sem mouse não tem cursor, e desenhar no stream não ajuda quem olha o monitor](.claude/rules/cursor-sem-mouse.md)
-6. [O que depende da sessão gráfica não nasce por SSH](.claude/rules/sessao-grafica.md)
-7. [Mandar não é ter chegado; número que ninguém imprime ninguém confere](.claude/rules/verificar-o-que-chegou.md)
-8. [Pixel de captura ≠ ponto de injeção](.claude/rules/espaco-de-coordenadas.md)
-9. [Código de outro sistema compila aqui — troque o `cfg` e confira](.claude/rules/checar-o-cfg-do-outro.md)
-10. [Um supervisor por daemon — e nunca a GUI](.claude/rules/um-supervisor-por-daemon.md)
+1. [Cada máquina tem a própria config, e nada sincroniza](.claude/rules/config-per-machine.md)
+2. [Reiniciar agente: o nome do processo não é o nome do binário](.claude/rules/restart-the-agent.md)
+3. [PowerShell remoto: sempre `-EncodedCommand` a partir de arquivo](.claude/rules/remote-powershell.md)
+4. [`E_ACCESSDENIED` no DXGI: quatro causas, e a mais comum é o protetor de tela](.claude/rules/windows-locked-screen.md)
+5. [Windows sem mouse não tem cursor, e desenhar no stream não ajuda quem olha o monitor](.claude/rules/cursor-without-mouse.md)
+6. [O que depende da sessão gráfica não nasce por SSH](.claude/rules/graphical-session.md)
+7. [Mandar não é ter chegado; número que ninguém imprime ninguém confere](.claude/rules/verify-what-arrived.md)
+8. [Pixel de captura ≠ ponto de injeção](.claude/rules/coordinate-spaces.md)
+9. [Código de outro sistema compila aqui — troque o `cfg` e confira](.claude/rules/check-the-other-cfg.md)
+10. [Um supervisor por daemon — e nunca a GUI](.claude/rules/one-supervisor-per-daemon.md)
 
 ## Skills (procedimentos)
 
 - [Deploy nas três máquinas](.claude/skills/deploy.md)
-- [Mudar config nas três máquinas](.claude/skills/mudar-config-nas-tres.md)
-- [Dar acesso aos dispositivos de input (KVM)](.claude/skills/dar-acesso-a-input.md)
-- [Testar o host de tela com a tela apagada](.claude/skills/testar-tela-apagada.md)
+- [Mudar config nas três máquinas](.claude/skills/change-config-on-all-three.md)
+- [Dar acesso aos dispositivos de input (KVM)](.claude/skills/grant-input-access.md)
+- [Testar o host de tela com a tela apagada](.claude/skills/test-with-screen-off.md)
 - [Clipboard entre as máquinas](.claude/skills/clipboard.md)
-- [Verificar tela, mouse e teclado no Mac](.claude/skills/verificar-o-mac.md)
-- [Configurar uma máquina (wizard de setup)](.claude/skills/configurar-maquina.md)
-- [Alcançar as máquinas fora da LAN](specs/012-fora-da-lan.md)
-- [Ligar e operar a atualização automática (OTA)](.claude/skills/ligar-o-ota.md)
+- [Verificar tela, mouse e teclado no Mac](.claude/skills/verify-the-mac.md)
+- [Configurar uma máquina (wizard de setup)](.claude/skills/configure-a-machine.md)
+- [Alcançar as máquinas fora da LAN](specs/012-outside-the-lan.md)
+- [Ligar e operar a atualização automática (OTA)](.claude/skills/enable-ota.md)
 
 ## Docs
 
 - [[docs/index]] — índice
-- [[docs/maquinas]] — as três máquinas, caminhos e nomes que divergem
-- [[docs/caminhos-de-tela]] — quem captura, codifica e decodifica em cada par
+- [[docs/machines]] — as três máquinas, caminhos e nomes que divergem
+- [[docs/screen-paths]] — quem captura, codifica e decodifica em cada par
 
 ## Os componentes
 
@@ -63,7 +63,7 @@ receptor.
 
 **Nunca escreva IP em config.** O IP do Windows já mudou uma vez e
 quebrou Deskflow, SSH e o painel de uma vez. Use mDNS, ou o nome do
-tailnet na máquina que sai de casa ([`specs/012`](specs/012-fora-da-lan.md)).
+tailnet na máquina que sai de casa ([`specs/012`](specs/012-outside-the-lan.md)).
 
 **No Mac o Tailscale é o do brew, nunca o app.** A extensão de rede dele
 derrubou a internet da máquina em 07/11.
@@ -90,9 +90,9 @@ segue o dongle, não a máquina. Ver [`specs/005`](specs/005-input-switch.md).
 4. **UI em pt-BR; código, commits e nomes de arquivo em inglês.** Script,
    binário, módulo, variável de ambiente e chave de config também
    (`sign.sh`, e não `assinar.sh`). Os nomes antigos em português saem
-   junto com a troca para oxdesk ([`specs/017`](specs/017-produto.md)).
+   junto com a troca para oxdesk ([`specs/017`](specs/017-product.md)).
 5. **Telemetria mínima e desligável; nuvem opcional; LAN sempre.** Desde
-   07/11 o ox-desk é produto ([`specs/017`](specs/017-produto.md)): a
+   07/11 o ox-desk é produto ([`specs/017`](specs/017-product.md)): a
    confiança vem da chave de cada máquina, o servidor é nosso ou da
    pessoa, e só com LAN tudo continua funcionando. O trust model antigo
    está em [`specs/008-security.md`](specs/008-security.md).

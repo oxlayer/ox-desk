@@ -59,5 +59,5 @@ condicional.
 
 ## Veja também
 
-- [[tela-bloqueada-windows]] — a mesma fronteira, do lado do Windows
-- [[cursor-sem-mouse]] — outro caso de "o sintoma não é onde você olha"
+- [[windows-locked-screen]] — a mesma fronteira, do lado do Windows
+- [[cursor-without-mouse]] — outro caso de "o sintoma não é onde você olha"

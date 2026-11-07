@@ -7,7 +7,7 @@
 
 A tela remota do Windows morre quando a sessão bloqueia. O
 `capture_win.rs` já documenta as quatro causas do mesmo
-`E_ACCESSDENIED` ([regra](../.claude/rules/tela-bloqueada-windows.md)),
+`E_ACCESSDENIED` ([regra](../.claude/rules/windows-locked-screen.md)),
 e três delas são a mesma coisa por baixo: **a mesa de entrada mudou**.
 
 A tela de bloqueio, o diálogo de UAC e o protetor de tela vivem em
@@ -16,7 +16,7 @@ não duplica mesa que não seja a de entrada, e só `LocalSystem`
 consegue se anexar à mesa `Winlogon`.
 
 Isso importa mais agora do que importava ontem: acessando de fora de
-casa ([spec 012](012-fora-da-lan.md)), a máquina vai estar bloqueada
+casa ([spec 012](012-outside-the-lan.md)), a máquina vai estar bloqueada
 quase sempre. Hoje isso é exatamente o estado em que ela não serve
 tela.
 
@@ -37,7 +37,7 @@ mesa de ENTRADA: não consegui abrir (Função incorreta. 0x80070001)
 
 A fronteira de sessão inteira em cinco linhas: o SSH cai na sessão 0, o
 console é a 1, e a mesa de entrada nem abre
-([regra](../.claude/rules/sessao-grafica.md)).
+([regra](../.claude/rules/graphical-session.md)).
 
 **Como SYSTEM, por tarefa `/ru SYSTEM`:**
 
@@ -148,6 +148,6 @@ decide o desenho antes de pedir a mudança maior. Mesmo espírito do
 
 ## Veja também
 
-- [[../.claude/rules/tela-bloqueada-windows.md]] — as quatro causas do mesmo erro
-- [[../.claude/rules/sessao-grafica.md]] — a fronteira, medida de novo aqui
-- [[012-fora-da-lan]] — por que isto virou prioridade
+- [[../.claude/rules/windows-locked-screen.md]] — as quatro causas do mesmo erro
+- [[../.claude/rules/graphical-session.md]] — a fronteira, medida de novo aqui
+- [[012-outside-the-lan]] — por que isto virou prioridade

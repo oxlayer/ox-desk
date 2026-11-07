@@ -1,6 +1,6 @@
 //! Who is on the other end of the screen channel.
 //!
-//! Spec: ../specs/017-produto.md (section 1, phase A)
+//! Spec: ../specs/017-product.md (section 1, phase A)
 //!
 //! Every installation has one identity: a self-signed certificate and its
 //! key (ECDSA P-256), created once and kept. The fingerprint is the SHA-256

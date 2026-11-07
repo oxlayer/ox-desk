@@ -16,7 +16,7 @@
 //! para quem sabe que ele existe. Este módulo é o mesmo diagnóstico com
 //! três diferenças que importam: roda nas três máquinas, roda **de
 //! dentro** do daemon (então mede a própria sessão, não a do SSH -- ver
-//! [[../../.claude/rules/sessao-grafica]]), e sabe arrumar parte do que
+//! [[../../.claude/rules/graphical-session]]), e sabe arrumar parte do que
 //! encontra.
 //!
 //! ## A regra de honestidade
@@ -29,7 +29,7 @@
 //!
 //! Depois de arrumar, **mede de novo**. O botão nunca pinta verde por
 //! ter rodado o comando; pinta por ter medido o resultado
-//! ([[../../.claude/rules/verificar-o-que-chegou]]).
+//! ([[../../.claude/rules/verify-what-arrived]]).
 //!
 //! ## O que é puro e o que não é
 //!
@@ -579,7 +579,7 @@ fn windows() -> Vec<Passo> {
                      ~/.ssh do usuário. Põr no lugar errado falha com \
                      \"Permission denied\" e nenhuma pista.",
             arrumo: Arrumo::Receita {
-                linha: "ssh-copy-id não existe aqui: ver .claude/rules/powershell-remoto.md",
+                linha: "ssh-copy-id não existe aqui: ver .claude/rules/remote-powershell.md",
             },
             depende: &["sshd"],
             essencial: true,

@@ -86,7 +86,7 @@ de uso do KVM nessa máquina.
 
 ## Veja também
 
-- [[tela-bloqueada-windows]] — outra família de sintomas do mesmo host
+- [[windows-locked-screen]] — outra família de sintomas do mesmo host
 - [[../../specs/005-input-switch.md]] — o KVM por LAN
 
 ## Desfecho (04/11)

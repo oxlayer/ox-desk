@@ -61,7 +61,7 @@ pub const LIMITE: usize = 256 * 1024;
 ///
 /// Quem pergunta é o wizard de setup, que precisa de uma resposta
 /// medida -- não da existência de um canal
-/// ([[../../.claude/rules/verificar-o-que-chegou]]).
+/// ([[../../.claude/rules/verify-what-arrived]]).
 static VIGIA: Mutex<Option<(bool, String)>> = Mutex::new(None);
 
 pub fn anotar_vigia(ok: bool, detalhe: impl Into<String>) {

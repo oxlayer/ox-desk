@@ -43,5 +43,5 @@ erro, que é justamente a que custa a viagem de ida e volta.
 
 ## Veja também
 
-- [[verificar-o-que-chegou]] — compilar não é ter chegado
-- [[sessao-grafica]] — o que não nasce por SSH, e por isso não se testa daqui
+- [[verify-what-arrived]] — compilar não é ter chegado
+- [[graphical-session]] — o que não nasce por SSH, e por isso não se testa daqui

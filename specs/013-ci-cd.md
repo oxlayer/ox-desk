@@ -47,7 +47,7 @@ vive num chaveiro de lá. Por isso os pacotes de Windows e Mac levam
 máquinas: ele assina, troca, reinicia e confere o `/healthz`. Fazer a CI
 entregar exigiria um runner dentro da LAN ou uma porta aberta para fora,
 e a regra é tudo na LAN. A exceção da
-[`012`](012-fora-da-lan.md) é estreita e não cobre isto.
+[`012`](012-outside-the-lan.md) é estreita e não cobre isto.
 
 A regra de nada de nuvem ([`008`](008-security.md)) vale para o sistema
 em execução: nenhum dado das máquinas passa pelo GitHub. O que sai daqui
@@ -58,7 +58,7 @@ leva só o `main.js`.
 
 ## O que é conferido
 
-"Compilou" não basta ([[../.claude/rules/verificar-o-que-chegou]]). Antes
+"Compilou" não basta ([[../.claude/rules/verify-what-arrived]]). Antes
 de empacotar, o script recusa se:
 
 - falta algum binário da lista, ou tem menos de 100 KB;
@@ -164,4 +164,4 @@ push e deixá-lo em tag e `workflow_dispatch`.
 
 - [[008-security]] — por que a chave não sobe
 - [[../.claude/skills/deploy]] — o caminho até as máquinas
-- [[../.claude/rules/verificar-o-que-chegou]]
+- [[../.claude/rules/verify-what-arrived]]

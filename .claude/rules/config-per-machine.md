@@ -22,11 +22,11 @@ cada agente lê a config da própria máquina e serve o próprio painel.
 
 ## Procedimento
 
-Ver [[../skills/mudar-config-nas-tres]]. Em resumo: baixar, transformar
+Ver [[../skills/change-config-on-all-three]]. Em resumo: baixar, transformar
 com o MESMO script nas três, subir, reiniciar o agente de cada uma.
 Nunca editar as três à mão — a divergência entra por digitação.
 
 ## Veja também
 
-- [[reiniciar-agente]] — os nomes de processo e tarefa diferem por SO
-- [[../skills/mudar-config-nas-tres]] — a receita
+- [[restart-the-agent]] — os nomes de processo e tarefa diferem por SO
+- [[../skills/change-config-on-all-three]] — a receita

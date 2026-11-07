@@ -11,7 +11,7 @@
 //!    de cache ou de um probe com timeout.
 //! 2. Todo reparo volta a mensagem do que **mediu depois**, não do que
 //!    mandou. "Rodei o comando" não é resultado
-//!    ([[../../.claude/rules/verificar-o-que-chegou]]).
+//!    ([[../../.claude/rules/verify-what-arrived]]).
 
 use crate::config::Config;
 use crate::setup::{Estado, Medida};

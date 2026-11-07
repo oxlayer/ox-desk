@@ -91,4 +91,4 @@ bloqueada, `Default` quando não. E relança quando o desktop troca.
 ## Veja também
 
 - [[../../specs/010-remote-desktop.md]] — o stack de tela inteiro
-- [[verificar-o-que-chegou]] — por que o log do host é a fonte, não o cliente
+- [[verify-what-arrived]] — por que o log do host é a fonte, não o cliente

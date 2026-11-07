@@ -119,7 +119,7 @@ pub fn pares(cfg: &Config) -> Medida {
 ///
 /// O app conta como falta mesmo com o overlay de pé: a extensão dele
 /// sem login prendeu o tráfego do Mac inteiro, e o pedido de VPN volta
-/// a cada vez que ele abre. Ver specs/012-fora-da-lan.md.
+/// a cada vez que ele abre. Ver specs/012-outside-the-lan.md.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn veredito_tailscale(json: &str, app_instalado: bool) -> Medida {
     const ID: &str = "tailscale";

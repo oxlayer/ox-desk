@@ -1281,7 +1281,7 @@ conferir antes de deixar o programa roubar o teclado de alguém.
 dispositivos Logitech — não o grupo `input`, que daria a qualquer
 processo da conta acesso permanente a todo dispositivo de entrada,
 inclusive com a sessão encerrada. Receita em
-`.claude/skills/dar-acesso-a-input.md`.
+`.claude/skills/grant-input-access.md`.
 
 ### O que falta
 

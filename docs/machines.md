@@ -11,7 +11,7 @@
 **Nunca escreva IP em config.** O IP do Windows já mudou uma vez e
 quebrou tudo de uma vez. mDNS (`avahi` + `libnss-mdns`), ou o nome do
 tailnet (`ubuntu-host`, `windows-host`) na máquina que sai de casa: ver
-[`specs/012`](../specs/012-fora-da-lan.md).
+[`specs/012`](../specs/012-outside-the-lan.md).
 
 ## Caminhos que divergem
 
@@ -53,9 +53,9 @@ interativa. É assim que `logid` e `logistream-host` sobem.
 
 ## Veja também
 
-- [[caminhos-de-tela]]
-- [[../.claude/rules/config-por-maquina]]
-- [[../.claude/rules/reiniciar-agente]]
+- [[screen-paths]]
+- [[../.claude/rules/config-per-machine]]
+- [[../.claude/rules/restart-the-agent]]
 
 ## Como o input troca de máquina
 
@@ -63,7 +63,7 @@ interativa. É assim que `logid` e `logistream-host` sobem.
 
 | Modo | Mecanismo | Precisa de quê |
 |---|---|---|
-| `lan` (padrão) | captura aqui (`EVIOCGRAB`) e manda pelo stream de input da tela remota | ACL no `/dev/input` ([[../.claude/skills/dar-acesso-a-input]]) e o host de tela de pé no destino |
+| `lan` (padrão) | captura aqui (`EVIOCGRAB`) e manda pelo stream de input da tela remota | ACL no `/dev/input` ([[../.claude/skills/grant-input-access]]) e o host de tela de pé no destino |
 | `hidpp` | manda o dispositivo trocar de canal Easy-Switch (0x1814) | um receptor pareado **na máquina de destino** |
 
 O padrão virou `lan` quando ficamos com um dongle só: no `hidpp`,

@@ -77,12 +77,12 @@ ele, com a chave que já tem.
 ## Regras que isto herda
 
 - **A prova de tela é olhar a imagem.** Contar quadro não prova nada
-  ([[../docs/caminhos-de-tela]]).
+  ([[../docs/screen-paths]]).
 - **Clique na barra não vai para a máquina remota.** O teste confere que
   nenhum `Evento::Mouse` saiu.
 - **A aba se mede contra o `logistream-view`:** o atraso da captura à tela.
 - **Transferência se prova pelo hash dos dois lados**, e não pelo fim da
-  barra de progresso ([[../.claude/rules/verificar-o-que-chegou]]).
+  barra de progresso ([[../.claude/rules/verify-what-arrived]]).
 - **O caminho do Windows é o do SFTP** (`/C:/Users/...`), que já tem
   conversão em `files.rs`.
 

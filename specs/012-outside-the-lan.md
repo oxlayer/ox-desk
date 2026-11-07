@@ -220,4 +220,4 @@ nome, então a regra de não escrever IP continua valendo.
 
 - [[008-security]] — o trust model que esta spec abre com cuidado
 - [[010-remote-desktop]] — por que QUIC, e por que isso restringe o overlay
-- [[../.claude/skills/configurar-maquina]] — o wizard, que já mede SSH entre pares
+- [[../.claude/skills/configure-a-machine]] — o wizard, que já mede SSH entre pares

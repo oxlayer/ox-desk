@@ -1,7 +1,7 @@
 # Mudar config nas três máquinas
 
 Config não viaja no deploy. Mudar uma e achar que mudou todas é o erro
-padrão — ver [[../rules/config-por-maquina]].
+padrão — ver [[../rules/config-per-machine]].
 
 A regra do procedimento: **uma transformação, aplicada três vezes**.
 Editar as três à mão introduz divergência por digitação.
@@ -54,7 +54,7 @@ scp /tmp/win-config.toml 'windows-host:C:/Users/user/AppData/Roaming/logi/config
 
 Reiniciar o agente — o processo é **`logid.exe`** e a tarefa é
 **`logid`**, e `taskkill` em vez de `Stop-Process`
-([[../rules/reiniciar-agente]]):
+([[../rules/restart-the-agent]]):
 
 ```powershell
 taskkill /F /IM logid.exe

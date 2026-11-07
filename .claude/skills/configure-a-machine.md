@@ -12,7 +12,7 @@ ssh windows-host 'start http://127.0.0.1:8787/setup'   # não serve: ver abaixo
 > ⚠️ **Não dá para configurar uma máquina a partir de outra.** O wizard
 > mede a sessão gráfica de quem o serve. Por SSH o Windows cai na sessão
 > 0 (área de transferência sempre vazia) e o macOS não tem concessão de
-> TCC nenhuma. Ver [[../rules/sessao-grafica]].
+> TCC nenhuma. Ver [[../rules/graphical-session]].
 
 ## Ler a tela
 
@@ -66,7 +66,7 @@ amarra no cdhash, que muda a cada compilação. Já aconteceu duas vezes.
 O passo `tailscale` é opcional e mede pelo `tailscale` do brew. Com o
 app instalado ele aparece como falta, mesmo conectado: apague o app pelo
 Finder e **negue** qualquer pedido de VPN. Ver
-[[../../specs/012-fora-da-lan]].
+[[../../specs/012-outside-the-lan]].
 
 ```bash
 brew install tailscale
@@ -84,7 +84,7 @@ SSH, como administrador, o script roda direto, sem pedido na tela.
 
 ## Computador novo
 
-A ordem por sistema está em [[../../docs/computador-novo]].
+A ordem por sistema está em [[../../docs/new-computer]].
 
 ## O que ele não faz
 
@@ -107,5 +107,5 @@ acordeão que mantinha dois passos abertos enquanto o estado dizia um.
 
 - [[../../specs/011-onboarding]] — o desenho e as três regras
 - [[deploy]] — o que leva binário para as três máquinas
-- [[verificar-o-mac]] — quando a tela do Mac não abre
-- [[dar-acesso-a-input]] — a regra de udev em detalhe
+- [[verify-the-mac]] — quando a tela do Mac não abre
+- [[grant-input-access]] — a regra de udev em detalhe

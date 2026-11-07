@@ -23,7 +23,7 @@ schtasks /run /tn ler-clip
 
 onde o script faz `Get-Clipboard -Raw | Out-File ...` e você lê o
 arquivo. Mesma fronteira de sessão que aparece no cursor e no host de
-tela ([[../rules/cursor-sem-mouse]]).
+tela ([[../rules/cursor-without-mouse]]).
 
 ## Quando não propaga
 
@@ -124,7 +124,7 @@ aconteceu, e apagar arquivo de alguém por engano não tem desfazer.
 
 - **PowerShell não espera processo GUI.** O clipboard de texto para o
   Windows estava intermitente desde sempre por isso. Ver
-  [[../rules/powershell-remoto]], armadilha #4.
+  [[../rules/remote-powershell]], armadilha #4.
 - **Nome repetido é recusado**, não renomeado: dois `igual.txt` de
   pastas diferentes viriam um sobre o outro na pasta de passagem e você
   colaria um achando que são dois.

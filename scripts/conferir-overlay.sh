@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # O overlay está de pé, e por qual caminho?
 #
-# Spec: ../specs/012-fora-da-lan.md
+# Spec: ../specs/012-outside-the-lan.md
 #
 #   bash scripts/conferir-overlay.sh
 #

@@ -44,7 +44,7 @@ Parar em `abrindo a tela 1...` = **falta Gravação de Tela** para este
 binário. Sem `acessibilidade concedida` = falta Acessibilidade. Sem
 TCC o AVFoundation **trava em vez de falhar**, então a última linha do
 log vira uma mensagem do ffmpeg sobre formato de pixel — que não tem
-nada a ver com o problema. Ver [[../rules/sessao-grafica]].
+nada a ver com o problema. Ver [[../rules/graphical-session]].
 
 ## 2. O vídeo chega?
 
@@ -77,7 +77,7 @@ Porta **9778**: vídeo e input são portas separadas (`porta + 1`).
 
 `--rel` não responde isso: ele acumula deltas e nunca passa pela
 conversão de espaço. Ele já disse "+200 px exatos" com o caminho
-absoluto quebrado — ver [[../rules/espaco-de-coordenadas]].
+absoluto quebrado — ver [[../rules/coordinate-spaces]].
 
 O caso que revela é o **meio** do quadro. O canto não serve: o sistema
 prende o ponteiro na borda e o erro fica escondido atrás do clamp.
@@ -150,5 +150,5 @@ pelas permissões do `logid`. Por isso a pergunta vai como job do launchd.
 ## Veja também
 
 - [[deploy]] — o passo `mac: assinar o host` falha se o binário ficar ad-hoc
-- [[../rules/sessao-grafica]] — por que nada disso sobe por SSH direto
-- [[../rules/verificar-o-que-chegou]] — por que o log do host é a prova
+- [[../rules/graphical-session]] — por que nada disso sobe por SSH direto
+- [[../rules/verify-what-arrived]] — por que o log do host é a prova

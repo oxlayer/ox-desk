@@ -33,7 +33,7 @@ Roda **de dentro do daemon**, e isso é metade do desenho: o daemon vive
 na sessão gráfica (LaunchAgent no Mac, tarefa `/IT` no Windows, unit de
 usuário no Linux), então ele enxerga o que uma sessão SSH não enxerga.
 Medir por SSH daria "não" para coisas que estão certas — ver
-[[../.claude/rules/sessao-grafica]].
+[[../.claude/rules/graphical-session]].
 
 ## As três regras
 
@@ -54,7 +54,7 @@ Todo reparo **mede de novo** e devolve o que a medição disse, não o que
 o comando devolveu. O `assinar.sh` do Mac é deliberadamente não-fatal; o
 `schtasks` devolve 0 criando tarefa sem token interativo; o `electron`
 sobe e morre em 200 ms. Nos três casos o código de saída mente e a
-medição não ([[../.claude/rules/verificar-o-que-chegou]]).
+medição não ([[../.claude/rules/verify-what-arrived]]).
 
 ### 3. Quem precisa de humano diz que precisa
 
@@ -105,7 +105,7 @@ No macOS, `gravacao-de-tela` e `acessibilidade` **dependem de**
 é pelo cdhash, que muda a cada compilação. Conceder antes de assinar
 desperdiça a concessão, e só o dono da máquina pode dar de volta, à mão,
 na interface. Isso já aconteceu duas vezes aqui — ver
-[[../.claude/rules/espaco-de-coordenadas]] e o `mac/criar-identidade.sh`.
+[[../.claude/rules/coordinate-spaces]] e o `mac/criar-identidade.sh`.
 
 ## O que o wizard NÃO faz
 
@@ -135,4 +135,4 @@ na interface. Isso já aconteceu duas vezes aqui — ver
 
 - [[001-control-plane]] — o daemon que serve esta página
 - [[008-security]] — por que a API só escuta em 127.0.0.1
-- [[../.claude/skills/configurar-maquina]] — a receita de uso
+- [[../.claude/skills/configure-a-machine]] — a receita de uso

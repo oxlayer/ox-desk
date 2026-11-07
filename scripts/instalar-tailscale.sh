@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Põe esta máquina no overlay, para alcançar as outras fora da LAN.
 #
-# Spec: ../specs/012-fora-da-lan.md
+# Spec: ../specs/012-outside-the-lan.md
 #
 #   sudo bash scripts/instalar-tailscale.sh
 #

@@ -343,7 +343,7 @@ pub fn tem_gravacao_de_tela() -> bool {
 /// Roda no processo do HOST de propósito, e tem de ser lançado da sessão
 /// gráfica: pelo SSH não há diálogo nenhum para mostrar, e a chamada
 /// volta `false` sem que ninguém tenha visto nada
-/// ([[../../.claude/rules/sessao-grafica]]).
+/// ([[../../.claude/rules/graphical-session]]).
 ///
 /// A de Acessibilidade usa a variante com `kAXTrustedCheckOptionPrompt`,
 /// que é o que faz o macOS abrir o painel certo em vez de só responder

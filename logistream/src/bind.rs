@@ -1,6 +1,6 @@
 //! Em qual endereço o host escuta.
 //!
-//! Spec: ../../specs/012-fora-da-lan.md
+//! Spec: ../../specs/012-outside-the-lan.md
 //!
 //! ## Por que isto existe
 //!

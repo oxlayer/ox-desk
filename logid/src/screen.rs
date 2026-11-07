@@ -322,7 +322,7 @@ pub struct Sessao {
 /// Abre uma sessao em aba: acorda o host e sobe a `logistream-ponte`.
 ///
 /// Sem a ponte instalada devolve erro, e a pagina cai no visualizador
-/// nativo. Ver specs/016-sessao-e-visual.md.
+/// nativo. Ver specs/016-session-and-visuals.md.
 pub fn abrir_sessao(cfg: &Config, host: &str) -> Result<Sessao, String> {
     let plan = plan_for(cfg, host, Opts::default())
         .ok_or_else(|| format!("host '{host}' nao tem `[hosts.screen]` na config"))?;

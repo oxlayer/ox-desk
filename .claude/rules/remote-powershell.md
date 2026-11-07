@@ -82,4 +82,4 @@ vazio).
 
 ## Veja também
 
-- [[verificar-o-que-chegou]] — mandar não é ter chegado
+- [[verify-what-arrived]] — mandar não é ter chegado
