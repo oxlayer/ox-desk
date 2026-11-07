@@ -31,7 +31,8 @@ case "$ALVO" in
     BINARIOS="logid/target/release/logid
 logistream/target/release/logistream-host
 logistream/target/release/logistream-view
-logistream/target/release/logistream-kvm"
+logistream/target/release/logistream-kvm
+ota/target/release/logi-ota"
     ;;
   windows)
     # `unsigned` no NOME, de proposito: `.exe` cru chegando ao Windows e o
@@ -41,14 +42,16 @@ logistream/target/release/logistream-kvm"
     BINARIOS="logid/target/$WIN/release/logid.exe
 agent/target/$WIN/release/logid-agent.exe
 logistream/target/$WIN/release/logistream-host.exe
-logistream/target/$WIN/release/logistream-view.exe"
+logistream/target/$WIN/release/logistream-view.exe
+ota/target/$WIN/release/logi-ota.exe"
     ;;
   mac)
     PACOTE="logi-mac-arm64-unsigned"
     FORMATO='Mach-O 64-bit.*arm64'
     BINARIOS="logid/target/release/logid
 logistream/target/release/logistream-host
-logistream/target/release/logistream-view"
+logistream/target/release/logistream-view
+ota/target/release/logi-ota"
     ;;
   *) echo "alvo desconhecido: $ALVO" >&2; exit 2 ;;
 esac
@@ -57,17 +60,20 @@ compilar() {
   case "$ALVO" in
     linux)
       cargo build --release --locked --manifest-path logid/Cargo.toml &&
+      cargo build --release --locked --manifest-path ota/Cargo.toml &&
       cargo build --release --locked --manifest-path logistream/Cargo.toml \
         --bin logistream-host --bin logistream-view --bin logistream-kvm
       ;;
     windows)
       cargo build --release --locked --target "$WIN" --manifest-path logid/Cargo.toml &&
       cargo build --release --locked --target "$WIN" --manifest-path agent/Cargo.toml &&
+      cargo build --release --locked --target "$WIN" --manifest-path ota/Cargo.toml &&
       cargo build --release --locked --target "$WIN" --manifest-path logistream/Cargo.toml \
         --bin logistream-host --bin logistream-view
       ;;
     mac)
       cargo build --release --locked --manifest-path logid/Cargo.toml &&
+      cargo build --release --locked --manifest-path ota/Cargo.toml &&
       cargo build --release --locked --manifest-path logistream/Cargo.toml \
         --bin logistream-host --bin logistream-view
       ;;
@@ -106,8 +112,13 @@ conferir_dependencias() {
       # O logistream liga no ffmpeg do brew: e esperado, e vale imprimir,
       # porque o binario so roda com o MESMO major do ffmpeg instalado.
       deps=$(otool -L "$b")
-      if [ "$nome" = logid ] && printf '%s\n' "$deps" | grep -q '/opt/homebrew'; then
-        falha "logid: nao deveria depender do brew"
+      # O `logid` e o `logi-ota` nao podem depender do brew: o primeiro
+      # e o control plane, o segundo e quem conserta a maquina quando o
+      # resto quebrou. Atualizador que precisa de ffmpeg para subir
+      # perderia a serventia justamente no caso em que e necessario.
+      if { [ "$nome" = logid ] || [ "$nome" = logi-ota ]; } &&
+         printf '%s\n' "$deps" | grep -q '/opt/homebrew'; then
+        falha "$nome: nao deveria depender do brew"
       fi
       printf '%s\n' "$deps" | grep '/opt/homebrew' | sed "s/^/  $nome:/" || true
       ;;

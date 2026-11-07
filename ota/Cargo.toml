@@ -1,0 +1,19 @@
+[package]
+name = "logi-ota"
+version = "0.1.0"
+edition = "2021"
+description = "Atualizacao pelas Releases do GitHub: confere, baixa, assina, troca e confere de novo"
+license = "MIT"
+
+[dependencies]
+# So para ler a resposta da API do GitHub. O resto -- rede, descompactar,
+# hash -- nao entra como dependencia: `curl` e `tar` existem nas tres
+# maquinas (o repo ja os usa em probe.rs e clip_arq.rs) e o SHA-256 mora
+# aqui em `sha256.rs`, com vetores. Ver ../specs/015-ota.md.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

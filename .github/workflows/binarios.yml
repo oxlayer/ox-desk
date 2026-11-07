@@ -10,6 +10,7 @@ on:
       - 'logistream/**'
       - 'hidpp/**'
       - 'agent/**'
+      - 'ota/**'
       - 'winput/**'
       - 'scripts/construir-binarios.sh'
       - '.github/workflows/binarios.yml'
@@ -95,6 +96,7 @@ jobs:
             logid
             logistream
             agent
+            ota
 
       - name: Compilar, conferir e empacotar
         run: bash scripts/construir-binarios.sh "${{ matrix.alvo }}"
@@ -104,6 +106,7 @@ jobs:
         run: |
           cargo test --release --locked --manifest-path hidpp/Cargo.toml
           cargo test --release --locked --manifest-path logid/Cargo.toml
+          cargo test --release --locked --manifest-path ota/Cargo.toml
           cargo test --release --locked --manifest-path logistream/Cargo.toml --lib \
             -- --skip decode_nv::testes::conversao_cabe_no_orcamento
 

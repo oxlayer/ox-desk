@@ -59,6 +59,12 @@ passo "ubuntu: instalar e reiniciar"
 if out=$(install -m755 logid/target/release/logid ~/.local/bin/logid 2>&1 &&
          systemctl --user restart logid.service 2>&1); then ok; else erro "$out"; fi
 
+passo "ubuntu: atualizador (logi-ota)"
+# Quem baixa a Release, confere a soma, troca e reverte. Vai para as
+# TRES maquinas -- no Windows so confere e relata (specs/015).
+if out=$(cargo build --release --manifest-path ota/Cargo.toml 2>&1 &&
+         install -m755 ota/target/release/logi-ota ~/.local/bin/logi-ota 2>&1); then ok; else erro "$out"; fi
+
 passo "ubuntu: tela e KVM (logistream)"
 # O host roda nesta maquina quando alguem pede a tela dela; o cliente
 # tambem fica instalado para o caso de ela virar quem assiste.
@@ -169,6 +175,46 @@ PS1
     if ruim "$out"; then erro "$out"; else ok; fi
   else erro "$out"; fi
   rm -f "$AGSIG"
+else erro "$out"; fi
+
+passo "windows: atualizador (logi-ota)"
+# Assinado como todo .exe que chega aqui: o Defender apaga o cru na
+# escrita (specs/008). Aqui ele NAO troca binario -- a chave do
+# Authenticode nao sai do Ubuntu, entao do lado de la o logi-ota
+# confere e relata, e quem troca e este script.
+if out=$(cargo build --release --target x86_64-pc-windows-gnu \
+           --manifest-path ota/Cargo.toml 2>&1); then
+  OT=ota/target/x86_64-pc-windows-gnu/release/logi-ota.exe
+  OTSIG=$(mktemp -u /tmp/logi-ota-assinado-XXXX.exe)
+  limpa=$({ cat <<'PS1' | psrun; } 2>&1
+Remove-Item (Join-Path $env:LOCALAPPDATA 'logid\logi-ota.new.exe') -ErrorAction SilentlyContinue
+PS1
+)
+  if out=$(cp "$OT" "$OTSIG" && bash scripts/sign-windows.sh "$OTSIG" 2>&1 &&
+           timeout 120 scp -q "$OTSIG" \
+             'windows-host:C:/Users/user/AppData/Local/logid/logi-ota.new.exe' 2>&1); then
+    out=$({ cat <<'PS1' | psrun; } 2>&1
+$dst = Join-Path $env:LOCALAPPDATA 'logid'
+$novo = Join-Path $dst 'logi-ota.new.exe'
+$alvo = Join-Path $dst 'logi-ota.exe'
+if (-not (Test-Path $novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $novo
+if ($v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + $v.Status); exit 1 }
+$esperado = (Get-Item $novo).Length
+Copy-Item -Force $novo $alvo
+Remove-Item -Force $novo
+Start-Sleep -Milliseconds 500
+$tem = (Get-Item $alvo).Length
+if ($tem -ne $esperado) {
+  Write-Output ('ERRO: gravou mas tem ' + $tem + ' bytes, esperado ' + $esperado + ' -- antivirus revertendo? confira a exclusao de ' + $dst)
+  exit 1
+}
+exit 0
+PS1
+)
+    if ruim "$out"; then erro "$out"; else ok; fi
+  else erro "$out"; fi
+  rm -f "$OTSIG"
 else erro "$out"; fi
 
 passo "windows: visualizador de tela"
@@ -303,9 +349,22 @@ else
   # `logistream` vai junto: o Mac e o CLIENTE da tela remota, e deixar o
   # binario dele para tras ja aconteceu uma vez -- quem notou foi o
   # usuario, nao eu.
-  if out=$(for d in hidpp logid logistream; do
+  #
+  # `ota` tambem: e justamente no Mac que o OTA tem razao de existir, e
+  # mandar o resto sem ele deixaria a maquina que viaja sem o unico
+  # caminho que ela tem para se atualizar longe de casa (specs/015).
+  if out=$(for d in hidpp logid logistream ota; do
              rsync -az --delete --exclude target -e "ssh -o BatchMode=yes" "$d" mac:~/logi/ || exit 1
            done 2>&1); then ok; else erro "$out"; fi
+
+  passo "mac: atualizador (logi-ota)"
+  # Compila LA, como todo binario do Mac. Nao depende do brew de
+  # proposito (o construir-binarios.sh recusa se depender): quem
+  # conserta a maquina nao pode precisar do ffmpeg para subir.
+  if out=$(timeout 300 ssh -n -o BatchMode=yes mac \
+            "cd ~/logi/ota && LOGI_BUILD='$BUILD' LOGI_BUILD_N='$LOGI_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
+             install -m755 target/release/logi-ota ~/.local/bin/logi-ota &&
+             ~/.local/bin/logi-ota --help > /dev/null" 2>&1); then ok; else erro "$out"; fi
   passo "mac: compilar e reiniciar"
   # Sem cross-compile de Linux para macOS: exige o SDK da Apple, entao o
   # build acontece la. O LOGI_BUILD viaja junto porque a copia nao tem .git.
@@ -372,6 +431,31 @@ else
              sleep 1
              launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.logistream-host.plist 2>/dev/null || \
              launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.logistream-host.plist" 2>&1); then ok; else erro "$out"; fi
+fi
+
+# ---------- token do OTA ----------
+# O token de leitura das Releases e um PAT de granulacao fina com
+# `Contents: read` SO neste repo. Ele vive aqui e e distribuido; sem ele
+# a API responde 200 com {"message":"Not Found"} e o wizard diz
+# exatamente isso. Ver specs/015.
+TOKEN="$HOME/.config/logi/ota-token"
+if [ -f "$TOKEN" ]; then
+  passo "windows: token do OTA"
+  if out=$(timeout 60 scp -q "$TOKEN" \
+             'windows-host:C:/Users/user/AppData/Local/logid/ota-token' 2>&1); then ok
+  else erro "$out"; fi
+  if [ "$PULAR_MAC" -eq 0 ]; then
+    passo "mac: token do OTA"
+    # `chmod 600` do lado de la: o scp preserva o modo da origem, mas
+    # confiar nisso e confiar no umask de outra maquina -- e o wizard
+    # recusa um token legivel por outros.
+    if out=$(ssh -n -o BatchMode=yes mac 'mkdir -p ~/.config/logi' 2>&1 &&
+             scp -q -o BatchMode=yes "$TOKEN" mac:.config/logi/ota-token 2>&1 &&
+             ssh -n -o BatchMode=yes mac 'chmod 600 ~/.config/logi/ota-token' 2>&1); then ok
+    else erro "$out"; fi
+  fi
+else
+  echo "  token do OTA: nao existe em $TOKEN -- o OTA nao vai funcionar (specs/015)"
 fi
 
 # ---------- conferencia ----------

@@ -29,7 +29,7 @@ use crate::setup::{Estado, Medida};
 use crate::setup_comum::rodar;
 use std::path::PathBuf;
 
-const BINS: [&str; 3] = ["logid", "logistream-host", "logistream-view"];
+const BINS: [&str; 4] = ["logid", "logistream-host", "logistream-view", "logi-ota"];
 const IDENTIDADE: &str = "logi local signing";
 const CHAVEIRO: &str = "Library/Keychains/logi.keychain-db";
 
@@ -65,7 +65,40 @@ pub fn medir(cfg: &Config) -> Vec<Medida> {
         crate::setup_comum::clipboard(),
         login_remoto(),
         crate::setup_comum::pares(cfg),
+        ota(),
     ]
+}
+
+fn token_ota() -> PathBuf {
+    crate::sys::home_dir().join(".config/logi/ota-token")
+}
+
+fn ota() -> Medida {
+    crate::setup_comum::ota(&bin_dir().join("logi-ota"), &token_ota(), relogio())
+}
+
+/// O LaunchAgent que acorda o `logi-ota`.
+///
+/// `launchctl print` e não `list`: o `list` responde pelo rótulo mesmo
+/// quando o job está carregado de um plist que não existe mais, e aqui
+/// a pergunta é "o launchd vai acordar isto?".
+fn relogio() -> Result<String, String> {
+    let rotulo = "ai.logi.ota";
+    let saida = rodar("/bin/launchctl", &["print", &format!("gui/{}/{rotulo}", uid())], 5)
+        .map_err(|e| format!("{rotulo}: {e}"))?;
+    // O intervalo sai do próprio launchd, não do que escrevemos: plist
+    // editado à mão (ou de uma versão anterior) apareceria como o
+    // intervalo de hoje se a frase viesse de uma constante nossa.
+    let s = saida
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("interval ="))
+        .and_then(|l| l.split('=').nth(1))
+        .map(|v| v.trim().to_string());
+    Ok(match s {
+        Some(seg) => format!("LaunchAgent a cada {seg} s"),
+        None => format!("{rotulo} carregado (o launchd não informou intervalo)"),
+    })
 }
 
 fn binarios() -> Medida {
@@ -236,6 +269,7 @@ pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
             "ai.logi.logid",
             &[bin_dir().join("logid").to_string_lossy().into_owned()],
             true,
+            None,
         ),
         "launchagent" => instalar_agente(
             "ai.logi.logistream-host",
@@ -245,7 +279,9 @@ pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
                 "1".into(),
             ],
             false,
+            None,
         ),
+        "ota" => instalar_relogio(),
         "assinatura" => assinar(),
         "gravacao-de-tela" => pedir("gravacao-de-tela", "Privacy_ScreenCapture"),
         "acessibilidade" => pedir("acessibilidade", "Privacy_Accessibility"),
@@ -259,7 +295,12 @@ pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
 /// versionados têm `/Users/user` embutido -- um caminho absoluto
 /// não tem como ser relativo, e `~` não expande em plist. Gerado, o
 /// mesmo wizard serve qualquer conta.
-fn instalar_agente(rotulo: &str, argv: &[String], run_at_load: bool) -> Result<String, String> {
+fn instalar_agente(
+    rotulo: &str,
+    argv: &[String],
+    run_at_load: bool,
+    intervalo: Option<u64>,
+) -> Result<String, String> {
     let home = crate::sys::home_dir();
     let log = home.join(".local/state").join(format!("{}.log", rotulo.rsplit('.').next().unwrap_or(rotulo)));
     std::fs::create_dir_all(home.join(".local/state")).map_err(|e| format!("criar ~/.local/state: {e}"))?;
@@ -278,11 +319,20 @@ fn instalar_agente(rotulo: &str, argv: &[String], run_at_load: bool) -> Result<S
          \x20 <key>ProgramArguments</key>\n  <array>\n{args}  </array>\n\
          \x20 <key>RunAtLoad</key><{ral}/>\n\
          \x20 <key>KeepAlive</key><{ral}/>\n\
+         {intervalo}\
          \x20 <key>ProcessType</key><string>Interactive</string>\n\
          \x20 <key>StandardOutPath</key><string>{log}</string>\n\
          \x20 <key>StandardErrorPath</key><string>{log}</string>\n\
          </dict>\n</plist>\n",
         ral = if run_at_load { "true" } else { "false" },
+        // `StartInterval` e `RunAtLoad false` juntos: o launchd dispara
+        // a primeira vez só depois do intervalo. É o que se quer aqui --
+        // disparar no `bootstrap` faria o agente aplicar um build novo e
+        // reiniciar o `logid` no meio da requisição que o instalou.
+        intervalo = match intervalo {
+            Some(s) => format!("  <key>StartInterval</key><integer>{s}</integer>\n"),
+            None => String::new(),
+        },
         log = escapar(&log.to_string_lossy()),
     );
 
@@ -307,6 +357,36 @@ fn instalar_agente(rotulo: &str, argv: &[String], run_at_load: bool) -> Result<S
     rodar("/bin/launchctl", &["print", &format!("{alvo}/{rotulo}")], 5)
         .map_err(|e| format!("carreguei e o launchd não o lista: {e}"))?;
     Ok(format!("{rotulo} instalado e carregado"))
+}
+
+/// Instala o LaunchAgent do `logi-ota` e confere uma vez.
+///
+/// Uma hora de intervalo. `RunAtLoad false`: o `bootstrap` não pode
+/// disparar o agente agora, porque ele aplicaria o build novo e
+/// reiniciaria o `logid` -- que é quem está respondendo esta
+/// requisição. A primeira checagem aqui é `--conferir`, que não troca
+/// nada; a troca acontece no primeiro tique, sem ninguém esperando.
+///
+/// Consequência aceita e documentada: depois de um boot, o Mac pode
+/// levar até uma hora para olhar. Para quem viaja com o laptop, isso é
+/// "quando eu abrir a tampa e for fazer café".
+fn instalar_relogio() -> Result<String, String> {
+    let bin = bin_dir().join("logi-ota");
+    if !bin.is_file() {
+        return Err(format!("não achei {}: rode o deploy", bin.display()));
+    }
+    instalar_agente(
+        "ai.logi.ota",
+        &[bin.to_string_lossy().into_owned()],
+        false,
+        Some(3600),
+    )?;
+    relogio()?;
+    let primeira = rodar(&bin.to_string_lossy(), &["--conferir"], 60);
+    Ok(match primeira {
+        Ok(s) => format!("agente instalado; primeira checagem: {}", s.trim()),
+        Err(e) => format!("agente instalado, mas a primeira checagem falhou: {e}"),
+    })
 }
 
 fn escapar(s: &str) -> String {

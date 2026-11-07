@@ -19,7 +19,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-const BINS: [&str; 4] = ["logid", "logistream-host", "logistream-view", "logistream-kvm"];
+const BINS: [&str; 5] =
+    ["logid", "logistream-host", "logistream-view", "logistream-kvm", "logi-ota"];
 
 fn bin_dir() -> PathBuf {
     crate::sys::home_dir().join(".local/bin")
@@ -37,7 +38,41 @@ pub fn medir(cfg: &Config) -> Vec<Medida> {
         crate::setup_comum::pares(cfg),
         nvenc(),
         bandeja(),
+        ota(),
     ]
+}
+
+fn token_ota() -> PathBuf {
+    crate::sys::home_dir().join(".config/logi/ota-token")
+}
+
+fn ota() -> Medida {
+    crate::setup_comum::ota(&bin_dir().join("logi-ota"), &token_ota(), relogio())
+}
+
+/// O timer do systemd que acorda o `logi-ota`.
+///
+/// `is-active` **e** `is-enabled`: um timer ativo e não habilitado morre
+/// no próximo boot sem avisar -- o mesmo par que o passo do daemon
+/// confere, pelo mesmo motivo.
+fn relogio() -> Result<String, String> {
+    let ativo = Command::new("systemctl")
+        .args(["--user", "is-active", "--quiet", "logi-ota.timer"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ativo {
+        return Err("logi-ota.timer não está ativo".into());
+    }
+    let habilitado = Command::new("systemctl")
+        .args(["--user", "is-enabled", "--quiet", "logi-ota.timer"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !habilitado {
+        return Err("logi-ota.timer roda agora mas não está habilitado: no próximo boot não sobe".into());
+    }
+    Ok("timer do systemd a cada 1 h".into())
 }
 
 fn binarios() -> Medida {
@@ -257,11 +292,54 @@ pub fn arrumar(id: &str, cfg: &Config) -> Result<String, String> {
         }
         "clipboard" => crate::setup_comum::testar_clipboard(),
         "bandeja" => lancar_bandeja(),
+        "ota" => instalar_relogio(),
         _ => Err(format!("'{id}' não se arruma sozinho nesta máquina")),
     }
     .map(|s| {
         let _ = cfg;
         s
+    })
+}
+
+/// Escreve o service e o timer do `logi-ota` e os habilita.
+///
+/// A unit é **gerada aqui**, não copiada do repo: o wizard tem de
+/// funcionar numa máquina que não tem o checkout (é o caso do Mac). E
+/// `%h` resolve a casa de quem roda, então o mesmo texto serve qualquer
+/// conta.
+///
+/// A primeira execução é `--conferir`, de propósito: `logi-ota` sem
+/// argumento pode aplicar um build novo e **reiniciar o logid** -- que é
+/// quem está respondendo esta requisição. O relógio aplica no próximo
+/// tique, com ninguém esperando resposta.
+fn instalar_relogio() -> Result<String, String> {
+    let bin = bin_dir().join("logi-ota");
+    if !bin.is_file() {
+        return Err(format!("não achei {}: rode o deploy", bin.display()));
+    }
+    let dir = crate::sys::home_dir().join(".config/systemd/user");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
+
+    let service = "[Unit]\n        Description=logi-ota - confere a Release publicada e aplica se for mais nova\n        Documentation=file:///home/user/dev/logi/specs/015-ota.md\n\n        [Service]\n        Type=oneshot\n        ExecStart=%h/.local/bin/logi-ota\n";
+    // `OnBootSec` pequeno e `OnUnitActiveSec` de uma hora: a primeira
+    // checagem depois de ligar a máquina é a que importa, e uma por
+    // hora cabe folgado no limite da API com token (5.000/h).
+    let timer = "[Unit]\n        Description=relógio do logi-ota\n\n        [Timer]\n        OnBootSec=3min\n        OnUnitActiveSec=1h\n        Unit=logi-ota.service\n\n        [Install]\n        WantedBy=timers.target\n";
+
+    std::fs::write(dir.join("logi-ota.service"), service)
+        .map_err(|e| format!("gravar logi-ota.service: {e}"))?;
+    std::fs::write(dir.join("logi-ota.timer"), timer)
+        .map_err(|e| format!("gravar logi-ota.timer: {e}"))?;
+
+    crate::setup_comum::rodar("systemctl", &["--user", "daemon-reload"], 15)?;
+    crate::setup_comum::rodar("systemctl", &["--user", "enable", "--now", "logi-ota.timer"], 15)?;
+
+    // Conferir o que ficou, não o que mandei.
+    relogio()?;
+    let primeira = crate::setup_comum::rodar(&bin.to_string_lossy(), &["--conferir"], 60);
+    Ok(match primeira {
+        Ok(s) => format!("timer habilitado; primeira checagem: {}", s.trim()),
+        Err(e) => format!("timer habilitado, mas a primeira checagem falhou: {e}"),
     })
 }
 

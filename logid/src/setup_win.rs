@@ -23,8 +23,13 @@ use crate::setup::Medida;
 use crate::setup_comum::rodar;
 use std::path::PathBuf;
 
-const BINS: [&str; 4] =
-    ["logid.exe", "logid-agent.exe", "logistream-host.exe", "logistream-view.exe"];
+const BINS: [&str; 5] = [
+    "logid.exe",
+    "logid-agent.exe",
+    "logistream-host.exe",
+    "logistream-view.exe",
+    "logi-ota.exe",
+];
 
 fn bin_dir() -> PathBuf {
     let base = std::env::var("LOCALAPPDATA").unwrap_or_default();
@@ -42,7 +47,26 @@ pub fn medir(cfg: &Config) -> Vec<Medida> {
         chave_admin(),
         crate::setup_comum::pares(cfg),
         protetor_de_tela(),
+        ota(),
     ]
+}
+
+fn token_ota() -> PathBuf {
+    bin_dir().join("ota-token")
+}
+
+fn ota() -> Medida {
+    crate::setup_comum::ota(&bin_dir().join("logi-ota.exe"), &token_ota(), relogio())
+}
+
+/// A tarefa agendada que acorda o `logi-ota`.
+fn relogio() -> Result<String, String> {
+    let m = tarefa("ota", "logi-ota");
+    if m.estado == crate::setup::Estado::Ok {
+        Ok(m.detalhe)
+    } else {
+        Err(m.detalhe)
+    }
 }
 
 fn binarios() -> Medida {
@@ -196,8 +220,26 @@ pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
             &bin_dir().join("logistream-host.exe").to_string_lossy(),
             &["/sc", "once", "/st", "00:00"],
         ),
+        "ota" => instalar_relogio(),
         _ => Err(format!("'{id}' não se arruma sozinho nesta máquina")),
     }
+}
+
+/// Cria a tarefa de hora em hora e confere uma vez.
+///
+/// A tarefa roda o `.exe` **sem argumento**. Não é descuido: aqui o
+/// `logi-ota` já recusa trocar binário por conta própria (a chave do
+/// Authenticode não sai do Ubuntu -- specs/008), então o modo padrão já
+/// é "conferir e relatar". E passar argumento no `/tr` exigiria aninhar
+/// aspas, que já quebrou esta ponte três vezes.
+fn instalar_relogio() -> Result<String, String> {
+    let exe = bin_dir().join("logi-ota.exe");
+    criar_tarefa("ota", "logi-ota", &exe.to_string_lossy(), &["/sc", "hourly"])?;
+    let primeira = rodar(&exe.to_string_lossy(), &["--conferir"], 60);
+    Ok(match primeira {
+        Ok(s) => format!("tarefa criada; primeira checagem: {}", s.trim()),
+        Err(e) => format!("tarefa criada, mas a primeira checagem falhou: {e}"),
+    })
 }
 
 fn criar_tarefa(id: &str, nome: &str, exe: &str, quando: &[&str]) -> Result<String, String> {

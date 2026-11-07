@@ -336,6 +336,17 @@ fn linux() -> Vec<Passo> {
             depende: &["daemon"],
             essencial: false,
         },
+        Passo {
+            id: "ota",
+            titulo: "Atualização automática (OTA)",
+            porque: "esta máquina se atualiza sozinha pelas Releases do \
+                     GitHub -- é o que mantém o Mac em dia quando ele \
+                     está longe de casa e ninguém pode rodar o deploy. \
+                     Sem o relógio, o build velho fica.",
+            arrumo: Arrumo::Sozinho { rotulo: "Instalar o relógio e conferir agora" },
+            depende: &["binarios"],
+            essencial: false,
+        },
     ]
 }
 
@@ -455,6 +466,18 @@ fn mac() -> Vec<Passo> {
             depende: &["config"],
             essencial: true,
         },
+        Passo {
+            id: "ota",
+            titulo: "Atualização automática (OTA)",
+            porque: "é o passo que faz este Mac se manter em dia longe de \
+                     casa. O agente baixa o build publicado, **assina com a \
+                     identidade local** e só então troca -- é isso que \
+                     preserva a Gravação de Tela, que um binário ad-hoc da \
+                     CI perderia.",
+            arrumo: Arrumo::Sozinho { rotulo: "Instalar o relógio e conferir agora" },
+            depende: &["binarios", "identidade"],
+            essencial: false,
+        },
     ]
 }
 
@@ -550,6 +573,18 @@ fn windows() -> Vec<Passo> {
                 linha: "powercfg /setacvalueindex SCHEME_CURRENT SUB_NONE CONSOLELOCK 0",
             },
             depende: &[],
+            essencial: false,
+        },
+        Passo {
+            id: "ota",
+            titulo: "Atualização automática (OTA)",
+            porque: "aqui o OTA **só confere e relata**: a chave do \
+                     Authenticode não sai do Ubuntu, e `.exe` sem assinatura \
+                     válida é o que o Defender apaga na escrita. Serve para \
+                     o painel dizer quando esta máquina ficou atrás -- quem \
+                     troca é o deploy.",
+            arrumo: Arrumo::Sozinho { rotulo: "Instalar a tarefa e conferir agora" },
+            depende: &["binarios"],
             essencial: false,
         },
     ]

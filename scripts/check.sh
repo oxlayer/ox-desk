@@ -36,16 +36,16 @@ run() {
 # `winput` compila VAZIO por `#![cfg(windows)]`, e o agent nao acha as
 # funcoes. Nao e regressao, e so nao ter alvo nativo aqui.
 echo "== nativo (linux) =="
-for c in hidpp logid; do
+for c in hidpp logid ota; do
   run "$c: build" cargo build --release --manifest-path "$c/Cargo.toml"
 done
-for c in hidpp logid; do
+for c in hidpp logid ota; do
   run "$c: test" cargo test --release --manifest-path "$c/Cargo.toml"
 done
 
 echo "== cruzado (windows) =="
 # O agent e o winput so existem no Windows; o logid roda nos dois.
-for c in hidpp logid agent winput; do
+for c in hidpp logid agent winput ota; do
   run "$c: build windows" cargo build --release --target x86_64-pc-windows-gnu \
       --manifest-path "$c/Cargo.toml"
 done

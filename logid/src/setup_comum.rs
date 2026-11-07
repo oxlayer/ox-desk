@@ -190,3 +190,171 @@ pub fn processo_vivo(nome: &str) -> bool {
         crate::sys::unit_state(nome) == "active"
     }
 }
+
+// ---------------------------------------------------------------- OTA
+
+/// "há 12 min", "há 3 h", "há 2 dias".
+///
+/// `saturating_add` nos arredondamentos: a idade pode chegar aqui como
+/// `u64::MAX` quando o campo veio ilegível, e um `+ 43_200` cru derruba
+/// o daemon em build de debug. Foi o teste que achou.
+pub fn idade_humana(s: u64) -> String {
+    match s {
+        0..=89 => format!("há {s}s"),
+        90..=5399 => format!("há {} min", s.saturating_add(30) / 60),
+        5400..=172_799 => format!("há {} h", s.saturating_add(1800) / 3600),
+        _ => format!("há {} dias", s.saturating_add(43_200) / 86_400),
+    }
+}
+
+/// Como está a atualização automática desta máquina.
+///
+/// Não lê o `estado.json` do `logi-ota` nem reescreve as frases dele:
+/// pergunta ao próprio binário (`--estado --curto`) e corta em TAB. O
+/// `logid` e o `logi-ota` são binários separados -- duplicar aqui o
+/// formato do arquivo seria a mesma armadilha de ter a lista de
+/// binários em dois lugares ([[../../specs/013-ci-cd.md]]).
+///
+/// `relogio` é o que cada sistema mediu do *seu* agendador: timer do
+/// systemd, `StartInterval` do launchd, tarefa agendada.
+pub fn ota(bin: &std::path::Path, token: &std::path::Path, relogio: Result<String, String>) -> Medida {
+    if !bin.is_file() {
+        return Medida::falta("ota", format!("{} não está instalado; rode o deploy", bin.display()));
+    }
+    // Sem token nada funciona, e o sintoma seria um "Not Found" da API
+    // que manda procurar na CI. Então a falta do token é o diagnóstico.
+    if !token.is_file() {
+        return Medida::falta(
+            "ota",
+            format!(
+                "falta o token de leitura em {}: o repo é privado e a API responde \"Not Found\" sem ele",
+                token.display()
+            ),
+        );
+    }
+    // Segredo legível por qualquer processo da máquina é segredo
+    // vazado -- e o Mac é justamente o que sai de casa.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(m) = std::fs::metadata(token) {
+            let modo = m.permissions().mode() & 0o077;
+            if modo != 0 {
+                return Medida::falta(
+                    "ota",
+                    format!("{} está com modo {:o}: só o dono deve ler (chmod 600)", token.display(), m.permissions().mode() & 0o777),
+                );
+            }
+        }
+    }
+    let relogio = match relogio {
+        Ok(t) => t,
+        Err(e) => return Medida::falta("ota", format!("o relógio não está de pé: {e}")),
+    };
+
+    let linha = match rodar(&bin.to_string_lossy(), &["--estado", "--curto"], 8) {
+        Ok(l) => l.trim().to_string(),
+        // Sai com != 0 quando nunca conferiu. É estado legítimo logo
+        // depois de instalar, não erro.
+        Err(_) => return Medida::falta("ota", format!("{relogio}, mas ainda não conferiu nenhuma vez")),
+    };
+    veredito(&linha, &relogio)
+}
+
+/// A decisão, separada de quem mede.
+///
+/// Pura porque é aqui que mora o critério -- e o critério tem um caso
+/// que só se vê escrito: **última checagem bem-sucedida não basta**. Um
+/// relógio de uma hora que não acorda há seis deixou de proteger, e
+/// como o último resultado dele foi "em dia", mostrá-lo como `Ok` é
+/// dizer que está tudo bem justamente quando parou de estar.
+pub fn veredito(linha: &str, relogio: &str) -> Medida {
+    let campos: Vec<&str> = linha.split('\t').collect();
+    if campos.len() != 3 {
+        return Medida::erro("ota", format!("não sei ler o estado do logi-ota: {linha:?}"));
+    }
+    let (resultado, idade, frase) =
+        (campos[0], campos[1].parse::<u64>().unwrap_or(u64::MAX), campos[2]);
+    let quando = idade_humana(idade);
+
+    match resultado {
+        "erro" | "revertido" => Medida::erro("ota", format!("{quando}: {frase}")),
+        _ if idade > 6 * 3600 => Medida::falta(
+            "ota",
+            format!("{relogio}, mas a última checagem foi {quando} -- o relógio não está acordando"),
+        ),
+        // Novidade publicada e não aplicada é pendência, não sucesso:
+        // no Windows é o estado permanente (não assinamos lá), e é
+        // justamente isso que o painel precisa mostrar.
+        "novidade" => Medida::falta("ota", format!("{quando}: {frase}")),
+        _ => Medida::ok("ota", format!("{relogio}; {quando}: {frase}")),
+    }
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    /// A frase do painel é lida por humano: 5400 s é "1 h e meia", e
+    /// mostrar "5400s" seria obrigar quem lê a dividir de cabeça.
+    #[test]
+    fn idade_em_palavras() {
+        assert_eq!(idade_humana(0), "há 0s");
+        assert_eq!(idade_humana(89), "há 89s");
+        assert_eq!(idade_humana(90), "há 2 min");
+        assert_eq!(idade_humana(3600), "há 60 min");
+        assert_eq!(idade_humana(5400), "há 2 h");
+        assert_eq!(idade_humana(90_000), "há 25 h");
+        assert_eq!(idade_humana(172_800), "há 2 dias");
+    }
+
+    /// Binário ausente é a primeira pergunta, antes de token e relógio:
+    /// sem ele nenhum dos outros dois tem sentido.
+    #[test]
+    fn sem_binario_nao_cobra_token() {
+        let m = ota(
+            std::path::Path::new("/nao/existe/logi-ota"),
+            std::path::Path::new("/nao/existe/token"),
+            Ok("relógio ok".into()),
+        );
+        assert_eq!(m.estado, crate::setup::Estado::Falta);
+        assert!(m.detalhe.contains("não está instalado"), "{}", m.detalhe);
+    }
+
+    /// Relógio parado não pode aparecer como "ok" só porque a última
+    /// checagem deu certo: é exatamente o caso em que a máquina para de
+    /// se atualizar e nada avisa.
+    #[test]
+    fn relogio_parado_nao_e_ok_mesmo_com_resultado_bom() {
+        let recente = veredito("igual\t600\tem dia no build #124 abc1234", "a cada 1 h");
+        assert_eq!(recente.estado, crate::setup::Estado::Ok);
+
+        let parado = veredito("igual\t25000\tem dia no build #124 abc1234", "a cada 1 h");
+        assert_eq!(parado.estado, crate::setup::Estado::Falta);
+        assert!(parado.detalhe.contains("não está acordando"), "{}", parado.detalhe);
+    }
+
+    #[test]
+    fn erro_e_reversao_sao_erro_e_novidade_e_pendencia() {
+        assert_eq!(veredito("erro\t60\tsem token", "x").estado, crate::setup::Estado::Erro);
+        assert_eq!(veredito("revertido\t60\tvoltei", "x").estado, crate::setup::Estado::Erro);
+        assert_eq!(veredito("novidade\t60\tha o #125", "x").estado, crate::setup::Estado::Falta);
+        assert_eq!(veredito("atualizado\t60\ttroquei", "x").estado, crate::setup::Estado::Ok);
+        assert_eq!(veredito("mais-novo-aqui\t60\t#130 aqui", "x").estado, crate::setup::Estado::Ok);
+    }
+
+    /// Linha fora do contrato é erro, não "ok" por omissão. Se o
+    /// `logi-ota` mudar o formato, o painel diz isso em vez de mentir.
+    #[test]
+    fn linha_fora_do_contrato_e_erro() {
+        let m = veredito("so um campo", "x");
+        assert_eq!(m.estado, crate::setup::Estado::Erro);
+        assert!(m.detalhe.contains("não sei ler"), "{}", m.detalhe);
+    }
+
+    /// Idade ilegível conta como velha, nunca como fresca.
+    #[test]
+    fn idade_ilegivel_nao_passa_por_fresca() {
+        assert_eq!(veredito("igual\tabc\tfrase", "x").estado, crate::setup::Estado::Falta);
+    }
+}
