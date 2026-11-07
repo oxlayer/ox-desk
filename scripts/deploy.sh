@@ -12,6 +12,13 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
 
+# A chave do Windows tem senha, e quem a guarda e o agente do GNOME. Numa
+# sessao SSH essa variavel vem vazia: o Windows aceita a chave, a
+# assinatura nao sai, e o `windows-host` responde `Permission denied`.
+if [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "/run/user/$(id -u)/gcr/ssh" ]; then
+  export SSH_AUTH_SOCK="/run/user/$(id -u)/gcr/ssh"
+fi
+
 PULAR_MAC=0
 [ "${1:-}" = "--pular-mac" ] && PULAR_MAC=1
 

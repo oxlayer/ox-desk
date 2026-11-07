@@ -186,16 +186,7 @@ impl Codificador {
                 let tam = (stride * self.h as usize).min(px.len());
                 unsafe { lock.write(&px[..tam]) };
             } else {
-                // Reempacota linha a linha. Alocar aqui a cada quadro
-                // seria 14 MB/quadro de churn, entao o buffer vive na
-                // struct -- mas ele depende do lock, que e por chamada.
-                let mut junto = Vec::with_capacity(linha * self.h as usize);
-                for y in 0..self.h as usize {
-                    let ini = y * stride;
-                    if ini + linha <= px.len() {
-                        junto.extend_from_slice(&px[ini..ini + linha]);
-                    }
-                }
+                let junto = reempacotar(px, stride, linha, pitch, self.h as usize);
                 unsafe { lock.write(&junto) };
             }
         }
@@ -239,5 +230,37 @@ impl Codificador {
     /// pode comecar a desenhar dali.
     pub fn ultimo_foi_idr(&self) -> bool {
         self.ultimo_foi_idr
+    }
+}
+
+/// Copia as linhas da origem para o passo que o NVENC pediu.
+///
+/// O destino tem `pitch` bytes por linha, e nao `linha`: colar as linhas
+/// embaralhava a imagem em toda largura cujo passo tem preenchimento,
+/// como 800 px (3200 bytes). Em 1920 e 2560 os passos coincidem, e por
+/// isso o defeito so apareceu com a tela virtual do Windows.
+fn reempacotar(px: &[u8], stride: usize, linha: usize, pitch: usize, h: usize) -> Vec<u8> {
+    let mut destino = vec![0u8; pitch * h];
+    for y in 0..h {
+        let ini = y * stride;
+        if ini + linha > px.len() {
+            break;
+        }
+        destino[y * pitch..y * pitch + linha].copy_from_slice(&px[ini..ini + linha]);
+    }
+    destino
+}
+
+#[cfg(test)]
+mod testes_passo {
+    #[test]
+    fn cada_linha_comeca_no_passo_do_destino() {
+        // Tres papeis com valores diferentes: origem, largura e destino.
+        let (stride, linha, pitch, h) = (6, 4, 8, 2);
+        let px = [1, 2, 3, 4, 9, 9, 5, 6, 7, 8, 9, 9];
+        let d = super::reempacotar(&px, stride, linha, pitch, h);
+        assert_eq!(d.len(), pitch * h);
+        assert_eq!(&d[0..4], &[1, 2, 3, 4]);
+        assert_eq!(&d[8..12], &[5, 6, 7, 8]);
     }
 }

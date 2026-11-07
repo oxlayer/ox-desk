@@ -76,3 +76,8 @@ Sem isso, nada ali pede para confiar em certificado autoassinado.
 
 Medido em 07/11, do Ubuntu pelo tailnet: 243 quadros em 10 s, zero
 perdidos.
+
+O driver nasce em 800×600, e foi isso que mostrou o defeito do passo de
+linha em `nvenc.rs`: o quadro chegava embaralhado em horizontal, com
+faixa preta embaixo, e o `sink` contava 243 quadros perfeitos. Contar
+quadro não prova imagem: decodifique um com `ffmpeg` e olhe.
