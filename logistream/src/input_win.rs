@@ -1,30 +1,30 @@
-//! Aplicar input no Windows: `SendInput`.
+//! Applying input on Windows: `SendInput`.
 //!
 //! Spec: ../specs/010-remote-desktop.md
 //!
-//! ## Tecla vai por SCANCODE, nao por tecla virtual
+//! ## Keys go by SCANCODE, not by virtual key
 //!
-//! O protocolo carrega keycode do evdev, que e a POSICAO fisica da tecla
-//! (ver `input::evdev_de_winit`). Aqui ela e traduzida para scancode do
-//! Set 1 e injetada com `KEYEVENTF_SCANCODE` -- com `wVk = 0`, o Windows
-//! resolve o scancode pelo layout da janela em foco. E o que mantem a
-//! promessa: cada maquina aplica o PROPRIO layout, como um teclado de
-//! verdade ligado nela. Mandar tecla virtual faria o layout do Mac
-//! decidir o que aparece no Windows.
+//! The protocol carries an evdev keycode, which is the physical POSITION of
+//! the key (see `input::evdev_from_winit`). Here it is translated to a Set 1
+//! scancode and injected with `KEYEVENTF_SCANCODE` -- with `wVk = 0`,
+//! Windows resolves the scancode through the layout of the focused window.
+//! That is what keeps the promise: each machine applies its OWN layout,
+//! like a real keyboard plugged into it. Sending a virtual key would let
+//! the Mac's layout decide what shows up on Windows.
 //!
-//! A tabela em si fica em `input::scancode_de_evdev`, junto do seu
-//! inverso e dos testes que a cobrem.
+//! The table itself lives in `input::scancode_from_evdev`, next to its
+//! inverse and the tests that cover it.
 //!
-//! ## Mouse vai por posicao normalizada do DESKTOP VIRTUAL
+//! ## The mouse goes by normalized position on the VIRTUAL DESKTOP
 //!
-//! O cliente manda pixel no espaco do que foi capturado -- UM monitor.
-//! O `SendInput` absoluto quer 0..65535 sobre o desktop virtual INTEIRO.
-//! Sem converter, em maquina de dois monitores o cursor iria para o
-//! lugar errado por um fator igual a razao das larguras.
+//! The client sends pixels in the space of what was captured -- ONE monitor.
+//! Absolute `SendInput` wants 0..65535 over the WHOLE virtual desktop.
+//! Without converting, on a two-monitor machine the cursor would go to the
+//! wrong place by a factor equal to the ratio of the widths.
 
 #![cfg(windows)]
 
-use crate::input::{scancode_de_evdev, Evento, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use crate::input::{scancode_from_evdev, Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOUSEEVENTF_ABSOLUTE,
@@ -40,56 +40,56 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SM_YVIRTUALSCREEN,
 };
 
-/// Um passo de roda. O cliente manda deslocamento continuo em "pixels"
-/// (linha = 15 px, ver o visualizador), entao a conversao e
-/// `px / 15 * 120` -- com o resto guardado, senao rolagem de trackpad
-/// (fracao de linha por evento) nunca passaria do zero.
+/// One wheel step. The client sends continuous movement in "pixels"
+/// (line = 15 px, see the viewer), so the conversion is
+/// `px / 15 * 120` -- with the remainder kept, otherwise trackpad scrolling
+/// (a fraction of a line per event) would never get past zero.
 const WHEEL_DELTA: f64 = 120.0;
-const PX_POR_LINHA: f64 = 15.0;
+const PX_PER_LINE: f64 = 15.0;
 
-/// Aplica os eventos do cliente nesta maquina.
+/// Applies the client's events on this machine.
 ///
-/// Guarda estado (resto da rolagem e a origem do monitor capturado), por
-/// isso e struct e nao funcao solta.
-pub struct Teclado {
-    /// Canto do monitor capturado dentro do desktop virtual.
+/// It keeps state (the scroll remainder and the origin of the captured
+/// monitor), which is why it is a struct and not a free function.
+pub struct Injector {
+    /// Corner of the captured monitor inside the virtual desktop.
     ///
-    /// Compartilhado e nao copiado: se a pessoa rearranjar os monitores
-    /// durante a sessao, a captura atualiza isto e o cursor continua
-    /// caindo no lugar certo. Uma copia ficaria velha em silencio, que e
-    /// o pior jeito de este bug aparecer.
-    origem: std::sync::Arc<std::sync::Mutex<(i32, i32)>>,
-    resto_x: f64,
-    resto_y: f64,
+    /// Shared and not copied: if the person rearranges the monitors during
+    /// the session, the capture updates this and the cursor keeps landing in
+    /// the right place. A copy would go stale silently, which is the worst
+    /// way for this bug to show up.
+    origin: std::sync::Arc<std::sync::Mutex<(i32, i32)>>,
+    rem_x: f64,
+    rem_y: f64,
 }
 
-impl Teclado {
-    pub fn novo(origem: std::sync::Arc<std::sync::Mutex<(i32, i32)>>) -> Self {
-        Teclado { origem, resto_x: 0.0, resto_y: 0.0 }
+impl Injector {
+    pub fn new(origin: std::sync::Arc<std::sync::Mutex<(i32, i32)>>) -> Self {
+        Injector { origin, rem_x: 0.0, rem_y: 0.0 }
     }
 
-    pub fn aplicar(&mut self, e: Evento) {
+    pub fn apply(&mut self, e: Event) {
         match e {
-            Evento::Mouse { x, y } => self.mover(x, y),
-            Evento::MouseRel { dx, dy } => self.mover_relativo(dx, dy),
-            Evento::Botao { codigo, apertado } => self.botao(codigo, apertado),
-            Evento::Rolagem { dx, dy } => self.rolar(dx, dy),
-            Evento::Tecla { keycode, apertado } => self.tecla(keycode, apertado),
+            Event::Mouse { x, y } => self.move_to(x, y),
+            Event::MouseRel { dx, dy } => self.move_relative(dx, dy),
+            Event::Button { code, pressed } => self.button(code, pressed),
+            Event::Scroll { dx, dy } => self.scroll(dx, dy),
+            Event::Key { keycode, pressed } => self.key(keycode, pressed),
         }
     }
 
-    fn mover(&self, x: f64, y: f64) {
+    fn move_to(&self, x: f64, y: f64) {
         let (vx, vy, vw, vh) = virtual_screen();
         if vw <= 1 || vh <= 1 {
             return;
         }
-        let Ok(origem) = self.origem.lock() else { return };
-        // Pixel do stream -> pixel do desktop -> 0..65535 do virtual.
-        let dx = origem.0 as f64 + x;
-        let dy = origem.1 as f64 + y;
+        let Ok(origin) = self.origin.lock() else { return };
+        // Stream pixel -> desktop pixel -> 0..65535 of the virtual desktop.
+        let dx = origin.0 as f64 + x;
+        let dy = origin.1 as f64 + y;
         let nx = ((dx - vx as f64) * 65535.0 / (vw - 1) as f64).round();
         let ny = ((dy - vy as f64) * 65535.0 / (vh - 1) as f64).round();
-        envia(&[INPUT {
+        send(&[INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
                 mi: MOUSEINPUT {
@@ -104,8 +104,8 @@ impl Teclado {
         }]);
     }
 
-    fn botao(&self, codigo: i32, apertado: bool) {
-        let flag: MOUSE_EVENT_FLAGS = match (codigo, apertado) {
+    fn button(&self, code: i32, pressed: bool) {
+        let flag: MOUSE_EVENT_FLAGS = match (code, pressed) {
             (BTN_LEFT, true) => MOUSEEVENTF_LEFTDOWN,
             (BTN_LEFT, false) => MOUSEEVENTF_LEFTUP,
             (BTN_RIGHT, true) => MOUSEEVENTF_RIGHTDOWN,
@@ -114,7 +114,7 @@ impl Teclado {
             (BTN_MIDDLE, false) => MOUSEEVENTF_MIDDLEUP,
             _ => return,
         };
-        envia(&[INPUT {
+        send(&[INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
                 mi: MOUSEINPUT {
@@ -129,16 +129,16 @@ impl Teclado {
         }]);
     }
 
-    fn rolar(&mut self, dx: f64, dy: f64) {
-        // Sinal invertido: no evdev `dy` positivo e rolar PARA BAIXO; no
-        // Windows a roda positiva e para CIMA.
-        self.resto_y += -dy / PX_POR_LINHA * WHEEL_DELTA;
-        self.resto_x += -dx / PX_POR_LINHA * WHEEL_DELTA;
-        let passos_y = (self.resto_y / WHEEL_DELTA).trunc();
-        if passos_y != 0.0 {
-            self.resto_y -= passos_y * WHEEL_DELTA;
-            let d = (passos_y * WHEEL_DELTA) as i32;
-            envia(&[INPUT {
+    fn scroll(&mut self, dx: f64, dy: f64) {
+        // Inverted sign: in evdev a positive `dy` scrolls DOWN; on Windows
+        // a positive wheel goes UP.
+        self.rem_y += -dy / PX_PER_LINE * WHEEL_DELTA;
+        self.rem_x += -dx / PX_PER_LINE * WHEEL_DELTA;
+        let steps_y = (self.rem_y / WHEEL_DELTA).trunc();
+        if steps_y != 0.0 {
+            self.rem_y -= steps_y * WHEEL_DELTA;
+            let d = (steps_y * WHEEL_DELTA) as i32;
+            send(&[INPUT {
                 r#type: INPUT_MOUSE,
                 Anonymous: INPUT_0 {
                     mi: MOUSEINPUT {
@@ -152,29 +152,29 @@ impl Teclado {
                 },
             }]);
         }
-        // Rolagem horizontal fica de fora por enquanto: exige
-        // MOUSEEVENTF_HWHEEL e poucas janelas a honram.
-        self.resto_x = self.resto_x.clamp(-WHEEL_DELTA, WHEEL_DELTA);
+        // Horizontal scroll is left out for now: it needs
+        // MOUSEEVENTF_HWHEEL and few windows honor it.
+        self.rem_x = self.rem_x.clamp(-WHEEL_DELTA, WHEEL_DELTA);
     }
 
-    fn tecla(&self, keycode: u32, apertado: bool) {
+    fn key(&self, keycode: u32, pressed: bool) {
         let mut flags = KEYBD_EVENT_FLAGS(0);
-        let (vk, scan) = match scancode_de_evdev(keycode) {
-            Some((scan, estendida)) => {
+        let (vk, scan) = match scancode_from_evdev(keycode) {
+            Some((scan, extended)) => {
                 flags |= KEYEVENTF_SCANCODE;
-                if estendida {
+                if extended {
                     flags |= KEYEVENTF_EXTENDEDKEY;
                 }
                 (VIRTUAL_KEY(0), scan)
             }
-            // Pause nao tem scancode de um byte; vai por tecla virtual.
+            // Pause has no one-byte scancode; it goes as a virtual key.
             None if keycode == 119 => (VK_PAUSE, 0),
             None => return,
         };
-        if !apertado {
+        if !pressed {
             flags |= KEYEVENTF_KEYUP;
         }
-        envia(&[INPUT {
+        send(&[INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
@@ -189,17 +189,17 @@ impl Teclado {
     }
 }
 
-fn envia(eventos: &[INPUT]) {
-    let n = unsafe { SendInput(eventos, std::mem::size_of::<INPUT>() as i32) };
-    if n as usize != eventos.len() {
-        // Acontece quando a janela em foco tem privilegio maior que o
-        // nosso (UIPI): o SendInput e recusado inteiro, sem erro.
-        eprintln!("  SendInput recusado ({n}/{}): janela elevada em foco?", eventos.len());
+fn send(events: &[INPUT]) {
+    let n = unsafe { SendInput(events, std::mem::size_of::<INPUT>() as i32) };
+    if n as usize != events.len() {
+        // Happens when the focused window has higher privilege than ours
+        // (UIPI): SendInput is refused as a whole, with no error.
+        eprintln!("  SendInput refused ({n}/{}): elevated window in focus?", events.len());
     }
 }
 
-/// (x, y, largura, altura) do desktop virtual -- cobre multi-monitor, ao
-/// contrario de `SM_CXSCREEN`, que so ve o primario.
+/// (x, y, width, height) of the virtual desktop -- covers multi-monitor,
+/// unlike `SM_CXSCREEN`, which only sees the primary.
 fn virtual_screen() -> (i32, i32, i32, i32) {
     unsafe {
         (
@@ -211,24 +211,24 @@ fn virtual_screen() -> (i32, i32, i32, i32) {
     }
 }
 
-impl Teclado {
-    /// Deslocamento relativo, sem passar por coordenada de tela.
+impl Injector {
+    /// Relative movement, without going through a screen coordinate.
     ///
-    /// O KVM manda isto. Nao da para reaproveitar `mover()`: aquele
-    /// normaliza para 0..65535 sobre o desktop virtual, e converter
-    /// relativo em absoluto exigiria manter um cursor virtual nosso --
-    /// que divergiria do cursor real assim que qualquer outra coisa
-    /// mexesse o ponteiro.
+    /// The KVM sends this. `move_to()` cannot be reused: that one
+    /// normalizes to 0..65535 over the virtual desktop, and converting
+    /// relative to absolute would require keeping a virtual cursor of our
+    /// own -- which would diverge from the real cursor as soon as anything
+    /// else moved the pointer.
     ///
-    /// Sem `MOUSEEVENTF_ABSOLUTE`, o Windows aplica a propria aceleracao
-    /// de ponteiro, que e o que a pessoa espera sentir. Jogo que le
-    /// entrada bruta recebe o deslocamento direto.
-    pub fn mover_relativo(&self, dx: f64, dy: f64) {
-        // Por `envia()`, e nao `SendInput` na mao: aquele confere o
-        // retorno e grita quando o UIPI recusa (janela elevada em
-        // foco). Chamar direto, como esta funcao fazia, engolia
-        // exatamente o caso que a gente precisa ver no log.
-        envia(&[INPUT {
+    /// Without `MOUSEEVENTF_ABSOLUTE`, Windows applies its own pointer
+    /// acceleration, which is what the person expects to feel. A game that
+    /// reads raw input gets the movement directly.
+    pub fn move_relative(&self, dx: f64, dy: f64) {
+        // Through `send()`, and not `SendInput` by hand: that one checks
+        // the return value and shouts when UIPI refuses (elevated window in
+        // focus). Calling it directly, as this function used to, swallowed
+        // exactly the case we need to see in the log.
+        send(&[INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
                 mi: MOUSEINPUT {
@@ -244,34 +244,34 @@ impl Teclado {
     }
 }
 
-// --- tela apagada ----------------------------------------------------
+// --- screen off -------------------------------------------------------
 //
-// O host nao subia quando a maquina estava com a tela apagada: o
-// `DuplicateOutput` recusava as cinco tentativas e o processo morria com
-// a mensagem sobre tela bloqueada -- que estava errada. Nao havia
-// bloqueio: mover o mouse na maquina nao pedia senha. Era so a economia
-// de energia tendo desligado a saida de video, e sem saida ligada nao ha
-// o que duplicar.
+// The host would not start when the machine had its screen off:
+// `DuplicateOutput` refused all five attempts and the process died with
+// the message about a locked screen -- which was wrong. There was no
+// lock: moving the mouse on the machine did not ask for a password. It was
+// just power saving having turned the video output off, and with no output
+// on there is nothing to duplicate.
 //
-// Isso so aparece no uso real, porque e justamente quando a maquina
-// ficou sozinha um tempo que voce quer alcanca-la de longe.
+// This only shows up in real use, because it is precisely when the machine
+// has been left alone for a while that you want to reach it from afar.
 
-/// Acorda a tela sem apertar nada e sem deslocar o ponteiro.
+/// Wakes the screen without pressing anything and without moving the pointer.
 ///
-/// Dois `MOUSEEVENTF_MOVE` relativos na MESMA chamada: +1 e depois -1.
-/// O ponteiro acaba onde estava, e o par e atomico, entao nao da para
-/// alguem clicar entre os dois.
+/// Two relative `MOUSEEVENTF_MOVE` in the SAME call: +1 and then -1.
+/// The pointer ends up where it was, and the pair is atomic, so nobody can
+/// click between the two.
 ///
-/// Tem de ser movimento de verdade. A primeira versao mandava um unico
-/// (0,0) achando que o contador de ociosidade bastava; o Windows
-/// descarta o no-op e a tela ficou apagada. Isso apareceu medindo: o
-/// `DuplicateOutput` passava, o cliente conectava, e nenhum quadro saia
-/// -- porque a saida de video continuava desligada.
+/// It has to be real movement. The first version sent a single (0,0),
+/// assuming the idle counter was enough; Windows discards the no-op and
+/// the screen stayed off. That showed up by measuring: `DuplicateOutput`
+/// passed, the client connected, and no frame came out -- because the video
+/// output was still off.
 ///
-/// NAO resolve sessao realmente bloqueada: ali o desktop seguro esta na
-/// frente e o DXGI nao o captura por desenho. Limite conhecido.
-pub fn acordar_tela() {
-    let passo = |dx: i32| INPUT {
+/// Does NOT solve a truly locked session: there the secure desktop is in
+/// front and DXGI does not capture it by design. Known limit.
+pub fn wake_screen() {
+    let step = |dx: i32| INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
@@ -284,60 +284,58 @@ pub fn acordar_tela() {
             },
         },
     };
-    let mut par = [passo(1), passo(-1)];
-    unsafe { SendInput(&mut par, std::mem::size_of::<INPUT>() as i32) };
+    let mut pair = [step(1), step(-1)];
+    unsafe { SendInput(&mut pair, std::mem::size_of::<INPUT>() as i32) };
 }
 
-/// Enquanto existir, a tela nao apaga sozinha.
+/// While it exists, the screen does not turn off on its own.
 ///
-/// Economia de energia desligando a saida no meio de uma sessao derruba
-/// a duplicacao (`DXGI_ERROR_ACCESS_LOST`), entao nao basta acordar na
-/// partida: e preciso segurar enquanto estamos servindo. No `Drop` o
-/// estado volta ao normal, e o Windows retoma a contagem de ociosidade
-/// de onde estava -- nao prendemos a maquina acordada depois que o host
-/// sai.
-pub struct TelaAcesa;
+/// Power saving turning the output off in the middle of a session brings
+/// the duplication down (`DXGI_ERROR_ACCESS_LOST`), so waking at startup is
+/// not enough: we have to hold it while we are serving. On `Drop` the
+/// state goes back to normal, and Windows resumes the idle count from where
+/// it was -- we do not keep the machine awake after the host exits.
+pub struct ScreenAwake;
 
-impl TelaAcesa {
-    pub fn nova() -> Self {
+impl ScreenAwake {
+    pub fn new() -> Self {
         unsafe {
             SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
         };
-        TelaAcesa
+        ScreenAwake
     }
 }
 
-impl Drop for TelaAcesa {
+impl Drop for ScreenAwake {
     fn drop(&mut self) {
         unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
     }
 }
 
-/// Encerra qualquer protetor de tela rodando. Devolve quantos matou.
+/// Ends any running screensaver. Returns how many it killed.
 ///
-/// **Esta era a causa real do "nao consigo acordar o Windows".**
+/// **This was the real cause of "I can't wake Windows up".**
 ///
-/// O protetor de tela roda num desktop proprio ("Screen-saver"), e o
-/// DXGI recusa duplicar para um processo que nao esta no desktop de
-/// input corrente: `DuplicateOutput` devolve `E_ACCESSDENIED`, o mesmo
-/// codigo da tela bloqueada e do driver pela metade. Diagnostiquei as
-/// duas causas erradas antes de olhar a lista de processos e achar o
-/// `Bubbles.scr` rodando, com o `LogonUI` ausente e o adaptador de
-/// video OK.
+/// The screensaver runs on its own desktop ("Screen-saver"), and DXGI
+/// refuses to duplicate for a process that is not on the current input
+/// desktop: `DuplicateOutput` returns `E_ACCESSDENIED`, the same code as a
+/// locked screen and a half-installed driver. I diagnosed both wrong causes
+/// before looking at the process list and finding `Bubbles.scr` running,
+/// with `LogonUI` absent and the video adapter OK.
 ///
-/// Nao da para dispensar por `SendInput`: a injecao vai para o desktop
-/// da THREAD que chama, que e o `Default` -- o protetor, noutro
-/// desktop, nem fica sabendo. Por isso `acordar_tela()` resolve tela
-/// apagada e nao resolve esta.
+/// It cannot be dismissed through `SendInput`: injection goes to the
+/// desktop of the calling THREAD, which is `Default` -- the screensaver, on
+/// another desktop, never even hears about it. That is why `wake_screen()`
+/// solves a screen that is off and does not solve this one.
 ///
-/// `SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, FALSE)` tambem nao
-/// serve sozinho: impede o proximo, nao encerra o que ja esta na tela.
+/// `SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, FALSE)` does not work on
+/// its own either: it prevents the next one, it does not end the one
+/// already on screen.
 ///
-/// Terminar o processo e o que sobra, e e o que as ferramentas de
-/// acesso remoto fazem. O risco e baixo: um protetor de tela nao tem
-/// estado para perder, e o proprio Windows o mata a qualquer movimento
-/// de mouse.
-pub fn encerrar_protetor_de_tela() -> usize {
+/// Terminating the process is what is left, and it is what remote access
+/// tools do. The risk is low: a screensaver has no state to lose, and
+/// Windows itself kills it on any mouse movement.
+pub fn end_screensaver() -> usize {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -345,7 +343,7 @@ pub fn encerrar_protetor_de_tela() -> usize {
     };
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 
-    let mut mortos = 0usize;
+    let mut killed = 0usize;
     unsafe {
         let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
             return 0;
@@ -356,13 +354,13 @@ pub fn encerrar_protetor_de_tela() -> usize {
         };
         if Process32FirstW(snap, &mut e).is_ok() {
             loop {
-                let fim = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
-                let nome = String::from_utf16_lossy(&e.szExeFile[..fim]);
-                if nome.to_ascii_lowercase().ends_with(".scr") {
+                let end = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+                let name = String::from_utf16_lossy(&e.szExeFile[..end]);
+                if name.to_ascii_lowercase().ends_with(".scr") {
                     if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, e.th32ProcessID) {
                         if TerminateProcess(h, 0).is_ok() {
-                            println!("  protetor de tela encerrado: {nome}");
-                            mortos += 1;
+                            println!("  screensaver terminated: {name}");
+                            killed += 1;
                         }
                         let _ = CloseHandle(h);
                     }
@@ -374,5 +372,5 @@ pub fn encerrar_protetor_de_tela() -> usize {
         }
         let _ = CloseHandle(snap);
     }
-    mortos
+    killed
 }

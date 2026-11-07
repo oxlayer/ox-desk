@@ -1,20 +1,22 @@
-//! Receptor: QUIC -> quadros -> arquivo. A v2 do lado de la.
+//! Receiver: QUIC -> frames -> file. v2 on the far side.
 //!
-//! Ainda nao desenha nada -- decodificar e render sao a proxima etapa.
-//! O que este binario responde e se o **transporte** aguenta: quantos
-//! quadros chegam inteiros, quantos se perdem, e com que atraso.
+//! It does not draw anything yet -- decoding and rendering are the next
+//! step. What this binary answers is whether the **transport** holds up:
+//! how many frames arrive whole, how many are lost, and with what delay.
 //!
-//! O relogio nao e o mesmo nas duas maquinas, entao a latencia so vale
-//! em loopback. Entre maquinas o numero vira o desvio dos relogios mais
-//! a rede, e e dito assim em vez de apresentado como verdade.
+//! The clock is not the same on both machines, so the latency only means
+//! something on loopback. Between machines the number becomes the clock
+//! skew plus the network, and it is labeled that way instead of being
+//! presented as truth.
 //!
-//! Com `--rajada N` ele tambem manda N movimentos de mouse pela MESMA
-//! conexao, como o visualizador faz. Isso importa: o host serve um
-//! cliente por vez, entao medir input e video por conexoes separadas nao
-//! reproduz nada -- a segunda fica na fila. Foi assim que a primeira
-//! tentativa de medir "o video para quando eu digito" mediu nada.
+//! With `--rajada N` (burst) it also sends N mouse movements over the
+//! SAME connection, as the viewer does. That matters: the host serves one
+//! client at a time, so measuring input and video over separate
+//! connections reproduces nothing -- the second one waits in the queue.
+//! That is how the first attempt to measure "the video stops when I type"
+//! measured nothing.
 //!
-//!   cargo run --release --bin sink -- <host:porta> [segundos] [--rajada N]
+//!   cargo run --release --bin sink -- <host:port> [seconds] [--rajada N]
 
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -24,88 +26,88 @@ use logistream::net::{self, Reassembler};
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().skip(1).collect();
-    let alvo = a.first().cloned().unwrap_or_else(|| "127.0.0.1:9777".into());
-    let segundos: u64 = a.get(1).and_then(|v| v.parse().ok()).unwrap_or(10);
+    let target = a.first().cloned().unwrap_or_else(|| "127.0.0.1:9777".into());
+    let seconds: u64 = a.get(1).and_then(|v| v.parse().ok()).unwrap_or(10);
 
-    // Resolver TODOS e preferir IPv4, e nao pegar o primeiro.
+    // Resolve ALL addresses and prefer IPv4, rather than taking the first.
     //
-    // `ubuntu-host.local` resolve nas duas familias, e o Mac devolve o
-    // IPv6 primeiro. Com o socket preso em `0.0.0.0`, o quinn recusa com
-    // "invalid remote address" -- a mesma armadilha que o `ssh` do
-    // daemon ja tinha dado. O socket local tem de nascer da familia do
-    // destino.
-    let mut enderecos: Vec<std::net::SocketAddr> =
-        tokio::net::lookup_host(&alvo).await?.collect();
-    enderecos.sort_by_key(|a| !a.is_ipv4());
-    let destino = *enderecos
+    // `ubuntu-host.local` resolves in both families, and the Mac returns
+    // IPv6 first. With the socket bound to `0.0.0.0`, quinn refuses with
+    // "invalid remote address" -- the same trap the daemon's `ssh` had
+    // already hit. The local socket has to be born in the destination's
+    // family.
+    let mut addrs: Vec<std::net::SocketAddr> =
+        tokio::net::lookup_host(&target).await?.collect();
+    addrs.sort_by_key(|a| !a.is_ipv4());
+    let dest = *addrs
         .first()
-        .ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
+        .ok_or_else(|| anyhow::anyhow!("could not resolve {target}"))?;
     let bind: std::net::SocketAddr =
-        if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
-    let ep = net::cliente(bind)?;
-    println!("  conectando em {destino}");
-    let conexao = ep.connect(destino, "logistream")?.await?;
-    println!("  conectado");
+        if dest.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
+    let ep = net::client(bind)?;
+    println!("  connecting to {dest}");
+    let conn = ep.connect(dest, "logistream")?.await?;
+    println!("  connected");
 
-    // Rajada de input pela MESMA conexao, antes de comecar a medir.
-    let rajada: usize = a
+    // Input burst over the SAME connection, before measuring starts.
+    let burst: usize = a
         .iter()
         .position(|x| x == "--rajada")
         .and_then(|i| a.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    if rajada > 0 {
+    if burst > 0 {
         use bytes::BytesMut;
-        use logistream::input::Evento;
-        let mut envio = conexao.open_uni().await?;
+        use logistream::input::Event;
+        let mut send = conn.open_uni().await?;
         let mut buf = BytesMut::new();
-        for i in 0..rajada {
+        for i in 0..burst {
             let ang = (i as f64) * 0.1;
-            let e = Evento::Mouse {
+            let e = Event::Mouse {
                 x: 1300.0 + 60.0 * ang.cos(),
                 y: 750.0 + 60.0 * ang.sin(),
             };
             buf.clear();
-            e.escrever(&mut buf);
-            envio.write_all(&buf).await?;
+            e.write(&mut buf);
+            send.write_all(&buf).await?;
         }
-        println!("  {rajada} eventos de input enviados pela mesma conexao");
+        println!("  {burst} input events sent over the same connection");
     }
 
-    let caminho = std::env::temp_dir().join("logistream-sink.h264");
-    let mut arquivo = std::fs::File::create(&caminho)?;
+    let path = std::env::temp_dir().join("logistream-sink.h264");
+    let mut file = std::fs::File::create(&path)?;
 
     let mut r = Reassembler::default();
-    let mut quadros = 0u64;
+    let mut frames = 0u64;
     let mut bytes = 0u64;
-    let mut datagramas = 0u64;
-    let mut atrasos_ms: Vec<f64> = Vec::new();
+    let mut datagrams = 0u64;
+    let mut delays_ms: Vec<f64> = Vec::new();
     let t0 = Instant::now();
-    let fim = t0 + Duration::from_secs(segundos);
+    let end = t0 + Duration::from_secs(seconds);
 
-    while Instant::now() < fim {
-        let resto = fim.saturating_duration_since(Instant::now());
-        let d = match tokio::time::timeout(resto, conexao.read_datagram()).await {
+    while Instant::now() < end {
+        let remaining = end.saturating_duration_since(Instant::now());
+        let d = match tokio::time::timeout(remaining, conn.read_datagram()).await {
             Ok(Ok(d)) => d,
             Ok(Err(e)) => {
-                println!("  conexao encerrada: {e}");
+                println!("  connection closed: {e}");
                 break;
             }
             Err(_) => break,
         };
-        datagramas += 1;
+        datagrams += 1;
         bytes += d.len() as u64;
-        if let Some((cab, quadro)) = r.push(&d) {
-            let agora = std::time::SystemTime::now()
+        if let Some((hdr, frame)) = r.push(&d) {
+            let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|x| x.as_nanos() as u64)
                 .unwrap_or(0);
-            atrasos_ms.push((agora.saturating_sub(cab.captured_at_ns)) as f64 / 1e6);
-            arquivo.write_all(&quadro)?;
-            quadros += 1;
+            delays_ms.push((now.saturating_sub(hdr.captured_at_ns)) as f64 / 1e6);
+            file.write_all(&frame)?;
+            frames += 1;
         }
     }
-    arquivo.flush()?;
+    file.flush()?;
 
     let s = t0.elapsed().as_secs_f64();
     let pct = |v: &Vec<f64>, q: usize| {
@@ -113,17 +115,17 @@ async fn main() -> anyhow::Result<()> {
         x.sort_by(|a, b| a.partial_cmp(b).unwrap());
         x.get(x.len().saturating_mul(q) / 100).copied().unwrap_or(0.0)
     };
-    println!("\n  {quadros} quadros inteiros em {s:.1}s = {:.1} fps", quadros as f64 / s.max(0.001));
-    println!("  {datagramas} datagramas, {:.1} Mbps", bytes as f64 * 8.0 / s / 1_000_000.0);
-    println!("  quadros perdidos (chegaram incompletos): {}", r.perdidos);
-    if !atrasos_ms.is_empty() {
+    println!("\n  {frames} whole frames in {s:.1}s = {:.1} fps", frames as f64 / s.max(0.001));
+    println!("  {datagrams} datagrams, {:.1} Mbps", bytes as f64 * 8.0 / s / 1_000_000.0);
+    println!("  frames lost (arrived incomplete): {}", r.lost);
+    if !delays_ms.is_empty() {
         println!(
-            "  captura -> quadro montado: p50 {:.1}ms  p95 {:.1}ms  (so vale em loopback: \
-             entre maquinas isto inclui o desvio dos relogios)",
-            pct(&atrasos_ms, 50),
-            pct(&atrasos_ms, 95)
+            "  capture -> frame assembled: p50 {:.1}ms  p95 {:.1}ms  (only valid on loopback: \
+             between machines this includes the clock skew)",
+            pct(&delays_ms, 50),
+            pct(&delays_ms, 95)
         );
     }
-    println!("  {}", caminho.display());
+    println!("  {}", path.display());
     Ok(())
 }

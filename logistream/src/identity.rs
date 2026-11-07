@@ -84,9 +84,9 @@ pub fn load() -> Result<Identity> {
 pub fn load_or_create(dir: &Path) -> Result<Identity> {
     let path = dir.join(FILE);
     if let Ok(bytes) = std::fs::read(&path) {
-        return parse(&bytes).with_context(|| format!("identidade corrompida em {}", path.display()));
+        return parse(&bytes).with_context(|| format!("corrupt identity at {}", path.display()));
     }
-    std::fs::create_dir_all(dir).with_context(|| format!("criar {}", dir.display()))?;
+    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
 
     let key_pair = rcgen::KeyPair::generate()?;
     let params = rcgen::CertificateParams::new(vec!["logistream".into()])?;
@@ -106,9 +106,9 @@ pub fn load_or_create(dir: &Path) -> Result<Identity> {
     match linked {
         Ok(()) => parse(&bytes),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            parse(&std::fs::read(&path)?).context("identidade criada por outro processo")
+            parse(&std::fs::read(&path)?).context("identity created by another process")
         }
-        Err(e) => Err(e).with_context(|| format!("publicar {}", path.display())),
+        Err(e) => Err(e).with_context(|| format!("publish {}", path.display())),
     }
 }
 
@@ -132,18 +132,18 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         o.mode(0o600);
     }
-    let mut f = o.open(path).with_context(|| format!("gravar {}", path.display()))?;
+    let mut f = o.open(path).with_context(|| format!("write {}", path.display()))?;
     f.write_all(bytes)?;
     f.sync_all()?;
     Ok(())
 }
 
 fn parse(bytes: &[u8]) -> Result<Identity> {
-    anyhow::ensure!(bytes.len() > 4, "arquivo curto demais");
+    anyhow::ensure!(bytes.len() > 4, "file too short");
     let n = u32::from_be_bytes(bytes[..4].try_into()?) as usize;
-    anyhow::ensure!(bytes.len() > 4 + n, "tamanho do certificado invalido");
+    anyhow::ensure!(bytes.len() > 4 + n, "invalid certificate length");
     let cert = CertificateDer::from(bytes[4..4 + n].to_vec());
-    let key = PrivateKeyDer::try_from(bytes[4 + n..].to_vec()).map_err(|e| anyhow::anyhow!("chave: {e}"))?;
+    let key = PrivateKeyDer::try_from(bytes[4 + n..].to_vec()).map_err(|e| anyhow::anyhow!("key: {e}"))?;
     Ok(Identity { cert, key })
 }
 
@@ -164,11 +164,11 @@ pub fn describe_peer(conn: &quinn::Connection, authorized: &HashSet<String>) -> 
         .peer_identity()
         .and_then(|i| i.downcast::<Vec<CertificateDer<'static>>>().ok());
     match certs.as_deref().and_then(|c| c.first()) {
-        None => "sem certificado".into(),
+        None => "no certificate".into(),
         Some(c) => {
             let fp = fingerprint(c);
-            let estado = if authorized.contains(&fp) { "autorizado" } else { "desconhecido" };
-            format!("{} {estado}", short(&fp))
+            let state = if authorized.contains(&fp) { "authorized" } else { "unknown" };
+            format!("{} {state}", short(&fp))
         }
     }
 }
@@ -197,11 +197,14 @@ impl ServerCertVerifier for PinnedHost {
     ) -> Result<ServerCertVerified, rustls::Error> {
         match &self.pinned {
             None => Ok(ServerCertVerified::assertion()),
-            Some(esperada) if *esperada == fingerprint(end_entity) => Ok(ServerCertVerified::assertion()),
-            Some(esperada) => Err(rustls::Error::General(format!(
+            Some(expected) if *expected == fingerprint(end_entity) => Ok(ServerCertVerified::assertion()),
+            // Stays pt-BR: it ends up in the handshake error that
+            // `logistream-kvm` prints right before exiting, and logid shows
+            // that last line in the tray ("o KVM saiu (...) antes de agarrar").
+            Some(expected) => Err(rustls::Error::General(format!(
                 "a digital do host e {}, e a fixada e {}",
                 short(&fingerprint(end_entity)),
-                short(esperada)
+                short(expected)
             ))),
         }
     }
@@ -279,8 +282,8 @@ pub fn pinned_from_env() -> Option<String> {
 mod tests {
     use super::*;
 
-    fn tmp(nome: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("logi-id-{nome}-{}-{}", std::process::id(), nonce()));
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("logi-id-{name}-{}-{}", std::process::id(), nonce()));
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -296,13 +299,13 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let m = std::fs::metadata(d.join(FILE)).unwrap().permissions().mode();
-            assert_eq!(m & 0o777, 0o600, "a chave nao pode ser legivel por outros");
+            assert_eq!(m & 0o777, 0o600, "the key must not be readable by others");
         }
     }
 
     #[test]
     fn concurrent_creation_yields_one_identity() {
-        let d = tmp("corrida");
+        let d = tmp("race");
         let fps: Vec<String> = (0..8)
             .map(|_| {
                 let d = d.clone();
@@ -313,18 +316,18 @@ mod tests {
             .map(|h| h.join().unwrap())
             .collect();
         assert!(fps.iter().all(|f| *f == fps[0]), "{fps:?}");
-        let sobras: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name()).collect();
-        assert_eq!(sobras.len(), 1, "temporarios ficaram para tras: {sobras:?}");
+        let leftovers: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(leftovers.len(), 1, "temporaries were left behind: {leftovers:?}");
     }
 
     #[test]
     fn authorized_list_ignores_comments_and_case() {
-        let d = tmp("lista");
+        let d = tmp("list");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join(AUTHORIZED_FILE), "# mac\nABC123  # mac\n\n  def \n").unwrap();
         let l = authorized(&d);
         assert_eq!(l, ["abc123".to_string(), "def".to_string()].into_iter().collect());
-        assert!(authorized(&tmp("vazia")).is_empty());
+        assert!(authorized(&tmp("empty")).is_empty());
     }
 
     #[test]
@@ -332,8 +335,8 @@ mod tests {
         let a = load_or_create(&tmp("pin-a")).unwrap();
         let b = load_or_create(&tmp("pin-b")).unwrap();
         let v = PinnedHost { pinned: Some(a.fingerprint()) };
-        let nome = ServerName::try_from("logistream").unwrap();
-        assert!(v.verify_server_cert(&a.cert, &[], &nome, &[], UnixTime::now()).is_ok());
-        assert!(v.verify_server_cert(&b.cert, &[], &nome, &[], UnixTime::now()).is_err());
+        let name = ServerName::try_from("logistream").unwrap();
+        assert!(v.verify_server_cert(&a.cert, &[], &name, &[], UnixTime::now()).is_ok());
+        assert!(v.verify_server_cert(&b.cert, &[], &name, &[], UnixTime::now()).is_err());
     }
 }

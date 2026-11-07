@@ -1,45 +1,49 @@
-//! KVM por LAN: captura teclado e mouse aqui e injeta na outra maquina.
+//! LAN KVM: captures keyboard and mouse here and injects them on the other machine.
 //!
 //! Spec: ../../specs/005-input-switch.md
 //!
-//!   logistream-kvm <host:porta> [--observar] [--dispositivo NOME]...
+//!   logistream-kvm <host:port> [--observar] [--dispositivo NAME]...
 //!
-//! Independe de qual maquina tem o dongle: o que importa e onde os
-//! dispositivos estao conectados AGORA. Troca de maquina deixa de ser
-//! um comando de radio para o teclado (HID++ 0x1814) e passa a ser uma
-//! decisao de software -- instantanea, e reversivel sem tocar em nada.
+//! It does not matter which machine has the dongle: what matters is where
+//! the devices are connected NOW. Switching machines stops being a radio
+//! command to the keyboard (HID++ 0x1814) and becomes a software decision
+//! -- instant, and reversible without touching anything.
 //!
-//! ## A ordem das duas operacoes perigosas
+//! ## The order of the two dangerous operations
 //!
-//! **Conectar primeiro, agarrar depois.** Agarrado, o teclado nao
-//! existe para o desktop local; se o alvo estiver fora do ar e a gente
-//! ja tivesse agarrado, a pessoa ficaria sem teclado E sem destino.
-//! Entao: falhou a conexao, ninguem agarra e saimos com erro.
+//! **Connect first, grab after.** Grabbed, the keyboard does not exist for
+//! the local desktop; if the target were down and we had already grabbed,
+//! the person would be left without a keyboard AND without a destination.
+//! So: the connection failed, nobody grabs and we exit with an error.
 //!
-//! **Soltar antes de morrer, sempre.** Qualquer caminho de saida passa
-//! por `soltar_tudo()`. O kernel tambem solta quando o fd fecha, entao
-//! teclado travado para sempre nao e alcancavel -- mas as teclas que
-//! estavam APERTADAS no outro lado ficariam presas, e isso e alcancavel.
-//! Por isso mandamos key-up do que estiver pressionado antes de sair.
+//! **Release before dying, always.** Every exit path releases everything.
+//! The kernel also releases when the fd closes, so a keyboard locked
+//! forever is not reachable -- but the keys that were PRESSED on the other
+//! side would stay stuck, and that is reachable. That is why we send a
+//! key-up for whatever is pressed before exiting.
 //!
-//! ## Socorro
+//! ## Rescue
 //!
-//! Os dois Ctrl juntos soltam tudo e encerram. Precisa existir saida
-//! que nao dependa da rede: se o alvo cair com o grab ativo, nem o
-//! teclado nem o mouse chegam ao desktop local.
+//! Both Ctrl keys together release everything and exit. There has to be a
+//! way out that does not depend on the network: if the target goes down
+//! with the grab active, neither keyboard nor mouse reach the local desktop.
+//!
+//! The messages printed right before a fatal exit stay in pt-BR: `logid`
+//! shows the last line of this process's log to the person when it exits
+//! early ("o KVM saiu (...) antes de agarrar: {line}", logid/src/kvm.rs).
 
 use std::collections::HashSet;
 use std::time::Duration;
 
 use bytes::BytesMut;
-use logistream::input::Evento;
+use logistream::input::Event;
 use logistream::net;
 
 #[cfg(target_os = "linux")]
-use logistream::capture_input::{e_socorro, Dispositivo};
+use logistream::capture_input::{is_rescue, Device};
 
-/// Nomes padrao, se ninguem passar `--dispositivo`.
-const PADRAO: [&str; 2] = ["MX Keys", "MX Anywhere"];
+/// Default names, if nobody passes `--dispositivo`.
+const DEFAULT: [&str; 2] = ["MX Keys", "MX Anywhere"];
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -51,163 +55,166 @@ fn main() {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let observar = args.iter().any(|a| a == "--observar");
-    // Alvo que aplica a propria logica de repeticao (o Mutter faz isso
-    // com teclas injetadas) receberia repeticao dobrada se mandassemos
-    // a do kernel junto. Quem lanca o processo sabe o SO do destino.
-    let repetir = !args.iter().any(|a| a == "--sem-repeticao");
-    // `--autoteste N`: conecta, NAO agarra, e empurra N movimentos pela
-    // mesma ponte que um dispositivo usaria (thread -> canal -> laco
-    // async -> QUIC). Existe porque o bug que isto pegou vivia
-    // exatamente nessa ponte: `recv_timeout` bloqueando o executor
-    // impedia o driver do QUIC de transmitir. Testar com o teclado de
-    // verdade exigiria agarra-lo, e agarrar para testar e justamente o
-    // que nao se quer fazer na maquina de alguem.
-    let autoteste: usize = args
+    let observe = args.iter().any(|a| a == "--observar");
+    // A target that applies its own repeat logic (Mutter does that with
+    // injected keys) would get doubled repeat if we sent the kernel's
+    // along. Whoever launches the process knows the target's OS.
+    let repeat = !args.iter().any(|a| a == "--sem-repeticao");
+    // `--autoteste N`: connects, does NOT grab, and pushes N movements
+    // through the same bridge a device would use (thread -> channel ->
+    // async loop -> QUIC). It exists because the bug it caught lived
+    // exactly in that bridge: `recv_timeout` blocking the executor kept the
+    // QUIC driver from transmitting. Testing with the real keyboard would
+    // require grabbing it, and grabbing to test is precisely what you do not
+    // want to do on someone's machine.
+    let self_test: usize = args
         .iter()
         .position(|a| a == "--autoteste")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let alvo = args
+    let target = args
         .iter()
         .find(|a| !a.starts_with("--"))
         .cloned()
         .unwrap_or_else(|| "127.0.0.1:9777".into());
 
-    let mut filtros: Vec<String> = Vec::new();
+    let mut filters: Vec<String> = Vec::new();
     for (i, a) in args.iter().enumerate() {
         if a == "--dispositivo" {
             if let Some(n) = args.get(i + 1) {
-                filtros.push(n.clone());
+                filters.push(n.clone());
             }
         }
     }
-    if filtros.is_empty() {
-        filtros = PADRAO.iter().map(|s| s.to_string()).collect();
+    if filters.is_empty() {
+        filters = DEFAULT.iter().map(|s| s.to_string()).collect();
     }
 
-    // --- escolher dispositivos -------------------------------------
-    let todos = Dispositivo::listar();
-    let mut escolhidos: Vec<Dispositivo> = Vec::new();
-    for mut d in todos {
-        if filtros.iter().any(|f| d.nome.contains(f.as_str())) {
-            println!("  {} -> {}", d.caminho.display(), d.nome);
-            d.definir_repeticao(repetir);
-            escolhidos.push(d);
+    // --- choose devices --------------------------------------------
+    let all = Device::list();
+    let mut chosen: Vec<Device> = Vec::new();
+    for mut d in all {
+        if filters.iter().any(|f| d.name.contains(f.as_str())) {
+            println!("  {} -> {}", d.path.display(), d.name);
+            d.set_repeat(repeat);
+            chosen.push(d);
         }
     }
-    // Dizer qual filtro nao achou nada.
+    // Say which filter found nothing.
     //
-    // Dispositivo Logitech some do receptor quando dorme ou e
-    // desligado, e o no de /dev/input some junto. Sem este aviso, o KVM
-    // levaria so o teclado e o mouse continuaria aqui -- e o sintoma
-    // seria "metade funciona", que e pior de entender que "nada
-    // funciona". Aconteceu num teste: o mouse estava dormindo e so o
-    // teclado entrou, em silencio.
-    for f in &filtros {
-        if !escolhidos.iter().any(|d| d.nome.contains(f.as_str())) {
-            eprintln!("  AVISO: nada casou com '{f}' -- dispositivo dormindo ou desligado?");
+    // A Logitech device disappears from the receiver when it sleeps or is
+    // turned off, and the /dev/input node disappears with it. Without this
+    // warning, the KVM would take only the keyboard and the mouse would stay
+    // here -- and the symptom would be "half of it works", which is harder
+    // to understand than "nothing works". It happened in a test: the mouse
+    // was asleep and only the keyboard went over, silently.
+    for f in &filters {
+        if !chosen.iter().any(|d| d.name.contains(f.as_str())) {
+            eprintln!("  WARNING: nothing matched '{f}' -- device asleep or turned off?");
         }
     }
 
-    if escolhidos.is_empty() {
+    // pt-BR on purpose: fatal before grabbing, shown in the tray (see the
+    // module doc).
+    if chosen.is_empty() {
         anyhow::bail!(
-            "nenhum dispositivo casou com {filtros:?}. Sem permissao? \
+            "nenhum dispositivo casou com {filters:?}. Sem permissao? \
              Veja .claude/skills/grant-input-access.md -- sem a regra de \
              udev os nos existem mas nao abrem, e a lista sai vazia \
              exatamente como se o dispositivo nao estivesse conectado."
         );
     }
 
-    // --- conectar ANTES de agarrar ---------------------------------
-    let conexao = if observar {
-        println!("  modo observar: nao agarra e nao manda nada");
+    // --- connect BEFORE grabbing -----------------------------------
+    let connection = if observe {
+        println!("  observe mode: does not grab and sends nothing");
         None
     } else {
-        let mut enderecos: Vec<std::net::SocketAddr> =
-            tokio::net::lookup_host(&alvo).await?.collect();
-        enderecos.sort_by_key(|a| !a.is_ipv4());
-        let destino =
-            *enderecos.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
+        let mut addrs: Vec<std::net::SocketAddr> =
+            tokio::net::lookup_host(&target).await?.collect();
+        addrs.sort_by_key(|a| !a.is_ipv4());
+        let dest =
+            *addrs.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {target}"))?;
         let bind: std::net::SocketAddr =
-            if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
-        let ep = net::cliente(bind)?;
-        // Falhar aqui e o caso BOM: ninguem agarrou nada ainda.
+            if dest.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
+        let ep = net::client(bind)?;
+        // Failing here is the GOOD case: nobody has grabbed anything yet.
         let c = ep
-            .connect(destino, "logistream")?
+            .connect(dest, "logistream")?
             .await
-            .map_err(|e| anyhow::anyhow!("nao conectei em {alvo}: {e}. Nada foi agarrado."))?;
-        println!("  conectado em {alvo}");
+            .map_err(|e| anyhow::anyhow!("nao conectei em {target}: {e}. Nada foi agarrado."))?;
+        println!("  connected to {target}");
         Some(c)
     };
 
-    let envio = match &conexao {
+    let send = match &connection {
         Some(c) => Some(c.open_uni().await?),
         None => None,
     };
 
-    // --- agarrar ----------------------------------------------------
-    if !observar && autoteste == 0 {
-        for d in &mut escolhidos {
-            d.agarrar().map_err(|e| {
-                anyhow::anyhow!("nao agarrei {}: {e}", d.nome)
+    // --- grab -------------------------------------------------------
+    if !observe && self_test == 0 {
+        for d in &mut chosen {
+            d.grab().map_err(|e| {
+                anyhow::anyhow!("nao agarrei {}: {e}", d.name)
             })?;
         }
-        println!("  agarrado; os dois Ctrl juntos devolvem o controle");
+        println!("  grabbed; both Ctrl keys together give control back");
     }
 
-    // --- ler em threads, uma por dispositivo ------------------------
+    // --- read in threads, one per device ----------------------------
     //
-    // Uma thread por dispositivo porque `read` em evdev bloqueia, e o
-    // teclado nao pode esperar o mouse se mexer.
-    // Canal do TOKIO, nao do std.
+    // One thread per device because `read` on evdev blocks, and the
+    // keyboard cannot wait for the mouse to move.
+    // TOKIO channel, not std.
     //
-    // A primeira versao usava `std::sync::mpsc` e `recv_timeout` no
-    // laco principal. `recv_timeout` BLOQUEIA a thread -- e num runtime
-    // `current_thread` a thread e o executor inteiro, incluindo o
-    // driver do QUIC, que e quem efetivamente poe os pacotes na rede.
+    // The first version used `std::sync::mpsc` and `recv_timeout` in the
+    // main loop. `recv_timeout` BLOCKS the thread -- and in a
+    // `current_thread` runtime the thread is the whole executor, including
+    // the QUIC driver, which is what actually puts the packets on the
+    // network.
     //
-    // O resultado foi o pior tipo de bug: parecia funcionar. A captura
-    // lia, o `write_all` enfileirava, e de vez em quando um punhado de
-    // eventos escapava na janela em que o driver conseguia rodar. O
-    // host do outro lado registrava "input conectado" e logo "input
-    // desconectado", sem um unico evento aplicado no meio.
+    // The result was the worst kind of bug: it seemed to work. Capture
+    // read, `write_all` queued, and now and then a handful of events
+    // escaped in the window where the driver got to run. The host on the
+    // other side logged "input connected" and soon "input disconnected",
+    // without a single event applied in between.
     //
-    // As threads de dispositivo continuam sendo threads de verdade
-    // (`read` em evdev bloqueia mesmo) e falam com o laco por
-    // `blocking_send`, que e a ponte correta entre as duas metades.
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Evento>(1024);
+    // The device threads are still real threads (`read` on evdev really
+    // blocks) and talk to the loop through `blocking_send`, which is the
+    // correct bridge between the two halves.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(1024);
 
-    if autoteste > 0 {
+    if self_test > 0 {
         let tx = tx.clone();
         std::thread::spawn(move || {
-            for _ in 0..autoteste {
-                if tx.blocking_send(Evento::MouseRel { dx: 10.0, dy: 0.0 }).is_err() {
+            for _ in 0..self_test {
+                if tx.blocking_send(Event::MouseRel { dx: 10.0, dy: 0.0 }).is_err() {
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(8));
             }
         });
-        println!("  autoteste: {autoteste} movimentos de +10 em X, sem agarrar");
+        println!("  self-test: {self_test} movements of +10 in X, without grabbing");
     }
 
-    for mut d in escolhidos {
-        if autoteste > 0 {
-            break; // nao ler dispositivo de verdade no autoteste
+    for mut d in chosen {
+        if self_test > 0 {
+            break; // do not read a real device in the self-test
         }
         let tx = tx.clone();
         std::thread::spawn(move || loop {
-            match d.ler() {
-                Ok(eventos) => {
-                    for e in eventos {
+            match d.read() {
+                Ok(events) => {
+                    for e in events {
                         if tx.blocking_send(e).is_err() {
-                            return; // o main saiu; soltar vem do Drop
+                            return; // main exited; releasing comes from Drop
                         }
                     }
                 }
                 Err(err) => {
-                    eprintln!("  {} parou: {err}", d.nome);
+                    eprintln!("  {} stopped: {err}", d.name);
                     return;
                 }
             }
@@ -215,24 +222,26 @@ async fn main() -> anyhow::Result<()> {
     }
     drop(tx);
 
-    // --- repassar ---------------------------------------------------
+    // --- forward ----------------------------------------------------
     let mut buf = BytesMut::new();
-    let mut pressionadas: HashSet<u32> = HashSet::new();
-    let mut envio = envio;
-    let motivo;
+    let mut pressed_keys: HashSet<u32> = HashSet::new();
+    let mut send = send;
+    // The reasons and the final line below stay pt-BR: they can be the last
+    // line of the log when the process exits within logid's 500 ms check.
+    let reason;
 
     loop {
         let e = match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
             Ok(Some(e)) => e,
-            // Todas as threads de dispositivo morreram.
+            // Every device thread died.
             Ok(None) => {
-                motivo = "os dispositivos pararam de responder".into();
+                reason = "os dispositivos pararam de responder".into();
                 break;
             }
             Err(_) => {
-                if let Some(c) = &conexao {
+                if let Some(c) = &connection {
                     if let Some(r) = c.close_reason() {
-                        motivo = format!("conexao caiu: {r}");
+                        reason = format!("conexao caiu: {r}");
                         break;
                     }
                 }
@@ -240,53 +249,52 @@ async fn main() -> anyhow::Result<()> {
             }
         };
 
-        // Contabilidade de teclas presas. Tem de valer TAMBEM em
-        // `--observar`, senao o primeiro uso real comeca com o conjunto
-        // mentindo.
-        if let Evento::Tecla { keycode, apertado } = e {
-            if apertado {
-                pressionadas.insert(keycode);
+        // Stuck-key bookkeeping. It has to apply ALSO in `--observar`,
+        // otherwise the first real use starts with the set lying.
+        if let Event::Key { keycode, pressed } = e {
+            if pressed {
+                pressed_keys.insert(keycode);
             } else {
-                pressionadas.remove(&keycode);
+                pressed_keys.remove(&keycode);
             }
         }
 
-        if e_socorro(&pressionadas) {
-            motivo = "socorro: os dois Ctrl".into();
+        if is_rescue(&pressed_keys) {
+            reason = "socorro: os dois Ctrl".into();
             break;
         }
 
-        if observar {
+        if observe {
             println!("  {e:?}");
             continue;
         }
 
         buf.clear();
-        e.escrever(&mut buf);
-        if let Some(s) = &mut envio {
+        e.write(&mut buf);
+        if let Some(s) = &mut send {
             if let Err(err) = s.write_all(&buf).await {
-                motivo = format!("escrita falhou: {err}");
+                reason = format!("escrita falhou: {err}");
                 break;
             }
         }
     }
 
-    // --- soltar o que ficou apertado do outro lado ------------------
+    // --- release what was left pressed on the other side ------------
     //
-    // Sem isto, encerrar com Shift apertado deixa a outra maquina
-    // digitando em maiuscula para sempre. Ja aconteceu no caminho do
-    // visualizador (Mac -> Ubuntu) e custou um reinicio de sessao.
-    if let Some(s) = &mut envio {
-        for k in &pressionadas {
+    // Without this, exiting with Shift pressed leaves the other machine
+    // typing in uppercase forever. It already happened on the viewer path
+    // (Mac -> Ubuntu) and cost a session restart.
+    if let Some(s) = &mut send {
+        for k in &pressed_keys {
             buf.clear();
-            Evento::Tecla { keycode: *k, apertado: false }.escrever(&mut buf);
+            Event::Key { keycode: *k, pressed: false }.write(&mut buf);
             let _ = s.write_all(&buf).await;
         }
         let _ = s.finish();
     }
-    // Uma volta para os ultimos bytes saírem antes de fechar o socket.
+    // One turn so the last bytes go out before the socket closes.
     tokio::time::sleep(Duration::from_millis(120)).await;
 
-    println!("  {motivo}; {} tecla(s) soltas; controle de volta", pressionadas.len());
+    println!("  {reason}; {} tecla(s) soltas; controle de volta", pressed_keys.len());
     Ok(())
 }
