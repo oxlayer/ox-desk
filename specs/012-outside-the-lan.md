@@ -94,7 +94,7 @@ project's own rule. `--bind` closes the door; it does not change the lock.
 
 The bitrate target scales with the area (~8 Mbps at 1080p, ~15 at 1440p,
 ~28 on Retina). The formula was **duplicated** — `nvenc.rs` and, by hand,
-`host_mac.rs` — and now lives in `qualidade.rs`, with a test.
+`host_mac.rs` — and now lives in `quality.rs`, with a test.
 
 **Measured:** the home upload delivers ~136 Mbps (25 MB in 1.46 s against
 speed.cloudflare.com). That is, **the bottleneck is not on this end**: 15 Mbps
