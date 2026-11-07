@@ -32,6 +32,14 @@ arquivo que aterrissou, justamente porque isso já aconteceu
 - **Config.** Ver [[mudar-config-nas-tres]].
 - **Regras de udev.** Ver [[dar-acesso-a-input]].
 
+## O deploy não é mais o único caminho
+
+Desde a [`015`](../../specs/015-ota.md) as máquinas também se atualizam
+sozinhas pelas Releases, e o `deploy.sh` leva o `logi-ota` e o token
+junto. O deploy continua sendo o caminho **de dentro de casa** — e o
+único que troca binário no Windows, porque a chave do Authenticode não
+sai do Ubuntu. Ver [[ligar-o-ota]].
+
 ## Binários da CI não substituem o deploy
 
 A CI compila os três sistemas a cada push de código, mas **não assina

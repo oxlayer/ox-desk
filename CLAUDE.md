@@ -34,7 +34,7 @@ remota própria, e o controle de tudo num painel só.
 - [Verificar tela, mouse e teclado no Mac](.claude/skills/verificar-o-mac.md)
 - [Configurar uma máquina (wizard de setup)](.claude/skills/configurar-maquina.md)
 - [Alcançar as máquinas fora da LAN](specs/012-fora-da-lan.md)
-- [Atualização automática pelas Releases](specs/015-ota.md)
+- [Ligar e operar a atualização automática (OTA)](.claude/skills/ligar-o-ota.md)
 
 ## Docs
 
