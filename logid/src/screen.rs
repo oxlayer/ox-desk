@@ -330,7 +330,8 @@ pub fn abrir_sessao(cfg: &Config, host: &str) -> Result<Sessao, String> {
         .iter()
         .find(|x| x.name == host)
         .ok_or_else(|| format!("host '{host}' nao esta na config"))?;
-    let ponte = find_program("logistream-ponte").ok_or("logistream-ponte nao instalada")?;
+    let nome = if cfg!(windows) { "logistream-ponte.exe" } else { "logistream-ponte" };
+    let ponte = find_program(nome).ok_or("logistream-ponte nao instalada")?;
     acordar_host(h, plan.port).map_err(|e| format!("nao consegui levantar o host de tela: {e}"))?;
 
     let mut bytes = [0u8; 24];

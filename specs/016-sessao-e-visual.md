@@ -1,6 +1,7 @@
 # 016 — A tela inicial e a sessão
 
-> Estado: proposta. Nada implementado.
+> Estado: tela inicial, sessão em aba, barra e gerenciador no ar. Falta o
+> controle de qualidade e a troca de monitor.
 
 ## O problema
 
@@ -55,6 +56,11 @@ num `<canvas>`; teclado e mouse fazem o caminho inverso.
 decodificador de hardware segura cerca de 4 quadros: 172 ms contra 1,9 ms
 (p50, 1080p, no Mac). Para voltar ao hardware, o host precisa mandar
 `max_num_reorder_frames=0` no VUI do H.264.
+
+Medido em 07/11, com host e cliente no mesmo Mac, em 3360×2100: da captura
+ao desenho, 6,3 ms na aba e 37 ms no `logistream-view`. Decodificar nesse
+tamanho custa 5,2 ms e cerca de meio núcleo. Entre máquinas a medida carrega
+a diferença dos relógios, e por isso a comparação é no mesmo Mac.
 
 Com isso aba, barra e arquivos são a mesma página, e a barra é HTML. O
 `logistream-view` fica como alternativa até a latência da aba estar medida:
