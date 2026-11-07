@@ -62,3 +62,17 @@ isso o host mantém o que já tem.
 
 Medido em 07/11: 25 quadros em 10 s, zero perdidos, com a tela parada.
 O Mutter só entrega quadro quando algo muda.
+
+## Windows sem monitor ligado
+
+Sem monitor o DXGI não tem saída: `DuplicateOutput` recusa com
+`0x80070057` e o cliente conecta sem receber quadro. O Windows não tem
+tela virtual nativa, então vai o Virtual Display Driver, assinado pela
+SignPath Foundation (`logid/setup/instalar-tela-virtual.ps1`).
+
+O script põe o publicador em `TrustedPublisher` só durante a instalação,
+porque o pedido de confirmação não aparece por SSH, e o retira depois.
+Sem isso, nada ali pede para confiar em certificado autoassinado.
+
+Medido em 07/11, do Ubuntu pelo tailnet: 243 quadros em 10 s, zero
+perdidos.

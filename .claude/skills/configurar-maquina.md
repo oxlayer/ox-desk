@@ -70,8 +70,21 @@ Finder e **negue** qualquer pedido de VPN. Ver
 
 ```bash
 brew install tailscale
-sudo bash scripts/instalar-tailscale-mac.sh   # no clone do repo
+sudo bash logid/setup/instalar-tailscale-mac.sh   # no clone do repo
 ```
+
+O botão do wizard faz o mesmo sem clone: abre o Terminal com o script.
+
+## Windows sem monitor
+
+O passo `tela-virtual` conta os monitores presentes. Com zero, o
+visualizador conecta e nenhum quadro chega. O botão instala o driver da
+`logid/setup/instalar-tela-virtual.ps1`, com versão e hash fixados. Por
+SSH, como administrador, o script roda direto, sem pedido na tela.
+
+## Computador novo
+
+A ordem por sistema está em [[../../docs/computador-novo]].
 
 ## O que ele não faz
 

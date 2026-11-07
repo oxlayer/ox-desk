@@ -145,6 +145,17 @@ pub fn veredito_tailscale(json: &str, app_instalado: bool) -> Medida {
     }
 }
 
+/// Lê a contagem de monitores presentes que o PowerShell devolveu.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn veredito_monitores(saida: &str) -> Medida {
+    const ID: &str = "tela-virtual";
+    match saida.trim().parse::<u32>() {
+        Ok(0) => Medida::falta(ID, "nenhum monitor presente: a tela remota não recebe quadros"),
+        Ok(n) => Medida::ok(ID, format!("{n} monitor(es) presente(s)")),
+        Err(_) => Medida::erro(ID, "não consegui contar os monitores"),
+    }
+}
+
 pub fn clipboard() -> Medida {
     match crate::clip::vigia() {
         Some((true, d)) => Medida::ok("clipboard", d),
@@ -614,5 +625,13 @@ mod testes {
         assert_eq!(veredito_tailscale("{}", false).estado, Estado::Erro);
         let sem_ip = r#"{"BackendState":"Running","Self":{}}"#;
         assert_eq!(veredito_tailscale(sem_ip, false).estado, Estado::Erro);
+    }
+
+    #[test]
+    fn monitores_zero_e_falta_e_sem_numero_e_erro() {
+        assert_eq!(veredito_monitores("1\r\n").estado, Estado::Ok);
+        assert_eq!(veredito_monitores("0").estado, Estado::Falta);
+        assert_eq!(veredito_monitores("").estado, Estado::Erro);
+        assert_eq!(veredito_monitores("Get-PnpDevice: erro").estado, Estado::Erro);
     }
 }
