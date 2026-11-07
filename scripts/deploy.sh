@@ -581,7 +581,7 @@ else
                /usr/libexec/PlistBuddy -c "Delete :ElectronAsarIntegrity" "$APP/Contents/Info.plist" >/dev/null 2>&1
                codesign --force --deep --sign - "$APP" 2>&1 | tail -1
              fi
-             grep -q comandoDoSupervisor "$APP/Contents/Resources/app/main.js" ||
+             grep -q supervisorCommand "$APP/Contents/Resources/app/main.js" ||
                echo "ERROR: the main.js that reached the Mac is not the one from this repo"' 2>&1); then
     if ruim "$out"; then erro "$out"; else ok; fi
   else erro "$out"; fi
