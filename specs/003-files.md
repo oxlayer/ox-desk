@@ -1,139 +1,142 @@
 # 003 — File browser
 
-## Decisão: SFTP, não protocolo novo
+## Decision: SFTP, not a new protocol
 
-O OpenSSH já está nas duas máquinas e o SFTP vem junto. Não há motivo
-para inventar transporte: o que falta é **UI**, não protocolo.
+OpenSSH is already on both machines and SFTP comes with it. There is no
+reason to invent a transport: what is missing is **UI**, not protocol.
 
-O KDE Connect tem plugin `sftp` (está em `incoming-capabilities` do
-`windows-host`), mas depende do daemon dele e monta via KIO — fora do
-nosso controle. SSH direto é mais simples e já autenticado.
+KDE Connect has an `sftp` plugin (it is in `windows-host`'s
+`incoming-capabilities`), but it depends on its daemon and mounts via
+KIO — outside our control. Plain SSH is simpler and already authenticated.
 
-## Duas camadas
+## Two layers
 
-**Navegação (`/api/files/{id}?path=`)** — lista diretório via
-`sftp` em modo batch. Só leitura, rápido, sem montar nada:
+**Browsing (`/api/files/{id}?path=`)** — lists a directory via `sftp`
+in batch mode. Read-only, fast, nothing mounted:
 
 ```bash
 echo "ls -la /caminho" | sftp -b - windows-host
 ```
 
-**Montagem (opcional)** — `sshfs` (já instalado aqui) para quando você
-quer abrir no Nautilus ou num editor:
+**Mounting (optional)** — `sshfs` (already installed here) for when you
+want to open it in Nautilus or an editor:
 
 ```bash
 sshfs windows-host:/C:/Users/user ~/mnt/windows-host -o reconnect,idmap=user
 ```
 
-Atenção: `sshfs` morre feio quando o host cai, e o host **já caiu uma
-vez hoje** por troca de IP. `-o reconnect` ajuda; mesmo assim, montagem
-é conveniência opcional, nunca o caminho principal da UI.
+Warning: `sshfs` dies badly when the host goes down, and the host
+**already went down once today** because of an IP change. `-o reconnect`
+helps; even so, mounting is an optional convenience, never the main path
+of the UI.
 
-## Caminhos no Windows
+## Paths on Windows
 
-O SFTP do Windows expõe `/C:/Users/user/...`. A UI deve mostrar
-`C:\Users\user` e traduzir internamente — o usuário não deve ver a
-costura.
+Windows SFTP exposes `/C:/Users/user/...`. The UI should show
+`C:\Users\user` and translate internally — the user should not see the
+seam.
 
-## Transferência
+## Transfer
 
-Arquivo pequeno: `scp`/`sftp` direto.
-Arquivo que você quer "mandar para a outra máquina" como gesto:
-o **share do KDE Connect** já funciona e cai em
-`~/Downloads` (`receive-directory` no dconf). Não reimplementar.
+Small file: `scp`/`sftp` directly.
+A file you want to "send to the other machine" as a gesture: the
+**KDE Connect share** already works and lands in `~/Downloads`
+(`receive-directory` in dconf). Do not reimplement.
 
-## Não fazer
+## Do not
 
-- Não indexar nem cachear árvore de diretórios. Latência de LAN é baixa;
-  cache inválido é pior que listar de novo.
-- Não escrever por padrão. Escrita só com ação explícita do usuário.
+- Do not index or cache the directory tree. LAN latency is low; an
+  invalid cache is worse than listing again.
+- Do not write by default. Writes only on an explicit user action.
 
 ---
 
-## Implementado (03/11)
+## Implemented (2026-11-03)
 
-[`logid/src/files.rs`](../logid/src/files.rs) + painel "Arquivos" no
-dashboard. **Só listagem** nesta versão: não baixa, não envia, não apaga.
+[`logid/src/files.rs`](../logid/src/files.rs) + "Arquivos" (Files) panel
+in the dashboard. **Listing only** in this version: no download, no
+upload, no delete.
 
-O daemon é superfície de privilégio ([`008`](008-security.md)) e já pode
-executar SSH, então listar não concede nada novo — mas escrever concede,
-e escrever por acidente num painel que eu mesmo sirvo é o tipo de erro
-que não tem desfazer.
+The daemon is a privilege surface ([`008`](008-security.md)) and can
+already run SSH, so listing grants nothing new — but writing does, and
+writing by accident from a panel I serve myself is the kind of mistake
+that has no undo.
 
-### Rota
+### Route
 
-`GET /api/files?host=<nome>&path=<caminho>`
+`GET /api/files?host=<name>&path=<path>`
 
-Sem `host`, usa o host `local` da config — o caso comum de abrir o painel
-e só olhar. Sem `path`, cada host começa no próprio home (`pwd` do SFTP
-no remoto, `$HOME`/`%USERPROFILE%` no local). O `path` vem
-percent-encoded porque carrega `/`, `\`, `:` e espaço, e nenhum deles
-pode ser confundido com separador de query.
+Without `host`, it uses the `local` host from the config — the common
+case of opening the panel just to look. Without `path`, each host starts
+at its own home (SFTP `pwd` on the remote, `$HOME`/`%USERPROFILE%`
+locally). `path` comes percent-encoded because it carries `/`, `\`, `:`
+and spaces, and none of them can be mistaken for a query separator.
 
-A rota ficou `?host=` em vez do `/api/files/{id}` que esta spec propunha:
-os hosts já são identificados por **nome** em todo o resto da API
-(`/api/focus` recebe `host`), e introduzir um `id` paralelo seria um
-segundo jeito de dizer a mesma coisa.
+The route became `?host=` instead of the `/api/files/{id}` this spec
+proposed: hosts are already identified by **name** everywhere else in
+the API (`/api/focus` takes `host`), and introducing a parallel `id`
+would be a second way of saying the same thing.
 
-### Um lote de SFTP, não dois
+### One SFTP batch, not two
 
-A primeira versão chamava `pwd` e depois `cd`+`ls -la`, pagando dois
-handshakes SSH: **809 ms** medidos para listar uma pasta. Com `pwd` e
-`ls` no mesmo lote: **350 ms**.
+The first version called `pwd` and then `cd`+`ls -la`, paying for two
+SSH handshakes: **809 ms** measured to list a folder. With `pwd` and
+`ls` in the same batch: **350 ms**.
 
-De brinde, o `pwd` no mesmo lote dá o caminho canônico confirmado pelo
-servidor, e é dele que saem o `display` e o `parent` — a UI navega pelo
-que o servidor diz, não pelo que eu supus.
+As a bonus, `pwd` in the same batch gives the canonical path confirmed by
+the server, and `display` and `parent` come from it — the UI navigates by
+what the server says, not by what I assumed.
 
-### O parser é ancorado no mês, não em contagem de campos
+### The parser is anchored on the month, not on a field count
 
-Escrevi "nome = tudo depois do 8º campo". São **nove** (modo, links,
-dono, grupo, tamanho, mês, dia, hora, nome), e o teste pegou: `.` e `..`
-passavam pelo filtro porque o nome lido era outro pedaço da linha, e o
-"tamanho" lido era o nome do grupo.
+I wrote "name = everything after the 8th field". There are **nine**
+(mode, links, owner, group, size, month, day, time, name), and the test
+caught it: `.` and `..` slipped through the filter because the name read
+was another piece of the line, and the "size" read was the group name.
 
-Corrigir o índice para 9 não bastaria — há servidor SFTP que omite o
-grupo, e aí são oito. Procurar o campo do **mês** acha a junção nos dois
-casos, porque dali para a direita o formato é fixo (`<mês> <dia>
-<hora-ou-ano> <nome>`) e o tamanho é o campo imediatamente anterior.
-Travado por `parseia_mesmo_sem_o_campo_de_grupo` e
+Fixing the index to 9 would not be enough — some SFTP servers omit the
+group, and then there are eight. Looking for the **month** field finds
+the junction in both cases, because from there to the right the format
+is fixed (`<month> <day> <time-or-year> <name>`) and the size is the
+field immediately before it. Locked by
+`parseia_mesmo_sem_o_campo_de_grupo` and
 `ano_em_vez_de_hora_para_arquivo_antigo`.
 
-O nome é recortado por **deslocamento de byte** na linha original, não
-por `join` dos campos restantes: `Program Files` tem espaço, e juntar
-colapsaria espaços repetidos.
+The name is cut by **byte offset** in the original line, not by `join`ing
+the remaining fields: `Program Files` has a space, and joining would
+collapse repeated spaces.
 
-### Caminhos não são comparáveis entre as duas origens
+### Paths are not comparable between the two sources
 
-O SFTP expõe o disco do Windows como `/C:/Users/user`; o `std::fs` na
-própria máquina diz `C:\Users\user`. São dois nomes para o mesmo lugar
-e nenhum está errado. Em vez de normalizar (e errar), cada listagem
-declara sua `source`, devolve `path` **opaco** para a UI navegar, e um
-`display` separado para mostrar — `C:\Users\user` na tela, `/C:/...` no
-clique.
+SFTP exposes the Windows disk as `/C:/Users/user`; `std::fs` on the
+machine itself says `C:\Users\user`. They are two names for the same
+place and neither is wrong. Instead of normalizing (and getting it
+wrong), each listing declares its `source`, returns an **opaque** `path`
+for the UI to navigate, and a separate `display` to show —
+`C:\Users\user` on screen, `/C:/...` on click.
 
-### Data: cada origem diz o que de fato sabe
+### Date: each source says what it actually knows
 
-Local entrega época unix (`mtime`), SFTP entrega o texto do `ls`
-(`mtime_text`) porque o protocolo não dá época nessa listagem. A UI
-prefere a época e formata no fuso local; cai no texto quando é o que
-existe. Inventar precisão que a origem não tem seria pior que mostrar
-`Nov 3 22:19`.
+Local gives a unix epoch (`mtime`), SFTP gives the `ls` text
+(`mtime_text`) because the protocol gives no epoch in this listing. The
+UI prefers the epoch and formats it in the local time zone; it falls back
+to the text when that is what exists. Inventing precision the source
+does not have would be worse than showing `Nov 3 22:19`.
 
-### Verificado
+### Verified
 
-Teto de 2000 entradas por listagem (`truncated` avisa). 17 testes
-unitários. Fim-a-fim pela própria UI, num Electron headless:
+Cap of 2000 entries per listing (`truncated` warns). 17 unit tests.
+End-to-end through the UI itself, in a headless Electron:
 
-- `ubuntu-host` → `/home/user`, 84 itens, `local`
-- clique em `windows-host` → `C:\Users\user`, 105 itens, `sftp`
-- entra em `.agents` → `C:\Users\user\.agents`
-- clique em "voltar" → volta para `C:\Users\user`, 105 itens
+- `ubuntu-host` → `/home/user`, 84 items, `local`
+- click on `windows-host` → `C:\Users\user`, 105 items, `sftp`
+- enter `.agents` → `C:\Users\user\.agents`
+- click on "voltar" (back) → back to `C:\Users\user`, 105 items
 
-### Falta
+### Missing
 
-- **Windows → Ubuntu não lista**, e diz isso na tela em vez de ficar
-  girando: o `openssh-server` não está instalado no Ubuntu. Mesmo
-  bloqueio da simetria da borda em [`001`](001-control-plane.md).
-- Transferência e `sshfs`: desenhados acima, não implementados.
-- Mac: entra junto com o host novo.
+- **Windows → Ubuntu does not list**, and says so on screen instead of
+  spinning: `openssh-server` is not installed on Ubuntu. Same blocker as
+  the edge symmetry in [`001`](001-control-plane.md).
+- Transfer and `sshfs`: designed above, not implemented.
+- Mac: comes in together with the new host.

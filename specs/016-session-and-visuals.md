@@ -1,100 +1,105 @@
-# 016 — A tela inicial e a sessão
+# 016 — The home screen and the session
 
-> Estado: tela inicial, sessão em aba, barra e gerenciador no ar. Falta o
-> controle de qualidade e a troca de monitor.
+> Status: home screen, session in a tab, bar and file manager live. Quality
+> control and monitor switching are still missing.
 
-## O problema
+## The problem
 
-O painel responde "o que está de pé", mas não parece um produto: a ação
-principal, abrir a tela de uma máquina, disputa espaço com portas, RAM e
-opções. E depois de conectar não há nada além do vídeo: para trocar um
-arquivo é preciso sair da sessão.
+The panel answers "what is up", but it does not look like a product: the
+main action, opening a machine's screen, competes for space with ports, RAM
+and options. And after connecting there is nothing besides the video: to
+exchange a file you have to leave the session.
 
-Parsec e AnyDesk são referência de **organização**, e não de marca: a
-identidade visual continua nossa.
+Parsec and AnyDesk are a reference for **organization**, not for branding:
+the visual identity remains ours.
 
-## O que muda
+## What changes
 
-### 1. Tela inicial
+### 1. Home screen
 
-- Um cartão por máquina: nome, sistema, estado e **Conectar** como botão
-  principal.
-- Portas, RAM, CPU e serviços ficam num detalhe que se abre.
-- Só aparece a opção que o cliente sabe cumprir.
-- Busca só a partir de cinco máquinas. Com três, ela é ruído.
+- One card per machine: name, system, state and **"Conectar"** (Connect)
+  as the main button.
+- Ports, RAM, CPU and services go into a detail that expands.
+- Only the options the client knows how to fulfill appear.
+- Search only from five machines up. With three, it is noise.
 
-### 2. A sessão é uma aba
+### 2. The session is a tab
 
-Conectar abre uma aba na janela do painel, e não outra janela. Várias
-máquinas ficam abertas lado a lado, e a tela inicial é a primeira aba.
+Connecting opens a tab in the panel window, not another window. Several
+machines stay open side by side, and the home screen is the first tab.
 
-A barra fica no topo da aba, e não pode roubar clique da máquina remota.
+The bar sits at the top of the tab, and must not steal clicks from the
+remote machine.
 
-| Botão | Faz |
+| Button | Does |
 |---|---|
-| Arquivos | abre o gerenciador nesta máquina |
-| Tela | escolhe o monitor, quando houver mais de um |
-| Qualidade | muda o teto de `--mbps` |
-| Teclado | manda Ctrl+Alt+Del e atalhos do sistema |
-| Sair | encerra a sessão |
+| "Arquivos" (Files) | opens the file manager on this machine |
+| "Tela" (Screen) | picks the monitor, when there is more than one |
+| "Qualidade" (Quality) | changes the `--mbps` ceiling |
+| "Teclado" (Keyboard) | sends Ctrl+Alt+Del and system shortcuts |
+| "Sair" (Exit) | ends the session |
 
-### 3. Gerenciador de arquivos
+### 3. File manager
 
-Dois painéis: esta máquina à esquerda, a remota à direita, com caminho,
-voltar, subir, recarregar, e as colunas nome, tamanho e data. Enviar e
-receber mostram progresso e erro por arquivo.
+Two panes: this machine on the left, the remote one on the right, with
+path, back, up, reload, and the name, size and date columns. Upload and
+download show progress and errors per file.
 
-## Como
+## How
 
-**O vídeo é decodificado na página.** O `logistream-view` é outro processo
-com janela nativa, e isso não se embute numa aba. Uma ponte local fala QUIC
-com o host e entrega H.264 à página por WebSocket em `127.0.0.1`, com um
-token e checagem de `Origin`. A página decodifica com WebCodecs e desenha
-num `<canvas>`; teclado e mouse fazem o caminho inverso.
+**The video is decoded in the page.** `logistream-view` is another process
+with a native window, and that cannot be embedded in a tab. A local bridge
+speaks QUIC to the host and hands H.264 to the page over WebSocket on
+`127.0.0.1`, with a token and an `Origin` check. The page decodes with
+WebCodecs and draws on a `<canvas>`; keyboard and mouse take the reverse
+path.
 
-**A decodificação é por software.** O fluxo não declara que não reordena, e o
-decodificador de hardware segura cerca de 4 quadros: 172 ms contra 1,9 ms
-(p50, 1080p, no Mac). Para voltar ao hardware, o host precisa mandar
-`max_num_reorder_frames=0` no VUI do H.264.
+**Decoding is in software.** The stream does not declare that it does not
+reorder, and the hardware decoder holds about 4 frames: 172 ms versus
+1.9 ms (p50, 1080p, on the Mac). To go back to hardware, the host needs to
+send `max_num_reorder_frames=0` in the H.264 VUI.
 
-Medido em 07/11, com host e cliente no mesmo Mac, em 3360×2100: da captura
-ao desenho, 6,3 ms na aba e 37 ms no `logistream-view`. Decodificar nesse
-tamanho custa 5,2 ms e cerca de meio núcleo. Entre máquinas a medida carrega
-a diferença dos relógios, e por isso a comparação é no mesmo Mac.
+Measured on 2026-11-07, with host and client on the same Mac, at 3360×2100:
+from capture to draw, 6.3 ms in the tab and 37 ms in `logistream-view`.
+Decoding at that size costs 5.2 ms and about half a core. Between machines
+the measurement carries the clock difference, which is why the comparison is
+on the same Mac.
 
-Com isso aba, barra e arquivos são a mesma página, e a barra é HTML. O
-`logistream-view` fica como alternativa até a latência da aba estar medida:
-ela só substitui o nativo se não for pior.
+With this, tab, bar and files are the same page, and the bar is HTML.
+`logistream-view` stays as an alternative until the tab's latency is
+measured: it only replaces the native one if it is not worse.
 
-**O gerenciador é uma aba do mesmo jeito.** Ver a [spec 003](003-files.md).
+**The file manager is a tab in the same way.** See [spec 003](003-files.md).
 
-**A transferência vai por SFTP**, como a listagem. A rota nova é
-`POST /api/files/transfer`, com o progresso lido pelo painel.
+**Transfer goes over SFTP**, like the listing. The new route is
+`POST /api/files/transfer`, with progress read by the panel.
 
-O `logid` continua escutando só em `127.0.0.1` (spec 008). Quem transfere é
-ele, com a chave que já tem.
+`logid` keeps listening only on `127.0.0.1` (spec 008). It is the one doing
+the transfer, with the key it already has.
 
-## Regras que isto herda
+## Rules this inherits
 
-- **A prova de tela é olhar a imagem.** Contar quadro não prova nada
-  ([[../docs/screen-paths]]).
-- **Clique na barra não vai para a máquina remota.** O teste confere que
-  nenhum `Evento::Mouse` saiu.
-- **A aba se mede contra o `logistream-view`:** o atraso da captura à tela.
-- **Transferência se prova pelo hash dos dois lados**, e não pelo fim da
-  barra de progresso ([[../.claude/rules/verify-what-arrived]]).
-- **O caminho do Windows é o do SFTP** (`/C:/Users/...`), que já tem
-  conversão em `files.rs`.
+- **The proof of a screen is looking at the image.** Counting frames proves
+  nothing ([[../docs/screen-paths]]).
+- **A click on the bar does not go to the remote machine.** The test checks
+  that no `Evento::Mouse` went out.
+- **The tab is measured against `logistream-view`:** the delay from capture
+  to screen.
+- **Transfer is proven by the hash on both sides**, not by the progress bar
+  finishing ([[../.claude/rules/verify-what-arrived]]).
+- **The Windows path is the SFTP one** (`/C:/Users/...`), which already has
+  conversion in `files.rs`.
 
-## Ordem
+## Order
 
-1. Tela inicial, sem mexer em API. É só `static/index.html`.
-2. Ponte e aba da sessão, com a latência medida contra o nativo.
-3. Barra da sessão, com os atalhos.
-4. Gerenciador de arquivos e a rota de transferência.
-5. Qualidade e troca de monitor, que dependem de mudar o host em sessão.
+1. Home screen, without touching the API. It is just `static/index.html`.
+2. Bridge and session tab, with latency measured against the native one.
+3. Session bar, with the shortcuts.
+4. File manager and the transfer route.
+5. Quality and monitor switching, which depend on changing the host
+   mid-session.
 
-## Fora daqui
+## Out of scope here
 
-- Pareamento por chave do canal de tela (spec 012).
-- Áudio remoto, chat e gravação de sessão.
+- Pairing by key for the screen channel (spec 012).
+- Remote audio, chat and session recording.

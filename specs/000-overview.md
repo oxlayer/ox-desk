@@ -1,64 +1,66 @@
-# 000 — Visão geral
+# 000 — Overview
 
-> Escrito para: você e os agentes que forem trabalhar neste repo.
+> Written for: you and the agents who will work on this repo.
 
-## A lacuna que justifica o projeto
+## The gap that justifies the project
 
-Da sua lista — SSH, file browser, KDE Connect, trocar de PC por borda ou
-atalho, clipboard, compartilhar tela — **quase tudo já existe e funciona
-bem em open source**. Reimplementar seria gastar meses para chegar pior.
+From your list — SSH, file browser, KDE Connect, switching PCs by edge or
+shortcut, clipboard, screen sharing — **almost everything already exists
+and works well in open source**. Reimplementing it would mean spending
+months to end up with something worse.
 
-Uma coisa não existe. É esta:
+One thing does not exist. This one:
 
-> Decidir **como** trocar de computador: mover o cursor pela LAN, ou
-> mandar o próprio mouse/teclado pular de canal Easy-Switch para o
-> receptor físico da outra máquina.
+> Deciding **how** to switch computers: move the cursor over the LAN, or
+> make the mouse/keyboard itself jump Easy-Switch channel to the other
+> machine's physical receiver.
 
-Isso é exatamente o que o **Logitech Flow** faz, é o que você queria no
-começo, e é a única peça que nenhum projeto aberto resolve:
+That is exactly what **Logitech Flow** does, it is what you wanted at
+the start, and it is the only piece no open project solves:
 
-- O **Solaar** sabe trocar o canal do dispositivo (`change-host`, HID++
-  0x1814) mas não sabe nada de rede.
-- O **Deskflow** sabe mover o cursor pela rede mas não toca no HID++.
-- O **GSConnect / KDE Connect** sabem falar com a outra máquina mas não
-  fazem nem um nem outro.
+- **Solaar** knows how to switch the device channel (`change-host`, HID++
+  0x1814) but knows nothing about the network.
+- **Deskflow** knows how to move the cursor over the network but does not
+  touch HID++.
+- **GSConnect / KDE Connect** know how to talk to the other machine but
+  do neither.
 
-Ninguém cola as três coisas. **Esse é o produto.** O resto é a casca
-que torna isso utilizável e que reaproveita o que já existe.
+Nobody glues the three together. **That is the product.** The rest is the
+shell that makes it usable and that reuses what already exists.
 
-## O que construímos e o que integramos
+## What we build and what we integrate
 
-O critério: construímos **orquestração, estado e UI**. Integramos
-**transporte, codec e protocolo** — camadas onde um projeto maduro já
-resolveu problemas que levariam anos.
+The criterion: we build **orchestration, state and UI**. We integrate
+**transport, codec and protocol** — layers where a mature project has
+already solved problems that would take years.
 
-| Capacidade | Decisão | Por quê |
+| Capability | Decision | Why |
 |---|---|---|
-| Roteamento de input (LAN ↔ receptor físico) | **construir** | não existe; é o núcleo do projeto |
-| Control plane + API + estado | **construir** | é a cola; ninguém faz |
-| GUI de configuração (Electron) | **construir** | já temos a casca e o painel |
-| Orquestração de SSH / bootstrap das máquinas | **construir** | específico do nosso par de máquinas |
-| File browser | **construir** (fino) | é UI sobre SFTP, que o OpenSSH já entrega |
-| Clipboard | **construir** (fino) | é relay de texto; o difícil é política, não protocolo |
-| Mover cursor entre telas | **integrar** Deskflow / lan-mouse | protocolo + injeção de input por portal; maduro |
-| Compartilhar tela / controle remoto | **integrar** RustDesk (self-hosted) ou Sunshine+Moonlight | captura PipeWire/DXGI, encode H.264/AV1, NAT, latência. Escopo de produto. |
-| Descoberta e pareamento TLS na LAN | **integrar** o modelo do KDE Connect | protocolo testado, e já estamos pareados |
+| Input routing (LAN ↔ physical receiver) | **build** | does not exist; it is the core of the project |
+| Control plane + API + state | **build** | it is the glue; nobody does it |
+| Configuration GUI (Electron) | **build** | we already have the shell and the panel |
+| SSH orchestration / machine bootstrap | **build** | specific to our pair of machines |
+| File browser | **build** (thin) | it is UI over SFTP, which OpenSSH already provides |
+| Clipboard | **build** (thin) | it is a text relay; the hard part is policy, not protocol |
+| Moving the cursor between screens | **integrate** Deskflow / lan-mouse | protocol + input injection via portal; mature |
+| Screen sharing / remote control | **integrate** RustDesk (self-hosted) or Sunshine+Moonlight | PipeWire/DXGI capture, H.264/AV1 encode, NAT, latency. Product-sized scope. |
+| LAN discovery and TLS pairing | **integrate** the KDE Connect model | tested protocol, and we are already paired |
 
-Reimplementar um RustDesk significaria: captura de tela (portal
-ScreenCast no Wayland, DXGI no Windows), encode com hardware, transporte
-com tuning de latência, travessia de NAT, injeção de input, cripto e
-auth. Não é projeto de fim de semana, e o RustDesk é **self-hostável** —
-`hbbs`/`hbbr` próprios, ou conexão direta em LAN, sem servidor de
-terceiro. "Próprio e seguro" sem escrever nada.
+Reimplementing a RustDesk would mean: screen capture (ScreenCast portal
+on Wayland, DXGI on Windows), hardware encoding, latency-tuned transport,
+NAT traversal, input injection, crypto and auth. It is not a weekend
+project, and RustDesk is **self-hostable** — our own `hbbs`/`hbbr`, or a
+direct LAN connection, with no third-party server. "Our own and secure"
+without writing anything.
 
-## Arquitetura
+## Architecture
 
-Simétrica: **todo nó roda o mesmo daemon e nenhum é central.** Quem
-manda é a máquina onde a pessoa está. Ver
-[`001`](001-control-plane.md#simétrico-todo-nó-é-par-nenhum-é-central).
+Symmetric: **every node runs the same daemon and none is central.** The
+machine in charge is the one where the person is. See
+[`001`](001-control-plane.md#symmetric-every-node-is-a-peer-none-is-central).
 
 ```
-   ubuntu-host            windows-host              MacBook (canal 3)
+   ubuntu-host            windows-host              MacBook (channel 3)
   ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
   │ GUI          │        │ GUI          │        │ GUI          │
   │  ↕           │        │  ↕           │        │  ↕           │
@@ -67,70 +69,70 @@ manda é a máquina onde a pessoa está. Ver
   │  ├ hidpp     │        │  ├ hidpp     │        │  ├ hidpp     │
   │  └ adapters  │        │  └ adapters  │        │  └ adapters  │
   └──────┬───────┘        └──────┬───────┘        └──────┬───────┘
-         │ canal 1               │ canal 2               │ canal 3
+         │ channel 1             │ channel 2             │ channel 3
          └───────────── MX Anywhere 3 + MX Keys ──────────┘
-                    (exatamente um detentor por vez)
+                    (exactly one holder at a time)
 ```
 
-Pedir foco é encaminhamento: quem pede fala com o **detentor atual**,
-porque só ele alcança o dispositivo por rádio.
+Requesting focus is forwarding: whoever asks talks to the **current
+holder**, because only it reaches the device over radio.
 
-## Linguagem: Rust
+## Language: Rust
 
-O control plane é **Rust** ([`logid/`](../logid/)), decisão tomada em
-03/11 e já implementada na fase 1.
+The control plane is **Rust** ([`logid/`](../logid/)), a decision made on
+2026-11-03 and already implemented in phase 1.
 
-O protótipo era Python stdlib, e funcionava. A migração aconteceu antes
-de a complexidade crescer — que é o momento barato de fazer isso, não
-depois. O que se ganhou, medido:
+The prototype was Python stdlib, and it worked. The migration happened
+before complexity grew — which is the cheap moment to do it, not
+afterwards. What was gained, measured:
 
 | | Python | Rust |
 |---|---|---|
-| `/healthz` | 0,6 ms | **0,19 ms** |
-| binário | — | 929 KB, sem runtime |
-| config inválida | erro em runtime, na requisição | **recusada no boot**, com exit 1 |
-| campo desconhecido no PATCH | precisaria de validação manual | recusado pelo tipo, 400 |
+| `/healthz` | 0.6 ms | **0.19 ms** |
+| binary | — | 929 KB, no runtime |
+| invalid config | runtime error, on the request | **rejected at boot**, with exit 1 |
+| unknown field in PATCH | would need manual validation | rejected by the type, 400 |
 
-O ganho real não é latência (I/O domina: `/api/status` leva 2 s nas
-duas versões, por causa do SSH). É o **tipo como contrato**: `Expect`
-é enum, não string; `Config` não desserializa se o TOML estiver errado;
-e o compilador recusa o caso não tratado. Num daemon que vai disparar
-troca de canal HID++ e pode te deixar sem teclado
-([`005`](005-input-switch.md#rollback-não-é-opcional)), isso vale mais
-que microssegundos.
+The real gain is not latency (I/O dominates: `/api/status` takes 2 s in
+both versions, because of SSH). It is the **type as contract**: `Expect`
+is an enum, not a string; `Config` does not deserialize if the TOML is
+wrong; and the compiler rejects the unhandled case. In a daemon that will
+trigger HID++ channel switches and can leave you without a keyboard
+([`005`](005-input-switch.md#there-is-no-rollback-on-this-side)), that is worth
+more than microseconds.
 
-Dependências, deliberadamente poucas: `tiny_http` (bloqueante — dois
-clientes não justificam async), `serde`, `serde_json`, `toml`. Sem
-crate de data: `date +%z` resolve o offset local.
+Dependencies, deliberately few: `tiny_http` (blocking — two clients do
+not justify async), `serde`, `serde_json`, `toml`. No date crate:
+`date +%z` resolves the local offset.
 
-O **agente Windows** também será Rust, pelo mesmo motivo pelo qual o
-HID++ 0x1814 vai ser nosso: binário único, sem runtime para instalar
-do outro lado.
+The **Windows agent** will also be Rust, for the same reason HID++
+0x1814 will be ours: a single binary, no runtime to install on the other
+side.
 
-## Fases
+## Phases
 
-| Fase | Entrega | Estado |
+| Phase | Deliverable | Status |
 |---|---|---|
-| **0** | Setup manual funcionando, documentado | ✅ feito — ver [README](../README.md) |
-| **—** | Deskflow e Solaar **removidos** dos dois lados | ✅ a troca é física; nenhum dos dois é mais necessário |
-| **1** | `logid` servindo status + config editável | ✅ feito — Rust, `PATCH /api/config` validado |
-| **2** | SSH + bootstrap automático das duas máquinas | [`002`](002-ssh.md) |
-| **3** | Roteamento de input: LAN × receptor físico | 🚧 `GET /api/devices` e `POST /api/focus` (dry-run) prontos; falta detecção de borda e o agente Windows |
-| **4** | Clipboard e file browser | [`003`](003-files.md), [`004`](004-clipboard.md) |
-| **5** | Compartilhar tela (integração) | [`006`](006-screen-share.md) |
+| **0** | Manual setup working, documented | ✅ done — see [README](../README.md) |
+| **—** | Deskflow and Solaar **removed** from both sides | ✅ the switch is physical; neither is needed anymore |
+| **1** | `logid` serving status + editable config | ✅ done — Rust, `PATCH /api/config` validated |
+| **2** | SSH + automatic bootstrap of both machines | [`002`](002-ssh.md) |
+| **3** | Input routing: LAN × physical receiver | 🚧 `GET /api/devices` and `POST /api/focus` (dry-run) ready; edge detection and the Windows agent are missing |
+| **4** | Clipboard and file browser | [`003`](003-files.md), [`004`](004-clipboard.md) |
+| **5** | Screen sharing (integration) | [`006`](006-screen-share.md) |
 
-Fase 3 antes de 4 e 5 de propósito: é a única que ninguém mais faz.
+Phase 3 before 4 and 5 on purpose: it is the only one nobody else does.
 
-## Não-objetivos
+## Non-goals
 
-- Internet, nuvem, conta, telemetria. Só LAN.
-- Suportar hardware que não seja o seu. Generalizar depois, se doer.
-- Reimplementar codec de vídeo, protocolo de KVM ou stack de descoberta.
-- Mobile. O GSConnect já resolve celular.
+- Internet, cloud, accounts, telemetry. LAN only.
+- Supporting hardware other than yours. Generalize later, if it hurts.
+- Reimplementing a video codec, KVM protocol or discovery stack.
+- Mobile. GSConnect already handles phones.
 
-## Ler também
+## Read also
 
-- [`001-control-plane.md`](001-control-plane.md) — o daemon e a API
-- [`005-input-switch.md`](005-input-switch.md) — o núcleo do projeto
-- [`008-security.md`](008-security.md) — identidade e trust model
-- [`../README.md`](../README.md) — o que já está rodando hoje
+- [`001-control-plane.md`](001-control-plane.md) — the daemon and the API
+- [`005-input-switch.md`](005-input-switch.md) — the core of the project
+- [`008-security.md`](008-security.md) — identity and trust model
+- [`../README.md`](../README.md) — what is already running today

@@ -1,167 +1,167 @@
-# 013 — Binários por CI
+# 013 — Binaries via CI
 
-> Estado: implementado. Linux e Windows conferidos contra o que este
-> Ubuntu compila; o pacote do Mac foi conferido por formato e carimbo,
-> mas **ainda não rodou no MacBook** (estava fora do ar no dia).
+> Status: implemented. Linux and Windows checked against what this
+> Ubuntu compiles; the Mac package was checked by format and stamp,
+> but **has not run on the MacBook yet** (it was offline that day).
 
-## O problema
+## The problem
 
-Os binários só existiam como efeito colateral do `deploy.sh`: compilados
-na máquina de quem dispara, e o Mac compilando a partir de um `rsync`.
-Se o Mac está fora do ar, ninguém descobre que o código dele parou de
-compilar. E não havia como responder "qual binário corresponde a este
-commit?" sem recompilar.
+The binaries only existed as a side effect of `deploy.sh`: compiled
+on the machine of whoever triggers it, and the Mac compiling from an `rsync`.
+If the Mac is offline, nobody finds out that its code stopped
+compiling. And there was no way to answer "which binary corresponds to this
+commit?" without recompiling.
 
-## A forma
+## The shape
 
-Um workflow, [`binarios.yml`](../.github/workflows/binarios.yml), que
-chama um script, [`construir-binarios.sh`](../scripts/construir-binarios.sh).
+One workflow, [`binarios.yml`](../.github/workflows/binarios.yml), which
+calls one script, [`construir-binarios.sh`](../scripts/construir-binarios.sh).
 
-| Alvo | Runner | Como compila | Pacote |
+| Target | Runner | How it compiles | Package |
 |---|---|---|---|
-| Ubuntu | `ubuntu-24.04` | nativo, e roda os testes | `logi-linux-x86_64-<n>-<hash>.tar.gz` |
-| Windows | `ubuntu-24.04` | cruzado, `x86_64-pc-windows-gnu` | `logi-windows-x86_64-unsigned-<n>-<hash>.tar.gz` |
-| macOS | `macos-15` (arm64) | nativo, ffmpeg do brew | `logi-mac-arm64-unsigned-<n>-<hash>.tar.gz` |
+| Ubuntu | `ubuntu-24.04` | native, and runs the tests | `logi-linux-x86_64-<n>-<hash>.tar.gz` |
+| Windows | `ubuntu-24.04` | cross, `x86_64-pc-windows-gnu` | `logi-windows-x86_64-unsigned-<n>-<hash>.tar.gz` |
+| macOS | `macos-15` (arm64) | native, ffmpeg from brew | `logi-mac-arm64-unsigned-<n>-<hash>.tar.gz` |
 
-| Evento | O que acontece |
+| Event | What happens |
 |---|---|
-| push em `main` ou `ci/**` que toca código | compila os três, pacotes ficam 14 dias como artefato |
-| tag `v*` | o mesmo, e publica uma Release com os três pacotes e `SHA256SUMS` |
-| `workflow_dispatch` | o mesmo que push, sob demanda |
+| push to `main` or `ci/**` touching code | compiles all three, packages kept 14 days as artifacts |
+| tag `v*` | the same, and publishes a Release with the three packages and `SHA256SUMS` |
+| `workflow_dispatch` | the same as push, on demand |
 
-Commit só de documentação não dispara nada: o filtro de `paths` existe
-para não gastar minuto com isso.
+A documentation-only commit triggers nothing: the `paths` filter exists
+so as not to spend minutes on that.
 
-## O que a CI não faz
+## What CI does not do
 
-**Não assina.** A chave do Authenticode não sai desta máquina
-([`008`](008-security.md)), e subir a chave para um segredo do GitHub
-trocaria o modelo de confiança por conveniência. A identidade do Mac
-vive num chaveiro de lá. Por isso os pacotes de Windows e Mac levam
-`unsigned` no nome:
+**It does not sign.** The Authenticode key does not leave this machine
+([`008`](008-security.md)), and uploading the key to a GitHub secret
+would trade the trust model for convenience. The Mac identity
+lives in a keychain over there. That is why the Windows and Mac packages carry
+`unsigned` in the name:
 
-- `.exe` cru chegando ao Windows é o que o Defender apaga na escrita;
-- binário ad-hoc no Mac perde a concessão de Gravação de Tela.
+- a raw `.exe` arriving on Windows is what Defender deletes on write;
+- an ad-hoc binary on the Mac loses the Screen Recording grant.
 
-**Não instala.** O `deploy.sh` continua sendo o único caminho até as
-máquinas: ele assina, troca, reinicia e confere o `/healthz`. Fazer a CI
-entregar exigiria um runner dentro da LAN ou uma porta aberta para fora,
-e a regra é tudo na LAN. A exceção da
-[`012`](012-outside-the-lan.md) é estreita e não cobre isto.
+**It does not install.** `deploy.sh` remains the only path to the
+machines: it signs, swaps, restarts and checks `/healthz`. Making CI
+deliver would require a runner inside the LAN or a port open to the outside,
+and the rule is everything on the LAN. The exception in
+[`012`](012-outside-the-lan.md) is narrow and does not cover this.
 
-A regra de nada de nuvem ([`008`](008-security.md)) vale para o sistema
-em execução: nenhum dado das máquinas passa pelo GitHub. O que sai daqui
-é o código, que já estava lá.
+The no-cloud rule ([`008`](008-security.md)) applies to the running
+system: no data from the machines goes through GitHub. What leaves here
+is the code, which was already there.
 
-**Não empacota a casca Electron.** O `gui/` não tem lógica, e o deploy
-leva só o `main.js`.
+**It does not package the Electron shell.** `gui/` has no logic, and the deploy
+only takes `main.js`.
 
-## O que é conferido
+## What is checked
 
-"Compilou" não basta ([[../.claude/rules/verify-what-arrived]]). Antes
-de empacotar, o script recusa se:
+"It compiled" is not enough ([[../.claude/rules/verify-what-arrived]]). Before
+packaging, the script refuses if:
 
-- falta algum binário da lista, ou tem menos de 100 KB;
-- o formato não é o do alvo (ELF, PE32+, Mach-O arm64);
-- o `logid` não carrega o carimbo do commit, a mesma pergunta que o
-  deploy faz ao `/healthz`, só que antes de qualquer máquina receber;
-- no Linux, `ldd` acusa biblioteca ausente;
-- no Windows, o `.exe` importa DLL que o sistema não tem (mingw, ffmpeg);
-- no Mac, o `logid` depende do brew.
+- any binary on the list is missing, or is smaller than 100 KB;
+- the format is not the target's (ELF, PE32+, Mach-O arm64);
+- `logid` does not carry the commit stamp, the same question the
+  deploy asks `/healthz`, only before any machine receives it;
+- on Linux, `ldd` reports a missing library;
+- on Windows, the `.exe` imports a DLL the system does not have (mingw, ffmpeg);
+- on the Mac, `logid` depends on brew.
 
-O tamanho e o sha256 de cada binário saem no log e no resumo do run. O
-carimbo errado foi testado de propósito: `deadbee` é recusado e nada é
-empacotado.
+The size and sha256 of each binary go to the log and the run summary. The
+wrong stamp was tested on purpose: `deadbee` is refused and nothing is
+packaged.
 
-## Decisões
+## Decisions
 
-**Windows cruzado, e não `windows-latest`.** É o mesmo caminho do
-`deploy.sh`, então o binário da CI é do mesmo tipo do que já roda lá. O
-minuto Linux também custa metade do Windows.
+**Cross-compiled Windows, not `windows-latest`.** It is the same path as
+`deploy.sh`, so the CI binary is the same kind as what already runs there. A
+Linux minute also costs half of a Windows one.
 
-**Tar, e não binário solto.** O `upload-artifact` perde o bit de
-execução. Conferido no pacote baixado: `-rwxr-xr-x`.
+**Tar, not a loose binary.** `upload-artifact` loses the execute
+bit. Checked in the downloaded package: `-rwxr-xr-x`.
 
-**Rust fixado em `1.99.1`**, a versão deste Ubuntu. Sobe de propósito,
-junto com a máquina, e não sozinho numa terça-feira.
+**Rust pinned at `1.99.1`**, the version on this Ubuntu. It goes up on purpose,
+together with the machine, and not on its own on a Tuesday.
 
-**Actions fixadas por SHA.** Tag de action é mutável, e o job de release
-tem permissão de escrita. `contents: write` existe só nele.
+**Actions pinned by SHA.** An action tag is mutable, and the release job
+has write permission. `contents: write` exists only there.
 
-**Runner `ubuntu-24.04` num Ubuntu 26.04.** Compilar no glibc mais velho
-roda no mais novo; o contrário não.
+**`ubuntu-24.04` runner on an Ubuntu 26.04.** Compiling against the older glibc
+runs on the newer one; the reverse does not.
 
-**`construir-binarios.sh` roda local.** A lista de binários não pode
-viver só num YAML que ninguém executa. `--sem-compilar` confere o que já
-está em `target/`.
+**`construir-binarios.sh` runs locally.** The binary list cannot
+live only in a YAML nobody executes. `--sem-compilar` checks what is already
+in `target/`.
 
-## Limites conhecidos
+## Known limits
 
-- **A lista de binários é duplicada** entre `deploy.sh` e
-  `construir-binarios.sh`. Binário novo entra nos dois. É o defeito que
-  já deixou o `logistream-kvm` fora de um deploy; juntar as duas listas
-  fica para quando o deploy passar a consumir os pacotes.
-- **O host e o view do Mac ligam no ffmpeg do brew.** O run usou o
-  9.0.2. O pacote só roda com o mesmo major instalado no MacBook, o que
-  não foi conferido.
-- **Os testes rodam só no Linux**, e do `logistream` só `--lib`. No Mac
-  custaria dez vezes mais por minuto.
-- **O orçamento de conversão não barra a CI.** O
-  `conversao_cabe_no_orcamento` passou no primeiro run e caiu no terceiro
-  com 12,18 ms contra o teto de 12, sem mudança no código medido: runner
-  compartilhado não é o hardware para o qual o teto foi escrito. Ele
-  segue rodando e imprimindo o número, sem decidir. Como o `check.sh`
-  também não testa o `logistream`, **hoje nada automático barra essa
-  regressão**: quem mexer na conversão roda o teste aqui.
-- **Sem runner de Mac não há release.** No teste da tag, o job ficou 15
-  minutos sem runner e foi cancelado (`The job was not acquired by
-  Runner`, com aviso de falta de capacidade em macOS arm64). Não é erro
-  nosso e não deixa log. A release espera os três, de propósito: o
-  conserto é `gh run rerun <id> --failed`, testado, e o Mac passou em
+- **The binary list is duplicated** between `deploy.sh` and
+  `construir-binarios.sh`. A new binary goes into both. It is the defect that
+  already left `logistream-kvm` out of a deploy; merging the two lists
+  is deferred until the deploy starts consuming the packages.
+- **The Mac host and view link against brew's ffmpeg.** The run used
+  9.0.2. The package only runs with the same major installed on the MacBook, which
+  was not checked.
+- **Tests run only on Linux**, and for `logistream` only `--lib`. On the Mac
+  it would cost ten times more per minute.
+- **The conversion budget does not block CI.**
+  `conversao_cabe_no_orcamento` passed on the first run and failed on the third
+  with 12.18 ms against the 12 ms ceiling, with no change in the measured code: a shared
+  runner is not the hardware the ceiling was written for. It
+  keeps running and printing the number, without deciding. Since `check.sh`
+  does not test `logistream` either, **today nothing automatic blocks this
+  regression**: whoever touches the conversion runs the test here.
+- **Without a Mac runner there is no release.** In the tag test, the job waited 15
+  minutes without a runner and was cancelled (`The job was not acquired by
+  Runner`, with a capacity shortage warning for macOS arm64). It is not our
+  error and it leaves no log. The release waits for all three, on purpose: the
+  fix is `gh run rerun <id> --failed`, tested, and the Mac passed in
   1min10.
-- **Teste em runner sem GPU não cobre captura nem NVENC.** O que depende
-  de sessão gráfica continua sendo verificado nas máquinas.
+- **Tests on a runner without a GPU do not cover capture or NVENC.** Whatever depends
+  on a graphical session is still verified on the machines.
 
-## Publicar uma versão
+## Publishing a version
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-A tag precisa começar com `v`. Testado de ponta a ponta com uma tag
-descartável: quatro anexos na release, conferidos pelo próprio job e de
-novo pelo `sha256sum -c` no pacote baixado.
+The tag must start with `v`. Tested end to end with a throwaway
+tag: four attachments on the release, checked by the job itself and
+again by `sha256sum -c` on the downloaded package.
 
-## Custo
+## Cost
 
-O repo é privado no plano Free da organização: 2.000 minutos por mês, e
-o minuto de macOS conta **dez vezes**. Cada job é arredondado para cima.
+The repo is private on the organization's Free plan: 2,000 minutes per month, and
+a macOS minute counts **ten times**. Each job is rounded up.
 
-Medido no primeiro run, sem cache (05/11):
+Measured on the first run, without cache (2026-11-05):
 
-| Job | Duração | Minutos cobrados |
+| Job | Duration | Minutes billed |
 |---|---|---|
-| linux, com 116 testes | 5min09 | 6 |
+| linux, with 116 tests | 5min09 | 6 |
 | windows | 3min45 | 4 |
 | mac | 2min24 | 3 × 10 = 30 |
 | **total** | | **40** |
 
-Com cache, medido no run de `37c4983`:
+With cache, measured on the run of `37c4983`:
 
-| Job | Duração | Minutos cobrados |
+| Job | Duration | Minutes billed |
 |---|---|---|
-| linux, com testes | 5min30 | 6 |
+| linux, with tests | 5min30 | 6 |
 | windows | 1min10 | 2 |
 | mac | 1min35 | 2 × 10 = 20 |
 | **total** | | **28** |
 
-São de 50 a 70 pushes de código por mês. O job do Linux quase não ganha
-com o cache: os testes recompilam em release. O Mac é mais de dois terços
-da conta. Se o orçamento apertar, o primeiro corte é tirá-lo do
-push e deixá-lo em tag e `workflow_dispatch`.
+That is 50 to 70 code pushes per month. The Linux job barely gains
+from the cache: the tests recompile in release. The Mac is more than two thirds
+of the bill. If the budget gets tight, the first cut is taking it off
+push and leaving it on tag and `workflow_dispatch`.
 
-## Veja também
+## See also
 
-- [[008-security]] — por que a chave não sobe
-- [[../.claude/skills/deploy]] — o caminho até as máquinas
+- [[008-security]] — why the key is not uploaded
+- [[../.claude/skills/deploy]] — the path to the machines
 - [[../.claude/rules/verify-what-arrived]]

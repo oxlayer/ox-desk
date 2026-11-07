@@ -1,75 +1,77 @@
-# 009 — Gerenciador de tarefas
+# 009 — Task manager
 
-Pedido do usuário: *"ver estatísticas, uso e conseguir finalizar tarefa
-também do outro pc"*.
+The user's request: *"see statistics, usage and be able to end a task on
+the other PC too"*.
 
-`GET /api/processes?host=<nome>` e `POST /api/processes/kill`, mais o
-painel **Tarefas** no dashboard. Funciona para os três hosts, local ou
-por SSH.
+`GET /api/processes?host=<name>` and `POST /api/processes/kill`, plus the
+**Tarefas** (Tasks) panel in the dashboard. Works for all three hosts,
+local or over SSH.
 
-## Um comando por SO, escolhido pelo SO do *alvo*
+## One command per OS, chosen by the *target's* OS
 
-Não existe comando que os três entendam. A escolha sai de
-`HostCfg::os` — não do SO onde o daemon roda. Rodar `ps` contra o
-Windows, ou `Get-Process` contra o Ubuntu, falha **calado**: o painel
-ficaria vazio sem dizer por quê.
+There is no command all three understand. The choice comes from
+`HostCfg::os` — not from the OS where the daemon runs. Running `ps`
+against Windows, or `Get-Process` against Ubuntu, fails **silently**: the
+panel would be empty without saying why.
 
-| alvo | comando |
+| target | command |
 |---|---|
 | Linux / macOS | `ps -eo pid=,pcpu=,rss=,comm= \| sort -k2 -rn \| head -n 60` |
 | Windows | `Get-Process \| Sort CPU -Desc \| Select -First 60 … \| ConvertTo-Json` |
 
-A ordenação sai no `sort` e não na flag do `ps` porque elas divergem:
-Linux tem `--sort=-pcpu`, macOS tem `-r`.
+Sorting is done in `sort` and not with a `ps` flag because the flags
+diverge: Linux has `--sort=-pcpu`, macOS has `-r`.
 
-## `cpu` significa coisas diferentes, e isso é declarado
+## `cpu` means different things, and that is declared
 
-No Unix o `ps` dá **percentual instantâneo**. No Windows o `Get-Process`
-dá **segundos acumulados** de CPU desde que o processo subiu. São
-unidades diferentes e leituras diferentes.
+On Unix, `ps` gives an **instantaneous percentage**. On Windows,
+`Get-Process` gives **accumulated seconds** of CPU since the process
+started. They are different units and different readings.
 
-Converter exigiria duas amostras e não vale o custo. Então o JSON traz
-`cpu_kind` (`pct` ou `seconds`) e a UI troca o cabeçalho da coluna entre
-`cpu %` e `cpu s`. Mostrar `24715` numa coluna `%` seria mentira
-plausível — a pior espécie, porque ninguém desconfia.
+Converting would require two samples and is not worth the cost. So the
+JSON carries `cpu_kind` (`pct` or `seconds`) and the UI switches the
+column header between `cpu %` and `cpu s`. Showing `24715` in a `%`
+column would be a plausible lie — the worst kind, because nobody
+suspects it.
 
-## Encerrar pede confirmação, em dois passos
+## Ending a process asks for confirmation, in two steps
 
-Mesma postura do `/api/focus` e do `set-host`: matar processo na máquina
-de alguém não sai de um clique distraído, e não tem desfazer. O corpo
-exige `confirm: true`, e a UI arma antes de agir — o primeiro clique
-troca o botão por `encerrar | forçado`, o segundo age.
+Same stance as `/api/focus` and `set-host`: killing a process on someone's
+machine does not come from a distracted click, and has no undo. The body
+requires `confirm: true`, and the UI arms before acting — the first click
+swaps the button for `encerrar | forçado` (end | forced), the second acts.
 
-`pid` 0 e 1 são recusados no servidor.
+`pid` 0 and 1 are refused on the server.
 
-No Windows o `taskkill` leva `/T` (a árvore): fechar só o pai deixaria
-filho órfão rodando, e quem clicou esperava que aquilo sumisse.
+On Windows, `taskkill` gets `/T` (the tree): closing only the parent
+would leave an orphan child running, and whoever clicked expected it to
+go away.
 
-## `remote.rs`: a terceira vez virou função
+## `remote.rs`: the third time became a function
 
-O `probe::ssh_detail` e o `agent` já montavam `ssh` com as mesmas quatro
-opções mais o contorno de resolução ([`002`](002-ssh.md)). Este módulo
-seria a terceira cópia — e a quarta seria onde alguém esqueceria o
-`ssh_addr_opts` e quebraria só no Windows, que é exatamente como aquele
-bug apareceu da primeira vez.
+`probe::ssh_detail` and `agent` were already building `ssh` with the same
+four options plus the resolution workaround ([`002`](002-ssh.md)). This
+module would have been the third copy — and the fourth would be where
+someone forgot `ssh_addr_opts` and broke only on Windows, which is
+exactly how that bug showed up the first time.
 
-`remote::run(host, cmd, timeout)` resolve local contra remoto, escolhe
-`sh -c` ou `powershell -Command`, e filtra o aviso de post-quantum que o
-OpenSSH do Windows cospe em stderr.
+`remote::run(host, cmd, timeout)` resolves local versus remote, chooses
+`sh -c` or `powershell -Command`, and filters the post-quantum warning
+that Windows OpenSSH spits on stderr.
 
-## Verificado
+## Verified
 
-Nos três, pelo painel:
+On all three, through the panel:
 
-- `ubuntu-host` — `local`, `cpu %`, 60 processos
-- `windows-host` — `ssh`, `cpu s`, 60 processos
-- `mac-host` — `ssh`, `cpu %`, 60 processos
+- `ubuntu-host` — `local`, `cpu %`, 60 processes
+- `windows-host` — `ssh`, `cpu s`, 60 processes
+- `mac-host` — `ssh`, `cpu %`, 60 processes
 
-E a confirmação em dois passos acompanha o pid certo mesmo quando a
-lista reordena entre um clique e outro.
+And the two-step confirmation follows the right pid even when the list
+reorders between one click and the next.
 
-## Falta
+## Missing
 
-- Totais da máquina (CPU agregada, memória) no cabeçalho do painel. O
-  `/api/status` já traz RAM livre/total; falta costurar.
-- Filtro por nome.
+- Machine totals (aggregate CPU, memory) in the panel header.
+  `/api/status` already carries free/total RAM; it still needs stitching.
+- Filter by name.

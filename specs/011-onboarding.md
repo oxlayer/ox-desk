@@ -1,138 +1,141 @@
-# 011 — Configurar uma máquina
+# 011 — Setting up a machine
 
-> Estado: implementado (Ubuntu e Windows medidos; macOS escrito e **não
-> verificado** — o MacBook estava fora do ar no dia).
+> Status: implemented (Ubuntu and Windows measured; macOS written and
+> **not verified** — the MacBook was offline that day).
 
-## O problema
+## The problem
 
-Montar uma máquina deste conjunto é uma lista de oito a onze coisas,
-diferente em cada sistema. O que torna a lista cara não é o tamanho: é
-que **nenhum dos itens dá erro claro quando falta**.
+Setting up a machine in this set is a list of eight to eleven things,
+different on each system. What makes the list expensive is not its
+length: it is that **none of the items gives a clear error when it is
+missing**.
 
-| O que falta | O que a pessoa vê |
+| What is missing | What the person sees |
 |---|---|
-| ACL no `/dev/hidraw` | o painel não acha dispositivo nenhum |
-| Gravação de Tela (macOS) | o log para em `abrindo a tela 1` e a última linha fala de formato de pixel |
-| Acessibilidade (macOS) | a tela aparece e o ponteiro não anda |
-| Tarefa sem `/IT` (Windows) | `E_ACCESSDENIED` ou captura preta |
-| Chave em `~/.ssh` em vez de `administrators_authorized_keys` | `Permission denied`, sem pista |
-| Binário ad-hoc no Mac | tudo funciona até o próximo deploy, e aí para |
+| ACL on `/dev/hidraw` | the panel finds no device at all |
+| Screen Recording (macOS) | the log stops at `abrindo a tela 1` and the last line talks about pixel format |
+| Accessibility (macOS) | the screen appears and the pointer does not move |
+| Task without `/IT` (Windows) | `E_ACCESSDENIED` or a black capture |
+| Key in `~/.ssh` instead of `administrators_authorized_keys` | `Permission denied`, no clue |
+| Ad-hoc binary on the Mac | everything works until the next deploy, and then stops |
 
-Todos os sintomas acima chegam como "não funcionou". O `status.sh` já
-respondia parte disso, mas só no Linux, só no terminal, e só para quem
-sabe que ele existe.
+All the symptoms above arrive as "it didn't work". `status.sh` already
+answered part of this, but only on Linux, only in the terminal, and only
+for those who know it exists.
 
-## A forma
+## The shape
 
-Uma página servida pelo próprio daemon em **`/setup`**, que mede o que
-falta nesta máquina e arruma o que dá para arrumar. A casca Electron a
-abre em tela cheia na partida **quando falta algo essencial**, e a
-bandeja tem o item "Configurar esta máquina".
+A page served by the daemon itself at **`/setup`**, which measures what
+is missing on this machine and fixes what can be fixed. The Electron
+shell opens it full screen at startup **when something essential is
+missing**, and the tray has the item "Configurar esta máquina"
+(Set up this machine).
 
-Roda **de dentro do daemon**, e isso é metade do desenho: o daemon vive
-na sessão gráfica (LaunchAgent no Mac, tarefa `/IT` no Windows, unit de
-usuário no Linux), então ele enxerga o que uma sessão SSH não enxerga.
-Medir por SSH daria "não" para coisas que estão certas — ver
+It runs **from inside the daemon**, and that is half the design: the
+daemon lives in the graphical session (LaunchAgent on the Mac, `/IT` task
+on Windows, user unit on Linux), so it sees what an SSH session does not.
+Measuring over SSH would give "no" for things that are right — see
 [[../.claude/rules/graphical-session]].
 
-## As três regras
+## The three rules
 
-### 1. Não medir é um estado, e ele bloqueia
+### 1. Not measured is a state, and it blocks
 
-`Estado::Erro` existe ao lado de `Ok`, `Falta` e `Fora`, e pesa igual a
-`Falta` no resumo. Um passo que o wizard não conseguiu medir **não é um
-passo aprovado**. Um passo que ninguém mediu também não: `estado_de`
-devolve `Erro` para id ausente, e há teste para isso.
+`Estado::Erro` exists alongside `Ok`, `Falta` and `Fora`, and weighs the
+same as `Falta` in the summary. A step the wizard could not measure **is
+not an approved step**. A step nobody measured is not either: `estado_de`
+returns `Erro` for a missing id, and there is a test for that.
 
-Essa é a mesma família de defeito do `backfill_gate` que não gateava e
-do `catch` que engolia o `MODULE_NOT_FOUND`: o no-op silencioso parece
-sucesso.
+This is the same family of defect as the `backfill_gate` that did not
+gate and the `catch` that swallowed `MODULE_NOT_FOUND`: the silent no-op
+looks like success.
 
-### 2. Arrumar não é ter arrumado
+### 2. Fixing is not having fixed
 
-Todo reparo **mede de novo** e devolve o que a medição disse, não o que
-o comando devolveu. O `assinar.sh` do Mac é deliberadamente não-fatal; o
-`schtasks` devolve 0 criando tarefa sem token interativo; o `electron`
-sobe e morre em 200 ms. Nos três casos o código de saída mente e a
-medição não ([[../.claude/rules/verify-what-arrived]]).
+Every repair **measures again** and returns what the measurement said,
+not what the command returned. The Mac's `assinar.sh` is deliberately
+non-fatal; `schtasks` returns 0 while creating a task without an
+interactive token; `electron` starts and dies within 200 ms. In all three
+cases the exit code lies and the measurement does not
+([[../.claude/rules/verify-what-arrived]]).
 
-### 3. Quem precisa de humano diz que precisa
+### 3. Whatever needs a human says so
 
-Quatro tipos de reparo, e a diferença é quem age:
+Four kinds of repair, and the difference is who acts:
 
-| Tipo | Quem faz | Exemplo |
+| Kind | Who does it | Example |
 |---|---|---|
-| `sozinho` | o daemon, agora | criar a tarefa agendada, habilitar a unit |
-| `sudo` | a pessoa, em qualquer terminal | instalar a regra de udev |
-| `clique` | a pessoa, **na frente da máquina** | TCC do macOS |
-| `receita` | a pessoa, com a receita escrita | rodar o deploy |
+| `sozinho` | the daemon, now | create the scheduled task, enable the unit |
+| `sudo` | the person, in any terminal | install the udev rule |
+| `clique` | the person, **in front of the machine** | macOS TCC |
+| `receita` | the person, with the written recipe | run the deploy |
 
-Misturar `sudo` com `clique` seria prometer automação que não existe: o
-primeiro resolve por SSH, o segundo exige consentimento humano numa
-janela do sistema.
+Mixing `sudo` with `clique` would promise automation that does not exist:
+the first can be solved over SSH, the second requires human consent in a
+system window.
 
-## Onde fica o quê
+## What lives where
 
-| Arquivo | Papel |
+| File | Role |
 |---|---|
-| `logid/src/setup.rs` | catálogo dos três sistemas + decisão. **Puro**, com testes |
-| `logid/src/setup_comum.rs` | medições iguais nas três (config, pares, clipboard) |
-| `logid/src/setup_linux.rs` | binários, unit, udev, Wayland, NVENC, bandeja |
-| `logid/src/setup_mac.rs` | launchd, identidade, assinatura, TCC, Login Remoto |
-| `logid/src/setup_win.rs` | tarefas `/IT`, sshd, chave de admin, protetor de tela |
-| `logid/static/setup.html` | a página |
-| `gui/check-setup.js` | teste de fumaça da página contra a API |
+| `logid/src/setup.rs` | catalog of the three systems + decision. **Pure**, with tests |
+| `logid/src/setup_comum.rs` | measurements common to all three (config, peers, clipboard) |
+| `logid/src/setup_linux.rs` | binaries, unit, udev, Wayland, NVENC, tray |
+| `logid/src/setup_mac.rs` | launchd, identity, signing, TCC, Remote Login |
+| `logid/src/setup_win.rs` | `/IT` tasks, sshd, admin key, screen saver |
+| `logid/static/setup.html` | the page |
+| `gui/check-setup.js` | smoke test of the page against the API |
 
-O catálogo é puro de propósito: os testes rodam no laptop de
-desenvolvimento cobrindo os **três** sistemas, não só o que está
-compilando. É o que pega dependência pendurada e passo fora de ordem
-antes de existir uma máquina para testar.
+The catalog is pure on purpose: the tests run on the development laptop
+covering **all three** systems, not just the one being compiled. That is
+what catches a dangling dependency or an out-of-order step before there
+is a machine to test on.
 
-## O que o catálogo garante (testado)
+## What the catalog guarantees (tested)
 
-- ids únicos em cada sistema
-- toda dependência **existe** e **vem antes** no catálogo — senão o
-  passo espera para sempre, ou a tela mostra "esperando" acima da coisa
-  esperada
-- todo passo diz por que existe (`porque` com mais de 40 caracteres).
-  Um passo sem motivo vira clique automático
-- `Fora` (não se aplica) não conta nem bloqueia; `Erro` bloqueia
+- unique ids on each system
+- every dependency **exists** and **comes earlier** in the catalog —
+  otherwise the step waits forever, or the screen shows "esperando"
+  (waiting) above the thing being waited for
+- every step says why it exists (`porque` with more than 40 characters).
+  A step without a reason becomes an automatic click
+- `Fora` (does not apply) neither counts nor blocks; `Erro` blocks
 
-## A dependência que mais importa
+## The dependency that matters most
 
-No macOS, `gravacao-de-tela` e `acessibilidade` **dependem de**
-`assinatura`. Não é zelo de ordem: com binário ad-hoc a amarração do TCC
-é pelo cdhash, que muda a cada compilação. Conceder antes de assinar
-desperdiça a concessão, e só o dono da máquina pode dar de volta, à mão,
-na interface. Isso já aconteceu duas vezes aqui — ver
-[[../.claude/rules/coordinate-spaces]] e o `mac/criar-identidade.sh`.
+On macOS, `gravacao-de-tela` and `acessibilidade` **depend on**
+`assinatura`. This is not fussiness about order: with an ad-hoc binary
+the TCC binding is by cdhash, which changes with every build. Granting
+before signing wastes the grant, and only the machine's owner can give
+it back, by hand, in the UI. This has already happened twice here — see
+[[../.claude/rules/coordinate-spaces]] and `mac/criar-identidade.sh`.
 
-## O que o wizard NÃO faz
+## What the wizard does NOT do
 
-- **Não instala binário.** Compilar leva minutos e exige cargo; o
-  caminho é `install.sh` ou `scripts/deploy.sh`. O wizard diz qual
-  rodar.
-- **Não roda sudo.** O daemon é serviço de usuário. Pedir senha de root
-  numa página web local seria ensinar um hábito ruim por economia de
-  dois comandos.
-- **Não mede sozinho em laço.** O passo `pares` abre SSH para cada
-  máquina; um temporizador de 10 s transformaria uma pergunta mensal
-  numa tempestade de conexões. A página mede ao abrir, depois de cada
-  reparo, e quando a pessoa pede.
+- **It does not install binaries.** Compiling takes minutes and requires
+  cargo; the path is `install.sh` or `scripts/deploy.sh`. The wizard says
+  which one to run.
+- **It does not run sudo.** The daemon is a user service. Asking for the
+  root password in a local web page would teach a bad habit to save two
+  commands.
+- **It does not measure on its own in a loop.** The `pares` step opens
+  SSH to each machine; a 10 s timer would turn a monthly question into a
+  storm of connections. The page measures on open, after each repair,
+  and when the person asks.
 
-## Pendente
+## Pending
 
-- A parte do macOS está escrita e **não foi executada**: o MacBook não
-  resolvia por mDNS no dia. O que falta conferir lá é `--conferir`
-  compilando, o `launchctl print` como medida, e se o diálogo do TCC
-  aparece quando disparado pelo daemon (que roda na sessão gráfica,
-  então deveria).
-- `logid/udev/70-logid-hidraw.rules` entrou junto e nunca foi
-  instalado em máquina nenhuma: aqui quem concede é a regra do pacote
-  do Solaar, que continua em `/usr/lib` mesmo com o Solaar removido.
+- The macOS part is written and **has not been run**: the MacBook did
+  not resolve via mDNS that day. What remains to check there is
+  `--conferir` compiling, `launchctl print` as the measurement, and
+  whether the TCC dialog appears when triggered by the daemon (which
+  runs in the graphical session, so it should).
+- `logid/udev/70-logid-hidraw.rules` went in alongside and was never
+  installed on any machine: here the grant comes from the Solaar
+  package's rule, which remains in `/usr/lib` even with Solaar removed.
 
-## Veja também
+## See also
 
-- [[001-control-plane]] — o daemon que serve esta página
-- [[008-security]] — por que a API só escuta em 127.0.0.1
-- [[../.claude/skills/configure-a-machine]] — a receita de uso
+- [[001-control-plane]] — the daemon that serves this page
+- [[008-security]] — why the API only listens on 127.0.0.1
+- [[../.claude/skills/configure-a-machine]] — the usage recipe

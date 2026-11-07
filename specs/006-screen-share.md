@@ -1,141 +1,145 @@
-# 006 — Compartilhar tela
+# 006 — Screen sharing
 
-## Decisão: integrar, nunca reimplementar
+## Decision: integrate, never reimplement
 
-Construir um RustDesk significa captura (portal ScreenCast no Wayland,
-DXGI no Windows), encode H.264/AV1 com hardware, transporte com tuning
-de latência, travessia de NAT, injeção de input e a camada de cripto.
-Escopo de produto, com anos de trabalho — e três projetos abertos já
-resolveram. O `logid` orquestra **ciclo de vida e credencial**, não
-protocolo.
+Building a RustDesk means capture (ScreenCast portal on Wayland, DXGI on
+Windows), hardware H.264/AV1 encoding, latency-tuned transport, NAT
+traversal, input injection and the crypto layer. Product-sized scope,
+years of work — and three open projects have already solved it. `logid`
+orchestrates **lifecycle and credentials**, not protocol.
 
-## O que já existe nesta LAN
+## What already exists on this LAN
 
-### Ubuntu visto do Windows — já pronto, zero software
+### Ubuntu seen from Windows — already done, zero software
 
-O `gnome-remote-desktop` 50.2 **está instalado e rodando** aqui com RDP
-**habilitado** na 3389, certificado TLS próprio e credenciais
-configuradas. Verificado: escutando, e o Windows alcança
+`gnome-remote-desktop` 50.2 **is installed and running** here with RDP
+**enabled** on 3389, its own TLS certificate and credentials configured.
+Verified: listening, and Windows reaches it
 (`Test-NetConnection … -Port 3389` → `True`).
 
-Do Windows: `mstsc` → `ubuntu-host.local`. Cliente da Microsoft.
+From Windows: `mstsc` → `ubuntu-host.local`. Microsoft's client.
 
 ```bash
-grdctl status          # estado, porta, fingerprint
-grdctl rdp disable     # desligar
+grdctl status          # state, port, fingerprint
+grdctl rdp disable     # turn off
 ```
 
-> ⚠️ É servidor RDP com senha aberto para toda a LAN, na máquina
-> principal. O `logid` deve **mostrar isso como risco** no painel, não
-> como feature silenciosa.
+> ⚠️ It is a password-protected RDP server open to the whole LAN, on the
+> main machine. `logid` should **show this as a risk** in the panel, not
+> as a silent feature.
 
-### Windows visto do Ubuntu
+### Windows seen from Ubuntu
 
-Windows 10 **Pro**, então tem RDP — só desligado (3389 fechada).
-Ligando, `remmina` ou `freerdp3-x11` resolvem. RDP toma a sessão local:
-não serve para uso simultâneo nem para jogo.
+Windows 10 **Pro**, so it has RDP — just turned off (3389 closed). Once
+on, `remmina` or `freerdp3-x11` do the job. RDP takes over the local
+session: it is no good for simultaneous use or for gaming.
 
-### Jogo / baixa latência
+### Gaming / low latency
 
-**Sunshine** (host no Windows) + **Moonlight** (cliente aqui). Encode
-por hardware, latência uma ordem de magnitude abaixo de RDP ou RustDesk.
+**Sunshine** (host on Windows) + **Moonlight** (client here). Hardware
+encoding, latency an order of magnitude below RDP or RustDesk.
 
-### Fora da LAN
+### Outside the LAN
 
-**RustDesk self-hosted** (`hbbs`/`hbbr`). "Próprio e seguro" sem
-escrever nada. Em LAN, nem precisa de relay.
+**Self-hosted RustDesk** (`hbbs`/`hbbr`). "Our own and secure" without
+writing anything. On the LAN it does not even need a relay.
 
-## O que o `logid` faz
+## What `logid` does
 
-| Faz | Não faz |
+| Does | Does not |
 |---|---|
-| mostrar quais rotas existem e quais estão ligadas | capturar tela |
-| ligar/desligar cada servidor | codificar vídeo |
-| guardar credencial e lembrar fingerprint | transportar frames |
-| escolher a rota pelo uso (ver abaixo) | injetar input remoto |
+| show which routes exist and which are on | capture the screen |
+| turn each server on/off | encode video |
+| store credentials and remember fingerprints | transport frames |
+| choose the route by use (see below) | inject remote input |
 
 ```
 POST /api/hosts/{id}/screen   {"intent": "work" | "game" | "glance"}
 ```
 
-- `work` → RDP (sessão própria, texto nítido)
-- `game` → Sunshine/Moonlight (latência)
-- `glance` → RustDesk (só olhar, sem tomar a sessão)
+- `work` → RDP (own session, crisp text)
+- `game` → Sunshine/Moonlight (latency)
+- `glance` → RustDesk (just look, without taking over the session)
 
-Mapear intenção para ferramenta é a parte que falta no mundo. Escolher
-entre três clientes com nomes técnicos é o que torna isso irritante hoje.
+Mapping intent to tool is the part missing in the world. Choosing between
+three clients with technical names is what makes this irritating today.
 
-## Wayland: a ressalva
+## Wayland: the caveat
 
-Captura no Wayland passa pelo portal `ScreenCast`, mesma família de
-problemas que já batemos (`InputCapture`, `libportal` 0.9.1 velho
-demais para o clipboard do Deskflow). Antes de prometer qualquer rota
-que capture **a tela do Ubuntu**, testar no 26.04 — não confiar em doc.
+Capture on Wayland goes through the `ScreenCast` portal, the same family
+of problems we have already hit (`InputCapture`, `libportal` 0.9.1 too
+old for the Deskflow clipboard). Before promising any route that
+captures **the Ubuntu screen**, test it on 26.04 — do not trust the docs.
 
 ---
 
-## Implementado (03/11) — nativo de cada SO, com a GUI despachando
+## Implemented (2026-11-03) — native to each OS, with the GUI dispatching
 
-**Decisão do usuário**, posta contra a alternativa de um RustDesk
-auto-hospedado. O RustDesk tinha dois argumentos reais a favor — um
-cliente igual nos três SOs, e só conexão de **saída**, que importaria num
-Mac com MDM — e perdeu porque é uma dependência externa grande e um relay
-a manter, enquanto o nativo não sobe daemon novo em lugar nenhum.
+**The user's decision**, made against the alternative of a self-hosted
+RustDesk. RustDesk had two real arguments in its favor — the same client
+on all three OSes, and only **outbound** connections, which would matter
+on a Mac with MDM — and lost because it is a large external dependency
+and a relay to maintain, while the native route brings up no new daemon
+anywhere.
 
-Cada máquina já sabe ser controlada, por um protocolo diferente. Não
-existe um que os três sirvam de fábrica:
+Each machine already knows how to be controlled, through a different
+protocol. There is no single one all three serve out of the box:
 
-| host | protocolo | servidor | estado |
+| host | protocol | server | status |
 |---|---|---|---|
-| Ubuntu | RDP | `gnome-remote-desktop` (daemon de **usuário**) | já ativo, `*:3389`, TLS e credenciais postos |
-| Windows | RDP | `TermService` nativo | ligado em 03/11, NLA obrigatório, firewall só na LAN |
-| macOS | VNC | Compartilhamento de Tela | a habilitar pelo usuário |
+| Ubuntu | RDP | `gnome-remote-desktop` (**user** daemon) | already active, `*:3389`, TLS and credentials set |
+| Windows | RDP | native `TermService` | turned on 2026-11-03, NLA mandatory, firewall LAN-only |
+| macOS | VNC | Screen Sharing | to be enabled by the user |
 
-### [`logid/src/screen.rs`](../logid/src/screen.rs) não implementa protocolo
+### [`logid/src/screen.rs`](../logid/src/screen.rs) does not implement a protocol
 
-Ele responde duas perguntas — *a tela daquele host está alcançável?* e
-*existe cliente aqui para falar com ela?* — e, a pedido, lança o cliente.
-Vídeo, input e TLS são dos programas que já existem.
+It answers two questions — *is that host's screen reachable?* and *is
+there a client here to talk to it?* — and, on request, launches the
+client. Video, input and TLS belong to the programs that already exist.
 
-Por isso o `GET /api/screen` é separado do `POST`: a UI precisa saber se o
-botão vai funcionar **antes** de a pessoa clicar. Um botão que abre nada é
-pior que um botão desabilitado com o motivo escrito do lado — e o motivo
-é específico (*"sem cliente rdp instalado aqui (procurei: …)"*,
-*"3389 não respondeu"*), não um "indisponível".
+That is why `GET /api/screen` is separate from `POST`: the UI needs to
+know whether the button will work **before** the person clicks. A button
+that opens nothing is worse than a disabled button with the reason
+written next to it — and the reason is specific (*"sem cliente rdp
+instalado aqui (procurei: …)"* — no rdp client installed here (looked
+for: …), *"3389 não respondeu"* — 3389 did not respond), not an
+"unavailable".
 
-A tabela de clientes por plataforma vive em `sys::screen_clients`, em
-ordem de preferência. No Linux o `gnome-connections` vem primeiro porque
-fala **RDP e VNC**: um app cobre o Windows e o Mac, em vez de dois
-clientes com duas UIs.
+The per-platform client table lives in `sys::screen_clients`, in order of
+preference. On Linux `gnome-connections` comes first because it speaks
+**RDP and VNC**: one app covers Windows and the Mac, instead of two
+clients with two UIs.
 
-> `{u_flag}` no template existe porque o freerdp quer `/u:nome` como **um**
-> argumento, e quando não há usuário o argumento tem de *desaparecer* —
-> passar `/u:` vazio faz ele pedir usuário em prompt e travar sem terminal.
-> Travado por `template_de_usuario_some_quando_nao_ha_usuario`.
+> `{u_flag}` exists in the template because freerdp wants `/u:name` as
+> **one** argument, and when there is no user the argument has to
+> *disappear* — passing an empty `/u:` makes it prompt for a user and
+> hang without a terminal. Locked by
+> `template_de_usuario_some_quando_nao_ha_usuario`.
 
-### O Windows foi ligado com escopo, não aberto
+### Windows was turned on with scope, not opened up
 
-`fDenyTSConnections = 0` e as regras de firewall do modo de usuário
-habilitadas — mas com `-RemoteAddress 192.168.1.0/24` e só nos perfis
-`Private,Domain`. A regra vem de fábrica com `Any` nos dois, o que abriria
-RDP em **qualquer rede** a que o notebook se conectasse. `UserAuthentication = 1`
-(NLA) para autenticar antes de pintar tela de login. A regra de *sombra*
-(assistir sessão de outro) fica desligada.
+`fDenyTSConnections = 0` and the user-mode firewall rules enabled — but
+with `-RemoteAddress 192.168.1.0/24` and only on the `Private,Domain`
+profiles. The rule ships with `Any` in both, which would open RDP on
+**any network** the laptop connected to. `UserAuthentication = 1` (NLA)
+to authenticate before painting a login screen. The *shadow* rule
+(watching someone else's session) stays off.
 
-### Verificado
+### Verified
 
-- **Windows → Ubuntu: pronto.** `mstsc.exe /v:ubuntu-host.local:3389`,
-  alvo respondendo em 0,4 ms. Não disparei: abrir RDP contra o
-  `gnome-remote-desktop` de usuário espelha a sessão que a pessoa está
-  usando, e esse clique é dela.
-- **Ubuntu → Windows: 3389 já abre** daqui; falta só o cliente, que entra
-  pelo [`scripts/enable-sshd.sh`](../scripts/enable-sshd.sh) junto do
+- **Windows → Ubuntu: ready.** `mstsc.exe /v:ubuntu-host.local:3389`,
+  target responding in 0.4 ms. I did not trigger it: opening RDP against
+  the user `gnome-remote-desktop` mirrors the session the person is
+  using, and that click is theirs.
+- **Ubuntu → Windows: 3389 already opens** from here; only the client is
+  missing, which comes in via
+  [`scripts/enable-sshd.sh`](../scripts/enable-sshd.sh) together with
   `openssh-server`.
-- **Mac**: nos três hosts da config com `expect = "any"`, acende sozinho
-  quando o Compartilhamento de Tela for habilitado.
+- **Mac**: among the three hosts in the config with `expect = "any"`, it
+  lights up on its own once Screen Sharing is enabled.
 
-### Falta
+### Missing
 
-- Cliente VNC no Windows (nada vem de fábrica) para alcançar o Mac.
-- Cliente RDP no Mac — `brew install --cask windows-app`.
-- Atalho na bandeja do Electron, hoje só no painel.
+- A VNC client on Windows (nothing ships out of the box) to reach the Mac.
+- An RDP client on the Mac — `brew install --cask windows-app`.
+- A shortcut in the Electron tray, today only in the panel.

@@ -1,144 +1,145 @@
 # 004 — Clipboard
 
-## O que já funciona
+## What already works
 
-GSConnect ↔ KDE Connect, pareados e com TLS. Verificado:
+GSConnect ↔ KDE Connect, paired and with TLS. Verified:
 `Paired: true`, `Connected: true`,
 `EncryptionInfo: 'Verification key: 4BCF0AF8'`.
 
-O clipboard do **Deskflow não funciona no Wayland** aqui: precisa de
-`libportal` ≥ 0.10 e o Ubuntu 26.04 traz 0.9.1. Por isso o transporte é
-o KDE Connect.
+The **Deskflow clipboard does not work on Wayland** here: it needs
+`libportal` ≥ 0.10 and Ubuntu 26.04 ships 0.9.1. That is why the
+transport is KDE Connect.
 
-## Política é o produto, protocolo não
+## Policy is the product, protocol is not
 
-O protocolo está resolvido. O que falta é **política**, e é aí que o
-nosso sistema agrega:
+The protocol is solved. What is missing is **policy**, and that is where
+our system adds value:
 
-| Chave GSConnect | Valor aqui | Razão |
+| GSConnect key | Value here | Reason |
 |---|---|---|
-| `receive-content` | `true` | clipboard do Windows chega aqui |
-| `send-content` | `false` | o clipboard **daqui não sai** |
+| `receive-content` | `true` | the Windows clipboard arrives here |
+| `send-content` | `false` | the clipboard **from here does not leave** |
 
-Assimétrico de propósito: o Bitwarden roda nesta máquina. Sync
-automático nas duas direções espelharia senha copiada para a outra
-máquina, onde fica até ser sobrescrita.
+Asymmetric on purpose: Bitwarden runs on this machine. Automatic sync in
+both directions would mirror a copied password to the other machine,
+where it stays until overwritten.
 
-### O que queremos além disso
+### What we want beyond that
 
-- **Lista de bloqueio por app de origem.** Se o foco estava no
-  Bitwarden, não propagar — nem com sync ligado. É a política que o
-  KDE Connect não tem.
-- **TTL.** Clipboard recebido expira em N segundos.
-- **Push manual explícito** sempre disponível, independente do auto.
-- **Histórico local opcional**, nunca sincronizado.
+- **Blocklist by source app.** If focus was on Bitwarden, do not
+  propagate — not even with sync on. This is the policy KDE Connect
+  lacks.
+- **TTL.** A received clipboard expires after N seconds.
+- **Explicit manual push** always available, independent of auto.
+- **Optional local history**, never synchronized.
 
-## Armadilhas registradas
+## Recorded traps
 
-**`gsettings set` não persiste** nessas chaves: reportava `true` no
-`get` enquanto `dconf read` voltava vazio e `clipboard/` não aparecia
-em `dconf list`. Sem explicação limpa. Use `dconf write` e confira com
-`dconf read`.
+**`gsettings set` does not persist** on these keys: it reported `true`
+on `get` while `dconf read` came back empty and `clipboard/` did not
+appear in `dconf list`. No clean explanation. Use `dconf write` and check
+with `dconf read`.
 
-**Testar por SSH não funciona.** `Set-Clipboard` via SSH escreve num
-clipboard que o `kdeconnectd` da sessão interativa não vê — e o
-`Get-Clipboard` da mesma sessão SSH devolve o valor, o que deixa o teste
-enganosamente verde. Teste de clipboard tem que rodar **no agente**,
-dentro da sessão gráfica.
+**Testing over SSH does not work.** `Set-Clipboard` over SSH writes to a
+clipboard that the interactive session's `kdeconnectd` does not see —
+and `Get-Clipboard` in the same SSH session returns the value, which
+makes the test deceptively green. Clipboard tests have to run **in the
+agent**, inside the graphical session.
 
-**Firewall.** O instalador do KDE Connect **não cria regra** no
-Windows. Ele escutava 1716 em TCP/UDP e `Get-NetFirewallRule -DisplayName
-"*KDE*"` não devolvia nada. Regras 1716-1764 TCP+UDP são parte do
-bootstrap ([`002`](002-ssh.md)).
+**Firewall.** The KDE Connect installer **does not create a rule** on
+Windows. It was listening on 1716 TCP/UDP and `Get-NetFirewallRule
+-DisplayName "*KDE*"` returned nothing. Rules for 1716-1764 TCP+UDP are
+part of the bootstrap ([`002`](002-ssh.md)).
 
-## Implementado (04/11) — e o KDE Connect saiu
+## Implemented (2026-11-04) — and KDE Connect is out
 
-Clipboard de texto sincronizado nas três máquinas, sem terceiros.
+Text clipboard synchronized across the three machines, with no third
+parties.
 
-### Linux: a API privada do Mutter
+### Linux: Mutter's private API
 
-Nem `wl-clipboard` (o Wayland não deixa ler a seleção sem foco; o
-`ext-data-control` não aparece nos globais deste compositor) nem o
-portal `org.freedesktop.portal.Clipboard` (existe, mas amarrado a uma
-sessão com diálogo de permissão).
+Neither `wl-clipboard` (Wayland does not let you read the selection
+without focus; `ext-data-control` does not appear among this
+compositor's globals) nor the `org.freedesktop.portal.Clipboard` portal
+(it exists, but is tied to a session with a permission dialog).
 
-A mesma `org.gnome.Mutter.RemoteDesktop` que já usamos para injetar
-input entrega o clipboard inteiro — `EnableClipboard`,
-`SelectionRead`, `SetSelection`, `SelectionWrite`, mais os sinais
-`SelectionOwnerChanged` e `SelectionTransfer` — e a sessão **sobe sem
-ScreenCast**, o que foi sondado antes de escrever qualquer coisa.
+The same `org.gnome.Mutter.RemoteDesktop` we already use to inject input
+provides the whole clipboard — `EnableClipboard`, `SelectionRead`,
+`SetSelection`, `SelectionWrite`, plus the `SelectionOwnerChanged` and
+`SelectionTransfer` signals — and the session **comes up without
+ScreenCast**, which was probed before writing anything.
 
-Duas pegadinhas, as duas encontradas sondando e as duas comentadas no
-código:
+Two gotchas, both found by probing and both commented in the code:
 
-1. **`EnableClipboard` com `mime-types` nos torna donos da seleção.**
-   A leitura passa a falhar com *"Tried to read own selection"*. Para
-   observar, chame sem tipos; declare tipos só ao publicar.
-2. **O fd de `SelectionRead` vem não-bloqueante.** `read_to_end` nele
-   devolve `WouldBlock` imediatamente — e quem engolir esse erro lê
-   zero bytes e conclui que o clipboard está vazio. Foi exatamente o
-   que a primeira sonda concluiu, com o clipboard cheio.
+1. **`EnableClipboard` with `mime-types` makes us the selection owner.**
+   Reading then fails with *"Tried to read own selection"*. To observe,
+   call it without types; declare types only when publishing.
+2. **The `SelectionRead` fd comes non-blocking.** `read_to_end` on it
+   returns `WouldBlock` immediately — and whoever swallows that error
+   reads zero bytes and concludes the clipboard is empty. That is
+   exactly what the first probe concluded, with the clipboard full.
 
-### Transporte: SSH, não porta nova
+### Transport: SSH, not a new port
 
-A API escuta só em `127.0.0.1` por desenho (specs/008). Clipboard
-carrega senha com alguma frequência; abrir porta na LAN para ele seria
-superfície nova para o dado mais sensível que passamos a mover.
+The API listens only on `127.0.0.1` by design (specs/008). The clipboard
+carries passwords fairly often; opening a LAN port for it would be new
+surface for the most sensitive data we now move.
 
-SSH já é o canal confiável entre as máquinas. ~300 ms por cópia, que é
-invisível no uso real: você copia, troca de máquina, e só então cola.
+SSH is already the trusted channel between the machines. ~300 ms per
+copy, which is invisible in real use: you copy, switch machines, and
+only then paste.
 
-O caminho do binário remoto vem **por sistema**, não do PATH: o shell
-não-interativo do SSH não carrega o PATH do login, e o Mac respondeu
-`zsh:1: command not found: logid`. O campo `agent` da config também não
-serve — aponta para outro executável e só existe no Windows.
+The remote binary's path comes **per system**, not from PATH: SSH's
+non-interactive shell does not load the login PATH, and the Mac replied
+`zsh:1: command not found: logid`. The config's `agent` field does not
+work either — it points to another executable and only exists on Windows.
 
-### Por que `clip-set` não escreve direto
+### Why `clip-set` does not write directly
 
-No Linux, quem escreve a seleção tem de **continuar vivo** para
-responder `SelectionTransfer` quando alguém colar. Um CLI que escreve e
-sai deixaria seleção sem dono, e o texto sumiria no primeiro Ctrl+V.
-Então o CLI entrega ao daemon local (POST em 127.0.0.1) e o daemon
-fica.
+On Linux, whoever writes the selection has to **stay alive** to answer
+`SelectionTransfer` when someone pastes. A CLI that writes and exits
+would leave an ownerless selection, and the text would vanish on the
+first Ctrl+V. So the CLI hands off to the local daemon (POST on
+127.0.0.1) and the daemon stays.
 
-### Laço de eco
+### Echo loop
 
-A mandaria para B, B veria o clipboard mudar e mandaria de volta, para
-sempre. `registrar()` guarda o último texto visto **ou escrito**, nas
-duas direções; mudança que bate com ele não é reenviada.
+A would send to B, B would see the clipboard change and send it back,
+forever. `registrar()` keeps the last text seen **or written**, in both
+directions; a change that matches it is not resent.
 
-### Windows e macOS: amostragem
+### Windows and macOS: polling
 
-Os dois têm API de notificação (`AddClipboardFormatListener`,
-`changeCount` do `NSPasteboard`) que exigiria laço de mensagens ou objc
-dentro de um daemon que não tem nem um nem outro. Amostragem de 2 s
-resolve: não dá para sentir ao trocar de máquina.
+Both have a notification API (`AddClipboardFormatListener`,
+`NSPasteboard`'s `changeCount`) that would require a message loop or
+objc inside a daemon that has neither. Polling every 2 s does the job:
+you cannot feel it when switching machines.
 
-Detalhe que custaria tempo: o `Get-Clipboard` do PowerShell acrescenta
-CRLF no fim. Sem aparar, cada leitura pareceria texto novo e a máquina
-empurraria o mesmo conteúdo para sempre.
+A detail that would cost time: PowerShell's `Get-Clipboard` appends a
+CRLF at the end. Without trimming, every read would look like new text
+and the machine would push the same content forever.
 
-### Conferido
+### Checked
 
-As quatro direções, com marca de tempo em cada uma:
+All four directions, with a timestamp on each:
 
-| De → Para | Resultado |
+| From → To | Result |
 |---|---|
 | Ubuntu → Mac | `ubuntu-171000` |
 | Ubuntu → Windows | `ubuntu-171000` |
 | Mac → Ubuntu | `mac-171127` |
 | Windows → Ubuntu | `windows-171146` |
 
-O clipboard do Windows tem de ser lido **dentro da sessão interativa**:
-cada sessão tem sua própria window station, e um `Get-Clipboard` pelo
-SSH lê o da sessão 0, que é outro. Mesma fronteira que já apareceu no
-cursor e no host de tela.
+The Windows clipboard has to be read **inside the interactive session**:
+each session has its own window station, and a `Get-Clipboard` over SSH
+reads session 0's, which is a different one. Same boundary that already
+showed up with the cursor and the screen host.
 
-### Limites conhecidos
+### Known limits
 
-- **Só texto.** Imagem e arquivo não viajam. O KDE Connect fazia; se
-  fizer falta, é trabalho novo.
-- 256 KB de teto. Clipboard de desenvolvedor às vezes carrega um
-  arquivo inteiro colado sem querer.
-- O Mac precisou da chave dele autorizada no Ubuntu (`Host ubuntu` no
-  `~/.ssh/config` dele já existia; faltava o lado de cá aceitar).
+- **Text only.** Images and files do not travel. KDE Connect did that;
+  if it is missed, it is new work.
+- 256 KB cap. A developer's clipboard sometimes carries an entire file
+  pasted by accident.
+- The Mac needed its key authorized on Ubuntu (`Host ubuntu` in its
+  `~/.ssh/config` already existed; this side accepting it was missing).

@@ -1,36 +1,36 @@
-# 005 — Roteamento de input (o núcleo)
+# 005 — Input routing (the core)
 
-É a peça que não existe em open source. Ver
-[`000`](000-overview.md#a-lacuna-que-justifica-o-projeto).
+This is the piece that does not exist in open source. See
+[`000`](000-overview.md#the-gap-that-justifies-the-project).
 
-## A ideia
+## The idea
 
-Quando o cursor encosta na borda (ou você aperta um atalho), há **dois
-jeitos** de passar o controle para a outra máquina:
+When the cursor touches the edge (or you press a shortcut), there are **two
+ways** to hand control to the other machine:
 
-| Rota | Como | Latência | Quando |
+| Route | How | Latency | When |
 |---|---|---|---|
-| **física** | manda o mouse/teclado pular de canal Easy-Switch para o receptor da outra máquina (HID++ 0x1814) | nativa — é o rádio do próprio dispositivo | a outra máquina tem receptor com o device pareado |
-| **LAN** | o Deskflow transmite eventos pela rede | ~1 ms + rede, e depende de portal/libei | a outra máquina não tem receptor, ou o canal não está pareado |
+| **physical** | tells the mouse/keyboard to jump Easy-Switch channel to the other machine's receiver (HID++ 0x1814) | native — it is the device's own radio | the other machine has a receiver with the device paired |
+| **LAN** | Deskflow transmits events over the network | ~1 ms + network, and depends on portal/libei | the other machine has no receiver, or the channel is not paired |
 
-O Flow faz a primeira. O Deskflow faz a segunda. **Nenhum escolhe entre
-as duas.** Escolher é o produto.
+Flow does the first. Deskflow does the second. **Neither chooses between
+the two.** Choosing is the product.
 
-A rota física é melhor quando disponível: latência nativa, funciona com
-a rede caindo, e não depende de injeção de input por portal — o que
-**contorna o segfault do modo servidor do Deskflow no Linux**
+The physical route is better when available: native latency, it works with
+the network down, and it does not depend on input injection through the portal — which
+**works around the Deskflow server-mode segfault on Linux**
 ([`README`](../README.md#ubuntu-como-servidor-testado-e-não-funciona-1270)).
-Hoje as duas máquinas têm receptor Unifying, então a rota física é
-possível nos dois sentidos.
+Today both machines have a Unifying receiver, so the physical route is
+possible in both directions.
 
-## Detecção de borda: mutter direto, não o portal
+## Edge detection: mutter directly, not the portal
 
-Correção de uma afirmação errada minha. Esta spec dizia "tudo por
-portal, nada de hack", baseada em eu ter visto o
-`org.freedesktop.portal.InputCapture` **aceitar** `CreateSession`.
-Aceitar não é responder.
+Correction of a wrong claim of mine. This spec said "everything through the
+portal, no hacks", based on my having seen
+`org.freedesktop.portal.InputCapture` **accept** `CreateSession`.
+Accepting is not responding.
 
-### O portal aceita e nunca responde
+### The portal accepts and never responds
 
 ```
 CreateSession  -> devolve request path
@@ -39,20 +39,24 @@ backend        -> 43 requests pendentes acumulados, nenhum resolvido
 no fechamento  -> "Object does not exist at .../session/icsess0"
 ```
 
-Não é falta de implementação: o `xdg-desktop-portal-gnome` tem
-`InputCaptureDialog` com switch de permissão, `AddBarrier`,
-`ClearBarriers`, `GetZones`, `ConnectToEIS`. O que ele não consegue é
-**exibir o diálogo de consentimento** —
-`Failed to associate portal window with parent window`. Uma CLI sem
-janela não tem o que passar em `parent_window`, e o pedido fica
-pendurado para sempre. O permission store confirma: há tabela para
-`remote-desktop` e `screencast`, **nenhuma** para `input-capture`.
+(In English: `CreateSession` returns a request path; `Response` NEVER arrives
+— clean run, 75 s, confirmed; backend: 43 pending requests piled up, none
+resolved; on close: the "Object does not exist" error.)
 
-### `org.gnome.Mutter.InputCapture` funciona, e é síncrono
+It is not a missing implementation: `xdg-desktop-portal-gnome` has
+`InputCaptureDialog` with a permission switch, `AddBarrier`,
+`ClearBarriers`, `GetZones`, `ConnectToEIS`. What it cannot do is
+**show the consent dialog** —
+`Failed to associate portal window with parent window`. A CLI without a
+window has nothing to pass as `parent_window`, and the request hangs
+forever. The permission store confirms it: there is a table for
+`remote-desktop` and `screencast`, **none** for `input-capture`.
 
-O backend do portal é só um intermediário para um serviço do mutter que
-está no barramento, servido pelo gnome-shell, e atende chamada direta —
-sem Request/Response, sem diálogo:
+### `org.gnome.Mutter.InputCapture` works, and it is synchronous
+
+The portal backend is just an intermediary for a mutter service that
+is on the bus, served by gnome-shell, and answers direct calls —
+no Request/Response, no dialog:
 
 ```
 org.gnome.Mutter.InputCapture
@@ -65,11 +69,11 @@ org.gnome.Mutter.InputCapture.Session
   ClearBarriers() / Enable() / Disable() / Close()
   ConnectToEIS()                 -> h fd
   Release(a{sv} options)
-  sinais: Activated(u barrier_id, u activation_id, (dd) cursor)
-          Deactivated(u activation_id), ZonesChanged, Disabled, Closed
+  signals: Activated(u barrier_id, u activation_id, (dd) cursor)
+           Deactivated(u activation_id), ZonesChanged, Disabled, Closed
 ```
 
-### Validado com hardware (03/11)
+### Validated with hardware (2026-11-03)
 
 ```
 CreateSession(2)   -> /org/gnome/Mutter/InputCapture/Session/u5
@@ -85,110 +89,110 @@ Enable()           -> ok
 [Release] ponteiro devolvido
 ```
 
-**Dá para usar só a detecção** e devolver o ponteiro na hora, sem
-precisar capturar nem encaminhar input via libei. É o gatilho da rota
-física saindo de graça.
+**It is possible to use only the detection** and give the pointer back right away,
+without capturing or forwarding input via libei. That is the trigger for the
+physical route, coming for free.
 
-### Três coisas que custaram tentativa
+### Three things that cost attempts
 
-**A barreira vai na FRONTEIRA da zona, não na última coluna dela.**
-Com `x = x + w - 1` (2559) o mutter recusa:
-`AccessDenied: Line overlaps with monitor region`. Tem que ser
+**The barrier goes on the zone's BOUNDARY, not on its last column.**
+With `x = x + w - 1` (2559) mutter refuses:
+`AccessDenied: Line overlaps with monitor region`. It has to be
 `x = x + w` (2560).
 
-**`ConnectToEIS` antes do `Enable`.** Não confirmei que seja
-obrigatório — entrou no teste para eliminar a hipótese e o evento
-chegou com ele presente. Fica como ordem conhecida-boa até alguém medir
-sem.
+**`ConnectToEIS` before `Enable`.** I did not confirm it is
+mandatory — it went into the test to eliminate the hypothesis, and the event
+arrived with it present. It stays as the known-good order until someone measures
+without it.
 
-**Movimento injetado vs. real.** O primeiro teste deu timeout com os
-dispositivos no canal do Windows: o ponteiro aqui era injetado pelo
-Deskflow via libei, e movimento injetado pode não atravessar barreira do
-compositor. O evento só veio com o dispositivo **no canal local**. Isso
-não é limitação — é exatamente o modo B, onde o device é local por
-definição.
+**Injected vs. real movement.** The first test timed out with the
+devices on the Windows channel: the pointer here was injected by
+Deskflow via libei, and injected movement may not cross a compositor
+barrier. The event only came with the device **on the local channel**. That
+is not a limitation — it is exactly mode B, where the device is local by
+definition.
 
-## Pré-requisito: acesso ao hidraw
+## Prerequisite: hidraw access
 
-HID++ precisa abrir `/dev/hidraw*`. A regra do Solaar
-(`/usr/lib/udev/rules.d/60-solaar.rules`) concede via `TAG+="uaccess"`,
-que vira ACL para o usuário logado.
+HID++ needs to open `/dev/hidraw*`. The Solaar rule
+(`/usr/lib/udev/rules.d/60-solaar.rules`) grants it via `TAG+="uaccess"`,
+which becomes an ACL for the logged-in user.
 
-**Pegadinha já paga:** os `hidraw` nasceram às 11:37 e o Solaar foi
-instalado às 13:22 — a regra não existia na criação dos nós, nenhuma ACL
-foi aplicada, e o `solaar config` morria em `No supported device found`
-com `getfacl /dev/hidraw0` mostrando só `user::rw-` (root).
+**Gotcha already paid for:** the `hidraw` nodes were created at 11:37 and Solaar was
+installed at 13:22 — the rule did not exist when the nodes were created, no ACL
+was applied, and `solaar config` died with `No supported device found`,
+with `getfacl /dev/hidraw0` showing only `user::rw-` (root).
 
 ```bash
-sudo udevadm trigger --subsystem-match=hidraw --action=add   # ou religar o receptor
-getfacl /dev/hidraw0 | grep user                           # confirmar a ACL
+sudo udevadm trigger --subsystem-match=hidraw --action=add   # or replug the receiver
+getfacl /dev/hidraw0 | grep user                           # confirm the ACL
 ```
 
-O `logid` deve **checar isso no startup** e dizer na API/GUI quando
-faltar, em vez de falhar obscuro na hora da troca.
+`logid` should **check this at startup** and report it in the API/GUI when it is
+missing, instead of failing obscurely at switch time.
 
-Mapeamento nesta máquina:
+Mapping on this machine:
 
-| hidraw | dispositivo |
+| hidraw | device |
 |---|---|
-| `hidraw0` | `046D:C52B` — receptor Unifying |
+| `hidraw0` | `046D:C52B` — Unifying receiver |
 | `hidraw2` | `046D:4090` — MX Keys |
 | `hidraw3` | `046D:408A` — MX Anywhere 3 |
 
-## Restrição descoberta: só quem detém o device pode empurrá-lo
+## Discovered constraint: only the holder of the device can push it
 
-Testado: com o mouse no canal do Windows, `solaar config 1` falha com
-`no online device found matching '1'`, e `solaar show` lista os dois
-devices como `offline`.
+Tested: with the mouse on the Windows channel, `solaar config 1` fails with
+`no online device found matching '1'`, and `solaar show` lists both
+devices as `offline`.
 
-O motivo é físico: o comando HID++ sai do receptor por rádio até o
-dispositivo. Se ele está ouvindo **outro** receptor, não há como
-alcançá-lo. Ou seja:
+The reason is physical: the HID++ command leaves the receiver by radio to the
+device. If it is listening to **another** receiver, there is no way to
+reach it. That is:
 
-> A troca de canal só pode ser emitida pela máquina que **está com o
-> dispositivo naquele momento**.
+> The channel switch can only be issued by the machine that **has the
+> device at that moment**.
 
-Isso torna a arquitetura obrigatoriamente **simétrica**: o control
-plane não executa a troca, ele **pede ao detentor atual** que execute.
-Quem está sem o device não tem como trazê-lo de volta pela rota física.
+This makes the architecture necessarily **symmetric**: the control
+plane does not execute the switch, it **asks the current holder** to execute it.
+Whoever is without the device has no way to bring it back via the physical route.
 
-### O lado Windows: resolvido
+### The Windows side: solved
 
-O Solaar é Linux-only, então o Windows precisava de HID++ próprio.
-Implementado em [`agent/`](../agent/): Rust, cross-compilado do Ubuntu
-(`x86_64-pc-windows-gnu` + mingw do apt), **352 KB**, sem runtime.
+Solaar is Linux-only, so Windows needed its own HID++.
+Implemented in [`agent/`](../agent/): Rust, cross-compiled from Ubuntu
+(`x86_64-pc-windows-gnu` + mingw from apt), **352 KB**, no runtime.
 
-É uma **CLI, não um servidor**, invocada por SSH. Reaproveita a chave
-que já existe: zero porta nova, zero auth nova, zero superfície de rede.
+It is a **CLI, not a server**, invoked over SSH. It reuses the key
+that already exists: zero new ports, zero new auth, zero network surface.
 
 ```
-logid-agent devices                      # slots, nº de canais, canal atual
+logid-agent devices                      # slots, number of channels, current channel
 logid-agent host-info <slot>
 logid-agent set-host <slot> <n> --confirm
-logid-agent input-age                    # ms desde o último input
+logid-agent input-age                    # ms since the last input
 logid-agent guard <slot> <n> <segundos>  # dead-man's switch
-logid-agent raw <slot> <feature> <func>  # sondagem de protocolo
+logid-agent raw <slot> <feature> <func>  # protocol probing
 ```
 
-HID++ via `hidapi` (integrar em vez de reimplementar: enumeração e I/O
-de HID no Windows são ~300 linhas de FFI unsafe já resolvidas lá).
+HID++ via `hidapi` (integrate rather than reimplement: HID enumeration and I/O
+on Windows are ~300 lines of unsafe FFI already solved there).
 
-#### A pegadinha das coleções HID no Windows
+#### The HID collections gotcha on Windows
 
-Primeira tentativa: write falhava com `hidapi error:` vazio. Causa:
-no Windows o receptor Logitech expõe **uma coleção HID por tipo de
-report** — usage 1 = curto (`0x10`, 7 bytes), usage 2 = longo (`0x11`,
-20 bytes), usage 4 = muito longo. Eu abria a primeira da lista (usage 2)
-e escrevia um report curto nela. Tamanho errado, write recusado.
+First attempt: write failed with an empty `hidapi error:`. Cause:
+on Windows the Logitech receiver exposes **one HID collection per report
+type** — usage 1 = short (`0x10`, 7 bytes), usage 2 = long (`0x11`,
+20 bytes), usage 4 = very long. I opened the first one in the list (usage 2)
+and wrote a short report to it. Wrong size, write refused.
 
-Solução: usar **sempre o report longo na coleção usage 2**, mesmo para
-funções que caberiam no curto. Assim escrita e leitura ficam na mesma
-coleção — a alternativa seria abrir duas e correlacionar entre elas.
+Solution: **always use the long report on the usage 2 collection**, even for
+functions that would fit in the short one. That way writes and reads stay in the same
+collection — the alternative would be to open two and correlate between them.
 
-No Linux não existe esse problema: um único `hidraw` carrega todos os
-tipos de report.
+On Linux this problem does not exist: a single `hidraw` carries all
+report types.
 
-### Lido do hardware (03/11)
+### Read from the hardware (2026-11-03)
 
 ```
 slot 1 (MX Anywhere 3):     3 canais, atual = 2
@@ -197,65 +201,68 @@ slot 2 (MX Keys Keyboard):  3 canais, atual = 2
 0x1815 func 1:  os três canais com status=1 (pareado)
 ```
 
-Então **`windows-host` é o canal 2**, confirmado, e os dispositivos
-conhecem três hosts — todos pareados.
+(Program output: each device has 3 channels, current = 2; func 1: all three
+channels with status=1, paired.)
 
-O canal do `ubuntu-host` **ainda não foi lido**, e não entra na config
-como chute: mandar o dispositivo para um canal errado o deixa
-inalcançável das duas máquinas. A descoberta sem risco é uma tecla:
-apertar Easy-Switch até o dispositivo aparecer aqui, e então
-`solaar config <slot> change-host` reporta o canal atual.
+So **`windows-host` is channel 2**, confirmed, and the devices
+know three hosts — all paired.
 
-> Tentei ler os nomes dos canais por `0x1815` func 2 e o layout não
-> rendeu (`02 80 00…`, sem ASCII). Abandonei: a função provável de
-> escrita fica ao lado da de leitura no mesmo feature, e sondar índice
-> de função às cegas podia **renomear** um host. Não valia o risco para
-> uma informação que uma tecla resolve.
+The `ubuntu-host` channel **has not been read yet**, and it does not go into the config
+as a guess: sending the device to a wrong channel leaves it
+unreachable from both machines. The risk-free discovery is a keypress:
+press Easy-Switch until the device shows up here, and then
+`solaar config <slot> change-host` reports the current channel.
 
-### Não existe rollback deste lado
+> I tried to read the channel names via `0x1815` func 2 and the layout did not
+> yield anything (`02 80 00…`, no ASCII). I gave up: the likely write
+> function sits next to the read one in the same feature, and probing function
+> indexes blindly could **rename** a host. Not worth the risk for
+> information that a keypress resolves.
 
-Correção de um erro de desenho meu: a primeira versão desta spec dizia
-"se o alvo não confirmar, voltar ao canal anterior". **Isso é
-impossível.**
+### There is no rollback on this side
 
-O `ChangeHost` viaja por rádio até o dispositivo. Depois que ele troca
-de canal, este receptor **não o alcança mais** — comprovado por
-`solaar config 1` falhando com `no online device found` justamente
-porque o device está no canal do Windows. Então a troca é
-**irreversível do lado de origem**, e não há ponto de retorno: no
-instante seguinte ao comando, estamos cegos e sem input.
+Correction of a design error of mine: the first version of this spec said
+"if the target does not confirm, go back to the previous channel". **That is
+impossible.**
 
-Duas consequências de projeto:
+`ChangeHost` travels by radio to the device. Once it switches
+channel, this receiver **can no longer reach it** — proven by
+`solaar config 1` failing with `no online device found` precisely
+because the device is on the Windows channel. So the switch is
+**irreversible on the source side**, and there is no return point: the
+instant after the command, we are blind and without input.
 
-**1. O pre-flight substitui o rollback.** Toda verificação acontece
-*antes* do ato irreversível, porque depois não há o que fazer. Por isso
-`POST /api/focus` é **dry-run por padrão** e só executa com
-`"confirm": true` — mesmo princípio da regra de disparo destrutivo do
-outro repo: a ação é irreversível, então preview é obrigatório.
+Two design consequences:
 
-**2. O dead-man's switch mora no ALVO.** Quem pode devolver o
-dispositivo é quem passa a detê-lo. Isso inverte a responsabilidade: a
-origem não tenta se salvar, o destino a resgata.
+**1. Pre-flight replaces rollback.** Every check happens
+*before* the irreversible act, because afterwards there is nothing to do. That is why
+`POST /api/focus` is **dry-run by default** and only executes with
+`"confirm": true` — same principle as the destructive-trigger rule of the
+other repo: the action is irreversible, so preview is mandatory.
 
-### Implementado dentro do `watch-edge` — e por que ali
+**2. The dead-man's switch lives on the TARGET.** Whoever can give the
+device back is whoever comes to hold it. This inverts the responsibility: the
+source does not try to save itself, the destination rescues it.
 
-Primeira ideia: o `logid` pediria ao agente do alvo, por SSH, que rodasse
-`guard`. **Não funciona.** `GetLastInputInfo` é por sessão, e comando por
-SSH cai numa sessão que nunca viu input — medido: reporta o uptime da
-máquina (704577031 ms ≈ 8 dias).
+### Implemented inside `watch-edge` — and why there
 
-Então o guard foi para dentro do `watch-edge`, que já é residente na
-sessão do usuário e já faz polling:
+First idea: `logid` would ask the target's agent, over SSH, to run
+`guard`. **It does not work.** `GetLastInputInfo` is per session, and a command over
+SSH lands in a session that has never seen input — measured: it reports the machine's
+uptime (704577031 ms ≈ 8 days).
 
-1. detecta que os dispositivos **chegaram** (transição de ausente para
-   presente, checada a 1 Hz);
-2. grava o idle naquele instante e abre uma janela de `LOGID_GUARD_SECS`
-   (25 s por padrão);
-3. se o idle cair abaixo do tempo desde a chegada, houve atividade — e
-   desarma;
-4. se a janela fechar sem input, emite `ChangeHost` de volta.
+So the guard went inside `watch-edge`, which is already resident in the
+user's session and already polls:
 
-Validado na primeira execução:
+1. detects that the devices **arrived** (transition from absent to
+   present, checked at 1 Hz);
+2. records the idle at that instant and opens a `LOGID_GUARD_SECS` window
+   (25 s by default);
+3. if the idle drops below the time since arrival, there was activity — and
+   it disarms;
+4. if the window closes without input, it issues `ChangeHost` back.
+
+Validated on the first run:
 
 ```
 watch-edge START borda='left' area=(0,0 4480x1440) slots=[1, 2] -> host 1
@@ -263,25 +270,28 @@ dispositivos CHEGARAM -- vigiando input por 25s (idle na chegada: 0ms)
 input detectado -- dead-man's switch desarmado
 ```
 
-> A checagem de presença é HID++ e o loop gira a cada 30 ms para o cursor
-> responder rápido. Sem limitar, seriam 33 pings por segundo martelando o
-> rádio — está a 1 Hz, e a janela do guard é de dezenas de segundos.
+(Log: devices ARRIVED — watching input for 25 s, idle on arrival 0 ms; input
+detected — dead-man's switch disarmed.)
 
-Outro dado do mesmo log: a área virtual passou de `2048x1152` para
-`4480x1440` entre execuções — a máquina ganhou um segundo monitor. É o
-argumento prático para usar `SM_XVIRTUALSCREEN` e família em vez de
-`SM_CXSCREEN`, que só veria o primário.
+> The presence check is HID++ and the loop spins every 30 ms so the cursor
+> responds quickly. Without a limit, that would be 33 pings per second hammering the
+> radio — it runs at 1 Hz, and the guard window is tens of seconds.
 
-### Recuperação sem input
+Another data point from the same log: the virtual area went from `2048x1152` to
+`4480x1440` between runs — the machine gained a second monitor. That is the
+practical argument for using `SM_XVIRTUALSCREEN` and family instead of
+`SM_CXSCREEN`, which would only see the primary.
 
-Se os dois lados falharem, o usuário está sem teclado e sem mouse. Os
-caminhos que sobram, em ordem:
+### Recovery without input
 
-1. botão Easy-Switch no próprio dispositivo (físico, sempre funciona);
-2. um teclado USB qualquer;
-3. SSH de outra máquina para `ubuntu-host`.
+If both sides fail, the user is without keyboard and mouse. The
+remaining paths, in order:
 
-A GUI tem que mostrar o item 1 **antes** de qualquer troca, não depois.
+1. the Easy-Switch button on the device itself (physical, always works);
+2. any USB keyboard;
+3. SSH from another machine to `ubuntu-host`.
+
+The GUI has to show item 1 **before** any switch, not after.
 
 ## Config
 
@@ -292,8 +302,8 @@ confirm_timeout_ms = 3000
 
 [input.border]
 enabled = true
-edge = "left"              # borda desta máquina que leva ao Windows
-hold_ms = 250              # evita troca acidental ao passar raspando
+edge = "left"              # edge of this machine that leads to Windows
+hold_ms = 250              # avoids an accidental switch when grazing past
 
 [input.shortcut]
 enabled = true
@@ -302,7 +312,7 @@ accel = "<Super><Alt>Right"
 [[devices]]
 name = "MX Anywhere 3"
 hidraw_id = "046D:408A"
-hosts = { "ubuntu-host" = 1, "windows-host" = 2 }   # canal Easy-Switch
+hosts = { "ubuntu-host" = 1, "windows-host" = 2 }   # Easy-Switch channel
 
 [[devices]]
 name = "MX Keys"
@@ -310,22 +320,22 @@ hidraw_id = "046D:4090"
 hosts = { "ubuntu-host" = 1, "windows-host" = 2 }
 ```
 
-O mapa `hosts` é o que o Solaar não tem e o Flow guarda na nuvem.
-Aqui mora num TOML seu.
+The `hosts` map is what Solaar does not have and Flow keeps in the cloud.
+Here it lives in a TOML of your own.
 
-## Validado ponta a ponta (03/11)
+## Validated end to end (2026-11-03)
 
-Ciclo completo, nas duas direcoes, com hardware real:
+Complete cycle, in both directions, with real hardware:
 
 ```
-# Windows -> Ubuntu, pelo agente via SSH
+# Windows -> Ubuntu, through the agent via SSH
 logid-agent set-host 1 1            -> recusa: falta --confirm
 logid-agent set-host 1 1 --confirm  -> {"ok":true,"slot":1,"host":1}
 logid-agent set-host 2 1 --confirm  -> {"ok":true,"slot":2,"host":1}
    Ubuntu:  slot 1 e 2 online=True
    Windows: nenhum slot online
 
-# Ubuntu -> Windows, pelo logid
+# Ubuntu -> Windows, through logid
 POST /api/focus {"host":"windows-host","confirm":true}
    executado: true
    MX Anywhere 3:    slot 1 -> canal 2
@@ -334,41 +344,45 @@ POST /api/focus {"host":"windows-host","confirm":true}
    Windows: slot 1 e 2 ONLINE canal=2
 ```
 
-**É o Logitech Flow, funcionando, sem nuvem e sem conta.** A peça que
-nenhum projeto aberto tinha.
+(Output: the first call is refused for missing `--confirm`; afterwards Ubuntu
+sees slots 1 and 2 online and Windows none; in the other direction both slots
+go to channel 2 and are ONLINE on Windows.)
 
-### `input-age` por SSH não serve — comprovado
+**It is Logitech Flow, working, without cloud and without an account.** The piece
+no open project had.
+
+### `input-age` over SSH is useless — proven
 
 ```
 $ ssh windows-host logid-agent input-age
-{"idle_ms":704577031,"ok":true}        # ~8,15 dias
+{"idle_ms":704577031,"ok":true}        # ~8.15 days
 ```
 
-8,15 dias é o **uptime** da máquina. A sessão do SSH nunca viu input,
-então `GetLastInputInfo` devolve o tempo desde o boot. Isso confirma por
-medida o isolamento de sessão descrito em
-[`002`](002-ssh.md#limite-estrutural-isolamento-de-sessão): o `guard`
-**não pode** ser disparado por SSH, tem que estar residente na sessão
-interativa (atalho em `shell:startup`).
+8.15 days is the machine's **uptime**. The SSH session never saw input,
+so `GetLastInputInfo` returns the time since boot. This confirms by
+measurement the session isolation described in
+[`002`](002-ssh.md#structural-limit-session-isolation): `guard`
+**cannot** be triggered over SSH, it has to be resident in the interactive
+session (shortcut in `shell:startup`).
 
-## Dois modos de trabalho, agora que a rota física existe
+## Two working modes, now that the physical route exists
 
-| | Dispositivos em | Como troca | Preço |
+| | Devices on | How it switches | Price |
 |---|---|---|---|
-| **A** (atual) | Windows | cursor na borda, via Deskflow | input do Ubuntu depende do Windows ligado |
-| **B** (novo) | Ubuntu | `POST /api/focus` | latência nativa, sem depender do Windows — mas falta o gatilho de borda |
+| **A** (current) | Windows | cursor at the edge, via Deskflow | Ubuntu input depends on Windows being on |
+| **B** (new) | Ubuntu | `POST /api/focus` | native latency, without depending on Windows — but the edge trigger is missing |
 
-O modo B é o melhor para quem tem o Ubuntu como máquina principal, e
-depende só da detecção de borda pelo portal `InputCapture` para ficar
-indistinguível do Flow.
+Mode B is the best for someone who has Ubuntu as their main machine, and
+depends only on edge detection through the `InputCapture` portal to become
+indistinguishable from Flow.
 
-## Implementado em Rust e medido (03/11)
+## Implemented in Rust and measured (2026-11-03)
 
-[`logid/src/border.rs`](../logid/src/border.rs), via crate `dbus`
-(libdbus), **não** zbus: medido, zbus levava a árvore de 5 para **189
-crates** arrastando runtime assíncrono para fazer seis chamadas D-Bus.
-Com `dbus 0.9.12` ficou em **40**, ao custo de `libdbus-1-dev` do apt.
-Descartado o `zbus 6.0.0` por ter 17 dias — major novo demais.
+[`logid/src/border.rs`](../logid/src/border.rs), via the `dbus` crate
+(libdbus), **not** zbus: measured, zbus took the tree from 5 to **189
+crates**, dragging in an async runtime to make six D-Bus calls.
+With `dbus 0.9.12` it stayed at **40**, at the cost of `libdbus-1-dev` from apt.
+`zbus 6.0.0` was discarded for being 17 days old — too new a major.
 
 ```
 border: barreira 1 na borda right (2560, 0, 2560, 1440), eis=sim
@@ -376,184 +390,190 @@ border: vigiando borda 'right' -> windows-host
 border: ACTIVATED barreira=1 activation=1 cursor=(2560.0, 555.18)
 ```
 
-### Três bugs que só o teste ao vivo mostrou
+### Three bugs only the live test showed
 
-**1. O solaar reporta falha numa troca que funcionou.**
+**1. solaar reports failure on a switch that worked.**
 
 ```
 18:05:48  ACTIVATED
-18:06:23  border: MX Anywhere 3: FALHOU --      ← mensagem VAZIA, 35 s depois
+18:06:23  border: MX Anywhere 3: FALHOU --      ← EMPTY message, 35 s later
 ```
 
-Os dispositivos estavam no Windows, canal 2: **a troca tinha dado
-certo.** Numa troca bem-sucedida o dispositivo desaparece no meio do
-comando, o solaar trava até o timeout e devolve erro vazio. Eu já
-tratava esse caso no agente Rust (`"sem resposta é o caso ESPERADO"`) e
-esqueci no caminho via solaar.
+The devices were on Windows, channel 2: **the switch had
+worked.** On a successful switch the device disappears in the middle of the
+command, solaar hangs until the timeout and returns an empty error. I already
+handled this case in the Rust agent (`"sem resposta é o caso ESPERADO"`, "no
+response is the EXPECTED case") and forgot it in the solaar path.
 
-Correção: **o exit code do solaar não é fonte de verdade.** Verificamos
-pelo efeito observável — se o slot saiu deste receptor, trocou.
+Fix: **solaar's exit code is not a source of truth.** We verify
+by the observable effect — if the slot left this receiver, it switched.
 
-**2. O handler bloqueava o loop do D-Bus por 35 s.**
+**2. The handler blocked the D-Bus loop for 35 s.**
 
-A troca roda em thread própria agora. Antes, nenhum sinal era processado
-durante ela.
+The switch runs in its own thread now. Before, no signal was processed
+during it.
 
-**3. Devolver o ponteiro na borda re-disparava a barreira em loop.**
+**3. Giving the pointer back at the edge re-triggered the barrier in a loop.**
 
-Chegamos a `activation=54` com o cursor parado em x=2560: cada `Release`
-o devolvia exatamente na barreira. O `Release` aceita `cursor_position`,
-então recuamos **24 px** para dentro. Depois disso, zero ativações
-espúrias.
+We got to `activation=54` with the cursor stopped at x=2560: each `Release`
+put it back exactly on the barrier. `Release` accepts `cursor_position`,
+so we pull it back **24 px** inward. After that, zero spurious
+activations.
 
-O cooldown subiu de 3 s para 10 s, porque a troca mais a verificação por
-efeito leva ~5 s e o segundo evento entrava antes do primeiro terminar.
+The cooldown went up from 3 s to 10 s, because the switch plus the effect-based
+verification takes ~5 s and the second event came in before the first finished.
 
-### A troca não é atômica
+### The switch is not atomic
 
-Mouse e teclado são comandos independentes, segundos cada um. Observado:
-o mouse saiu e o teclado ficou por alguns segundos — **estado real e
-transitório**, não erro de leitura (suspeitei do parser e estava errado;
-a API e o `solaar show` concordaram no mesmo instante).
+Mouse and keyboard are independent commands, seconds each. Observed:
+the mouse left and the keyboard stayed for a few seconds — **a real and
+transient state**, not a read error (I suspected the parser and was wrong;
+the API and `solaar show` agreed at the same instant).
 
-O risco de verdade é o segundo falhar e o estado dividido ficar
-**permanente** — e não há rollback para quem já foi. Por isso
-`Outcome.partial` agora grita:
+The real risk is the second one failing and the split state becoming
+**permanent** — and there is no rollback for the one that already left. That is why
+`Outcome.partial` now shouts:
 
 ```
 ESTADO DIVIDIDO: 1 trocaram, mas 1 ficaram aqui (MX Keys Keyboard).
 Nao ha rollback para quem foi -- use o botao Easy-Switch no que ficou.
 ```
 
-## O par simétrico: `watch-edge` no Windows
+(SPLIT STATE: 1 switched, but 1 stayed here; there is no rollback for the one
+that left — use the Easy-Switch button on the one that stayed.)
 
-[`agent/`](../agent/) ganhou `watch-edge`, que fecha o ciclo do modo B:
+## The symmetric pair: `watch-edge` on Windows
+
+[`agent/`](../agent/) gained `watch-edge`, which closes the mode B cycle:
 
 ```
 logid-agent watch-edge left 1,2 1 [hold_ms]
 ```
 
-Vigia a borda e, ao encostar, manda os slots para o canal do alvo.
+It watches the edge and, on touching it, sends the slots to the target's channel.
 
-**No Windows isso é muito mais simples que no Linux**: não há portal,
-não há barreira de compositor, não há diálogo de consentimento. Ler
-`GetCursorPos` e `GetSystemMetrics` resolve. Usamos a área **virtual**
-(`SM_XVIRTUALSCREEN` e família) em vez de `SM_CXSCREEN`, que só reporta
-o monitor primário.
+**On Windows this is much simpler than on Linux**: there is no portal,
+no compositor barrier, no consent dialog. Reading
+`GetCursorPos` and `GetSystemMetrics` does it. We use the **virtual** area
+(`SM_XVIRTUALSCREEN` and family) instead of `SM_CXSCREEN`, which only reports
+the primary monitor.
 
-Diferenças de projeto em relação ao lado GNOME:
+Design differences compared to the GNOME side:
 
 | | Linux (`border.rs`) | Windows (`watch-edge`) |
 |---|---|---|
-| detecção | barreira do compositor via D-Bus | polling de `GetCursorPos` a 30 ms |
-| permanência | não existe no mutter; usamos cooldown | `hold_ms`, default 250 ms |
-| recuo do ponteiro | necessário (`Release` com `cursor_position`) | desnecessário: o cursor para sozinho na borda |
+| detection | compositor barrier via D-Bus | polling `GetCursorPos` every 30 ms |
+| dwell | does not exist in mutter; we use a cooldown | `hold_ms`, default 250 ms |
+| pointer pull-back | required (`Release` with `cursor_position`) | unnecessary: the cursor stops at the edge by itself |
 
-### Permanência no lado Linux: densidade de ativações
+### Dwell on the Linux side: activation density
 
-Portado, mas por outro mecanismo — o mutter **não tem** dwell, a barreira
-dispara no contato. Aproximamos pela **densidade de ativações**:
+Ported, but by another mechanism — mutter **has no** dwell, the barrier
+fires on contact. We approximate it by **activation density**:
 
 | | |
 |---|---|
 | `HOLD_WINDOW` | 400 ms |
-| `HOLD_HITS` | 3 ativações na janela |
+| `HOLD_HITS` | 3 activations in the window |
 
-A medição que virou mecanismo: com o cursor parado em x=2560 chegamos a
-`activation=54`, porque cada `Release` o devolvia na barreira. Esse
-re-disparo é exatamente o sinal de que a pessoa está **insistindo** na
-borda; um raspão de passagem gera uma ativação só.
+The measurement that became a mechanism: with the cursor stopped at x=2560 we got to
+`activation=54`, because each `Release` put it back on the barrier. That
+re-firing is exactly the signal that the person is **insisting** on the
+edge; a passing graze produces a single activation.
 
-Então o `Release` passou a ser condicional:
+So `Release` became conditional:
 
-- **enquanto coleta** (hits < 3): devolve **sem** recuo, de propósito, para
-  que insistir continue re-disparando;
-- **ao decidir** (hits ≥ 3): devolve **recuado** 24 px, zera a contagem e
-  arma o cooldown de 10 s.
+- **while collecting** (hits < 3): it gives the pointer back **without** pull-back, on purpose, so
+  that insisting keeps re-firing;
+- **on deciding** (hits ≥ 3): it gives it back **pulled back** 24 px, resets the count and
+  arms the 10 s cooldown.
 
-O cooldown também vem antes da coleta: dentro dele nem contamos, só
-devolvemos recuado. Isso evita que a contagem suba durante os ~5 s da
-troca anterior.
+The cooldown also comes before collection: inside it we do not even count, we only
+give it back pulled back. This keeps the count from rising during the ~5 s of the
+previous switch.
 
-A inversão é o detalhe elegante: o churn que eu primeiro tratei como bug
-virou o sinal de intenção.
+The inversion is the elegant detail: the churn I first treated as a bug
+became the intent signal.
 
-### Precisa da sessão interativa
+### It needs the interactive session
 
-Medido: rodando por SSH, o agente reporta
-`area virtual (0,0 1024x768)` — a tela falsa da sessão não-interativa,
-não o monitor real. Mesmo isolamento que já invalidou `input-age` por
-SSH. Por isso a vigilância **tem** de nascer na sessão interativa.
+Measured: running over SSH, the agent reports
+`area virtual (0,0 1024x768)` — the fake screen of the non-interactive session,
+not the real monitor. Same isolation that already invalidated `input-age` over
+SSH. That is why the watcher **has** to be born in the interactive session.
 
-> Histórico: isso era um atalho em `shell:startup` apontando para
-> `logid-agent watch-edge`, criado por um `windows-autostart.ps1`. Os
-> dois foram removidos. A vigilância virou **thread do daemon**
-> ([`border_win.rs`](../logid/src/border_win.rs)) quando o `logid` passou
-> a rodar no Windows, porque com os dois vivos seriam dois donos do mesmo
-> receptor HID++ — já aconteceu, três `watch-edge` simultâneos
-> triplicando o tráfego de rádio. A thread reivindica o **mesmo nome de
-> mutex** do modo antigo justamente para que um atalho esquecido nunca
-> polle junto com o daemon.
+> History: this used to be a shortcut in `shell:startup` pointing to
+> `logid-agent watch-edge`, created by a `windows-autostart.ps1`. Both
+> were removed. The watcher became a **daemon thread**
+> ([`border_win.rs`](../logid/src/border_win.rs)) when `logid` started
+> running on Windows, because with both alive there would be two owners of the same
+> HID++ receiver — it already happened, three simultaneous `watch-edge`
+> tripling the radio traffic. The thread claims the **same mutex
+> name** as the old mode precisely so that a forgotten shortcut never
+> polls alongside the daemon.
 >
-> Quem garante a sessão interativa hoje é a tarefa agendada do `logid`,
-> criada com `/it` pelo assistente (`setup_win.rs`), e o script morto
-> ainda mandava criar atalho para um `.exe` que não existe mais.
+> What guarantees the interactive session today is `logid`'s scheduled task,
+> created with `/it` by the wizard (`setup_win.rs`), and the dead script
+> was still asking to create a shortcut to an `.exe` that no longer exists.
 
-## O recuo do ponteiro não existe: o mutter ignora
+## The pointer pull-back does not exist: mutter ignores it
 
-Medido em teste real, e isso derrubou o desenho anterior:
+Measured in a real test, and this brought down the previous design:
 
 ```
-300+ ativacoes, todas com cursor=(2560.0, ...)   <- x NUNCA mudou
+300+ ativacoes, todas com cursor=(2560.0, ...)   <- x NEVER changed
 690 linhas de "em cooldown, ignorando"
 ```
 
-O `Release` **aceita** `cursor_position` e **não move o ponteiro**. Com o
-cursor encostado na borda, cada Release o devolvia ali e a barreira
-re-disparava — 300 vezes num segundo, inundando o journal.
+(300+ activations, all with the cursor at x=2560; 690 lines of "in cooldown,
+ignoring".)
 
-### A estratégia que funciona: desarmar a barreira
+`Release` **accepts** `cursor_position` and **does not move the pointer**. With the
+cursor resting on the edge, each Release put it back there and the barrier
+re-fired — 300 times in one second, flooding the journal.
 
-Em vez de mover o ponteiro, `Disable()` na decisão e `Enable()` quando o
-cooldown vence. Sem barreira não há evento, independente de onde o
-ponteiro esteja.
+### The strategy that works: disarm the barrier
 
-O `Enable` do rearme roda no **loop principal**, não na thread da troca:
-a sessão pertence àquela conexão D-Bus, e outra conexão não a controla.
-O estado compartilhado é um `reenable_at: Option<Instant>`.
+Instead of moving the pointer, `Disable()` on the decision and `Enable()` when the
+cooldown expires. Without a barrier there is no event, regardless of where the
+pointer is.
 
-> Isto também simplificou o `release()`: sem opções, sem fallback. A
-> função inteira virou três linhas.
+The re-arming `Enable` runs in the **main loop**, not in the switch thread:
+the session belongs to that D-Bus connection, and another connection does not control it.
+The shared state is a `reenable_at: Option<Instant>`.
 
-## `watch-edge` confundia ausência com falha
+> This also simplified `release()`: no options, no fallback. The
+> whole function became three lines.
 
-Reportado pelo uso real:
+## `watch-edge` confused absence with failure
+
+Reported from real use:
 
 ```
 sem resposta para feature 0x00 func 0x00 ... switch_failed
 ```
 
-Encostar na borda do Windows com os dispositivos **em outra máquina**
-fazia o agente tentar `set_host` e falhar no `feature_index` — que é
-ausência, não falha. Agora ele checa presença antes:
+Touching the Windows edge with the devices **on another machine**
+made the agent try `set_host` and fail at `feature_index` — which is
+absence, not failure. Now it checks presence first:
 
-- nenhum slot presente → log claro e cooldown de 10 s, sem tentar;
-- parte presente → envia só esses e **avisa do estado dividido**.
+- no slot present → clear log and a 10 s cooldown, without trying;
+- some present → sends only those and **warns about the split state**.
 
-### Slot é por receptor, e não coincide entre máquinas
+### Slots are per receiver, and do not match between machines
 
-Descoberto ao reunir os dispositivos: o Windows tinha o **slot 1 online**
-e o slot 2 vazio, enquanto aqui os dois existem. `set-host 2` de lá
-falhou por isso, não por bug.
+Discovered when gathering the devices: Windows had **slot 1 online**
+and slot 2 empty, while here both exist. `set-host 2` from there
+failed because of that, not because of a bug.
 
-A config do `logid` já resolve por **nome** de dispositivo. O agente
-ainda recebe números crus na linha de comando (`watch-edge left 1,2 1`),
-e a checagem de presença o faz tolerar divergência — mas o certo é ele
-ler `DEVICE NAME` (HID++ 0x0005) e casar por nome também. Fica em aberto.
+The `logid` config already resolves by device **name**. The agent
+still takes raw numbers on the command line (`watch-edge left 1,2 1`),
+and the presence check makes it tolerate the divergence — but the right thing is for it to
+read `DEVICE NAME` (HID++ 0x0005) and match by name too. Left open.
 
-## O solaar é caro demais para o caminho quente — medido
+## solaar is too expensive for the hot path — measured
 
-A troca **funciona**, mas levou **105 segundos** no teste real:
+The switch **works**, but it took **105 seconds** in the real test:
 
 ```
 18:51:18  border: barreira desarmada; trocando...
@@ -561,138 +581,140 @@ A troca **funciona**, mas levou **105 segundos** no teste real:
 18:53:05  border: MX Keys Keyboard: slot 2 saiu deste receptor (canal 2)
 ```
 
-Causa medida:
+(Log: barrier disarmed, switching...; each slot left this receiver, channel 2.)
+
+Measured cause:
 
 ```
-solaar show  ->  5,9 s  /  15,3 s  (segunda medida sob contencao)
-solaar show 1 ->  5,5 s            (por dispositivo, nao ajuda)
+solaar show  ->  5,9 s  /  15,3 s  (second measurement under contention)
+solaar show 1 ->  5,5 s            (per device, does not help)
 ```
 
-E o `change_host` chama isso **4× por dispositivo** (uma antes, três de
-verificação), × 2 dispositivos, mais o `survey()` do `plan()` e o SSH
-para o agente. Daí os 105 s.
+And `change_host` calls that **4× per device** (one before, three for
+verification), × 2 devices, plus `plan()`'s `survey()` and the SSH
+to the agent. Hence the 105 s.
 
-Agrava: o **GUI do Solaar roda em paralelo** (`solaar --window=hide`),
-e dois donos do mesmo receptor é exatamente a contenção que a doc do
-OpenLogi descreve.
+Aggravating: the **Solaar GUI runs in parallel** (`solaar --window=hide`),
+and two owners of the same receiver is exactly the contention that the
+OpenLogi docs describe.
 
-### A saída: HID++ direto, como no Windows
+### The way out: direct HID++, as on Windows
 
-`hidapi` **funciona no Linux** (backend hidraw; precisa de
-`libudev-dev`). E a enumeração mostrou mais do que o esperado:
+`hidapi` **works on Linux** (hidraw backend; needs
+`libudev-dev`). And the enumeration showed more than expected:
 
 ```
-pid=c52b  /dev/hidraw0  usage_page=0xff00   <- o receptor
-pid=4090  /dev/hidraw2  usage_page=0xff00   <- MX Anywhere 3, no proprio
-pid=408a  /dev/hidraw3  usage_page=0xff00   <- MX Keys, no proprio
+pid=c52b  /dev/hidraw0  usage_page=0xff00   <- the receiver
+pid=4090  /dev/hidraw2  usage_page=0xff00   <- MX Anywhere 3, on its own
+pid=408a  /dev/hidraw3  usage_page=0xff00   <- MX Keys, on its own
 ```
 
-Cada dispositivo pareado tem **nó hidraw próprio** com coleções HID++.
-Consequências:
+Each paired device has its **own hidraw node** with HID++ collections.
+Consequences:
 
-1. Dá para falar direto com o dispositivo (`device_index` 0xFF) em vez
-   de indexar slot no receptor — o que **resolve a divergência de
-   numeração** entre máquinas.
-2. "Está online?" vira um ping HID++ de milissegundos, não um
-   `solaar show` de 6-15 s.
-3. O código do protocolo já existe em [`agent/src/hidpp.rs`](../agent/src/hidpp.rs)
-   e é agnóstico de plataforma: vira crate compartilhado.
+1. It is possible to talk directly to the device (`device_index` 0xFF) instead
+   of indexing a slot on the receiver — which **solves the numbering
+   divergence** between machines.
+2. "Is it online?" becomes a millisecond HID++ ping, not a 6-15 s
+   `solaar show`.
+3. The protocol code already exists in [`agent/src/hidpp.rs`](../agent/src/hidpp.rs)
+   and is platform-agnostic: it becomes a shared crate.
 
-Isso era o plano desde o início ("a fronteira deste módulo foi desenhada
-para que uma implementação de HID++ 0x1814 sobre /dev/hidraw substitua o
-backend sem tocar em quem chama"). O custo medido do solaar tornou a
-migração obrigatória, não opcional.
+That was the plan from the start ("the boundary of this module was designed
+so that an HID++ 0x1814 implementation over /dev/hidraw replaces the
+backend without touching the callers"). The measured cost of solaar made the
+migration mandatory, not optional.
 
-## Migrado para HID++ direto — medido antes e depois
+## Migrated to direct HID++ — measured before and after
 
-O `solaar` saiu do caminho quente. O protocolo virou crate compartilhado
-em [`hidpp/`](../hidpp/), usado pelo `logid` **e** pelo `agent` — uma
-cópia só, testada contra hardware nos dois sistemas.
+`solaar` left the hot path. The protocol became a shared crate
+in [`hidpp/`](../hidpp/), used by `logid` **and** by `agent` — a single
+copy, tested against hardware on both systems.
 
-| | antes (solaar) | depois (HID++) |
+| | before (solaar) | after (HID++) |
 |---|---|---|
-| troca de canal, ponta a ponta | **105 s** | **13,8 s** |
-| confirmação de que o device saiu | até 4× `solaar show` | ping de **300 ms** |
-| `/api/devices` | 6-15 s | **1,5 s** |
-| probe do agente por SSH | 6,4 s | **2,06 s** |
-| ping de presença | — | **22 a 81 ms** |
+| channel switch, end to end | **105 s** | **13.8 s** |
+| confirmation that the device left | up to 4× `solaar show` | **300 ms** ping |
+| `/api/devices` | 6-15 s | **1.5 s** |
+| agent probe over SSH | 6.4 s | **2.06 s** |
+| presence ping | — | **22 to 81 ms** |
 
-### O que o HID++ deu de brinde
+### What HID++ gave as a bonus
 
-**Nome lido do dispositivo** (feature 0x0005), não do solaar. E os nomes
-**divergem**: o solaar dizia `MX Keys Keyboard`, o dispositivo se chama
-`MX Keys Wireless Keyboard`. A config precisou ser corrigida — confira
-com `cargo run --release --bin probe` no crate.
+**Name read from the device** (feature 0x0005), not from solaar. And the names
+**diverge**: solaar said `MX Keys Keyboard`, the device calls itself
+`MX Keys Wireless Keyboard`. The config had to be corrected — check
+with `cargo run --release --bin probe` in the crate.
 
-**Latência por dispositivo** exposta na API (`ping_ms`), que não existia.
+**Per-device latency** exposed in the API (`ping_ms`), which did not exist.
 
-**Canal atual** de cada um, sem custo extra.
+**Current channel** of each one, at no extra cost.
 
-### Três defeitos que a velocidade nova revelou
+### Three defects the new speed revealed
 
-**1. Dispositivo offline desaparecia da API.** O HID++ não lê o nome de
-quem não responde, então a lista ficava vazia e a GUI em branco —
-regressão frente ao solaar, que listava offline com nome. Resolvido com
-cache de slot→nome persistido em `~/.local/state/logi/slots.json`:
-runtime descartável, não config.
+**1. An offline device disappeared from the API.** HID++ does not read the name of
+something that does not respond, so the list came out empty and the GUI blank —
+a regression compared to solaar, which listed offline devices by name. Solved with a
+slot→name cache persisted in `~/.local/state/logi/slots.json`:
+disposable runtime, not config.
 
-**2. `executed: true` com zero resultados.** Com a troca tão mais
-rápida, a vigilância de borda passou a ganhar a corrida contra a API: o
-pre-flight passava e, nos segundos até a execução, outra travessia já
-tinha levado tudo. Agora as trocas são **serializadas** por mutex
-global, e a elegibilidade é reavaliada **dentro** do lock.
+**2. `executed: true` with zero results.** With the switch so much
+faster, the edge watcher started winning the race against the API: the
+pre-flight passed and, in the seconds until execution, another crossing had
+already taken everything. Now switches are **serialized** by a global
+mutex, and eligibility is re-evaluated **inside** the lock.
 
-**3. O texto do plano ainda citava `solaar config`.** Passou a dizer o
-que de fato faz: `HID++ 0x1814 setCurrentHost`.
+**3. The plan text still mentioned `solaar config`.** It now says
+what it actually does: `HID++ 0x1814 setCurrentHost`.
 
-### Os testes trocaram de assunto
+### The tests changed subject
 
-Os 5 testes antigos cobriam o parser da saída do `solaar`, que deixou de
-existir. Em vez de aceitar a queda para zero, escrevi **7** sobre as
-funções puras que sobraram: `barrier_line` nas quatro bordas, com offset
-de monitor secundário e borda inválida; e o parsing de config —
-`Expect` default, `down`/`any`, e o mapa de canais por nome.
+The 5 old tests covered the parser of `solaar`'s output, which no longer
+exists. Instead of accepting the drop to zero, I wrote **7** on the
+pure functions that remained: `barrier_line` on the four edges, with a secondary
+monitor offset and an invalid edge; and config parsing —
+`Expect` default, `down`/`any`, and the channel map by name.
 
-### O gargalo que sobrou
+### The remaining bottleneck
 
-Dos 13,8 s, o pre-flight domina, e dentro dele o SSH ao agente. Com o
-agente migrado isso caiu para ~2 s, então a troca deve ficar perto de
-**9 s**. O resto é latência de SSH, não de HID++.
+Of the 13.8 s, the pre-flight dominates, and within it the SSH to the agent. With the
+agent migrated that dropped to ~2 s, so the switch should end up close to
+**9 s**. The rest is SSH latency, not HID++.
 
-## Teclado segue o mouse: reconciliador
+## Keyboard follows the mouse: reconciler
 
-[`logid/src/follow.rs`](../logid/src/follow.rs). Um dispositivo é
-**líder** e os demais de `[[devices]]` seguem o canal dele, reavaliado a
-cada N segundos.
+[`logid/src/follow.rs`](../logid/src/follow.rs). One device is the
+**leader** and the others in `[[devices]]` follow its channel, re-evaluated
+every N seconds.
 
 ```toml
 [input.follow]
-enabled = false              # desligado por padrão
-leader = "MX Anywhere 3"     # nome HID++
+enabled = false              # off by default
+leader = "MX Anywhere 3"     # HID++ name
 interval_seconds = 5
 ```
 
-Resolve o estado dividido na raiz, e — o que a borda não consegue —
-**funciona quando a troca foi manual, no botão Easy-Switch**. O `border`
-só vê travessia de cursor; o reconciliador vê o estado.
+It solves the split state at the root, and — which the edge cannot do —
+**works when the switch was manual, with the Easy-Switch button**. `border`
+only sees cursor crossings; the reconciler sees the state.
 
-### A assimetria do hardware manda no desenho
+### The hardware asymmetry drives the design
 
-Só quem detém o dispositivo pode empurrá-lo, então a ação depende de
-onde o seguidor está:
+Only the holder of the device can push it, so the action depends on
+where the follower is:
 
-| seguidor está | quem age |
+| follower is | who acts |
 |---|---|
-| aqui | nós, por HID++ local |
-| num par | pedimos ao agente dele, por SSH |
-| em nenhum conhecido | nada — pode ser o MacBook, sem daemon |
+| here | us, via local HID++ |
+| on a peer | we ask its agent, over SSH |
+| on none we know | nothing — it may be the MacBook, with no daemon |
 
-### Validado, no caminho difícil
+### Validated, on the hard path
 
-Testei a direção que passa pelo par, não a local:
+I tested the direction that goes through the peer, not the local one:
 
 ```
-# so o lider volta para o canal 1; o teclado fica no 2
+# only the leader goes back to channel 1; the keyboard stays on 2
 ssh windows-host logid-agent set-host 2 1 --confirm
 
 follow: MX Keys Wireless Keyboard: pedi a windows-host que o mandasse para o canal 1
@@ -700,62 +722,65 @@ follow: MX Keys Wireless Keyboard: pedi a windows-host que o mandasse para o can
 -> MX Keys Wireless Keyboard  online=True canal=1
 ```
 
-Agiu **uma vez** e sossegou — mais que isso seria loop.
+(Log: "I asked windows-host to send it to channel 1"; both devices then online
+on channel 1.)
 
-### Casar por nome, não por canal
+It acted **once** and settled down — more than that would be a loop.
 
-Primeira versão localizava o dispositivo no par comparando o **canal
-declarado**, e isso é ambíguo: mouse e teclado declaram o mesmo canal
-para o mesmo host. Corrigido fazendo o agente reportar o nome HID++
-(feature 0x0005) e casando por ele.
+### Match by name, not by channel
 
-A medição que fechou o argumento, no mesmo teste:
+The first version located the device on the peer by comparing the **declared
+channel**, and that is ambiguous: mouse and keyboard declare the same channel
+for the same host. Fixed by having the agent report the HID++ name
+(feature 0x0005) and matching by it.
+
+The measurement that closed the argument, in the same test:
 
 ```
-aqui:     slot 1 = MX Anywhere 3            slot 2 = MX Keys
+here:     slot 1 = MX Anywhere 3            slot 2 = MX Keys
 Windows:  slot 1 = MX Keys                  slot 2 = MX Anywhere 3
 ```
 
-**Invertido.** Slot é por receptor e não coincide — já suspeitávamos, e
-agora está medido. Qualquer lógica baseada em número de slot entre
-máquinas está errada por construção.
+**Swapped.** Slots are per receiver and do not match — we already suspected it, and
+now it is measured. Any logic based on slot numbers across
+machines is wrong by construction.
 
-### Travas
+### Safeguards
 
-- **Desligado por padrão.** Um reconciliador que erra te deixa sem teclado.
-- **Nunca age sem saber onde o líder está.** Canal desconhecido = não mexe.
-- **Mesmo mutex das outras trocas** (`focus::switch_lock`): borda, API e
-  reconciliador nunca competem.
-- **8 s de espera depois de agir**, para não brigar consigo mesmo.
+- **Off by default.** A reconciler that gets it wrong leaves you without a keyboard.
+- **Never acts without knowing where the leader is.** Unknown channel = hands off.
+- **Same mutex as the other switches** (`focus::switch_lock`): edge, API and
+  reconciler never compete.
+- **8 s wait after acting**, so it does not fight itself.
 
-## Velocidade: 105 s → 1,3 s, em quatro passos medidos
+## Speed: 105 s → 1.3 s, in four measured steps
 
-| | troca ponta a ponta |
+| | end-to-end switch |
 |---|---|
 | solaar | **105 s** |
-| HID++ direto | 13,8 s |
-| + paralelismo e cache de nomes | 3,9 s |
-| + modo rápido (cache de pares) | **1,32 s** |
+| direct HID++ | 13.8 s |
+| + parallelism and name cache | 3.9 s |
+| + fast mode (peer cache) | **1.32 s** |
 
-Cada passo saiu de uma medição, não de intuição:
+Each step came from a measurement, not intuition:
 
-**1. Paralelizar o que não depende.** A varredura local (1,6 s) e o probe
-do agente por SSH (2,7 s) rodavam em sequência no `plan()`. Juntas em
-`thread::scope`: 2,2 s em vez de 4,3 s.
+**1. Parallelize what does not depend.** The local scan (1.6 s) and the
+agent probe over SSH (2.7 s) ran sequentially in `plan()`. Together in
+`thread::scope`: 2.2 s instead of 4.3 s.
 
-**2. Não reler o que já se sabe.** O `survey` lia o nome de cada
-dispositivo por HID++ a cada chamada — ~1,1 s dos 1,6 s gastos para
-descobrir o que o cache já tinha.
+**2. Do not re-read what is already known.** `survey` read each
+device's name over HID++ on every call — ~1.1 s of the 1.6 s spent
+discovering what the cache already had.
 
-**3. Varrer só os slots conhecidos.** Os 6 slots custavam ~1 s só em
-timeout dos 4 vazios. Com o cache, varremos 2 — e uma varredura completa
-a cada 10, senão um dispositivo pareado depois nunca apareceria.
-`/api/devices`: 1,63 s → **0,36 s**.
+**3. Scan only known slots.** The 6 slots cost ~1 s just in
+timeouts of the 4 empty ones. With the cache, we scan 2 — and a full scan
+every 10, otherwise a device paired later would never show up.
+`/api/devices`: 1.63 s → **0.36 s**.
 
-**4. Não esperar SSH no caminho quente** (ideia do usuário). O probe do
-agente era ~2,2 s dos 3,9 s. Um refresher em background
-([`peers.rs`](../logid/src/peers.rs)) mantém o estado dos pares a cada
-6 s, e `"fast": true` lê o cache:
+**4. Do not wait for SSH on the hot path** (the user's idea). The agent
+probe was ~2.2 s of the 3.9 s. A background refresher
+([`peers.rs`](../logid/src/peers.rs)) keeps the peers' state every
+6 s, and `"fast": true` reads the cache:
 
 ```
 dry-run normal  2,193 s
@@ -763,39 +788,42 @@ dry-run rapido  0,197 s     <- 11x
 troca rapida    1,32 s
 ```
 
-A checagem **declara a idade** do dado em vez de fingir frescor:
-`agente responde (cache de 7220ms atras)`. A vigilância de borda usa o
-modo rápido; a API sem `fast` continua sondando de verdade.
+(normal dry-run 2.193 s; fast dry-run 0.197 s; fast switch 1.32 s.)
 
-**5. `LEAVE_WAIT` de 300 ms para 120 ms.** O dispositivo sai quase
-instantaneamente — a confirmação chega na primeira tentativa.
+The check **declares the age** of the data instead of pretending it is fresh:
+`agente responde (cache de 7220ms atras)` ("agent responds, cache from 7220 ms
+ago"). The edge watcher uses fast
+mode; the API without `fast` keeps probing for real.
 
-## Bateria por HID++, e um achado
+**5. `LEAVE_WAIT` from 300 ms to 120 ms.** The device leaves almost
+instantly — the confirmation arrives on the first attempt.
 
-Dois features, porque dispositivos da mesma família usam diferentes —
-medido: o MX Anywhere 3 expõe **0x1004** (porcentagem) e o MX Keys
-**0x1000** (faixa). Tentamos o primeiro e caímos para o segundo.
+## Battery over HID++, and a finding
 
-Bytes crus, para o parser não ser suposição:
+Two features, because devices of the same family use different ones —
+measured: the MX Anywhere 3 exposes **0x1004** (percentage) and the MX Keys
+**0x1000** (range). We try the first and fall back to the second.
+
+Raw bytes, so the parser is not an assumption:
 
 ```
-slot 1  0x1004 getStatus   -> 05 01 00      (5%, nivel 1)
-slot 2  0x1000 getLevel    -> 05 00 00      (5%, descarregando)
-slot 2  0x1000 getCapability -> 04 04 c0 06 0a   (critico = 0x0a = 10%)
+slot 1  0x1004 getStatus   -> 05 01 00      (5%, level 1)
+slot 2  0x1000 getLevel    -> 05 00 00      (5%, discharging)
+slot 2  0x1000 getCapability -> 04 04 c0 06 0a   (critical = 0x0a = 10%)
 ```
 
-Validado contra fonte independente: o `upower`, que lê pelo driver
-`hid-logitech-hidpp` do kernel, reporta **o mesmo** — 5%,
-`warning-level: critical`. Os dois dispositivos estão quase sem carga, e
-isso explica o "ping perdido" que eu havia atribuído a economia de
-energia: um dispositivo a 5% demora a responder.
+Validated against an independent source: `upower`, which reads through the kernel's
+`hid-logitech-hidpp` driver, reports **the same** — 5%,
+`warning-level: critical`. Both devices are almost out of charge, and
+that explains the "lost ping" I had attributed to power
+saving: a device at 5% is slow to respond.
 
-A bateria **não** entra no caminho quente (`survey_opts(false)`): custa
-duas idas e voltas por dispositivo e não influencia decisão de troca.
+Battery does **not** go into the hot path (`survey_opts(false)`): it costs
+two round trips per device and does not influence the switch decision.
 
-## Remapeamento de botão (0x1B04)
+## Button remapping (0x1B04)
 
-Lido do seu hardware, e os nomes conferem com o que o Solaar exibia:
+Read from your hardware, and the names match what Solaar displayed:
 
 ```
 slot 1 (MX Anywhere 3) -- 7 controles
@@ -810,26 +838,31 @@ slot 1 (MX Anywhere 3) -- 7 controles
 slot 2 (MX Keys) -- 24 controles (teclas F e midia)
 ```
 
-Os flags vêm do próprio dispositivo: `0x10` = reprogramável, `0x20` =
-divertable. Os botões esquerdo e direito reportam `0x01` — **sem** o bit
-`0x10`, e o `set_control_remap` recusa com essa justificativa em vez de
-tentar e falhar obscuro.
+(Output: 7 controls on the mouse — left button and right button not
+reprogrammable; middle button, Back ("Voltar"), Forward ("Avancar"), Smart Shift
+reprogrammable + divertable; gesture button. 24 controls on the keyboard, F and
+media keys.)
+
+The flags come from the device itself: `0x10` = reprogrammable, `0x20` =
+divertable. The left and right buttons report `0x01` — **without** the
+`0x10` bit, and `set_control_remap` refuses with that justification instead of
+trying and failing obscurely.
 
 ### API
 
 | | |
 |---|---|
-| `GET /api/controls` | controles de cada dispositivo **online** |
-| `POST /api/controls/remap` | `{slot, cid, to, confirm}`; `to: "0"` volta ao padrão |
+| `GET /api/controls` | controls of each **online** device |
+| `POST /api/controls/remap` | `{slot, cid, to, confirm}`; `to: "0"` restores the default |
 
-Exige `confirm`, como as outras ações que mudam hardware. Recusas
-testadas: sem `confirm` → 400, dispositivo em outro canal → 409, id
-inválido → 400. Dispositivo ausente não aparece em `/api/controls` —
-listar nome sem poder ler nem escrever seria enganoso.
+It requires `confirm`, like the other actions that change hardware. Tested
+refusals: without `confirm` → 400, device on another channel → 409, invalid
+id → 400. An absent device does not appear in `/api/controls` —
+listing a name without being able to read or write would be misleading.
 
-### Escrita validada contra hardware
+### Write validated against hardware
 
-Ciclo completo, com os dispositivos parados:
+Complete cycle, with the devices idle:
 
 ```
 POST remap 0x0056 -> 0x0052    {"detail":"0x0056 (Avancar) -> 0x0052 (Botao do meio)","ok":true}
@@ -838,35 +871,38 @@ POST remap 0x0056 -> padrao     {"detail":"0x0056 (Avancar) -> padrao","ok":true
 GET  controls                   todos -> padrao
 ```
 
-E o teste pegou dois bugs antes de o usuário sentir:
+(Forward remapped to the middle button, read back, restored to default
+("padrao"), and all read back as default.)
 
-**`to = 0` não restaura o padrão.** A escrita retornava `ok` e o
-dispositivo continuava reportando o remapeamento antigo. No 0x1B04 o
-padrão se restaura remapeando o controle **para ele mesmo**. Agora
-`to: "0"` é traduzido para o próprio `cid`.
+And the test caught two bugs before the user felt them:
 
-Se eu tivesse confiado no retorno `ok` em vez de ler de volta, teria
-deixado o botão Avançar do usuário alterado e reportado sucesso.
+**`to = 0` does not restore the default.** The write returned `ok` and the
+device kept reporting the old remapping. In 0x1B04 the
+default is restored by remapping the control **to itself**. Now
+`to: "0"` is translated to the `cid` itself.
 
-**O gate de ping precisava de retry.** O `remap` falhou com
-`slot 1 nao responde` segundos depois de uma leitura bem-sucedida. Eu
-havia posto retry no `survey` e esquecido no `remap` e no `change_host`
-— com os dispositivos a 5% de bateria, um ping único perde. Os três
-agora tentam de novo (3 a 4 vezes, 180 ms de intervalo).
+Had I trusted the `ok` return instead of reading back, I would have
+left the user's Forward button altered and reported success.
 
-### Limite observado: bateria baixa quebra enumeração longa
+**The ping gate needed a retry.** `remap` failed with
+`slot 1 nao responde` ("slot 1 does not respond") seconds after a successful read. I
+had put a retry in `survey` and forgotten it in `remap` and `change_host`
+— with the devices at 5% battery, a single ping is lost. All three
+now retry (3 to 4 times, 180 ms apart).
 
-O teclado tem 24 controles, e a 5% ele não sustenta as ~50 idas e
-voltas: `/api/controls` devolve
-`MX Keys Wireless Keyboard (erro: sem resposta)` enquanto o mouse, com
-7 controles, completa. O erro aparece por dispositivo em vez de
-derrubar a resposta inteira.
+### Observed limit: low battery breaks long enumeration
 
-## Por que a borda do Windows "não funcionava" — era meu bug
+The keyboard has 24 controls, and at 5% it cannot sustain the ~50 round
+trips: `/api/controls` returns
+`MX Keys Wireless Keyboard (erro: sem resposta)` while the mouse, with
+7 controls, completes. The error appears per device instead of
+bringing down the whole response.
 
-Reclamação do usuário: bater na borda no Windows às vezes não traz os
-dispositivos. O log do agente — que só existe desde que paramos de voar
-cego daquele lado — mostrou isso 25 vezes em 5 minutos:
+## Why the Windows edge "did not work" — it was my bug
+
+User complaint: hitting the edge on Windows sometimes does not bring the
+devices. The agent's log — which only exists since we stopped flying
+blind on that side — showed this 25 times in 5 minutes:
 
 ```
 21:24:54  BORDA TOCADA em (0,516) mas nenhum dos slots [1,2] esta neste receptor
@@ -874,182 +910,187 @@ cego daquele lado — mostrou isso 25 vezes em 5 minutos:
 ...
 ```
 
-A borda **era detectada** — a posição do cursor está ali. O que falhava
-era a **checagem de presença**, dizendo que não havia dispositivo
-enquanto o usuário movia o mouse naquela máquina. Impossível.
+(EDGE TOUCHED at (0,516) but none of slots [1,2] is on this receiver.)
 
-Causa: eu checava presença com `host_info`, que custa **duas** idas e
-volta com timeout de 700 ms cada, e **sem retry**. Com os dispositivos a
-5% de bateria, isso perde. Eu já havia corrigido exatamente isso no lado
-Linux e esquecido no agente — a segunda vez que o mesmo descuido
-aparece.
+The edge **was detected** — the cursor position is right there. What failed
+was the **presence check**, saying there was no device
+while the user was moving the mouse on that machine. Impossible.
 
-Agora existe `Receiver::present(slot, tentativas)` no crate
-compartilhado, com `ping` (250 ms) e retry, e os dois lados o usam. Uma
-implementação de retry, não duas.
+Cause: I checked presence with `host_info`, which costs **two** round
+trips with a 700 ms timeout each, and **no retry**. With the devices at
+5% battery, that gets lost. I had already fixed exactly this on the
+Linux side and forgotten it in the agent — the second time the same oversight
+showed up.
 
-## Guardas do `watch-edge`
+Now there is `Receiver::present(slot, tentativas)` in the shared
+crate, with `ping` (250 ms) and retry, and both sides use it. One
+retry implementation, not two.
 
-Problema real observado: **três instâncias ao mesmo tempo**, competindo
-pelo mesmo receptor e triplicando o tráfego HID++. O atalho do Startup
-mais um lançamento manual empilham.
+## `watch-edge` guards
 
-Duas guardas, e as duas custaram uma tentativa errada:
+Real problem observed: **three instances at the same time**, competing
+for the same receiver and tripling the HID++ traffic. The Startup shortcut
+plus a manual launch stack up.
 
-**Sessão do console.** Lançar por SSH cria uma instância na sessão 0 que
-não vê input nenhum (`area=(0,0 1024x768)`, idle igual ao uptime) e ainda
-disputa o receptor. `WTSGetActiveConsoleSessionId` +
-`ProcessIdToSessionId` recusam isso com mensagem explícita.
+Two guards, and both cost a wrong attempt:
 
-**Instância única, no namespace `Local\`.** Minha primeira versão usou
-`Global\`, e **duas instâncias passaram**: o `Global` exige
-`SeCreateGlobalPrivilege`, e quando a criação falha não dá para
-distinguir "já existe" de "não pude criar". Como a guarda de sessão já
-barra o caso entre sessões, o namespace por sessão é exatamente o escopo
-que faltava.
+**Console session.** Launching over SSH creates an instance in session 0 that
+sees no input at all (`area=(0,0 1024x768)`, idle equal to the uptime) and still
+contends for the receiver. `WTSGetActiveConsoleSessionId` +
+`ProcessIdToSessionId` refuse this with an explicit message.
 
-> Nota de método: ao testar, contei dois processos e quase reportei a
-> guarda como quebrada. Eram a instância boa mais a recusada **saindo** —
-> minha medição correndo com o teardown. O log tinha um único
-> `watch-edge START`, e é ele que decide, não o `Get-Process`.
+**Single instance, in the `Local\` namespace.** My first version used
+`Global\`, and **two instances got through**: `Global` requires
+`SeCreateGlobalPrivilege`, and when creation fails there is no way to
+distinguish "already exists" from "could not create". Since the session guard already
+blocks the cross-session case, the per-session namespace is exactly the scope
+that was missing.
 
-### Deploy no Windows precisa de rename, não de `scp` direto
+> Method note: while testing, I counted two processes and almost reported the
+> guard as broken. They were the good instance plus the refused one **exiting** —
+> my measurement racing the teardown. The log had a single
+> `watch-edge START`, and that is what decides, not `Get-Process`.
 
-`scp` sobre o exe falha com `dest open ... Failure` quando qualquer
-instância o mantém aberto, e o script ainda imprimia "trocado". Agora:
-enviar como `.new.exe`, `Remove-Item` no atual, `Move-Item`, e
-**conferir tamanho e data** — não confiar na ausência de erro.
+### Deploying on Windows needs a rename, not a direct `scp`
 
-## A espera que eu estava pagando por nada: 2,27 s → 66 ms
+`scp` over the exe fails with `dest open ... Failure` when any
+instance keeps it open, and the script still printed "trocado" ("swapped"). Now:
+send it as `.new.exe`, `Remove-Item` the current one, `Move-Item`, and
+**check size and date** — do not trust the absence of an error.
 
-O usuário continuou sentindo delay depois do modo rápido, e tinha razão.
-Cronometrado isoladamente, sem API nem verificação:
+## The wait I was paying for nothing: 2.27 s → 66 ms
+
+The user kept feeling a delay after fast mode, and was right.
+Timed in isolation, without the API or verification:
 
 ```
 abrir receptor     :  0,01 ms
 ping de posse      : 45,54 ms
-feature index      : 20,00 ms   (memoizado depois da 1a vez)
+feature index      : 20,00 ms   (memoized after the 1st time)
 escrita ChangeHost :  0,60 ms
 TOTAL              : 66,14 ms
 ```
 
-No daemon o `feature_index` já está memoizado, então o custo real é
+(open receiver 0.01 ms; ownership ping 45.54 ms; feature index 20.00 ms;
+ChangeHost write 0.60 ms; total 66.14 ms.)
+
+In the daemon `feature_index` is already memoized, so the real cost is
 **~46 ms**.
 
-### O que era o resto
+### What the rest was
 
-**`set_host` esperava 700 ms por uma resposta que nunca vem.** Numa
-troca bem-sucedida o dispositivo sai do rádio **antes** de responder — eu
-já sabia disso (tratava ausência como sucesso) e ainda assim pagava o
-`REPLY_TIMEOUT` inteiro, em cada dispositivo. `set_host_nowait` escreve o
-report e volta: **0,6 ms**.
+**`set_host` waited 700 ms for a reply that never comes.** On a
+successful switch the device leaves the radio **before** replying — I
+already knew this (I treated absence as success) and still paid the
+whole `REPLY_TIMEOUT`, on each device. `set_host_nowait` writes the
+report and returns: **0.6 ms**.
 
-**O `feature_index` custava uma ida e volta por chamada.** Ele é estável
-por dispositivo; memoizado, sai do caminho quente (20 ms → ~0).
+**`feature_index` cost a round trip per call.** It is stable
+per device; memoized, it leaves the hot path (20 ms → ~0).
 
-**O `plan()` varria o receptor a cada travessia** (~360 ms). Agora há
-cache curto, mantido a 1,5 s por um refresher, com fallback para
-varredura se estiver velho — correção antes de velocidade.
+**`plan()` scanned the receiver on every crossing** (~360 ms). Now there is a
+short cache, kept at 1.5 s by a refresher, with a fallback to a
+scan if it is stale — correctness before speed.
 
-**As duas trocas eram sequenciais.** Agora disparam em paralelo, e a
-confirmação virou log em background (`verificacao: slot 1 saiu em
-120ms`) em vez de bloquear a resposta.
+**The two switches were sequential.** Now they fire in parallel, and the
+confirmation became a background log (`verificacao: slot 1 saiu em
+120ms`, "verification: slot 1 left in 120 ms") instead of blocking the response.
 
-Medido: o `plan()` em modo rápido responde em **0,98 ms**.
+Measured: `plan()` in fast mode responds in **0.98 ms**.
 
-### A tensão que isso cria, e é decisão sua
+### The tension this creates, and it is your decision
 
-Baixei a permanência de 3 toques em 400 ms para **2 em 300 ms**, e ficou
-configurável:
+I lowered the dwell from 3 touches in 400 ms to **2 in 300 ms**, and made it
+configurable:
 
 ```toml
 [input.border]
-hold_hits = 2          # 1 = troca no primeiro toque
+hold_hits = 2          # 1 = switch on the first touch
 hold_window_ms = 300
 ```
 
-Mas atravessar a borda aqui **não é como no Flow**: lá o cursor volta de
-graça, aqui é um reparelhamento de rádio. Com `hold_hits = 2` o
-movimento normal até a borda direita já dispara — observado durante os
-testes, os dispositivos saíram três vezes sem intenção.
+But crossing the edge here **is not like Flow**: there the cursor comes back for
+free, here it is a radio re-pairing. With `hold_hits = 2` the
+normal movement up to the right edge already fires — observed during the
+tests, the devices left three times unintentionally.
 
-`hold_hits = 1` dá o imediato que você pediu, ao custo de trocar de
-máquina por raspão. `3` evita o acidente e devolve o delay. Não há
-escolha certa sem saber o seu uso.
+`hold_hits = 1` gives the immediacy you asked for, at the cost of switching
+machines on a graze. `3` avoids the accident and brings back the delay. There is no
+right choice without knowing your usage.
 
-## O status de bateria é afirmação do dispositivo, não nossa
+## Battery status is the device's claim, not ours
 
-Reclamação: "teclado carregando há 30 minutos já" — e o painel dizia
-`descarregando`. Investigado nos bytes crus:
+Complaint: "keyboard has been charging for 30 minutes already" — and the panel said
+`descarregando` ("discharging"). Investigated in the raw bytes:
 
 ```
-MX Keys   0x1000 getLevel -> 32 14 00    = 50%, proximo 20%, status 0
-MX Anywhere 3 0x1004 getStatus -> 05 01 01 01  = 5%, nivel 1,
+MX Keys   0x1000 getLevel -> 32 14 00    = 50%, next 20%, status 0
+MX Anywhere 3 0x1004 getStatus -> 05 01 01 01  = 5%, level 1,
                                                  chargingStatus 1, externalPower 1
 ```
 
-**A carga estava funcionando**: o teclado havia subido de 5% para 50%, e
-o mouse foi de 5% a 70% durante a própria investigação. O que estava
-errado era o meu rótulo.
+**Charging was working**: the keyboard had gone up from 5% to 50%, and
+the mouse went from 5% to 70% during the investigation itself. What was
+wrong was my label.
 
-O MX Keys reporta `status = 0` ("descarregando") **no cabo, com a carga
-subindo**. O `upower`, que lê pelo driver do kernel, reporta o mesmo — a
-afirmação falsa é do firmware. Mas eu a exibia como se fosse leitura
-minha, num campo chamado `battery_level`, como se fosse o nível.
+The MX Keys reports `status = 0` ("discharging") **on the cable, with the charge
+rising**. `upower`, which reads through the kernel driver, reports the same — the
+false claim is the firmware's. But I displayed it as if it were my own
+reading, in a field called `battery_level`, as if it were the level.
 
-Correções:
+Fixes:
 
-- `battery_level` virou **`battery_status`**, e a doc diz de quem é a
-  afirmação. A bandeja mostra `diz: descarregando`, não `descarregando`.
-- `charging` para 0x1004 agora usa `chargingStatus` **ou**
-  `externalPower` (byte 3), mais confiável que só o primeiro.
-- `battery_next_level` (byte 1 do 0x1000) deixou de ser descartado.
+- `battery_level` became **`battery_status`**, and the docs say whose
+  claim it is. The tray shows `diz: descarregando` ("says: discharging"), not `descarregando`.
+- `charging` for 0x1004 now uses `chargingStatus` **or**
+  `externalPower` (byte 3), more reliable than the first alone.
+- `battery_next_level` (byte 1 of 0x1000) is no longer discarded.
 
-> Quando o dispositivo está ausente, o valor vem do cache com
-> `battery_age_s` — observado: teclado `50% idade=49s` enquanto o mouse
-> lia `70% idade=0s`. Memória declarada como memória.
+> When the device is absent, the value comes from the cache with
+> `battery_age_s` — observed: keyboard `50% idade=49s` while the mouse
+> read `70% idade=0s` ("idade" = age). Memory declared as memory.
 
-## Troca imediata na borda, por pedido
+## Immediate switch at the edge, on request
 
-`hold_hits = 1`: troca no primeiro toque, sem permanência. O usuário
-pediu explicitamente depois de eu apresentar o trade-off — a borda
-direita não é caminho frequente para ele.
+`hold_hits = 1`: switch on the first touch, no dwell. The user
+asked for it explicitly after I presented the trade-off — the right
+edge is not a frequent path for them.
 
-O default do repo segue `2`, para quem instalar não ser surpreendido.
+The repo default stays `2`, so whoever installs it is not surprised.
 
-## O Deskflow ainda aparecia no painel
+## Deskflow still showed up in the panel
 
-Removido do pacote e das duas máquinas, mas continuava na config: um
-`[[hosts.services]]` na porta 24800 e o unit `deskflow-client.service`
-em `units`. O painel mostrava `Deskflow srv: fechada` e
-`deskflow-client · inactive` — ruído sobre algo que não existe mais.
+Removed from the package and from both machines, but it remained in the config: a
+`[[hosts.services]]` on port 24800 and the `deskflow-client.service` unit
+in `units`. The panel showed `Deskflow srv: fechada` ("closed") and
+`deskflow-client · inactive` — noise about something that no longer exists.
 
-Trocado por `logid.service`, que é o que de fato importa vigiar.
+Replaced by `logid.service`, which is what actually matters to watch.
 
-## Quando os dispositivos "trocam de host sozinhos": a lista (04/11)
+## When the devices "switch hosts on their own": the list (2026-11-04)
 
-Custou a manhã do usuário duas vezes. A próxima pessoa — provavelmente
-eu — merece uma lista em vez de uma investigação.
+It cost the user's morning twice. The next person — probably
+me — deserves a list instead of an investigation.
 
-**Quem pode mover um dispositivo, e nenhum deles aparece se você olhar
-só o painel de uma máquina:**
+**Who can move a device, and none of them show up if you look
+only at one machine's panel:**
 
-| Ator | Onde | Como desligar | Pegadinha |
+| Actor | Where | How to turn off | Gotcha |
 |---|---|---|---|
-| Borda (GNOME) | `border.rs`, Ubuntu | `input.border.enabled` | As barreiras nascem no boot; a flag passou a ser lida **na encostada** |
-| Borda (Win32) | `border_win.rs`, Windows | a mesma flag, **naquela** máquina | Arquivo diferente — corrigir um não corrige o outro, e eu caí nisso |
-| Dead-man's switch | `border_win.rs`, `Guard` | junto com a borda | Devolve tudo se ninguém digitar em 25 s |
-| Reconciliador | `follow.rs` | `input.follow.enabled` | Pedia ao par e acreditava sem conferir; hoje tem disjuntor |
-| Energia do USB | **Windows, fora do nosso código** | ver abaixo | **Não loga nada em lugar nenhum** |
+| Edge (GNOME) | `border.rs`, Ubuntu | `input.border.enabled` | Barriers are created at boot; the flag is now read **on touch** |
+| Edge (Win32) | `border_win.rs`, Windows | the same flag, **on that** machine | Different file — fixing one does not fix the other, and I fell for it |
+| Dead-man's switch | `border_win.rs`, `Guard` | together with the edge | Gives everything back if nobody types within 25 s |
+| Reconciler | `follow.rs` | `input.follow.enabled` | Asked the peer and believed it without checking; today it has a circuit breaker |
+| USB power | **Windows, outside our code** | see below | **Logs nothing anywhere** |
 
-### O ator que não deixa rastro: economia de energia do USB
+### The actor that leaves no trace: USB power saving
 
-Com borda e reconciliador desligados nas três máquinas e nenhuma linha
-de log reivindicando a ação, os dispositivos ainda voltavam ao canal 1
-poucos segundos depois de irem para o 2. Nenhum software pediu.
+With edge and reconciler off on all three machines and no log line
+claiming the action, the devices still went back to channel 1
+a few seconds after going to 2. No software asked for it.
 
-O Windows tinha permissão para **desligar o receptor Logitech** para
-economizar energia — nas três interfaces dele e no hub raiz:
+Windows had permission to **turn off the Logitech receiver** to
+save power — on its three interfaces and on the root hub:
 
 ```powershell
 Get-CimInstance -Namespace root\wmi -ClassName MSPower_DeviceEnable |
@@ -1057,237 +1098,237 @@ Get-CimInstance -Namespace root\wmi -ClassName MSPower_DeviceEnable |
   ForEach-Object { Set-CimInstance -InputObject $_ -Property @{ Enable = $false } }
 ```
 
-Dongle suspenso = o dispositivo não acha o host 2 e cai de volta no 1,
-que continua chamando. Explica os dois sintomas de uma vez: "tem hora
-que não vai" (dongle dormindo quando o pedido chega) e "quando vai,
-alguns segundos depois volta".
+Suspended dongle = the device does not find host 2 and falls back to 1,
+which keeps calling. It explains both symptoms at once: "sometimes it
+doesn't go" (dongle asleep when the request arrives) and "when it goes,
+a few seconds later it comes back".
 
-### A ordem de investigação que funciona
+### The investigation order that works
 
-1. `GET /api/status` em **qualquer** máquina: o campo `kvm` de cada host
-   diz a borda e o reconciliador **daquele** host. Foi acrescentado
-   justamente porque olhar um lado só não bastava.
-2. Log das **duas** máquinas. "Nenhuma linha reivindica a ação" é
-   informação, não falta de informação: elimina o nosso código.
-3. Processos separados do daemon: `logid-agent watch-edge` tem atalho
-   próprio no Startup do Windows e não morre com a flag do daemon.
-4. Outro gerenciador: `solaar`, `logiops`, `piper`, `ratbagd`.
-5. Energia do USB no host de DESTINO.
+1. `GET /api/status` on **any** machine: each host's `kvm` field
+   tells the edge and reconciler **of that** host. It was added
+   precisely because looking at one side only was not enough.
+2. Logs from **both** machines. "No line claims the action" is
+   information, not a lack of information: it rules out our code.
+3. Processes separate from the daemon: `logid-agent watch-edge` has its own
+   shortcut in Windows Startup and does not die with the daemon's flag.
+4. Another manager: `solaar`, `logiops`, `piper`, `ratbagd`.
+5. USB power on the DESTINATION host.
 
-### A causa, enfim: o receptor do Windows numa porta USB 3.0 (04/11)
+### The cause, at last: the Windows receiver on a USB 3.0 port (2026-11-04)
 
-Depois de eliminar borda, reconciliador, sondagem (pausada nas duas
-maquinas), Options+, energia do USB e pareamento -- todos por experimento,
-nenhum por palpite -- sobrou a medicao que faltava:
+After ruling out edge, reconciler, probing (paused on both
+machines), Options+, USB power and pairing -- all by experiment,
+none by guess -- the missing measurement remained:
 
-| canal | receptor em | |
+| channel | receiver on | |
 |---|---|---|
-| 1 (Ubuntu) | bus `usb1`, 12 Mbps, versao 2.00 | **USB 2.0** |
+| 1 (Ubuntu) | bus `usb1`, 12 Mbps, version 2.00 | **USB 2.0** |
 | 2 (Windows) | `USB\ROOT_HUB30` | **USB 3.0** |
 
-Controlador USB 3.0 emite ruido de banda larga em torno de 2,4 GHz, que e
-a faixa do Unifying. Dongle numa porta USB 3 perde alcance e cai
-intermitentemente -- e documentado pela propria Logitech.
+A USB 3.0 controller emits broadband noise around 2.4 GHz, which is
+the Unifying band. A dongle on a USB 3 port loses range and drops
+intermittently -- documented by Logitech itself.
 
-**O que isso explica, que nada antes explicava:**
+**What this explains, which nothing before explained:**
 
-- Os dispositivos sempre voltam para o **canal 1**, nao para uma MAQUINA.
-  Quando o usuario levou o receptor do Ubuntu para o Windows, eles
-  convergiram para o canal 1 **no Windows**. Nao e "algo puxa para o
-  Ubuntu"; e "eles largam o host 2 e caem no host estavel".
-- A relacao com a bateria, que era o pedaco que nao encaixava: mais carga
-  = transmissor mais forte = sobrevive mais tempo no ruido. Medido, com o
-  mesmo software e os mesmos receptores:
+- The devices always go back to **channel 1**, not to a MACHINE.
+  When the user took the Ubuntu receiver to Windows, they
+  converged to channel 1 **on Windows**. It is not "something pulls toward
+  Ubuntu"; it is "they drop host 2 and fall onto the stable host".
+- The relationship with the battery, which was the piece that did not fit: more charge
+  = stronger transmitter = survives longer in the noise. Measured, with the
+  same software and the same receivers:
 
-  | bateria | tempo no canal 2 |
+  | battery | time on channel 2 |
   |---|---|
-  | teclado a 0% | ~10 s |
-  | teclado recarregando | ~48 s |
-  | mouse a 85% | ~85 s |
+  | keyboard at 0% | ~10 s |
+  | keyboard recharging | ~48 s |
+  | mouse at 85% | ~85 s |
 
-- Nenhuma linha de log reivindicando a acao, nos dois lados, em nenhum
-  momento. Era informacao, nao falta de informacao: eliminava o software.
+- No log line claiming the action, on either side, at any
+  moment. It was information, not a lack of information: it ruled out the software.
 
-**Remedio:** mover o dongle do Windows para uma porta **USB 2.0**, ou usar
-um cabo de extensao curto para tirar ele da carcaca e da vizinhanca das
-outras portas USB 3.
+**Remedy:** move the Windows dongle to a **USB 2.0** port, or use
+a short extension cable to get it away from the case and from the vicinity of the
+other USB 3 ports.
 
-**A licao de processo:** eu persegui seis atores de software antes de
-medir em que porta o receptor estava. A ordem de investigacao no inicio
-desta secao agora comeca pelo fisico -- velocidade e barramento dos dois
-receptores -- porque custa um comando e elimina a classe inteira.
+**The process lesson:** I chased six software actors before
+measuring which port the receiver was on. The investigation order at the start
+of this section now begins with the physical -- speed and bus of both
+receivers -- because it costs one command and rules out the whole class.
 
-### A cola segue o dongle, nao a maquina -- e o dongle B le lixo (04/11)
+### The stickiness follows the dongle, not the machine -- and dongle B reads garbage (2026-11-04)
 
-Invertendo os dois dongles entre as maquinas, a cola seguiu o **dongle**,
-nao a maquina: os dispositivos foram para onde o dongle A estava, e
-ficaram la estaveis por minutos -- na mesma maquina e nas mesmas portas
-USB 3.0 que eu havia culpado. **Isso derrubou a hipotese de ruido de USB
-3.0**, que eu tinha construido com uma escada de bateria que parecia
-confirmar.
+Swapping the two dongles between the machines, the stickiness followed the **dongle**,
+not the machine: the devices went to wherever dongle A was, and
+stayed there stable for minutes -- on the same machine and the same USB
+3.0 ports I had blamed. **That brought down the USB
+3.0 noise hypothesis**, which I had built with a battery ladder that seemed
+to confirm it.
 
-Com o dongle B no Ubuntu, as leituras HID++ que passam por ele voltaram
-**corrompidas, de forma repetida**:
+With dongle B on Ubuntu, the HID++ reads that go through it came back
+**corrupted, repeatedly**:
 
 ```
 MX Keys WirelessMX Keys W    canal=5 de 19
 ```
 
-O nome veio concatenado consigo mesmo e o canal veio **5 de 19** -- num
-teclado de tres hosts. Duas leituras seguidas, o mesmo lixo. Receptor que
-devolve payload malformado nao esta fraco, esta com defeito.
+The name came concatenated with itself and the channel came as **5 of 19** -- on a
+three-host keyboard. Two reads in a row, the same garbage. A receiver that
+returns a malformed payload is not weak, it is defective.
 
-**O que isso explica:** os dispositivos caiam do dongle B em dezenas de
-segundos; a escada bateria-duracao era real porque qualquer link ruim se
-comporta assim; e a convergencia "sempre no host 1" era convergencia no
-**dongle que funciona**.
+**What this explains:** the devices dropped off dongle B within tens of
+seconds; the battery-duration ladder was real because any bad link
+behaves like that; and the "always on host 1" convergence was convergence on the
+**dongle that works**.
 
-**Remedio:** usar so o dongle A, e alcancar a outra maquina pela tela
-remota (specs/010) em vez de mover os dispositivos.
+**Remedy:** use only dongle A, and reach the other machine through the remote
+screen (specs/010) instead of moving the devices.
 
-#### Ressalva: o titulo desta secao afirma mais do que eu medi
+#### Caveat: the title of this section claims more than I measured
 
-Escrevi "o dongle B esta defeituoso" no mesmo dia em que vi o lixo, e o
-commit cb5722c carrega essa frase. Ela pode estar certa, mas as duas
-leituras corrompidas **nao a provam**: naquele momento os dispositivos
-estavam caindo do dongle B o tempo todo, e uma leitura HID++ de um
-dispositivo que ja saiu do ar devolve exatamente esse tipo de payload
-sem sentido. Lixo na resposta e sintoma compativel com receptor com
-defeito **e** com dispositivo ausente -- e eu tinha as duas condicoes
-juntas.
+I wrote "dongle B is defective" on the same day I saw the garbage, and
+commit cb5722c carries that sentence. It may be right, but the two
+corrupted reads **do not prove it**: at that moment the devices
+were dropping off dongle B all the time, and an HID++ read from a
+device that has already gone off the air returns exactly this kind of nonsensical
+payload. Garbage in the response is a symptom compatible with a defective receiver
+**and** with an absent device -- and I had both conditions
+together.
 
-O que ficou medido, e que basta para a decisao pratica:
+What was measured, and is enough for the practical decision:
 
-- a cola segue o dongle, nao a maquina nem a porta (isso derrubou a
-  hipotese de USB 3.0, e foi medido invertendo os dois);
-- com o dongle A sozinho as leituras sao coerentes -- `canal=1 de 3` nos
-  dois dispositivos, nome correto, estavel por 20 minutos de vigilancia;
-- com o dongle B as leituras nao eram confiaveis.
+- the stickiness follows the dongle, not the machine nor the port (that brought down the
+  USB 3.0 hypothesis, and was measured by swapping the two);
+- with dongle A alone the reads are coherent -- `canal=1 de 3` on
+  both devices, correct name, stable over 20 minutes of watching;
+- with dongle B the reads were not reliable.
 
-Isso justifica usar so o dongle A. Nao justifica afirmar a causa fisica.
-Para decidir de verdade bastaria parear os dois dispositivos no dongle B
-numa maquina sem o dongle A por perto e ler com eles presentes e
-acordados; se o lixo voltar com dispositivo vivo, ai sim e o receptor.
-Fica anotado como nao feito, nao como sabido.
+That justifies using only dongle A. It does not justify asserting the physical cause.
+To decide for real it would be enough to pair both devices on dongle B
+on a machine without dongle A nearby and read with them present and
+awake; if the garbage comes back with a live device, then it is the receiver.
+Noted as not done, not as known.
 
-### Dois instrumentos consertados por causa disto
+### Two instruments fixed because of this
 
-1. **`host_info` valida a faixa.** Canal acima do total que o proprio
-   dispositivo declarou virou erro, nao numero. Antes devolvia `5` como
-   fato e o reconciliador agia nisso. Tres testes cobrem a regra.
-2. **O cache de nomes pode se envenenar.** Uma leitura corrompida gravou
-   `MX Keys WirelessMX Keys W` em disco e o painel passou a repetir isso
-   mesmo com o dongle bom. Limpar resolve, mas a licao e que cache de
-   dado lido de hardware ruim precisa de validacao na ENTRADA -- hoje ele
-   aceita o que vier.
+1. **`host_info` validates the range.** A channel above the total the device itself
+   declared became an error, not a number. Before, it returned `5` as
+   fact and the reconciler acted on it. Three tests cover the rule.
+2. **The name cache can get poisoned.** A corrupted read wrote
+   `MX Keys WirelessMX Keys W` to disk and the panel kept repeating it
+   even with the good dongle. Clearing it fixes it, but the lesson is that a cache of
+   data read from bad hardware needs validation on INPUT -- today it
+   accepts whatever comes.
 
-### A regra que sai disto
+### The rule that comes out of this
 
-**Interruptor que não desliga é pior que interruptor nenhum.** Um laço
-residente tem de ler a flag a cada volta, não no boot — senão a tela
-mostra "off" sobre um comportamento vivo, e a pessoa perde a confiança
-no painel exatamente quando mais precisa dele. Vale para a borda nas
-duas plataformas, para o reconciliador e para qualquer coisa que a gente
-acrescente aqui depois.
+**A switch that does not turn off is worse than no switch at all.** A resident
+loop has to read the flag on every iteration, not at boot — otherwise the screen
+shows "off" over a live behavior, and the person loses trust
+in the panel exactly when they need it most. It applies to the edge on both
+platforms, to the reconciler and to anything we
+add here later.
 
-## Em aberto
+## Open
 
-- Canal do `ubuntu-host`: uma tecla de Easy-Switch resolve.
-- Detecção de borda pelo portal `InputCapture` — API existe no GNOME 50
-  (backend declara e `CreateSession` é aceito), mas é D-Bus + libei, e a
-  v1 pode não bastar.
-- `guard` ainda não roda residente: precisa de atalho em `shell:startup`
-  para ficar na sessão interativa, já que `GetLastInputInfo` não vê input
-  de outra sessão.
-- Latência real da troca HID++ ponta a ponta — medir antes de prometer.
-- E se o mouse estiver no canal de uma máquina desligada? Só o botão
-  físico resolve, e a GUI tem que dizer isso.
+- `ubuntu-host` channel: one Easy-Switch keypress resolves it.
+- Edge detection through the `InputCapture` portal — the API exists in GNOME 50
+  (the backend declares it and `CreateSession` is accepted), but it is D-Bus + libei, and
+  v1 may not be enough.
+- `guard` does not run resident yet: it needs a shortcut in `shell:startup`
+  to stay in the interactive session, since `GetLastInputInfo` does not see input
+  from another session.
+- Real end-to-end latency of the HID++ switch — measure before promising.
+- What if the mouse is on the channel of a machine that is off? Only the physical
+  button solves it, and the GUI has to say so.
 
-## KVM por LAN: trocar de máquina sem trocar de dongle (04/11)
+## KVM over LAN: switching machines without switching dongles (2026-11-04)
 
-Dois dongles perto não funcionam — a cola segue o dongle, e ficou um só
-no Ubuntu. Isso resolve a instabilidade e deixa um problema: alcançar
-as outras máquinas exige mover o receptor na mão.
+Two dongles close together do not work — the stickiness follows the dongle, and only one
+stayed, on Ubuntu. That solves the instability and leaves a problem: reaching
+the other machines requires moving the receiver by hand.
 
-A saída é parar de tratar troca de máquina como comando de rádio para o
-teclado e passar a tratá-la como decisão de software: capturar aqui e
-injetar lá, pela LAN.
+The way out is to stop treating a machine switch as a radio command to the
+keyboard and start treating it as a software decision: capture here and
+inject there, over the LAN.
 
-### Por que evdev e não o `InputCapture` do Mutter
+### Why evdev and not Mutter's `InputCapture`
 
-O GNOME 50 expõe `org.gnome.Mutter.InputCapture`, que é a API feita
-para isto. Introspeccionando uma sessão (sonda descartável, porque ela
-morre junto com a conexão que a cria e o `busctl` não serve), ela
-oferece:
+GNOME 50 exposes `org.gnome.Mutter.InputCapture`, which is the API made
+for this. Introspecting a session (a throwaway probe, because it
+dies together with the connection that creates it and `busctl` does not work), it
+offers:
 
 ```
 GetZones, AddBarrier, ClearBarriers, Enable, Disable,
 ConnectToEIS, Release, Close
-sinais: Activated(barrier_id, activation_id, cursor_position), Deactivated
+signals: Activated(barrier_id, activation_id, cursor_position), Deactivated
 ```
 
-Não há **nenhum** método para ativar a captura sob demanda. O
-compositor só entrega input quando o ponteiro cruza uma barreira de
-borda — exatamente o gesto que estamos tentando abandonar em favor do
-clique na bandeja.
+There is **no** method to activate capture on demand. The
+compositor only delivers input when the pointer crosses an edge
+barrier — exactly the gesture we are trying to abandon in favor of the
+tray click.
 
-Daria para contornar: criar uma barreira e teleportar o ponteiro para
-dentro dela pelo `RemoteDesktop`. Seria simular a borda, com mais peças
-para quebrar.
+It could be worked around: create a barrier and teleport the pointer
+into it via `RemoteDesktop`. That would be simulating the edge, with more parts
+to break.
 
-O evdev resolve direto: `EVIOCGRAB` é explícito (a semântica do
-clique), **os códigos já são os nossos** — `Evento::Tecla` carrega
-keycode de evdev porque é o que `NotifyKeyboardKeycode` recebe, e
-`scancode_de_evdev()` já traduz para o Windows — e independe de
+evdev solves it directly: `EVIOCGRAB` is explicit (the click's
+semantics), **the codes are already ours** — `Evento::Tecla` carries an
+evdev keycode because that is what `NotifyKeyboardKeycode` receives, and
+`scancode_de_evdev()` already translates it for Windows — and it is independent of the
 compositor.
 
-### Movimento relativo
+### Relative movement
 
-`Evento::MouseRel` entrou no protocolo. O visualizador manda absoluto
-porque sabe onde o cursor está dentro da janela dele; o KVM não tem
-janela. E jogo lê movimento relativo: com absoluto a mira trava nas
-bordas, e "mudar para Windows para jogar" é o caso que motivou tudo.
+`Evento::MouseRel` entered the protocol. The viewer sends absolute
+because it knows where the cursor is inside its window; the KVM has no
+window. And games read relative movement: with absolute the crosshair gets stuck at the
+edges, and "switch to Windows to play" is the case that motivated everything.
 
-A tag nova quase ativou um bug latente: o decodificador terminava em
-`_ => Tecla`, então qualquer tag desconhecida lia 5 bytes. Um `MouseRel`
-de 16 lido como tecla deixaria 11 bytes soltos e, dali em diante, todo
-o stream vira comando fantasma **no computador de outra pessoa**. Cada
-tag tem arm próprio agora, e um teste trava o formato.
+The new tag almost activated a latent bug: the decoder ended in
+`_ => Tecla`, so any unknown tag read 5 bytes. A 16-byte `MouseRel`
+read as a key would leave 11 loose bytes and, from then on, the whole
+stream turns into phantom commands **on someone else's computer**. Each
+tag has its own arm now, and a test locks the format.
 
-### As três salvaguardas
+### The three safeguards
 
-Agarrado, o teclado não existe para o desktop local. Isso é o que
-queremos — sem o grab, cada tecla seria digitada nos dois computadores
-— e é o que torna o modo perigoso.
+Grabbed, the keyboard does not exist for the local desktop. That is what
+we want — without the grab, each key would be typed on both computers
+— and it is what makes the mode dangerous.
 
-1. **Conectar antes de agarrar.** Falhou a conexão, ninguém agarra.
-   Sem isso, alvo fora do ar deixaria a pessoa sem teclado e sem
-   destino.
-2. **Socorro que não depende da rede.** Os dois Ctrl juntos soltam tudo
-   e encerram. Nenhum texto os produz e nenhum programa os usa — é o
-   mesmo gesto de switch KVM de hardware, pelo mesmo motivo.
-3. **Soltar o que ficou apertado.** O kernel solta o grab quando o fd
-   fecha, então teclado travado para sempre não é alcançável. Mas as
-   teclas apertadas **no outro lado** ficariam presas, e isso é
-   alcançável — já aconteceu no caminho do visualizador. Mandamos
-   key-up de tudo antes de sair.
+1. **Connect before grabbing.** If the connection fails, nobody grabs.
+   Without this, a target that is down would leave the person without a keyboard and without a
+   destination.
+2. **An escape hatch that does not depend on the network.** Both Ctrl keys together release everything
+   and exit. No text produces them and no program uses them — it is the
+   same gesture as a hardware KVM switch, for the same reason.
+3. **Release what was left pressed.** The kernel releases the grab when the fd
+   closes, so a keyboard stuck forever is not reachable. But the
+   keys pressed **on the other side** would stay stuck, and that is
+   reachable — it already happened on the viewer path. We send
+   key-up for everything before exiting.
 
-`--observar` lê e imprime sem agarrar e sem mandar: é o modo de
-conferir antes de deixar o programa roubar o teclado de alguém.
+`--observar` ("observe") reads and prints without grabbing and without sending: it is the way to
+check before letting the program steal someone's keyboard.
 
-### Permissão
+### Permission
 
-`logid/udev/70-logid-input.rules`, com `TAG+="uaccess"` nos
-dispositivos Logitech — não o grupo `input`, que daria a qualquer
-processo da conta acesso permanente a todo dispositivo de entrada,
-inclusive com a sessão encerrada. Receita em
+`logid/udev/70-logid-input.rules`, with `TAG+="uaccess"` on the
+Logitech devices — not the `input` group, which would give any
+process of the account permanent access to every input device,
+even with the session closed. Recipe in
 `.claude/skills/grant-input-access.md`.
 
-### O que falta
+### What is missing
 
-- A bandeja nativa que chama isto (hoje é linha de comando).
-- Captura no Windows (`SetWindowsHookEx` + Raw Input) para o caminho
-  inverso, quando o dongle estiver lá.
-- Modo só-input no host: hoje o KVM conecta no host de tela, que passa
-  a codificar vídeo sem ninguém assistindo. Para jogar no Windows isso
-  é GPU jogada fora.
+- The native tray that calls this (today it is command line).
+- Capture on Windows (`SetWindowsHookEx` + Raw Input) for the reverse
+  path, when the dongle is there.
+- Input-only mode on the host: today the KVM connects to the screen host, which then
+  encodes video with nobody watching. For gaming on Windows that
+  is wasted GPU.

@@ -1,31 +1,31 @@
-# 013 — Tela de bloqueio do Windows (estilo Parsec)
+# 013 — Windows lock screen (Parsec-style)
 
-> Estado: **mecanismo provado**, serviço não escrito. Falta a medição
-> com a máquina de fato bloqueada.
+> Status: **mechanism proven**, service not written. The measurement with
+> the machine actually locked is still missing.
 
-## O problema
+## The problem
 
-A tela remota do Windows morre quando a sessão bloqueia. O
-`capture_win.rs` já documenta as quatro causas do mesmo
-`E_ACCESSDENIED` ([regra](../.claude/rules/windows-locked-screen.md)),
-e três delas são a mesma coisa por baixo: **a mesa de entrada mudou**.
+The Windows remote screen dies when the session locks. `capture_win.rs`
+already documents the four causes of the same `E_ACCESSDENIED`
+([rule](../.claude/rules/windows-locked-screen.md)), and three of them
+are the same thing underneath: **the input desktop changed**.
 
-A tela de bloqueio, o diálogo de UAC e o protetor de tela vivem em
-mesas (desktops) próprias dentro da window station `WinSta0`. O DXGI
-não duplica mesa que não seja a de entrada, e só `LocalSystem`
-consegue se anexar à mesa `Winlogon`.
+The lock screen, the UAC dialog and the screen saver live on their own
+desktops inside the `WinSta0` window station. DXGI does not duplicate a
+desktop that is not the input desktop, and only `LocalSystem` can attach
+to the `Winlogon` desktop.
 
-Isso importa mais agora do que importava ontem: acessando de fora de
-casa ([spec 012](012-outside-the-lan.md)), a máquina vai estar bloqueada
-quase sempre. Hoje isso é exatamente o estado em que ela não serve
-tela.
+This matters more now than it did yesterday: accessing from outside the
+house ([spec 012](012-outside-the-lan.md)), the machine will be locked
+almost all the time. Today that is exactly the state in which it does
+not serve a screen.
 
-## O que foi medido
+## What was measured
 
-Com o `logistream-probe-sistema`, nesta máquina (Windows 10 Pro,
+With `logistream-probe-sistema`, on this machine (Windows 10 Pro,
 2560x1440):
 
-**Como usuário, pela sessão SSH:**
+**As the user, through the SSH session:**
 
 ```
 pid 29568 sessão 0
@@ -35,11 +35,11 @@ mesa desta thread: Default
 mesa de ENTRADA: não consegui abrir (Função incorreta. 0x80070001)
 ```
 
-A fronteira de sessão inteira em cinco linhas: o SSH cai na sessão 0, o
-console é a 1, e a mesa de entrada nem abre
-([regra](../.claude/rules/graphical-session.md)).
+The whole session boundary in five lines: SSH lands in session 0, the
+console is session 1, and the input desktop does not even open
+([rule](../.claude/rules/graphical-session.md)).
 
-**Como SYSTEM, por tarefa `/ru SYSTEM`:**
+**As SYSTEM, via a `/ru SYSTEM` task:**
 
 ```
 winlogon.exe pid 524
@@ -55,99 +55,101 @@ LANCEI pid 11656 na mesa winsta0\Winlogon
   → DUPLICOU: 2560x1440
 ```
 
-Ou seja: o caminho funciona. Um processo SYSTEM lançado assim **troca
-de mesa conforme a entrada** e captura.
+In other words: the path works. A SYSTEM process launched this way
+**switches desktops following the input** and captures.
 
-## O mecanismo (o mesmo de Parsec e RustDesk)
+## The mechanism (the same as Parsec and RustDesk)
 
-1. Serviço LocalSystem, sessão 0.
-2. `WTSGetActiveConsoleSessionId()` → a sessão interativa.
-3. Achar `winlogon.exe` **naquela sessão**. É o alvo porque existe
-   sempre, roda como SYSTEM, e **continua existindo sem usuário
-   logado** — que é o estado da tela de bloqueio. O `explorer` não
-   serve: é do usuário e some.
+1. LocalSystem service, session 0.
+2. `WTSGetActiveConsoleSessionId()` → the interactive session.
+3. Find `winlogon.exe` **in that session**. It is the target because it
+   always exists, runs as SYSTEM, and **keeps existing with no user
+   logged in** — which is the lock-screen state. `explorer` will not do:
+   it belongs to the user and goes away.
 4. `OpenProcessToken` + `DuplicateTokenEx(..., TokenPrimary, ...)`.
-   Primário, não de impersonação: o `CreateProcessAsUser` recusa o
-   outro, e a documentação é explícita.
-5. `CreateProcessAsUserW` com `lpDesktop = "winsta0\\Winlogon"`.
-6. No filho: `OpenInputDesktop` + `SetThreadDesktop` a cada troca, e
-   recriar a duplicação do DXGI.
+   Primary, not impersonation: `CreateProcessAsUser` refuses the other
+   kind, and the documentation is explicit.
+5. `CreateProcessAsUserW` with `lpDesktop = "winsta0\\Winlogon"`.
+6. In the child: `OpenInputDesktop` + `SetThreadDesktop` on every switch,
+   and recreate the DXGI duplication.
 
-Privilégios: `SeDebugPrivilege` para abrir o winlogon,
-`SeIncreaseQuotaPrivilege` e `SeAssignPrimaryTokenPrivilege` para o
-`CreateProcessAsUser`. Sem eles a chamada falha com
-`ERROR_PRIVILEGE_NOT_HELD`, e a mensagem não menciona privilégio.
+Privileges: `SeDebugPrivilege` to open winlogon,
+`SeIncreaseQuotaPrivilege` and `SeAssignPrimaryTokenPrivilege` for
+`CreateProcessAsUser`. Without them the call fails with
+`ERROR_PRIVILEGE_NOT_HELD`, and the message does not mention privileges.
 
-Detalhe que custaria um susto: o filho nasce com `CREATE_NO_WINDOW`.
-Com `CREATE_NEW_CONSOLE` abriria uma janela preta **na tela de
-bloqueio** — bem onde ninguém quer ver uma.
+A detail that would cost a scare: the child is born with
+`CREATE_NO_WINDOW`. With `CREATE_NEW_CONSOLE` it would open a black
+window **on the lock screen** — right where nobody wants to see one.
 
-## O que falta medir, e por que não foi medido
+## What remains to measure, and why it was not measured
 
-**A máquina bloqueada.** Com ela destravada a mesa de entrada é
-`Default`, e foi o que o probe capturou. Bloqueada, a mesa vira
-`Winlogon`, e aí o comportamento **varia por versão do Windows**: há
-relato de o processo morrer logo após o bloqueio no Win 11 e relato de
-funcionar como SYSTEM. Também há relato de o DXGI inicializar na
-Winlogon e devolver quadros **vazios** sem falhar — daí a necessidade
-de queda para GDI.
+**The locked machine.** With it unlocked the input desktop is `Default`,
+and that is what the probe captured. Locked, the desktop becomes
+`Winlogon`, and then the behavior **varies by Windows version**: there
+are reports of the process dying right after locking on Win 11 and
+reports of it working as SYSTEM. There are also reports of DXGI
+initializing on Winlogon and returning **empty** frames without failing
+— hence the need to fall back to GDI.
 
-Não dá para decidir isso por leitura, e o teste exige bloquear a
-máquina de verdade — o que custa a senha de volta. Por isso ficou como
-pedido explícito, não como algo a fazer sozinho.
+This cannot be decided by reading, and the test requires actually locking
+the machine — which costs the password to get back in. So it was left as
+an explicit request, not something to do alone.
 
 ```powershell
-# bloquear, esperar, rodar como SYSTEM, ler
+# lock, wait, run as SYSTEM, read
 rundll32 user32.dll,LockWorkStation
 schtasks /run /tn ox-probe-sistema
 Get-Content C:\ProgramData\logid\probe-sistema.log
 ```
 
-## Desenho proposto
+## Proposed design
 
-Um binário novo, não o host atual:
+A new binary, not the current host:
 
-| Hoje | Proposto |
+| Today | Proposed |
 |---|---|
-| tarefa `/IT`, roda como o usuário | serviço LocalSystem lança o host na sessão do console |
-| captura só a mesa `Default` | segue a mesa de entrada |
-| morre no bloqueio | sobrevive |
+| `/IT` task, runs as the user | LocalSystem service launches the host in the console session |
+| captures only the `Default` desktop | follows the input desktop |
+| dies on lock | survives |
 
-### A decisão que não é óbvia
+### The decision that is not obvious
 
-Rodar o host **sempre** como SYSTEM é mais privilégio do que ele
-precisa 95% do tempo, e esta máquina já teve o `logid.exe` apagado
-pelo Defender uma vez (spec 008). Um binário SYSTEM permanente que
-captura tela e injeta teclado é exatamente o perfil que um antivírus
-odeia — com razão.
+Running the host **always** as SYSTEM is more privilege than it needs
+95% of the time, and this machine has already had `logid.exe` deleted by
+Defender once (spec 008). A permanent SYSTEM binary that captures the
+screen and injects keystrokes is exactly the profile an antivirus hates
+— with reason.
 
-Alternativa: manter o host do usuário como principal e o serviço só
-assume quando a mesa de entrada deixa de ser `Default`. Custa um
-handoff e uma segunda conexão; ganha que o caso comum segue sem
-privilégio.
+Alternative: keep the user host as the main one and have the service
+take over only when the input desktop stops being `Default`. It costs a
+handoff and a second connection; it gains that the common case runs
+without privilege.
 
-A escolha depende do que a medição com a máquina bloqueada mostrar: se
-o processo SYSTEM morre ao bloquear (como um relato diz), o handoff
-vira obrigatório de qualquer jeito.
+The choice depends on what the measurement with the machine locked
+shows: if the SYSTEM process dies on lock (as one report says), the
+handoff becomes mandatory anyway.
 
-## Por que probe antes de serviço
+## Why a probe before a service
 
-Instalar serviço mexe em `HKLM` e cria processo SYSTEM permanente.
-O probe consegue o mesmo efeito por tarefa `/ru SYSTEM`, que o
-administrador cria e apaga sem resíduo — e responde a pergunta que
-decide o desenho antes de pedir a mudança maior. Mesmo espírito do
-`mac-probe`: provar as peças antes de montar o pipeline.
+Installing a service touches `HKLM` and creates a permanent SYSTEM
+process. The probe achieves the same effect via a `/ru SYSTEM` task,
+which the administrator creates and deletes without residue — and it
+answers the question that decides the design before asking for the
+bigger change. Same spirit as `mac-probe`: prove the pieces before
+assembling the pipeline.
 
-## Pendências menores
+## Minor pending items
 
-- O log do probe (`C:\ProgramData\logid\probe-sistema.log`) sai em
-  UTF-8 e o PowerShell lê como ANSI: acentos chegam trocados. Cosmético
-  e não afeta a medição, mas vai confundir alguém.
-- `SendSAS` (Ctrl+Alt+Del remoto) não foi tentado. Sem ele não dá para
-  destravar a máquina de fora — só ver a tela de bloqueio.
+- The probe log (`C:\ProgramData\logid\probe-sistema.log`) is written in
+  UTF-8 and PowerShell reads it as ANSI: accents arrive garbled.
+  Cosmetic and it does not affect the measurement, but it will confuse
+  someone.
+- `SendSAS` (remote Ctrl+Alt+Del) was not tried. Without it the machine
+  cannot be unlocked from outside — only the lock screen can be seen.
 
-## Veja também
+## See also
 
-- [[../.claude/rules/windows-locked-screen.md]] — as quatro causas do mesmo erro
-- [[../.claude/rules/graphical-session.md]] — a fronteira, medida de novo aqui
-- [[012-outside-the-lan]] — por que isto virou prioridade
+- [[../.claude/rules/windows-locked-screen.md]] — the four causes of the same error
+- [[../.claude/rules/graphical-session.md]] — the boundary, measured again here
+- [[012-outside-the-lan]] — why this became a priority

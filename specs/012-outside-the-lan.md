@@ -1,171 +1,171 @@
-# 012 — Alcançar as máquinas fora da LAN
+# 012 — Reaching the machines outside the LAN
 
-> Estado: as três máquinas **dentro** do tailnet. O Mac entrou pelo
-> `tailscaled` do brew, e não pelo app (ver "O Mac"). O `--bind` e o
-> `--mbps` estão prontos e medidos.
+> Status: all three machines **inside** the tailnet. The Mac joined via
+> brew's `tailscaled`, not via the app (see "The Mac"). `--bind` and
+> `--mbps` are ready and measured.
 
-## O que muda em relação à spec 008
+## What changes relative to spec 008
 
-A [spec 008](008-security.md) diz "tudo na LAN, nenhuma conta, nenhuma
-nuvem". Esta spec abre uma exceção estreita e diz o preço.
+[Spec 008](008-security.md) says "everything on the LAN, no account, no
+cloud". This spec opens a narrow exception and states the price.
 
-O que **não** muda: o `logid` continua escutando só em `127.0.0.1`. O
-painel de fora chega por túnel SSH (`ssh -L 8787:127.0.0.1:8787 …`),
-que é literalmente o que a 008 já mandava fazer. Nenhuma porta de
-controle passa a escutar na rede.
+What does **not** change: `logid` keeps listening only on `127.0.0.1`. The
+panel from outside arrives over an SSH tunnel (`ssh -L 8787:127.0.0.1:8787 …`),
+which is literally what 008 already said to do. No control
+port starts listening on the network.
 
-O que muda: as três máquinas entram num overlay, e o MacBook passa a
-alcançá-las de qualquer lugar.
+What changes: the three machines join an overlay, and the MacBook can
+reach them from anywhere.
 
-## Por que overlay e não túnel HTTP
+## Why an overlay and not an HTTP tunnel
 
-O transporte da tela é QUIC, que é **UDP** ([spec 010](010-remote-desktop.md)).
-Isso elimina metade das opções antes de começar:
+The screen transport is QUIC, which is **UDP** ([spec 010](010-remote-desktop.md)).
+That eliminates half the options before starting:
 
-| Ferramenta | Carrega nosso UDP? | Caminho |
+| Tool | Carries our UDP? | Path |
 |---|---|---|
-| Cloudflare Tunnel (`cloudflared`) | ❌ só TCP/HTTP | — |
-| Cloudflare Mesh (ex-WARP Connector) | ✅ TCP/UDP/ICMP | **relay pela borda da Cloudflare** |
-| Tailscale | ✅ | direto entre os pares; relay (DERP) só quando o NAT impede |
-| WireGuard puro | ✅ | direto, mas **sem travessia de NAT**: exige endpoint alcançável |
+| Cloudflare Tunnel (`cloudflared`) | ❌ TCP/HTTP only | — |
+| Cloudflare Mesh (formerly WARP Connector) | ✅ TCP/UDP/ICMP | **relay through the Cloudflare edge** |
+| Tailscale | ✅ | direct between peers; relay (DERP) only when NAT prevents it |
+| Plain WireGuard | ✅ | direct, but **no NAT traversal**: requires a reachable endpoint |
 
-Escolhido **Tailscale**. O que decidiu não foi a facilidade: foi o
-caminho. Cada quadro de tela atravessa a rede 60 vezes por segundo, e o
-Mesh põe a borda da Cloudflare no meio de todos eles. O Tailscale tenta
-direto primeiro.
+**Tailscale** was chosen. What decided it was not ease of use: it was the
+path. Every screen frame crosses the network 60 times per second, and
+Mesh puts the Cloudflare edge in the middle of all of them. Tailscale tries
+direct first.
 
-WireGuard puro ficaria mais fiel ao "nada de nuvem", mas precisaria de
-endpoint público — port-forward com IP dinâmico, ou um VPS. Mais peças
-para quebrar, e a coordenação do Tailscale só vê metadado de
-conexão: o tráfego é WireGuard fim-a-fim entre as máquinas.
+Plain WireGuard would be more faithful to "no cloud", but it would need a
+public endpoint — port-forwarding with a dynamic IP, or a VPS. More pieces
+to break, and Tailscale's coordination only sees connection
+metadata: the traffic is end-to-end WireGuard between the machines.
 
-### Risco aceito
+### Accepted risk
 
-Uma conta de terceiro passa a ser parte do caminho: se o coordenador
-do Tailscale estiver fora, máquina nova não entra e chave expirada não
-renova. As sessões já estabelecidas seguem. É o mesmo tipo de
-dependência que a 008 evitou até aqui, e entra como risco consciente,
-não como esquecimento.
+A third-party account becomes part of the path: if Tailscale's coordinator
+is down, a new machine cannot join and an expired key does not
+renew. Sessions already established keep going. It is the same kind of
+dependency that 008 avoided until now, and it comes in as a conscious risk,
+not as an oversight.
 
-## A exposição que isto cria, e o que foi feito
+## The exposure this creates, and what was done
 
-O canal de tela **cifra e não autentica**. O cliente aceita qualquer
-certificado (`AceitaQualquer`, em `logistream/src/net.rs`, marcado como
-temporário desde que foi escrito) e o host nunca pediu nada do cliente.
-Quem alcança a 9777 assiste; quem alcança a 9778 digita.
+The screen channel **encrypts and does not authenticate**. The client accepts any
+certificate (`AceitaQualquer`, in `logistream/src/net.rs`, marked as
+temporary since it was written) and the host never asked the client for anything.
+Whoever reaches 9777 watches; whoever reaches 9778 types.
 
-Enquanto as três máquinas ficavam em casa, "quem alcança" era a LAN de
-casa. **O MacBook sair muda isso**: em `0.0.0.0`, num Wi-Fi de hotel,
-ele serve tela e teclado para a rede inteira do hotel.
+While the three machines stayed at home, "whoever reaches" was the home
+LAN. **The MacBook leaving changes that**: on `0.0.0.0`, on a hotel Wi-Fi,
+it serves screen and keyboard to the whole hotel network.
 
-### Feito: `--bind`
+### Done: `--bind`
 
 ```
 logistream-host [porta] [tela] [--bind todas|overlay|<endereço>] [--mbps N]
 ```
 
-- `todas` (padrão) — `0.0.0.0`, exatamente o de sempre. Nenhuma máquina
-  muda de comportamento sem alguém pedir.
-- `overlay` — só o endereço do overlay.
-- `<endereço>` — à mão.
+- `todas` (all, the default) — `0.0.0.0`, exactly as always. No machine
+  changes behavior without someone asking.
+- `overlay` — only the overlay address.
+- `<endereço>` (address) — by hand.
 
-Duas decisões que o código impõe, cada uma com teste que quebra se
-alguém "melhorar":
+Two decisions the code enforces, each with a test that breaks if
+someone "improves" it:
 
-**`overlay` falha quando não acha o overlay.** Não cai para `0.0.0.0`.
-A queda silenciosa seria confortável e seria o bug: a pessoa pediu
-proteção, o Tailscale não subiu, e o host abriria para o hotel sem
-ninguém saber.
+**`overlay` fails when it does not find the overlay.** It does not fall back to `0.0.0.0`.
+The silent fallback would be comfortable and would be the bug: the person asked for
+protection, Tailscale did not come up, and the host would open to the hotel without
+anyone knowing.
 
-**Faixa + nome da interface, nunca só a faixa.** 100.64.0.0/10 é a
-CGNAT (RFC 6598) e o Tailscale usa ela — mas ela é CGNAT de verdade
-também. Um celular compartilhando internet entrega endereço dessa faixa
-para quem conecta, então o MacBook em hotspot (justamente o cenário de
-teste) teria um `en0` em 100.x, e o critério ingênuo escutaria na rede
-do celular achando que era o overlay.
+**Range + interface name, never just the range.** 100.64.0.0/10 is
+CGNAT (RFC 6598) and Tailscale uses it — but it is real CGNAT
+too. A phone sharing its internet hands out addresses in that range
+to whoever connects, so the MacBook on a hotspot (precisely the test
+scenario) would have an `en0` in 100.x, and the naive criterion would listen on the
+phone's network thinking it was the overlay.
 
-### Pendente: pareamento por chave
+### Pending: key-based pairing
 
-O certo é o que a 008 já descreve para os outros três canais: trust on
-first use com confirmação humana. O canal de tela é o único que viola a
-regra do próprio projeto. `--bind` fecha a porta; não troca a fechadura.
+The right thing is what 008 already describes for the other three channels: trust on
+first use with human confirmation. The screen channel is the only one that violates the
+project's own rule. `--bind` closes the door; it does not change the lock.
 
-## Banda: `--mbps`
+## Bandwidth: `--mbps`
 
-O alvo de bitrate escala com a área (~8 Mbps em 1080p, ~15 em 1440p,
-~28 na Retina). A fórmula estava **duplicada** — `nvenc.rs` e, à mão,
-`host_mac.rs` — e agora mora em `qualidade.rs`, com teste.
+The bitrate target scales with the area (~8 Mbps at 1080p, ~15 at 1440p,
+~28 on Retina). The formula was **duplicated** — `nvenc.rs` and, by hand,
+`host_mac.rs` — and now lives in `qualidade.rs`, with a test.
 
-**Medido:** o upload de casa entrega ~136 Mbps (25 MB em 1,46 s contra
-speed.cloudflare.com). Ou seja, **o gargalo não é daqui**: 15 Mbps
-saem sem esforço. Quem aperta é o outro lado — Wi-Fi de hotel costuma
-dar 10–50 Mbps de download, variável, com fila.
+**Measured:** the home upload delivers ~136 Mbps (25 MB in 1.46 s against
+speed.cloudflare.com). That is, **the bottleneck is not on this end**: 15 Mbps
+goes out effortlessly. What squeezes is the other side — hotel Wi-Fi usually
+gives 10–50 Mbps of download, variable, with queueing.
 
-Por isso o teto existe e por isso ele é escolhido para a sessão
-remota, não gravado na máquina.
+That is why the cap exists and why it is chosen for the remote
+session, not stored on the machine.
 
-### O que o teto não é
+### What the cap is not
 
-Não é controle de congestionamento. Escolhido uma vez, não se mexe. Se
-o link piorar no meio da sessão, nada reage.
+It is not congestion control. Chosen once, it does not move. If
+the link gets worse mid-session, nothing reacts.
 
-O passo seguinte é fechar o laço, e o sinal já existe de graça: o
-`quinn` mede RTT, perda e eventos de congestionamento do caminho
-(`Connection::stats()`), e o host já conta `recusados` quando o
-controle de congestionamento recusa um datagrama. Nada consome nenhum
-dos dois. Realimentar o encoder com isso é, em uma frase, o que o BUD
-da Parsec faz de diferente do nosso.
+The next step is to close the loop, and the signal already exists for free:
+`quinn` measures RTT, loss and congestion events on the path
+(`Connection::stats()`), and the host already counts `recusados` when
+congestion control refuses a datagram. Nothing consumes either
+of them. Feeding that back into the encoder is, in one sentence, what Parsec's BUD
+does differently from ours.
 
-## mDNS não morre, e isso foi medido
+## mDNS does not die, and this was measured
 
-Preocupação levantada e **descartada por medição**: nesta máquina os
-nomes `.local` não passam pelo systemd-resolved.
+A concern raised and **discarded by measurement**: on this machine `.local`
+names do not go through systemd-resolved.
 
 ```
 hosts: files mdns4_minimal [NOTFOUND=return] dns
 ```
 
-O Avahi responde pelo NSS **antes** do `dns`, então qualquer resolvedor
-que o Tailscale configure nem é consultado para `.local`. O
-`resolvectl` confirma: mDNS está desligado em todos os links, e
-`getent hosts windows-host.local` resolve assim mesmo.
+Avahi answers through NSS **before** `dns`, so any resolver
+Tailscale configures is not even consulted for `.local`.
+`resolvectl` confirms: mDNS is off on all links, and
+`getent hosts windows-host.local` resolves anyway.
 
-Se um dia quebrar: `sudo tailscale set --accept-dns=false`.
+If it ever breaks: `sudo tailscale set --accept-dns=false`.
 
-## Receita
+## Recipe
 
 ```bash
-# Ubuntu (precisa de sudo -- o daemon não instala pacote sozinho)
+# Ubuntu (needs sudo -- the daemon does not install packages on its own)
 sudo bash scripts/instalar-tailscale.sh
 sudo tailscale up
 
-# Windows (feito: MSI com TS_UNATTENDEDMODE=always)
-#   `always` mantém o túnel de pé SEM usuário logado -- a máquina
-#   continua alcançável na tela de bloqueio, que é o estado em que ela
-#   vai estar quando eu quiser alcançá-la de fora.
+# Windows (done: MSI with TS_UNATTENDEDMODE=always)
+#   `always` keeps the tunnel up WITHOUT a logged-in user -- the machine
+#   stays reachable at the lock screen, which is the state it will be
+#   in when I want to reach it from outside.
 
-# conferir, dos DOIS lados -- "direto" é propriedade do par
+# check, on BOTH sides -- "direct" is a property of the pair
 bash scripts/conferir-overlay.sh
 ```
 
-## O teste que vale
+## The test that counts
 
-Medir "fora da LAN" de dentro de casa não prova nada. O único teste
-honesto é **prender o MacBook num hotspot de celular** (desligando o
-Wi-Fi de casa) e abrir uma tela de verdade. O que importa medir lá:
+Measuring "outside the LAN" from inside the house proves nothing. The only
+honest test is **tethering the MacBook to a phone hotspot** (turning off the
+home Wi-Fi) and opening a real screen. What matters to measure there:
 
-- `tailscale ping` diz `direct` ou `via DERP`? Relay = CGNAT dos dois
-  lados; funciona, mas a tela sente.
-- fps e quadros perdidos no `logistream-sink`.
-- latência de ponteiro, que é o que a pessoa percebe primeiro.
+- does `tailscale ping` say `direct` or `via DERP`? Relay = CGNAT on both
+  sides; it works, but the screen feels it.
+- fps and dropped frames in `logistream-sink`.
+- pointer latency, which is what the person notices first.
 
-## O Mac — pelo brew, nunca pelo app
+## The Mac — via brew, never via the app
 
-O plano era o `tailscale-app`, o cask com extensão de rede do sistema.
-Em 07/11/2026 ele derrubou a internet do Mac, e saiu.
+The plan was `tailscale-app`, the cask with a system network extension.
+On 2026-11-07 it took down the Mac's internet, and it was removed.
 
-Sem login terminado, a extensão ficava em "Connecting…" com **Connect
-on demand** ligado. Medido no log (macOS 14.0, app 1.104.5):
+Without a completed login, the extension stayed at "Connecting…" with **Connect
+on demand** turned on. Measured in the log (macOS 14.0, app 1.104.5):
 
 ```
 Failed to current profile: notFound
@@ -173,51 +173,51 @@ setGUIVisible=true failed: noSessionID
 Tunnel did not connect ...  stopTunnel: "connectionFailed"
 ```
 
-Ela desistia em 5 minutos e o on demand a religava. Enquanto isso o Mac
-ficava sem internet, e o login precisa de internet para abrir. A saída
-era apagar a configuração em Ajustes → VPN. Clicar "Allow" repetia tudo.
+It gave up after 5 minutes and on demand turned it back on. Meanwhile the Mac
+had no internet, and the login needs internet to open. The way out
+was to delete the configuration in Settings → VPN. Clicking "Allow" repeated everything.
 
-O `/usr/local/bin/tailscale` que o app instala é um script que **abre o
-app**, então até um `tailscale status` por ali dispara o pedido de VPN.
-A medição mudava o que era medido.
+The `/usr/local/bin/tailscale` that the app installs is a script that **opens the
+app**, so even a `tailscale status` through it triggers the VPN request.
+The measurement changed what was being measured.
 
-O caminho que funcionou é o `tailscaled` do brew como root, com `utun`:
+The path that worked is brew's `tailscaled` as root, with `utun`:
 
 ```bash
 brew install tailscale
 sudo bash logid/setup/instalar-tailscale-mac.sh
 ```
 
-O passo `tailscale` do wizard faz isso sozinho: o script vai dentro do
-binário, e o botão abre o Terminal com ele.
+The wizard's `tailscale` step does this on its own: the script ships inside the
+binary, and the button opens Terminal with it.
 
-Ele não passa pela extensão, só acrescenta a rota de `100.64.0.0/10`, e
-a rota padrão fica onde estava. Os nomes do tailnet funcionam por
-`/etc/resolver`, só para o domínio do tailnet: o DNS geral não muda. O
-script desfaz o passo se a internet falhar. O wizard mede isso no passo
-`tailscale`, e conta o app instalado como falta.
+It does not go through the extension, it only adds the route for `100.64.0.0/10`, and
+the default route stays where it was. Tailnet names work via
+`/etc/resolver`, only for the tailnet domain: general DNS does not change. The
+script undoes the step if the internet fails. The wizard measures this in the
+`tailscale` step, and counts the installed app as a fault.
 
-Medido no Mac: `100.64/10` em `utun15`, rota padrão em `en0`, SSH nas
-outras duas pelo nome curto.
+Measured on the Mac: `100.64/10` on `utun15`, default route on `en0`, SSH to the
+other two by short name.
 
-Modo userspace (`--tun=userspace-networking`) também funciona, sem
-root, mas os apps do Mac só alcançam o tailnet por proxy SOCKS.
+Userspace mode (`--tun=userspace-networking`) also works, without
+root, but Mac apps only reach the tailnet through a SOCKS proxy.
 
-**O nome do tailnet entra na config, no lugar do `.local`.** Fora da
-LAN o mDNS não resolve, e o painel marca as máquinas como mortas. É um
-nome, então a regra de não escrever IP continua valendo.
+**The tailnet name goes into the config, in place of `.local`.** Outside the
+LAN mDNS does not resolve, and the panel marks the machines as dead. It is a
+name, so the rule of not writing IPs still holds.
 
-## O que falta
+## What is missing
 
-- Mac: `--bind overlay` no host de tela.
-- Um protocolo próprio no lugar do Tailscale, para sair da dependência
-  da conta e do coordenador (o "Risco aceito" acima).
-- Adaptação de bitrate pelo `quinn::Connection::stats()`.
-- Pareamento por chave pinada no canal de tela.
-- O teste do hotspot (acima), que é o único que vale.
+- Mac: `--bind overlay` on the screen host.
+- Our own protocol in place of Tailscale, to get out of the dependency
+  on the account and the coordinator (the "Accepted risk" above).
+- Bitrate adaptation via `quinn::Connection::stats()`.
+- Pinned-key pairing on the screen channel.
+- The hotspot test (above), which is the only one that counts.
 
-## Veja também
+## See also
 
-- [[008-security]] — o trust model que esta spec abre com cuidado
-- [[010-remote-desktop]] — por que QUIC, e por que isso restringe o overlay
-- [[../.claude/skills/configure-a-machine]] — o wizard, que já mede SSH entre pares
+- [[008-security]] — the trust model this spec carefully opens
+- [[010-remote-desktop]] — why QUIC, and why that constrains the overlay
+- [[../.claude/skills/configure-a-machine]] — the wizard, which already measures SSH between peers

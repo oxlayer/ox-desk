@@ -1,272 +1,272 @@
-# 017 — De infra pessoal a produto
+# 017 — From personal infra to product
 
-> Estado: decidido em 07/11. Fase A do pareamento no ar desde 07/11 (#11,
-> build #166 nas três máquinas).
+> Status: decided on 2026-11-07. Phase A of pairing live since 2026-11-07 (#11,
+> build #166 on all three machines).
 
-## A decisão
+## The decision
 
-O ox-desk deixa de ser só a infra de três computadores e vira um produto de
-acesso remoto, na categoria do Parsec e do AnyDesk:
+ox-desk stops being just the infra for three computers and becomes a
+remote-access product, in the same category as Parsec and AnyDesk:
 
-- **open source**, e qualquer pessoa pode hospedar o próprio servidor;
-- **ou usa os nossos servidores**, que é a versão paga;
-- **telemetria básica, que pode ser desligada**, para medir o que decide o
-  produto: quantas conexões saem diretas e quantas caem no relay.
+- **open source**, and anyone can host their own server;
+- **or use our servers**, which is the paid version;
+- **basic telemetry, which can be turned off**, to measure what decides the
+  product: how many connections go direct and how many fall back to the relay.
 
-Isso muda duas premissas antigas, e esta spec é o registro dessas mudanças:
+This changes two old premises, and this spec is the record of those changes:
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| "Nada de telemetria, nada de nuvem" (`CLAUDE.md`, spec 008) | Telemetria mínima, ligada por padrão, que pode ser desligada. O servidor é opcional e pode ser hospedado por qualquer pessoa |
-| Confiança vinda da LAN e do overlay (spec 012) | Confiança vinda da **chave de cada máquina**. A rede, inclusive o nosso servidor, nunca precisa de confiança |
+| "No telemetry, no cloud" (`CLAUDE.md`, spec 008) | Minimal telemetry, on by default, which can be turned off. The server is optional and can be hosted by anyone |
+| Trust coming from the LAN and the overlay (spec 012) | Trust coming from **each machine's key**. The network, including our server, never needs to be trusted |
 
-## Duas regras que não se perdem
+## Two rules that are not lost
 
-**Só com LAN continua funcionando.** Sem internet, sem servidor e sem
-telemetria, as máquinas da mesma rede se acham por mDNS e conectam direto,
-com o mesmo pareamento por chave. O servidor de encontro só entra quando o
-direto pela LAN não existe. Nenhum recurso local pode passar a depender
-dele: perder o servidor tira o acesso de fora, e nunca o de dentro de casa.
+**LAN-only keeps working.** With no internet, no server and no
+telemetry, machines on the same network find each other via mDNS and connect directly,
+with the same key-based pairing. The rendezvous server only comes in when
+direct LAN does not exist. No local feature may come to depend
+on it: losing the server takes away access from outside, and never from inside the house.
 
-**Todo computador é host e cliente.** É uma instalação só, com uma
-identidade só, que serve a própria tela e abre a dos outros. A lista de
-quem pode entrar (`autorizados`) é de cada máquina, e autorizar A a ver B
-não autoriza B a ver A.
+**Every computer is host and client.** It is a single install, with a single
+identity, that serves its own screen and opens others'. The list of
+who may connect (`autorizados`) belongs to each machine, and authorizing A to see B
+does not authorize B to see A.
 
-## O nome: oxdesk
+## The name: oxdesk
 
-"logi" e "logistream" vêm de Logitech, do tempo em que o projeto era trocar
-teclado e mouse entre PCs. No produto, o Logitech é **um recurso** (a troca
-de canal Easy-Switch para quem tem teclado e mouse deles e vários PCs), e o
-nome passa a ser **oxdesk**.
+"logi" and "logistream" come from Logitech, from the time when the project was about switching
+keyboard and mouse between PCs. In the product, Logitech is **one feature** (Easy-Switch
+channel switching for whoever has their keyboard and mouse and several PCs), and the
+name becomes **oxdesk**.
 
-| Hoje | Depois |
+| Today | After |
 |---|---|
-| `logid` | `oxdesk` (daemon e CLI) |
+| `logid` | `oxdesk` (daemon and CLI) |
 | `logistream-host`, `-view`, `-ponte`, `-kvm` | `oxdesk-host`, `-view`, `-ponte`, `-kvm` |
 | `logi-ota` | `oxdesk-ota` |
 | `~/.config/logi`, `%APPDATA%\logi` | `~/.config/oxdesk`, `%APPDATA%\oxdesk` |
 | `%LOCALAPPDATA%\logid` | `%LOCALAPPDATA%\oxdesk` |
-| `ai.logi.*` (launchd), tarefa `logid`, `logid.service` | `app.oxdesk.*`, tarefa `oxdesk`, `oxdesk.service` |
-| `LOGI_*` (`LOGI_PAR`, `LOGI_PONTE_TOKEN`...) | `OXDESK_*` em inglês (`OXDESK_PIN`, `OXDESK_BRIDGE_TOKEN`...), aceitando o antigo por um tempo |
-| crate `hidpp` | fica: é o protocolo da Logitech, e o nome é dele |
+| `ai.logi.*` (launchd), task `logid`, `logid.service` | `app.oxdesk.*`, task `oxdesk`, `oxdesk.service` |
+| `LOGI_*` (`LOGI_PAR`, `LOGI_PONTE_TOKEN`...) | `OXDESK_*` in English (`OXDESK_PIN`, `OXDESK_BRIDGE_TOKEN`...), accepting the old one for a while |
+| crate `hidpp` | stays: it is Logitech's protocol, and the name is theirs |
 
-É uma troca de dois lados, e tem três armadilhas medidas antes:
-- **O OTA instalado só conhece os nomes antigos.** Uma versão de transição
-  tem de saber instalar a nova e trocar o próprio supervisor. Sem ela, a
-  máquina que atualiza sozinha (Windows, Mac) para na versão antiga.
-- **No Mac, a permissão de Gravação de Tela e de Acessibilidade é do
-  binário.** Com o nome novo, a pessoa concede de novo, à mão.
-- **No Windows, a exclusão do Defender é do caminho** `%LOCALAPPDATA%\logid`.
-  A pasta nova precisa da exclusão antes de o binário chegar, ou ele é
-  apagado na escrita (spec 008).
+It is a two-sided change, and it has three traps measured beforehand:
+- **The installed OTA only knows the old names.** A transition version
+  has to know how to install the new one and swap its own supervisor. Without it, the
+  machine that updates itself (Windows, Mac) stops at the old version.
+- **On the Mac, the Screen Recording and Accessibility permissions belong to the
+  binary.** With the new name, the person grants them again, by hand.
+- **On Windows, the Defender exclusion is for the path** `%LOCALAPPDATA%\logid`.
+  The new folder needs the exclusion before the binary arrives, or it is
+  deleted on write (spec 008).
 
-**E tudo que não é texto de tela fica em inglês:** nome de arquivo, script,
-binário, módulo, identificador, variável de ambiente, chave de config, rótulo
-de launchd e de tarefa. Português só no que a pessoa lê na tela, nos logs que
-ela lê e nas specs. Entra no mesmo PR da troca de nome: `assinar.sh` →
+**And everything that is not on-screen text is in English:** file name, script,
+binary, module, identifier, environment variable, config key, launchd
+and task label. Portuguese only in what the person reads on screen, in the logs
+they read and in the specs. It goes into the same PR as the rename: `assinar.sh` →
 `sign.sh`, `construir-binarios.sh` → `build-binaries.sh`, `ponte.rs` →
 `bridge.rs`, `qualidade.rs` → `quality.rs`, `setup_comum.rs` →
 `setup_common.rs`, `instalar-tela-virtual.ps1` → `install-virtual-display.ps1`,
-e assim por diante. O que é chamado de fora (deploy, OTA, tarefas, launchd)
-muda junto, e a busca pelo nome antigo tem de dar zero no fim.
+and so on. Whatever is called from outside (deploy, OTA, tasks, launchd)
+changes along with it, and searching for the old name has to return zero at the end.
 
-A config e a identidade migram na primeira partida: se a pasta nova não
-existe e a antiga existe, ela é movida, e o log diz isso.
+The config and the identity migrate on first start: if the new folder does not
+exist and the old one does, it is moved, and the log says so.
 
-Vai num PR próprio, depois de a fase A do pareamento estar no ar.
+It goes in its own PR, after pairing phase A is live.
 
-## A ordem
+## The order
 
-1. **Pareamento por chave.** Ele vale em todos os cenários, inclusive no
-   Tailscale de hoje.
-2. **Telemetria de caminho**, para medir quanto cai em relay: em casa, no 4G
-   e fora.
-3. **Um binário de encontro e relay** (`logi-encontro`), que nós hospedamos
-   e que outras pessoas também podem hospedar.
-4. **Cloudflare só como opção de hospedagem**, e nunca como dependência.
-5. **Desligar o Tailscale**, só depois de o caminho próprio rodar sozinho por
-   um tempo.
+1. **Key-based pairing.** It applies in every scenario, including today's
+   Tailscale.
+2. **Path telemetry**, to measure how much falls back to relay: at home, on 4G
+   and outside.
+3. **A rendezvous and relay binary** (`logi-encontro`), which we host
+   and which other people can host too.
+4. **Cloudflare only as a hosting option**, and never as a dependency.
+5. **Turn off Tailscale**, only after our own path has run on its own for
+   a while.
 
-## 1. Pareamento por chave
+## 1. Key-based pairing
 
-### O que existe hoje
+### What exists today
 
-- O host gera um certificado novo a cada partida.
-- O cliente aceita qualquer certificado (`AceitaQualquer`, em `net.rs`).
-- A assinatura TLS do servidor também não é conferida.
-- O host não pergunta quem é o cliente.
+- The host generates a new certificate on every start.
+- The client accepts any certificate (`AceitaQualquer`, in `net.rs`).
+- The server's TLS signature is not checked either.
+- The host does not ask who the client is.
 
-Na prática, o canal cifra e não autentica. Quem alcança a porta 9777 vê a
-tela, e quem alcança a 9778 digita nela.
+In practice, the channel encrypts and does not authenticate. Whoever reaches port 9777 sees the
+screen, and whoever reaches 9778 types into it.
 
-### O desenho
+### The design
 
-- **Toda instalação tem uma identidade:** um certificado com a chave
-  (ECDSA P-256), gerado uma vez e guardado com permissão `600`. A digital é o
-  SHA-256 do certificado.
-- **O host apresenta essa identidade**, e não um certificado efêmero.
-- **O cliente confere a digital do host** quando a recebe (`LOGI_PAR`). A
-  assinatura TLS passa a ser verificada de verdade. Sem essa conferência,
-  qualquer um poderia apresentar o certificado do host, que é público, sem ter
-  a chave.
-- **O cliente também apresenta a identidade dele.** O host confere essa
-  identidade contra a lista de quem ele autoriza
-  (`<config>/identidade/autorizados`, uma digital por linha).
+- **Every install has an identity:** a certificate with the key
+  (ECDSA P-256), generated once and stored with permission `600`. The fingerprint is the
+  SHA-256 of the certificate.
+- **The host presents this identity**, not an ephemeral certificate.
+- **The client checks the host's fingerprint** when it receives it (`LOGI_PAR`). The
+  TLS signature starts being verified for real. Without this check,
+  anyone could present the host's certificate, which is public, without having
+  the key.
+- **The client also presents its identity.** The host checks this
+  identity against the list of who it authorizes
+  (`<config>/identidade/autorizados`, one fingerprint per line).
 
-### De onde vem a digital
+### Where the fingerprint comes from
 
-- **Hoje, entre as nossas máquinas:** pelo SSH, que já é autenticado pelo
-  `known_hosts`. O `logid` lê a digital do outro lado e a fixa. É um canal
-  autenticado, e não confiança no primeiro uso.
-- **No produto:** pelo código de pareamento. A pessoa lê um código curto nas
-  duas telas e confirma, como na spec 008: o `logid` pode mostrar os códigos
-  lado a lado, mas nunca pode aceitar sozinho.
+- **Today, between our machines:** via SSH, which is already authenticated by
+  `known_hosts`. `logid` reads the fingerprint on the other side and pins it. It is an
+  authenticated channel, not trust on first use.
+- **In the product:** via the pairing code. The person reads a short code on
+  both screens and confirms, as in spec 008: `logid` may show the codes
+  side by side, but may never accept on its own.
 
-### As fases (o servidor vai primeiro)
+### The phases (the server goes first)
 
-O host é quem aceita, então ele sobe antes. A recusa só liga depois de um
-período de observação, como manda a lição do `observe` → `enforce`.
+The host is the one that accepts, so it goes up first. Refusal is only turned on after a
+period of observation, as the `observe` → `enforce` lesson says.
 
-| Fase | Host | Cliente |
+| Phase | Host | Client |
 |---|---|---|
-| **A, observar** | Apresenta a identidade persistente. Pede o certificado do cliente, sem exigir, e registra no log `cliente <digital> autorizado/desconhecido/sem certificado` | Apresenta a identidade. Confere a digital do host quando há `LOGI_PAR` e recusa se ela não bater. Sem `LOGI_PAR`, segue como hoje e avisa no log |
-| **B, fixar** | Igual à fase A | O `logid` passa a digital pelo SSH. Sem digital, o painel não abre a sessão |
-| **C, exigir** | Recusa cliente sem certificado e cliente fora da lista | Igual à fase B |
+| **A, observe** | Presents the persistent identity. Asks for the client certificate, without requiring it, and logs `cliente <digital> autorizado/desconhecido/sem certificado` | Presents the identity. Checks the host fingerprint when there is `LOGI_PAR` and refuses if it does not match. Without `LOGI_PAR`, it carries on as today and warns in the log |
+| **B, pin** | Same as phase A | `logid` passes the fingerprint over SSH. Without a fingerprint, the panel does not open the session |
+| **C, require** | Refuses clients without a certificate and clients not on the list | Same as phase B |
 
-A virada para a fase C só acontece depois de o log da fase A mostrar zero
-`desconhecido` e zero `sem certificado` nas conexões legítimas das três
-máquinas.
+The switch to phase C only happens after the phase A log shows zero
+`desconhecido` and zero `sem certificado` in the legitimate connections of the three
+machines.
 
-## 2. Telemetria
+## 2. Telemetry
 
-### O que se manda
+### What is sent
 
-Um evento por sessão, no fim dela:
+One event per session, at its end:
 
-| Campo | Exemplo |
+| Field | Example |
 |---|---|
-| versão, sistema do host e do cliente | `0.3.0`, `windows`, `macos` |
-| caminho | `lan`, `overlay-direto`, `overlay-relay`, `nosso-direto`, `nosso-relay` |
-| tipo de NAT, quando houver medida | `cone`, `simetrico` |
-| RTT p50 e p95, fps, Mbps médio, quadros perdidos | |
-| duração, em minutos arredondados | |
-| motivo do fim | `fechou`, `caiu`, `recusado` |
+| version, host and client OS | `0.3.0`, `windows`, `macos` |
+| path | `lan`, `overlay-direto`, `overlay-relay`, `nosso-direto`, `nosso-relay` |
+| NAT type, when measured | `cone`, `simetrico` |
+| RTT p50 and p95, fps, average Mbps, dropped frames | |
+| duration, in rounded minutes | |
+| end reason | `fechou`, `caiu`, `recusado` |
 
-### O que nunca se manda
+### What is never sent
 
-- IP, nome de máquina, nome de usuário, caminho de arquivo ou conteúdo de
-  tela, de teclado ou de clipboard;
-- a digital da identidade. O id da instalação é um aleatório, separado dela,
-  e muda quando a telemetria é desligada e ligada de novo.
+- IP, machine name, user name, file path or the content of the
+  screen, keyboard or clipboard;
+- the identity fingerprint. The install id is a random value, separate from it,
+  and changes when telemetry is turned off and on again.
 
-### Como desligar
+### How to turn it off
 
-- `telemetria = false` no `config.toml`, ou o interruptor no painel;
-- `LOGI_TELEMETRIA=0` no ambiente, que vence a configuração;
-- quem hospeda o próprio servidor escolhe para onde vai a telemetria, ou a
-  desliga para todos os clientes daquele servidor.
+- `telemetria = false` in `config.toml`, or the switch in the panel;
+- `LOGI_TELEMETRIA=0` in the environment, which overrides the configuration;
+- whoever hosts their own server chooses where the telemetry goes, or
+  turns it off for all clients of that server.
 
-O painel mostra, antes do primeiro envio, o que é enviado, e mantém o último
-evento visível para a pessoa conferir.
+Before the first send, the panel shows what is sent, and keeps the last
+event visible for the person to check.
 
-### Enquanto não há servidor
+### While there is no server
 
-O evento é gravado num arquivo local (`<estado>/telemetria.jsonl`). Isso já
-responde à pergunta do caminho com o Tailscale: o `tailscale status --json`
-diz se o par está direto ou em relay (DERP).
+The event is written to a local file (`<estado>/telemetria.jsonl`). That already
+answers the path question with Tailscale: `tailscale status --json`
+says whether the peer is direct or on relay (DERP).
 
-## 3. Encontro e relay
+## 3. Rendezvous and relay
 
-Um binário só, `logi-encontro`, e uma imagem Docker:
+A single binary, `logi-encontro`, and a Docker image:
 
-- **Encontro:** cada máquina mantém uma conexão com ele e anuncia os
-  endereços que vê (o local e o público, medido como STUN). Quando alguém
-  quer conectar, o servidor apresenta um ao outro, e os dois tentam a
-  conexão direta (*hole punching*) pelo mesmo socket UDP do QUIC.
-- **Relay:** se o direto não sair em ~2 s, o tráfego vai pelo servidor. Como
-  é QUIC cifrado de ponta a ponta com a identidade das máquinas, o relay
-  repassa bytes que não consegue ler.
-- O servidor sabe **quem fala com quem e quando**. Nunca vê a tela, o teclado
-  ou os arquivos.
+- **Rendezvous:** each machine keeps a connection to it and announces the
+  addresses it sees (the local one and the public one, measured like STUN). When someone
+  wants to connect, the server introduces them to each other, and both try the
+  direct connection (*hole punching*) over the same UDP socket as QUIC.
+- **Relay:** if direct does not come through in ~2 s, traffic goes through the server. Since
+  it is QUIC encrypted end to end with the machines' identity, the relay
+  forwards bytes it cannot read.
+- The server knows **who talks to whom and when**. It never sees the screen, the keyboard
+  or the files.
 
-Referências de desenho: o hbbs/hbbr do RustDesk e o DERP do Tailscale.
+Design references: RustDesk's hbbs/hbbr and Tailscale's DERP.
 
-### Onde hospedar e quanto custa
+### Where to host and how much it costs
 
-O custo é a banda do relay. Sinalização é desprezível.
+The cost is relay bandwidth. Signaling is negligible.
 
-| Opção | Banda | Observação |
+| Option | Bandwidth | Note |
 |---|---|---|
-| VPS em São Paulo | alguns TB incluídos | Barato, mas nós operamos |
-| Cloudflare (TURN do Realtime) | ~1 TB grátis/mês, depois ~US$ 0,05/GB | Sem operação; preço a conferir antes de decidir |
-| AWS sa-east-1 | ~US$ 0,15/GB | Caro para vídeo |
-| Hetzner, DigitalOcean | banda barata | Sem região no Brasil: soma latência |
+| VPS in São Paulo | a few TB included | Cheap, but we operate it |
+| Cloudflare (Realtime TURN) | ~1 TB free/month, then ~US$ 0.05/GB | No operations; price to be checked before deciding |
+| AWS sa-east-1 | ~US$ 0.15/GB | Expensive for video |
+| Hetzner, DigitalOcean | cheap bandwidth | No region in Brazil: adds latency |
 
-O binário não pode depender da Cloudflare. Ela entra, se entrar, como mais
-um lugar para rodar o relay.
+The binary must not depend on Cloudflare. It comes in, if at all, as one more
+place to run the relay.
 
-## Planos
+## Plans
 
-A estrutura segue a do Parsec, que é a referência de mercado: grátis para
-uso pessoal, e o pago vende o que custa para nós (relay, gestão de equipe,
-auditoria). Os preços do Parsec em 07/11, por usuário e por mês: US$ 9,99
-(individual), US$ 35 (times) e US$ 45 (empresa, só anual).
+The structure follows Parsec's, which is the market reference: free for
+personal use, and the paid tier sells what costs us money (relay, team management,
+auditing). Parsec's prices on 2026-11-07, per user per month: US$ 9.99
+(individual), US$ 35 (teams) and US$ 45 (enterprise, annual only).
 
-| Plano | O que tem |
+| Plan | What it has |
 |---|---|
-| **Grátis** | O núcleo inteiro, como no Parsec: 60 fps com baixa latência, teclado, mouse e controle, conexão ponta a ponta cifrada, host em Windows, macOS e Linux, compartilhar a tela por link. Mais: LAN, conexão direta pelo nosso encontro e servidor próprio sem limite. Relay nosso com limite de banda |
-| **Individual** | Relay sem limite, vários monitores, monitor virtual, cor 4:4:4, modo privado (tela física apagada) |
-| **Times** | Computadores da equipe num lugar só, permissões por pessoa e por máquina, login único (SAML/OIDC), registro de acessos de 7 dias |
-| **Empresa** | Relay dedicado ou na região do cliente, registro completo de acessos, papéis de administrador, API para automação |
+| **Free** | The whole core, as in Parsec: 60 fps with low latency, keyboard, mouse and controller, end-to-end encrypted connection, host on Windows, macOS and Linux, share the screen by link. Plus: LAN, direct connection via our rendezvous, and unlimited self-hosted server. Our relay with a bandwidth cap |
+| **Individual** | Unlimited relay, multiple monitors, virtual monitor, 4:4:4 color, privacy mode (physical screen blanked) |
+| **Teams** | Team computers in one place, per-person and per-machine permissions, single sign-on (SAML/OIDC), 7-day access log |
+| **Enterprise** | Dedicated relay or in the customer's region, full access log, administrator roles, API for automation |
 
-Do núcleo, ainda não temos: controle (gamepad) e compartilhar por link,
-que é um convite de uso único, com prazo, que dá acesso a uma máquina sem
-pareamento permanente.
+Of the core, we do not have yet: controller (gamepad) and share by link,
+which is a single-use, time-limited invite that gives access to a machine without
+permanent pairing.
 
-O que fica grátis é o que não custa para nós. Hospedar o próprio servidor é
-sempre grátis, e é o que mantém o projeto open source de verdade.
+What stays free is what costs us nothing. Hosting your own server is
+always free, and it is what keeps the project truly open source.
 
-### O que mais o Parsec faz, e como fica aqui
+### What else Parsec does, and how it works here
 
-Lido em parsec.app/pricing, em 07/11:
+Read at parsec.app/pricing, on 2026-11-07:
 
-| No Parsec | Aqui |
+| In Parsec | Here |
 |---|---|
-| Grátis só para uso pessoal; trabalho exige licença | O código é MIT e não pode ter essa restrição. Ela vale só para **os nossos servidores**, pelos termos de uso. Quem hospeda o próprio servidor usa para o que quiser |
-| Teste de 14 dias de Times e Empresa | Igual |
-| Mensal, ou anual com desconto; Empresa só anual; sem desconto por volume | Igual, para começar |
-| Colaboração por link: o outro observa ou assume o controle | O convite por link do grátis, com dois modos: só ver, ou ver e controlar |
-| Acesso de convidado (Times): créditos comprados à parte, até 5 dias | Convite com prazo e sem pareamento permanente. Créditos à parte, no Times |
-| Computadores da equipe, atribuídos a uma pessoa ou a um grupo | É o "Times" da tabela acima |
-| No Times, membro só conecta em membro | Lista de autorizados vinda da equipe, e não de cada máquina |
-| Bloquear que máquinas da rede da empresa sirvam a tela | Política da equipe que o host obedece |
-| Relay dentro do firewall do cliente (Empresa) | O `logi-encontro` hospedado pelo cliente, que é o mesmo binário open source |
+| Free only for personal use; work requires a license | The code is MIT and cannot carry that restriction. It applies only to **our servers**, through the terms of use. Whoever hosts their own server uses it for whatever they want |
+| 14-day trial of Teams and Enterprise | Same |
+| Monthly, or annual with a discount; Enterprise annual only; no volume discount | Same, to start with |
+| Collaboration by link: the other person watches or takes control | The free link invite, with two modes: view only, or view and control |
+| Guest access (Teams): credits bought separately, up to 5 days | Time-limited invite without permanent pairing. Credits sold separately, in Teams |
+| Team computers, assigned to a person or a group | That is the "Teams" in the table above |
+| In Teams, members only connect to members | Authorized list coming from the team, not from each machine |
+| Block machines on the company network from serving their screen | Team policy that the host obeys |
+| Relay inside the customer's firewall (Enterprise) | `logi-encontro` hosted by the customer, which is the same open source binary |
 
-## O que aproveitar dos repositórios abertos do Parsec (lidos em 07/11)
+## What to reuse from Parsec's open repositories (read on 2026-11-07)
 
-Clonados e só lidos, sem compilar nem rodar:
+Cloned and only read, without compiling or running:
 
-| Repositório | Licença | Para nós |
+| Repository | License | For us |
 |---|---|---|
-| `libmatoya` (C, ativo) | MIT: dá para portar, com o aviso de copyright | Controle em `src/hid/` (PS4, PS5, Switch, Xbox, vibração); áudio no cliente (`windows/audio.c`, `resample.c`); cursor RGBA desenhado no cliente, gancho de Alt+Tab e tecla Windows, `keyboard.lock` e pointer lock (`windows/appw.c`, `unix/web/matoya.js`) |
-| `go-stun` (Go, 2018) | MIT | Formato do Binding Response com `XOR-MAPPED-ADDRESS`, para o `logi-encontro`. STUN e QUIC no mesmo socket se separam pelo primeiro byte (RFC 7983) |
-| `Parsec-Cloud-Preparation-Tool` (PowerShell) | sem licença: só referência | Lista de ajustes de VM: auto-logon, tirar o bloqueio, desligar o adaptador básico de vídeo, instalar o driver de monitor virtual |
-| `Cloud-GPU-Updater` (PowerShell) | sem licença: só referência | GPU de nuvem em modo TCC não tem saída de vídeo; trocar para WDDM é um item do `doctor` para host em VM |
+| `libmatoya` (C, active) | MIT: can be ported, with the copyright notice | Controller in `src/hid/` (PS4, PS5, Switch, Xbox, rumble); client-side audio (`windows/audio.c`, `resample.c`); RGBA cursor drawn on the client, Alt+Tab and Windows-key hook, `keyboard.lock` and pointer lock (`windows/appw.c`, `unix/web/matoya.js`) |
+| `go-stun` (Go, 2018) | MIT | Binding Response format with `XOR-MAPPED-ADDRESS`, for `logi-encontro`. STUN and QUIC on the same socket are separated by the first byte (RFC 7983) |
+| `Parsec-Cloud-Preparation-Tool` (PowerShell) | no license: reference only | List of VM tweaks: auto-logon, remove the lock screen, disable the basic display adapter, install the virtual monitor driver |
+| `Cloud-GPU-Updater` (PowerShell) | no license: reference only | A cloud GPU in TCC mode has no video output; switching to WDDM is a `doctor` item for hosts in a VM |
 
-Nenhum deles cobre o lado do host que nos falta: captura de áudio, tela de bloqueio e
-UAC, Ctrl+Alt+Del e o serviço SYSTEM. O "MouseKeys como cursor" do Preparation Tool
-foi medido aqui e não funciona (`.claude/rules/cursor-without-mouse.md`).
+None of them covers the host side we are missing: audio capture, lock screen and
+UAC, Ctrl+Alt+Del and the SYSTEM service. The Preparation Tool's "MouseKeys as cursor"
+was measured here and does not work (`.claude/rules/cursor-without-mouse.md`).
 
-## O que esta spec não decide
+## What this spec does not decide
 
-- O preço em reais, e o que entra no limite do relay grátis.
-- Conta de usuário e lista de máquinas na nuvem: começa sem conta, só com
-  id e pareamento.
-- O endpoint que recebe a telemetria (vem com o `logi-encontro`).
+- The price in reais, and what goes into the free relay cap.
+- User account and machine list in the cloud: it starts without accounts, only with
+  id and pairing.
+- The endpoint that receives telemetry (comes with `logi-encontro`).
 
-## Veja também
+## See also
 
-- [[008-security]] — o trust model que esta spec muda
-- [[012-outside-the-lan]] — por que overlay, e o que falta
-- [[016-session-and-visuals]] — a sessão em aba, que passa a levar a digital
+- [[008-security]] — the trust model this spec changes
+- [[012-outside-the-lan]] — why an overlay, and what is missing
+- [[016-session-and-visuals]] — the session in a tab, which starts carrying the fingerprint
