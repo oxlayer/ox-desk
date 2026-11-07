@@ -1,26 +1,27 @@
-//! De onde vem o quadro.
+//! Where the frame comes from.
 //!
-//! Linux/Wayland: portal `ScreenCast` + PipeWire. Nao ha atalho -- o
-//! compositor nao deixa ninguem ler a tela sem passar por ele, que e a
-//! mesma razao de a borda falar com o `Mutter.InputCapture` em vez de ler
-//! o cursor.
+//! Linux/Wayland: `ScreenCast` portal + PipeWire. There is no shortcut -- the
+//! compositor lets no one read the screen without going through it, which is
+//! the same reason the edge talks to `Mutter.InputCapture` instead of reading
+//! the cursor.
 //!
 //! Windows: DXGI Desktop Duplication.
 
-/// Um quadro cru, como a plataforma entregou.
+/// A raw frame, as the platform delivered it.
 pub struct Frame {
     pub width: u32,
     pub height: u32,
-    /// Nanossegundos do relogio monotonico. Sem isto nao ha como medir
-    /// latencia fim-a-fim, e sem medir nao ha como melhorar.
+    /// Nanoseconds of the monotonic clock. Without this there is no way to
+    /// measure end-to-end latency, and without measuring there is no way to
+    /// improve it.
     pub captured_at_ns: u64,
-    /// BGRA linear, ou um handle de textura quando a captura for
-    /// zero-copy. Comeca simples.
+    /// Linear BGRA, or a texture handle once capture is zero-copy. Starting
+    /// simple.
     pub data: Vec<u8>,
 }
 
-/// Fonte de quadros. Trait porque sao tres implementacoes e elas nao
-/// compartilham nada alem desta forma.
+/// Frame source. A trait because there are three implementations and they
+/// share nothing beyond this shape.
 pub trait Capture: Send {
     fn next_frame(&mut self) -> anyhow::Result<Frame>;
     fn size(&self) -> (u32, u32);

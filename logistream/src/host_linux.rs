@@ -1,18 +1,18 @@
-//! Host no Linux/Wayland: Mutter -> PipeWire -> NVENC -> QUIC.
+//! Host on Linux/Wayland: Mutter -> PipeWire -> NVENC -> QUIC.
 //!
 //! Spec: ../specs/010-remote-desktop.md
 //!
-//! ## Por que duas threads e um canal
+//! ## Why two threads and a channel
 //!
-//! O laco do PipeWire e sincrono e dono da sua thread; o `quinn` e
-//! async. Chamar rede de dentro do callback de quadro misturaria os dois
-//! mundos e, pior, qualquer hesitacao da rede viraria quadro perdido na
-//! captura. O canal desacopla: o callback codifica e **larga**; a thread
-//! de rede manda.
+//! The PipeWire loop is synchronous and owns its thread; `quinn` is async.
+//! Calling the network from inside the frame callback would mix the two
+//! worlds and, worse, any network hesitation would become a lost frame in
+//! the capture. The channel decouples them: the callback encodes and
+//! **lets go**; the network thread sends.
 //!
-//! O canal tem fundo raso de proposito (`CAPACIDADE`). Se a rede nao
-//! acompanha, o certo e **descartar quadro velho**, nao enfileirar: numa
-//! tela remota, quadro atrasado nao tem valor nenhum -- ja passou.
+//! The channel is shallow on purpose (`CAPACITY`). If the network cannot
+//! keep up, the right thing is to **drop the old frame**, not to queue: on
+//! a remote screen, a late frame has no value at all -- it is already past.
 
 #![cfg(target_os = "linux")]
 
@@ -42,27 +42,28 @@ const RD: &str = "org.gnome.Mutter.RemoteDesktop";
 const RD_OBJ: &str = "/org/gnome/Mutter/RemoteDesktop";
 const RD_SESSION: &str = "org.gnome.Mutter.RemoteDesktop.Session";
 const T: Duration = Duration::from_secs(10);
-/// Tamanho da tela quando nao ha monitor ligado na maquina.
-const VIRTUAL_L: u32 = 1920;
-const VIRTUAL_A: u32 = 1080;
+/// Screen size when there is no monitor plugged into the machine.
+const VIRTUAL_W: u32 = 1920;
+const VIRTUAL_H: u32 = 1080;
 
-/// O Mutter recusou o conector porque ele nao existe agora?
+/// Did Mutter reject the connector because it does not exist right now?
 ///
-/// E o que acontece com o monitor desligado ou desconectado: as saidas
-/// ficam `disconnected` e o `RecordMonitor` responde "Unknown monitor".
-/// Qualquer outro erro (sessao, permissao) continua sendo erro.
-fn monitor_ausente(msg: Option<&str>) -> bool {
+/// That is what happens with the monitor off or unplugged: the outputs go
+/// `disconnected` and `RecordMonitor` answers "Unknown monitor". Any other
+/// error (session, permission) is still an error.
+fn monitor_missing(msg: Option<&str>) -> bool {
     msg.is_some_and(|m| m.contains("Unknown monitor"))
 }
 
-/// Pede o stream ao Mutter: o monitor pedido, ou um virtual se ele nao
-/// existir. Devolve o caminho do stream e se ele e virtual.
+/// Asks Mutter for the stream: the requested monitor, or a virtual one if
+/// it does not exist. Returns the stream path and whether it is virtual.
 ///
-/// Sem isto a maquina sem monitor ligado, que e justamente a que se quer
-/// alcancar de longe, nao tinha tela remota: o host morria na partida.
-fn gravar(
+/// Without this, the machine with no monitor plugged in, which is exactly
+/// the one you want to reach from afar, had no remote screen: the host died
+/// at startup.
+fn record(
     sp: &dbus::blocking::Proxy<'_, &Connection>,
-    conector: &str,
+    connector: &str,
 ) -> anyhow::Result<(Path<'static>, bool)> {
     let props = || {
         let mut p = dbus::arg::PropMap::new();
@@ -72,89 +73,91 @@ fn gravar(
         );
         p
     };
-    let pedido: Result<(Path,), dbus::Error> =
-        sp.method_call(SESSION, "RecordMonitor", (conector, props()));
-    match pedido {
-        Ok((caminho,)) => Ok((caminho.into_static(), false)),
-        Err(e) if monitor_ausente(e.message()) => {
-            eprintln!("sem monitor {conector}: usando tela virtual {VIRTUAL_L}x{VIRTUAL_A}");
-            let (caminho,): (Path,) = sp.method_call(SESSION, "RecordVirtual", (props(),))?;
-            Ok((caminho.into_static(), true))
+    let request: Result<(Path,), dbus::Error> =
+        sp.method_call(SESSION, "RecordMonitor", (connector, props()));
+    match request {
+        Ok((path,)) => Ok((path.into_static(), false)),
+        Err(e) if monitor_missing(e.message()) => {
+            eprintln!("no monitor {connector}: using virtual screen {VIRTUAL_W}x{VIRTUAL_H}");
+            let (path,): (Path,) = sp.method_call(SESSION, "RecordVirtual", (props(),))?;
+            Ok((path.into_static(), true))
         }
         Err(e) => Err(e.into()),
     }
 }
-/// Dois quadros de folga. Mais que isso seria fila de coisa velha.
-const CAPACIDADE: usize = 2;
+/// Two frames of slack. More than that would be a queue of stale stuff.
+const CAPACITY: usize = 2;
 
-/// Cadencia alvo da codificacao: um quadro a cada 16,67 ms (60 Hz).
+/// Target encoding cadence: one frame every 16.67 ms (60 Hz).
 ///
-/// O Mutter entrega a ~80 fps e nos codificavamos todos. Acima da taxa de
-/// atualizacao da tela de quem assiste isso nao vira imagem -- vira mais
-/// banda, mais GPU aqui e mais conversao de cor do outro lado, para o
-/// olho de ninguem. As telas das tres maquinas sao de 60 Hz.
+/// Mutter delivers at ~80 fps and we encoded them all. Above the refresh
+/// rate of the viewer's screen that does not become picture -- it becomes
+/// more bandwidth, more GPU here and more color conversion on the other
+/// side, for nobody's eyes. The screens of all three machines are 60 Hz.
 ///
-/// O portao compara com um PRAZO que avanca, e nao com o tempo desde o
-/// ultimo quadro. A primeira versao fazia o segundo e mediu 48 fps em vez
-/// de 60: com a fonte entregando a cada 12,5 ms, "recuse se faz menos de
-/// 16,7 ms" aceita um sim e um nao, e 80 vira ~40. Com o prazo que
-/// avanca, medido: 60,0 fps e 4,5 Mbps, contra 80 fps e 6,2 Mbps antes.
-const CADENCIA: Duration = Duration::from_micros(16_667);
+/// The gate compares against a DEADLINE that advances, not against the time
+/// since the last frame. The first version did the latter and measured
+/// 48 fps instead of 60: with the source delivering every 12.5 ms, "reject
+/// if less than 16.7 ms" accepts one and rejects the next, and 80 becomes
+/// ~40. With the advancing deadline, measured: 60.0 fps and 4.5 Mbps,
+/// against 80 fps and 6.2 Mbps before.
+const CADENCE: Duration = Duration::from_micros(16_667);
 
-pub fn run(porta: u16, conector: &str) -> anyhow::Result<()> {
-    // Canal do TOKIO, nao `std::sync::mpsc`.
+pub fn run(port: u16, connector: &str) -> anyhow::Result<()> {
+    // A TOKIO channel, not `std::sync::mpsc`.
     //
-    // Com o canal da std, o laco de rede bloqueava a thread em
-    // `recv_timeout` -- e numa runtime `current_thread` isso impede o
-    // driver da conexao de rodar. `send_datagram` so ENFILEIRA; quem poe
-    // no fio e o driver. Resultado medido: host anunciando 80 fps e "0
-    // recusados" com o receptor em zero, porque nada era transmitido.
-    let (tx, rx) = tokio::sync::mpsc::channel::<EncodedFrame>(CAPACIDADE);
+    // With the std channel, the network loop blocked the thread in
+    // `recv_timeout` -- and in a `current_thread` runtime that keeps the
+    // connection driver from running. `send_datagram` only ENQUEUES; the
+    // driver is what puts it on the wire. Measured result: host announcing
+    // 80 fps and "0 refused" with the receiver at zero, because nothing was
+    // being transmitted.
+    let (tx, rx) = tokio::sync::mpsc::channel::<EncodedFrame>(CAPACITY);
 
-    // --- coreografia entre as duas threads -------------------------------
+    // --- choreography between the two threads ----------------------------
     //
-    // A sessao de INPUT tem de existir antes da de TELA: e o `SessionId`
-    // dela que amarra as duas, e sem o vinculo o
-    // `NotifyPointerMotionAbsolute` nao tem espaco de coordenadas.
+    // The INPUT session has to exist before the SCREEN one: its `SessionId`
+    // is what ties the two together, and without the link
+    // `NotifyPointerMotionAbsolute` has no coordinate space.
     //
-    // Mas quem injeta e a thread de rede, e no D-Bus a sessao pertence a
-    // conexao que a criou -- outra conexao nao pode chamar `Notify*`
-    // nela. Entao a sessao de input nasce LA, e so o identificador
-    // atravessa.
+    // But the injector is the network thread, and in D-Bus a session
+    // belongs to the connection that created it -- another connection
+    // cannot call `Notify*` on it. So the input session is born THERE, and
+    // only the identifier crosses over.
     //
-    //   rede:  cria input  -> manda SessionId ----> main
-    //   main:  cria tela vinculada, RecordMonitor -> manda caminho do
-    //          stream (para o ponteiro absoluto) -> rede
-    //   rede:  Start() -- que inicia as duas
-    //   main:  recebe PipeWireStreamAdded e segue
+    //   network: create input -> send SessionId ----> main
+    //   main:    create linked screen, RecordMonitor -> send stream path
+    //            (for the absolute pointer) -> network
+    //   network: Start() -- which starts both
+    //   main:    receive PipeWireStreamAdded and carry on
     let (tx_id, rx_id) = std::sync::mpsc::channel::<String>();
-    let (tx_pronto, rx_pronto) = std::sync::mpsc::channel::<String>();
+    let (tx_ready, rx_ready) = std::sync::mpsc::channel::<String>();
 
-    // Quem decide encerrar e a rede (ninguem assistindo), mas quem pode
-    // PARAR e a thread de captura -- e a dona do laco do PipeWire e dos
-    // recursos de CUDA/NVENC.
+    // The one who decides to shut down is the network (nobody watching),
+    // but the one who can STOP is the capture thread -- it owns the
+    // PipeWire loop and the CUDA/NVENC resources.
     //
-    // Tentei `std::process::exit` da thread de rede e o processo travou:
-    // o exit comeca a destruir os estaticos enquanto a captura ainda
-    // esta codificando, e o log mostrou `encode: InvalidParam` seguido de
-    // nada. Bandeira + timer no proprio laco resolve na ordem certa.
-    let sinais = std::sync::Arc::new(Signals::default());
-    let sinais_rede = std::sync::Arc::clone(&sinais);
+    // I tried `std::process::exit` from the network thread and the process
+    // hung: exit starts destroying statics while capture is still encoding,
+    // and the log showed `encode: InvalidParam` followed by nothing. A flag
+    // plus a timer in the loop itself does it in the right order.
+    let signals = std::sync::Arc::new(Signals::default());
+    let signals_net = std::sync::Arc::clone(&signals);
 
-    let rede = std::thread::spawn(move || {
-        if let Err(e) = servir(porta, rx, tx_id, rx_pronto, std::sync::Arc::clone(&sinais_rede)) {
-            eprintln!("  rede: {e}");
+    let network = std::thread::spawn(move || {
+        if let Err(e) = run_network(port, rx, tx_id, rx_ready, std::sync::Arc::clone(&signals_net)) {
+            eprintln!("  network: {e}");
         }
-        // A rede acabou -- por sucesso ou por erro. Em qualquer caso nao
-        // ha mais para quem mandar quadro, e quem encerra na ordem certa
-        // e a captura. Sem esta linha, um erro na rede deixava o processo
-        // vivo para sempre, capturando para ninguem.
-        sinais_rede.shutdown();
+        // The network is done -- by success or by error. Either way there
+        // is nobody left to send frames to, and the one who shuts down in
+        // the right order is the capture. Without this line, a network
+        // error left the process alive forever, capturing for nobody.
+        signals_net.shutdown();
     });
 
     let rd_id = rx_id
         .recv_timeout(Duration::from_secs(10))
-        .map_err(|_| anyhow::anyhow!("a thread de rede nao criou a sessao de input"))?;
+        .map_err(|_| anyhow::anyhow!("the network thread did not create the input session"))?;
 
     // --- Mutter ---------------------------------------------------------
     let conn = Connection::new_session()?;
@@ -166,24 +169,24 @@ pub fn run(porta: u16, conector: &str) -> anyhow::Result<()> {
     );
     let (sess_path,): (Path,) = root.method_call(SC, "CreateSession", (sc_props,))?;
     let sp = conn.with_proxy(SC, sess_path.into_static(), T);
-    let (stream_path, tela_virtual) = gravar(&sp, conector)?;
+    let (stream_path, virtual_screen) = record(&sp, connector)?;
     let node = std::sync::Arc::new(std::sync::Mutex::new(None::<u32>));
     let node2 = std::sync::Arc::clone(&node);
-    let mut regra = MatchRule::new_signal(STREAM, "PipeWireStreamAdded");
-    regra.path = Some(stream_path.clone());
-    conn.add_match(regra, move |(id,): (u32,), _, _| {
+    let mut rule = MatchRule::new_signal(STREAM, "PipeWireStreamAdded");
+    rule.path = Some(stream_path.clone());
+    conn.add_match(rule, move |(id,): (u32,), _, _| {
         *node2.lock().unwrap() = Some(id);
         true
     })?;
-    // Quem chama Start e a thread de rede, dona da sessao de input --
-    // iniciar a de input inicia a de tela vinculada.
-    tx_pronto.send(stream_path.to_string())?;
-    let limite = Instant::now() + Duration::from_secs(5);
-    while node.lock().unwrap().is_none() && Instant::now() < limite {
+    // The one who calls Start is the network thread, owner of the input
+    // session -- starting the input one starts the linked screen one.
+    tx_ready.send(stream_path.to_string())?;
+    let limit = Instant::now() + Duration::from_secs(5);
+    while node.lock().unwrap().is_none() && Instant::now() < limit {
         conn.process(Duration::from_millis(100))?;
     }
     let node_id =
-        (*node.lock().unwrap()).ok_or_else(|| anyhow::anyhow!("sem PipeWireStreamAdded"))?;
+        (*node.lock().unwrap()).ok_or_else(|| anyhow::anyhow!("no PipeWireStreamAdded"))?;
 
     // --- PipeWire + NVENC -----------------------------------------------
     pipewire::init();
@@ -200,15 +203,15 @@ pub fn run(porta: u16, conector: &str) -> anyhow::Result<()> {
         },
     )?;
 
-    let cod = Rc::new(RefCell::new(None::<NvencEncoder>));
-    let descartados = Rc::new(Cell::new(0u64));
-    let proximo_quadro = Rc::new(Cell::new(Instant::now()));
-    let proximo_proc = Rc::clone(&proximo_quadro);
-    let cod_fmt = Rc::clone(&cod);
-    let tam_fmt = Cell::new((0u32, 0u32));
-    let cod_proc = Rc::clone(&cod);
-    let desc_proc = Rc::clone(&descartados);
-    let sinais_proc = std::sync::Arc::clone(&sinais);
+    let enc = Rc::new(RefCell::new(None::<NvencEncoder>));
+    let dropped = Rc::new(Cell::new(0u64));
+    let next_frame_due = Rc::new(Cell::new(Instant::now()));
+    let next_due_proc = Rc::clone(&next_frame_due);
+    let enc_fmt = Rc::clone(&enc);
+    let size_fmt = Cell::new((0u32, 0u32));
+    let enc_proc = Rc::clone(&enc);
+    let dropped_proc = Rc::clone(&dropped);
+    let signals_proc = std::sync::Arc::clone(&signals);
 
     let _listener = stream
         .add_local_listener_with_user_data(())
@@ -228,18 +231,18 @@ pub fn run(porta: u16, conector: &str) -> anyhow::Result<()> {
                 return;
             }
             let (w, h) = (info.size().width, info.size().height);
-            // A tela virtual renegocia logo depois de nascer, com o mesmo
-            // tamanho. Trocar o codificador nesse instante derrubava o
-            // processo com SIGSEGV (saida 139, medido); o monitor fisico
-            // negocia uma vez so e nunca passava por aqui.
-            if cod_fmt.borrow().is_some() && tam_fmt.get() == (w, h) {
+            // The virtual screen renegotiates right after it is born, with
+            // the same size. Swapping the encoder at that instant took the
+            // process down with SIGSEGV (exit 139, measured); the physical
+            // monitor negotiates only once and never went through here.
+            if enc_fmt.borrow().is_some() && size_fmt.get() == (w, h) {
                 return;
             }
             match NvencEncoder::new(w, h) {
                 Ok(c) => {
-                    println!("  capturando {w}x{h}, NVENC a {:.1} Mbps", c.target_mbps());
-                    *cod_fmt.borrow_mut() = Some(c);
-                    tam_fmt.set((w, h));
+                    println!("  capturing {w}x{h}, NVENC at {:.1} Mbps", c.target_mbps());
+                    *enc_fmt.borrow_mut() = Some(c);
+                    size_fmt.set((w, h));
                 }
                 Err(err) => eprintln!("  NVENC: {err}"),
             }
@@ -249,42 +252,42 @@ pub fn run(porta: u16, conector: &str) -> anyhow::Result<()> {
             let datas = buf.datas_mut();
             let Some(d) = datas.first_mut() else { return };
             let stride = d.chunk().stride() as usize;
-            let tam = d.chunk().size() as usize;
-            if tam == 0 {
+            let size = d.chunk().size() as usize;
+            if size == 0 {
                 return;
             }
             let Some(px) = d.data() else { return };
-            let capturado = now_ns();
+            let captured = now_ns();
 
-            // Sem ninguem assistindo, nao codifica: o quadro iria para
-            // um canal que ninguem drena. O buffer do PipeWire ja foi
-            // devolvido acima, entao a captura segue saudavel.
-            if !sinais_proc.has_client() {
+            // With nobody watching, do not encode: the frame would go into
+            // a channel nobody drains. The PipeWire buffer was already
+            // handed back above, so capture stays healthy.
+            if !signals_proc.has_client() {
                 return;
             }
-            // Teto de taxa: descartar aqui e de graca (o buffer ja
-            // voltou), e codificar custa GPU dos dois lados.
-            let agora = Instant::now();
-            if agora < proximo_proc.get() {
+            // Rate ceiling: dropping here is free (the buffer is already
+            // back), and encoding costs GPU on both sides.
+            let now = Instant::now();
+            if now < next_due_proc.get() {
                 return;
             }
-            // `max(agora, ...)`: depois de uma pausa (tela parada, host
-            // sem cliente) o prazo nao pode estar no passado distante,
-            // senao o primeiro punhado de quadros passaria todo junto.
-            proximo_proc.set((proximo_proc.get() + CADENCIA).max(agora));
-            let mut g = cod_proc.borrow_mut();
+            // `max(now, ...)`: after a pause (still screen, host with no
+            // client) the deadline cannot be in the distant past, or the
+            // first handful of frames would all go through together.
+            next_due_proc.set((next_due_proc.get() + CADENCE).max(now));
+            let mut g = enc_proc.borrow_mut();
             let Some(c) = g.as_mut() else { return };
-            if sinais_proc.take_idr() {
+            if signals_proc.take_idr() {
                 c.request_idr();
             }
             match c.encode(px, stride) {
-                // `try_send`: se a rede nao acompanha, o quadro novo e
-                // descartado AQUI em vez de virar fila. EncodedFrame atrasado
-                // nao tem valor numa tela remota.
+                // `try_send`: if the network cannot keep up, the new frame
+                // is dropped HERE instead of becoming a queue. A late frame
+                // has no value on a remote screen.
                 Ok(data) => {
                     let keyframe = c.last_was_idr();
-                    if tx.try_send(EncodedFrame { data, keyframe, captured_at_ns: capturado }).is_err() {
-                        desc_proc.set(desc_proc.get() + 1);
+                    if tx.try_send(EncodedFrame { data, keyframe, captured_at_ns: captured }).is_err() {
+                        dropped_proc.set(dropped_proc.get() + 1);
                     }
                 }
                 Err(err) => eprintln!("  {err}"),
@@ -307,26 +310,26 @@ pub fn run(porta: u16, conector: &str) -> anyhow::Result<()> {
             VideoFormat::BGRA
         ),
     );
-    // Monitor de verdade dita o tamanho. O virtual nao tem tamanho
-    // nenhum ate o cliente pedir um, e sem pedir ele nasce em 1280x720.
-    if tela_virtual {
+    // A real monitor dictates the size. The virtual one has no size at all
+    // until the client asks for one, and without asking it is born 1280x720.
+    if virtual_screen {
         obj.properties.push(pod::property!(
             FormatProperties::VideoSize,
             Choice,
             Range,
             Rectangle,
-            Rectangle { width: VIRTUAL_L, height: VIRTUAL_A },
+            Rectangle { width: VIRTUAL_W, height: VIRTUAL_H },
             Rectangle { width: 640, height: 480 },
             Rectangle { width: 7680, height: 4320 }
         ));
     }
-    let valores = pod::serialize::PodSerializer::serialize(
+    let values = pod::serialize::PodSerializer::serialize(
         std::io::Cursor::new(Vec::new()),
         &pod::Value::Object(obj),
     )?
     .0
     .into_inner();
-    let mut params = [Pod::from_bytes(&valores).ok_or_else(|| anyhow::anyhow!("pod"))?];
+    let mut params = [Pod::from_bytes(&values).ok_or_else(|| anyhow::anyhow!("pod"))?];
     stream.connect(
         Direction::Input,
         Some(node_id),
@@ -334,12 +337,12 @@ pub fn run(porta: u16, conector: &str) -> anyhow::Result<()> {
         &mut params,
     )?;
 
-    // Timer no proprio laco: e o unico lugar de onde da para chamar
-    // `quit` com seguranca, porque o `MainLoop` nao atravessa threads.
+    // A timer in the loop itself: it is the only place `quit` can be called
+    // from safely, because the `MainLoop` does not cross threads.
     let ml = mainloop.clone();
-    let sinais_timer = std::sync::Arc::clone(&sinais);
+    let signals_timer = std::sync::Arc::clone(&signals);
     let timer = mainloop.loop_().add_timer(move |_| {
-        if sinais_timer.should_exit() {
+        if signals_timer.should_exit() {
             ml.quit();
         }
     });
@@ -347,82 +350,84 @@ pub fn run(porta: u16, conector: &str) -> anyhow::Result<()> {
         .update_timer(Some(Duration::from_millis(500)), Some(Duration::from_millis(500)))
         .into_result()?;
 
-    println!("  host na porta {porta}; ctrl-c para parar");
+    println!("  host on port {port}; ctrl-c to stop");
     mainloop.run();
-    println!("  captura encerrada");
+    println!("  capture ended");
     let _ = sp.method_call::<(), _, _, _>(SESSION, "Stop", ());
-    let _ = rede.join();
+    let _ = network.join();
     Ok(())
 }
 
-/// Injeta um evento na sessao do Mutter, SEM esperar resposta.
+/// Injects an event into the Mutter session, WITHOUT waiting for a reply.
 ///
-/// `NotifyPointerMotionAbsolute` recebe o caminho do STREAM de tela: e
-/// ele que define o espaco de coordenadas. Por isso a sessao de input
-/// precisa estar vinculada a de tela -- sem o vinculo, nao ha para onde
-/// mapear o x,y.
+/// `NotifyPointerMotionAbsolute` takes the path of the screen STREAM: it is
+/// what defines the coordinate space. That is why the input session has to
+/// be linked to the screen one -- without the link, there is nowhere to map
+/// the x,y to.
 ///
-/// ## Por que `no_reply`, e nao `method_call`
+/// ## Why `no_reply`, and not `method_call`
 ///
-/// Era `method_call`, que ESPERA a resposta. O usuario descreveu os dois
-/// sintomas disso na mesma frase: "mac para ubuntu meeeeeeeio bugado e
-/// lento o iiiiiiiinput" -- as letras repetidas sao tecla presa, o
-/// "solta tecla" chegando tarde -- e "o video para se eu paro de
-/// digitar".
+/// It was `method_call`, which WAITS for the reply. The user described both
+/// symptoms of that in the same sentence: "mac para ubuntu meeeeeeeio
+/// bugado e lento o iiiiiiiinput" ("mac to ubuntu kiiiiind of buggy and
+/// slow, the iiiiiinput") -- the repeated letters are a stuck key, the "key
+/// up" arriving late -- and "o video para se eu paro de digitar" ("the
+/// video stops if I stop typing").
 ///
-/// Uma causa, dois sintomas. A thread que injeta input e a MESMA que
-/// bombeia os datagramas de video (ver `servir`: runtime de uma thread,
-/// porque a conexao D-Bus nao e Send). Cada evento parava ali esperando o
-/// Mutter responder -- o Mutter, que naquele instante tambem esta
-/// capturando e codificando. Enquanto a resposta nao vinha, nenhum quadro
-/// saia; e enquanto quadros saiam, o "solta tecla" esperava.
+/// One cause, two symptoms. The thread that injects input is the SAME one
+/// that pumps the video datagrams (see `run_network`: a single-thread
+/// runtime, because the D-Bus connection is not Send). Each event stopped
+/// there waiting for Mutter to reply -- Mutter, which at that instant is
+/// also capturing and encoding. While the reply did not come, no frame went
+/// out; and while frames went out, the "key up" waited.
 ///
-/// A resposta de uma injecao de input nao carrega nada que a gente use.
-/// Com `NO_REPLY_EXPECTED` a chamada vira uma escrita no socket e nao ha
-/// mais ida e volta no caminho quente.
+/// The reply to an input injection carries nothing we use. With
+/// `NO_REPLY_EXPECTED` the call becomes a socket write and there is no
+/// more round trip on the hot path.
 ///
-/// O preco e real e aceito: erro de injecao deixa de ser visivel por
-/// evento. O que sobra e o erro de ESCRITA, que e o que indica sessao
-/// morta -- o caso que importa.
+/// The price is real and accepted: injection errors stop being visible per
+/// event. What remains is the WRITE error, which is what signals a dead
+/// session -- the case that matters.
 fn apply_event(conn: &Connection, rd: &Path, stream: &str, e: Event) -> Result<(), String> {
     use crate::input::Event as E;
-    let m = |membro: &str| {
-        dbus::Message::new_method_call(RD, rd.clone(), RD_SESSION, membro)
+    let m = |member: &str| {
+        dbus::Message::new_method_call(RD, rd.clone(), RD_SESSION, member)
     };
     let msg = match e {
         E::Mouse { x, y } => m("NotifyPointerMotionAbsolute").map(|z| z.append3(stream, x, y)),
-        // Relativo tem metodo proprio no Mutter, e nao e o absoluto com
-        // conta feita: `NotifyPointerMotion` respeita aceleracao e os
-        // limites de tela do lado de ca, que e o que o KVM quer.
+        // Relative has its own method in Mutter, and is not the absolute one
+        // with the math done: `NotifyPointerMotion` honors acceleration and
+        // the screen bounds on this side, which is what the KVM wants.
         E::MouseRel { dx, dy } => m("NotifyPointerMotion").map(|z| z.append2(dx, dy)),
         E::Button { code, pressed } => {
             m("NotifyPointerButton").map(|z| z.append2(code, pressed))
         }
-        // flags 0 = rolagem continua. O `AxisDiscrete` seria para roda
-        // com clique, mas o trackpad do Mac nao tem passo.
+        // flags 0 = continuous scroll. `AxisDiscrete` would be for a wheel
+        // with clicks, but the Mac trackpad has no steps.
         E::Scroll { dx, dy } => m("NotifyPointerAxis").map(|z| z.append3(dx, dy, 0u32)),
         E::Key { keycode, pressed } => {
             m("NotifyKeyboardKeycode").map(|z| z.append2(keycode, pressed))
         }
     };
-    let mut msg = msg.map_err(|e| format!("montar mensagem: {e}"))?;
+    let mut msg = msg.map_err(|e| format!("build message: {e}"))?;
     msg.set_no_reply(true);
-    conn.channel().send(msg).map_err(|_| "fila do D-Bus cheia".to_string())?;
+    conn.channel().send(msg).map_err(|_| "D-Bus queue full".to_string())?;
     Ok(())
 }
 
-/// Rede: serve video por datagrama e recebe input por stream.
+/// Network: serves video by datagram and receives input by stream.
 ///
-/// `LocalSet` e nao `tokio::spawn` porque a conexao D-Bus **nao e Send**,
-/// e a sessao de input pertence a conexao que a criou -- uma segunda
-/// conexao chamando `Notify*` naquela sessao seria recusada pelo Mutter.
-/// Entao tudo roda nesta thread e o `Rc` compartilha.
-fn servir(
-    porta: u16,
+/// `LocalSet` and not `tokio::spawn` because the D-Bus connection **is not
+/// Send**, and the input session belongs to the connection that created it
+/// -- a second connection calling `Notify*` on that session would be
+/// refused by Mutter. So everything runs on this thread and the `Rc`
+/// shares it.
+fn run_network(
+    port: u16,
     mut rx: tokio::sync::mpsc::Receiver<EncodedFrame>,
     tx_id: std::sync::mpsc::Sender<String>,
-    rx_pronto: std::sync::mpsc::Receiver<String>,
-    sinais: std::sync::Arc<Signals>,
+    rx_ready: std::sync::mpsc::Receiver<String>,
+    signals: std::sync::Arc<Signals>,
 ) -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let local = tokio::task::LocalSet::new();
@@ -435,138 +440,138 @@ fn servir(
         let id: String = dbus.with_proxy(RD, rd_path.clone(), T).get(RD_SESSION, "SessionId")?;
         tx_id.send(id)?;
 
-        // Espera a sessao de tela existir, ja vinculada a esta.
-        let caminho_stream = rx_pronto.recv_timeout(Duration::from_secs(10))?;
+        // Wait for the screen session to exist, already linked to this one.
+        let stream_path = rx_ready.recv_timeout(Duration::from_secs(10))?;
         dbus.with_proxy(RD, rd_path.clone(), T)
             .method_call::<(), _, _, _>(RD_SESSION, "Start", ())?;
-        println!("  input ligado (stream {caminho_stream})");
+        println!("  input enabled (stream {stream_path})");
 
-        let escuta = crate::bind::listen_addr();
-        let ep = crate::net::server((escuta, porta).into())?;
-        // O endereco REAL, nao "0.0.0.0" fixo: com --bind overlay o
-        // host escuta em outro lugar, e um log que diz 0.0.0.0
-        // mandaria quem diagnostica procurar no lugar errado.
-        println!("  escutando em {escuta}:{porta}");
+        let listen = crate::bind::listen_addr();
+        let ep = crate::net::server((listen, port).into())?;
+        // The REAL address, not a hardcoded "0.0.0.0": with --bind overlay
+        // the host listens somewhere else, and a log saying 0.0.0.0 would
+        // send whoever is diagnosing to look in the wrong place.
+        println!("  listening on {listen}:{port}");
 
-        // Porta de input, ao lado da de video.
+        // Input port, next to the video one.
         //
-        // O host serve um cliente de VIDEO por vez, e o KVM por LAN
-        // disputava essa vaga com o visualizador: o usuario mandava o
-        // input para a outra maquina e via a tela dela congelada,
-        // concluindo (com razao, pelo que via) que nada tinha mexido.
-        let porta_input = porta + 1;
-        let ep_in = crate::net::server((escuta, porta_input).into())?;
-        println!("  input em {escuta}:{porta_input}");
+        // The host serves one VIDEO client at a time, and the LAN KVM
+        // fought the viewer for that slot: the user sent input to the
+        // other machine and saw its screen frozen, concluding (rightly,
+        // from what they saw) that nothing had moved.
+        let input_port = port + 1;
+        let ep_in = crate::net::server((listen, input_port).into())?;
+        println!("  input on {listen}:{input_port}");
         {
-            let sinais_in = std::sync::Arc::clone(&sinais);
+            let signals_in = std::sync::Arc::clone(&signals);
             let dbus_in = Rc::clone(&dbus);
             let rd_i = rd_path.clone();
-            let st_i = caminho_stream.clone();
+            let st_i = stream_path.clone();
             tokio::task::spawn_local(async move {
-                serve::serve_input(&ep_in, std::sync::Arc::clone(&sinais_in), |conexao| {
-                    let conexao = conexao.clone();
+                serve::serve_input(&ep_in, std::sync::Arc::clone(&signals_in), |conn| {
+                    let conn = conn.clone();
                     let dbus = Rc::clone(&dbus_in);
                     let rd = rd_i.clone();
                     let st = st_i.clone();
                     tokio::task::spawn_local(
-                        async move { receber_input(conexao, dbus, rd, st).await },
+                        async move { receive_input(conn, dbus, rd, st).await },
                     )
                 })
                 .await;
             });
         }
 
-        serve::serve_video(&ep, &mut rx, &sinais, |conexao| {
-            let conexao = conexao.clone();
+        serve::serve_video(&ep, &mut rx, &signals, |conn| {
+            let conn = conn.clone();
             let dbus = Rc::clone(&dbus);
             let rd_in = rd_path.clone();
-            let stream_in = caminho_stream.clone();
+            let stream_in = stream_path.clone();
             tokio::task::spawn_local(
-                async move { receber_input(conexao, dbus, rd_in, stream_in).await },
+                async move { receive_input(conn, dbus, rd_in, stream_in).await },
             )
         })
         .await
     })
 }
 
-/// Le o stream de input de uma conexao e injeta ate ela fechar.
+/// Reads a connection's input stream and injects until it closes.
 ///
-/// Um so para as duas portas: o visualizador manda input pela conexao
-/// de video, o KVM manda pela porta de input, e os dois merecem o
-/// mesmo tratamento. Duplicar isto seria convidar as duas copias a
-/// divergirem -- e uma delas e a que o usuario usa para digitar.
-async fn receber_input(
-    conexao: quinn::Connection,
+/// One for both ports: the viewer sends input over the video connection,
+/// the KVM sends it over the input port, and both deserve the same
+/// treatment. Duplicating this would invite the two copies to diverge --
+/// and one of them is the one the user types with.
+async fn receive_input(
+    conn: quinn::Connection,
     dbus: Rc<Connection>,
     rd_in: Path<'static>,
     stream_in: String,
 ) {
-    let Ok(mut recv) = conexao.accept_uni().await else { return };
-    let mut leitor = Reader::default();
+    let Ok(mut recv) = conn.accept_uni().await else { return };
+    let mut reader = Reader::default();
     let mut buf = vec![0u8; 4096];
     let mut n = 0u64;
-    let mut falhas = 0u64;
-    while let Ok(Some(lidos)) = recv.read(&mut buf).await {
-        leitor.feed(&buf[..lidos]);
-        let mut aplicados_agora = 0u32;
-        while let Some(e) = leitor.next_event() {
+    let mut failures = 0u64;
+    while let Ok(Some(read)) = recv.read(&mut buf).await {
+        reader.feed(&buf[..read]);
+        let mut applied_now = 0u32;
+        while let Some(e) = reader.next_event() {
             if let Err(err) = apply_event(&dbus, &rd_in, &stream_in, e) {
-                falhas += 1;
-                // Uma vez e as potencias de dez: injecao a 60 Hz
-                // transformaria log em ruido, e o numero que
-                // importa e "parou de funcionar", nao cada evento.
-                if falhas == 1 || falhas % 100 == 0 {
-                    eprintln!("  input recusado ({falhas}): {err}");
+                failures += 1;
+                // Once, then every hundred: injection at 60 Hz would turn
+                // the log into noise, and the number that matters is
+                // "stopped working", not each event.
+                if failures == 1 || failures % 100 == 0 {
+                    eprintln!("  input refused ({failures}): {err}");
                 }
             }
             n += 1;
-            // Os primeiros, um a um: "nao deu erro" e prova
-            // fraca de que o input chegou. Depois so o
-            // agregado, para nao encher o log a 60 Hz.
+            // The first ones, one by one: "no error" is weak proof that
+            // the input arrived. After that only the aggregate, so as not
+            // to flood the log at 60 Hz.
             if n <= 8 {
                 println!("  input #{n}: {e:?}");
             } else if n % 500 == 0 {
-                println!("  {n} eventos de input aplicados");
+                println!("  {n} input events applied");
             }
-            aplicados_agora += 1;
+            applied_now += 1;
         }
 
-        // ESVAZIAR A FILA. Sem isto o input nao sai daqui.
+        // FLUSH THE QUEUE. Without this the input does not leave here.
         //
-        // `Channel::send` chama `dbus_connection_send` e
-        // mais nada; quem escreve no socket e o
-        // `dbus_connection_flush`, que mora em `flush()` --
-        // separado. (A outra API do mesmo crate, `ffidisp`,
-        // faz os dois juntos; a nossa nao.) Sem flush, cada
-        // evento ficava na fila de saida do libdbus ate algo
-        // mais provocar escrita.
+        // `Channel::send` calls `dbus_connection_send` and nothing
+        // else; what writes to the socket is
+        // `dbus_connection_flush`, which lives in `flush()` --
+        // separately. (The crate's other API, `ffidisp`, does both
+        // together; ours does not.) Without a flush, each event sat
+        // in libdbus's outgoing queue until something else
+        // triggered a write.
         //
-        // O sintoma nao era "input nao funciona", era pior:
-        // funcionava em rajadas. Um key-up atrasado alem de
-        // ~500 ms faz o Mutter entrar em auto-repeticao, e o
-        // usuario escreveu "winddowsssss" e "nnnnnnnnnn" --
-        // as letras repetidas da mensagem dele eram o bug.
+        // The symptom was not "input does not work", it was worse:
+        // it worked in bursts. A key-up delayed past ~500 ms makes
+        // Mutter go into auto-repeat, and the user wrote
+        // "winddowsssss" and "nnnnnnnnnn" -- the repeated letters in
+        // their message were the bug.
         //
-        // Uma vez por leitura de rede, nao por evento: um
-        // `read` traz o lote inteiro de um movimento de
-        // mouse, e flush por evento seria syscall a toa no
-        // caminho quente. Nao espera resposta do Mutter --
-        // so escreve o socket -- entao preserva o motivo de
+        // Once per network read, not per event: one `read` brings
+        // the whole batch of a mouse movement, and flushing per
+        // event would be a wasted syscall on the hot path. It does
+        // not wait for a reply from Mutter -- it only writes the
+        // socket -- so it keeps the reason for
         // `set_no_reply(true)`.
-        if aplicados_agora > 0 {
+        if applied_now > 0 {
             dbus.channel().flush();
         }
     }
 }
 
 #[cfg(test)]
-mod testes {
-    use super::monitor_ausente;
+mod tests {
+    use super::monitor_missing;
 
     #[test]
-    fn so_o_monitor_ausente_cai_para_o_virtual() {
-        assert!(monitor_ausente(Some("Unknown monitor")));
-        assert!(!monitor_ausente(Some("Permission denied")));
-        assert!(!monitor_ausente(None));
+    fn only_missing_monitor_falls_back_to_virtual() {
+        assert!(monitor_missing(Some("Unknown monitor")));
+        assert!(!monitor_missing(Some("Permission denied")));
+        assert!(!monitor_missing(None));
     }
 }

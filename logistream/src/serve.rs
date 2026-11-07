@@ -1,40 +1,41 @@
-//! O laco de video: quadro codificado -> datagramas QUIC.
+//! The video loop: encoded frame -> QUIC datagrams.
 //!
 //! Spec: ../specs/010-remote-desktop.md
 //!
-//! Esta parte e **igual** no Linux e no Windows: fatiar, mandar, contar,
-//! e encerrar quando ninguem esta mais assistindo. Ficou aqui quando o
-//! Windows virou host, e nao copiada para o segundo binario, porque foi
-//! justamente aqui que moraram os bugs caros -- o `send_datagram` que
-//! falhava calado, a contagem de fps que mentia, a saida que travava no
-//! meio da destruicao do NVENC. Duas copias disso divergem, e a copia
-//! errada e sempre a que ninguem esta olhando.
+//! This part is **the same** on Linux and Windows: slice, send, count,
+//! and shut down when nobody is watching anymore. It stayed here when
+//! Windows became a host, instead of being copied into the second binary,
+//! because this is exactly where the expensive bugs lived -- the
+//! `send_datagram` that failed silently, the fps count that lied, the exit
+//! that hung halfway through tearing down NVENC. Two copies of this
+//! diverge, and the wrong copy is always the one nobody is looking at.
 //!
-//! O que NAO esta aqui e o que de fato difere: de onde vem o quadro
-//! (PipeWire x DXGI) e como o input e aplicado (D-Bus x SendInput).
+//! What is NOT here is what actually differs: where the frame comes from
+//! (PipeWire vs DXGI) and how input is applied (D-Bus vs SendInput).
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::net::{self, SliceHeader};
 
-/// Quanto esperar por outro cliente antes de encerrar o host.
+/// How long to wait for another client before shutting the host down.
 pub const IDLE_S: u64 = 20;
 
-/// Quanto esperar pelo PRIMEIRO cliente antes de desistir.
+/// How long to wait for the FIRST client before giving up.
 ///
-/// O host sobe sob demanda -- o painel o acorda e abre o visualizador em
-/// seguida -- entao se ninguem conectou em meio minuto, nao vai mais. Sem
-/// este limite, uma tentativa que falhou do lado do cliente deixava a
-/// captura e o NVENC rodando na maquina de outra pessoa indefinidamente,
-/// porque `accept()` sozinho espera para sempre.
+/// The host starts on demand -- the panel wakes it and opens the viewer
+/// right after -- so if nobody connected within half a minute, nobody
+/// will. Without this limit, an attempt that failed on the client side
+/// left capture and NVENC running on someone else's machine indefinitely,
+/// because `accept()` alone waits forever.
 pub const FIRST_CLIENT_WAIT_S: u64 = 30;
 
-/// Nanossegundos do relogio de parede.
+/// Wall-clock nanoseconds.
 ///
-/// De parede e nao monotonico de proposito: o carimbo viaja para a outra
-/// maquina, e so da para medir latencia fim-a-fim se os dois lados
-/// falarem da mesma origem. Com NTP na LAN o erro e de milissegundos.
+/// Wall clock and not monotonic on purpose: the timestamp travels to the
+/// other machine, and end-to-end latency can only be measured if both
+/// sides count from the same origin. With NTP on the LAN the error is in
+/// milliseconds.
 pub fn now_ns() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -42,217 +43,218 @@ pub fn now_ns() -> u64 {
         .unwrap_or(0)
 }
 
-/// As tres bandeiras entre a captura e a rede.
+/// The three flags between capture and network.
 ///
-/// Juntas numa struct e nao tres `Arc<AtomicBool>` soltos: elas sempre
-/// viajam juntas, e tres parametros booleanos seguidos numa assinatura e
-/// um convite a passar na ordem errada.
+/// Together in a struct and not three loose `Arc<AtomicBool>`: they
+/// always travel together, and three boolean parameters in a row in a
+/// signature are an invitation to pass them in the wrong order.
 ///
-/// Bandeira e nao canal porque toda mensagem aqui e idempotente: dois
-/// pedidos de quadro-chave valem um, e "saia" dito duas vezes e "saia".
+/// Flags and not a channel because every message here is idempotent: two
+/// keyframe requests are worth one, and "exit" said twice is "exit".
 ///
-/// Tudo em `SeqCst`, e nao `Relaxed`: a ORDEM entre elas importa. A rede
-/// liga `idr` antes de `cliente`, e a captura le `cliente` antes de
-/// `idr` -- com `Relaxed` ela pode ver "ha cliente" sem ver "manda
-/// quadro-chave", e ai o cliente novo recebe um quadro P que nao
-/// decodifica. Sao algumas escritas por segundo; a ordem vale mais que
-/// os nanossegundos.
+/// All `SeqCst`, not `Relaxed`: the ORDER between them matters. The
+/// network sets `idr` before `client`, and capture reads `client` before
+/// `idr` -- with `Relaxed` it could see "there is a client" without
+/// seeing "send a keyframe", and then the new client gets a P frame it
+/// cannot decode. It is a few writes per second; the ordering is worth
+/// more than the nanoseconds.
 #[derive(Default)]
 pub struct Signals {
-    /// A rede decidiu encerrar; quem para de verdade e a captura, que e
-    /// a dona do NVENC. Matar do outro lado travava no meio da
-    /// destruicao dos recursos de CUDA.
-    sair: AtomicBool,
-    /// O proximo quadro tem de ser IDR.
+    /// The network decided to shut down; whoever actually stops is the
+    /// capture, which owns NVENC. Killing from the other side hung
+    /// halfway through tearing down the CUDA resources.
+    exit: AtomicBool,
+    /// The next frame has to be an IDR.
     idr: AtomicBool,
-    /// Ha alguem assistindo.
-    cliente: AtomicBool,
-    /// Quantos clientes de INPUT estao conectados (o KVM por LAN).
+    /// Someone is watching.
+    client: AtomicBool,
+    /// How many INPUT clients are connected (the KVM over LAN).
     ///
-    /// Separado de `cliente` porque sao papeis diferentes: quem assiste
-    /// quer video, quem manda input nao. Sem esta contagem, o laco de
-    /// video encerraria o processo por ociosidade enquanto alguem ainda
-    /// esta digitando atraves dele -- derrubando o KVM junto.
-    entradas: AtomicUsize,
+    /// Separate from `client` because they are different roles: whoever
+    /// watches wants video, whoever sends input does not. Without this
+    /// count, the video loop would end the process for idleness while
+    /// someone is still typing through it -- taking the KVM down with it.
+    inputs: AtomicUsize,
 }
 
 impl Signals {
     pub fn should_exit(&self) -> bool {
-        self.sair.load(Ordering::SeqCst)
+        self.exit.load(Ordering::SeqCst)
     }
 
-    /// Pede que a captura encerre o processo.
+    /// Asks the capture to end the process.
     ///
-    /// Publico porque quem descobre que nao ha mais o que fazer e a
-    /// REDE, e quem pode parar com seguranca e a captura -- ela e dona
-    /// do NVENC e do CUDA, e destruir isso do outro lado travava.
+    /// Public because whoever finds out there is nothing left to do is
+    /// the NETWORK, and whoever can stop safely is the capture -- it owns
+    /// NVENC and CUDA, and destroying those from the other side hung.
     pub fn shutdown(&self) {
-        self.sair.store(true, Ordering::SeqCst);
+        self.exit.store(true, Ordering::SeqCst);
     }
 
-    /// Alguem conectou na porta de input.
+    /// Someone connected on the input port.
     pub fn input_joined(&self) {
-        self.entradas.fetch_add(1, Ordering::SeqCst);
+        self.inputs.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// Alguem saiu da porta de input.
+    /// Someone left the input port.
     pub fn input_left(&self) {
-        self.entradas.fetch_sub(1, Ordering::SeqCst);
+        self.inputs.fetch_sub(1, Ordering::SeqCst);
     }
 
     pub fn has_input(&self) -> bool {
-        self.entradas.load(Ordering::SeqCst) > 0
+        self.inputs.load(Ordering::SeqCst) > 0
     }
 
-    /// Consome o pedido de quadro-chave. Devolve `true` uma vez por
-    /// pedido -- quem chama repassa ao codificador.
+    /// Consumes the keyframe request. Returns `true` once per request --
+    /// the caller passes it on to the encoder.
     pub fn take_idr(&self) -> bool {
         self.idr.swap(false, Ordering::SeqCst)
     }
 
-    /// Vale a pena codificar agora?
+    /// Is it worth encoding now?
     ///
-    /// Sem ninguem assistindo, codificar e queimar GPU na maquina de
-    /// outra pessoa: o quadro iria para um canal que ninguem drena e
-    /// seria descartado. Medido no Windows -- 120 quadros descartados
-    /// antes de o primeiro cliente conectar.
+    /// With nobody watching, encoding is burning GPU on someone else's
+    /// machine: the frame would go into a channel nobody drains and be
+    /// dropped. Measured on Windows -- 120 frames dropped before the
+    /// first client connected.
     pub fn has_client(&self) -> bool {
-        self.cliente.load(Ordering::SeqCst)
+        self.client.load(Ordering::SeqCst)
     }
 }
 
-/// Um quadro ja codificado, esperando a rede.
+/// An already encoded frame, waiting for the network.
 pub struct EncodedFrame {
     pub data: Vec<u8>,
     pub keyframe: bool,
     pub captured_at_ns: u64,
 }
 
-/// Aceita um cliente, transmite enquanto ele estiver lá, e pede parada.
+/// Accepts a client, streams while it is there, and asks for a stop.
 ///
-/// `abrir_input` recebe a conexao e devolve a tarefa que aplica os
-/// eventos. E closure, e nao trait, porque o lado do Linux precisa
-/// capturar uma conexao D-Bus que **nao e Send** (roda em `LocalSet`,
-/// com `spawn_local`) enquanto o do Windows usa `tokio::spawn` normal --
-/// e as duas devolvem o mesmo `JoinHandle`.
+/// `open_input` takes the connection and returns the task that applies
+/// the events. A closure, not a trait, because the Linux side needs to
+/// capture a D-Bus connection that **is not Send** (it runs in a
+/// `LocalSet`, with `spawn_local`) while the Windows one uses a normal
+/// `tokio::spawn` -- and both return the same `JoinHandle`.
 pub async fn serve_video(
     ep: &quinn::Endpoint,
     rx: &mut tokio::sync::mpsc::Receiver<EncodedFrame>,
-    sinais: &Signals,
-    mut abrir_input: impl FnMut(&quinn::Connection) -> tokio::task::JoinHandle<()>,
+    signals: &Signals,
+    mut open_input: impl FnMut(&quinn::Connection) -> tokio::task::JoinHandle<()>,
 ) -> anyhow::Result<()> {
-    // UM laco para o primeiro cliente e para os que voltam, com prazos
-    // diferentes.
+    // ONE loop for the first client and for the ones that come back, with
+    // different deadlines.
     //
-    // Antes eram dois lugares: o laco aceitava o primeiro, e depois de
-    // ele sair havia um `accept` separado so para saber se alguem
-    // voltava -- que entao encerrava de todo jeito, recusando quem
-    // acabara de conectar. O log dizia isso em voz alta ("alguem voltou,
-    // mas a conexao nao volta para o laco") e o sintoma era clicar "Ver
-    // a tela" duas vezes e a segunda falhar com "o servidor recusou".
-    let mut houve_cliente = false;
+    // It used to be two places: the loop accepted the first one, and
+    // after it left there was a separate `accept` just to find out
+    // whether someone came back -- which then shut down anyway, refusing
+    // whoever had just connected. The log said so out loud ("someone came
+    // back, but the connection does not return to the loop") and the
+    // symptom was clicking "Ver a tela" twice and the second one failing
+    // with "the server refused".
+    let mut had_client = false;
     loop {
-        // Ate o primeiro cliente, o prazo e generoso: o painel acorda o
-        // host e abre o visualizador em seguida. Depois dele, o prazo e
-        // curto -- quem fechou a janela provavelmente acabou.
-        let prazo = if houve_cliente { IDLE_S } else { FIRST_CLIENT_WAIT_S };
-        let entrando = match tokio::time::timeout(Duration::from_secs(prazo), ep.accept()).await {
+        // Until the first client, the deadline is generous: the panel
+        // wakes the host and opens the viewer right after. After it, the
+        // deadline is short -- whoever closed the window is probably done.
+        let deadline = if had_client { IDLE_S } else { FIRST_CLIENT_WAIT_S };
+        let incoming = match tokio::time::timeout(Duration::from_secs(deadline), ep.accept()).await {
             Ok(Some(e)) => e,
-            // Endpoint fechado: nao ha mais o que aceitar.
+            // Endpoint closed: nothing more to accept.
             Ok(None) => break,
             Err(_) => {
-                // Ociosidade de VIDEO nao e ociosidade do host.
+                // VIDEO idleness is not host idleness.
                 //
-                // Com o KVM conectado na porta de input, ninguem precisa
-                // estar assistindo -- a pessoa olha o monitor fisico da
-                // outra maquina. Encerrar aqui mataria o processo que
-                // esta recebendo as teclas dela, e o teclado voltaria
-                // sozinho no meio do uso.
-                if sinais.has_input() {
+                // With the KVM connected on the input port, nobody needs
+                // to be watching -- the person looks at the other
+                // machine's physical monitor. Exiting here would kill the
+                // process receiving their keystrokes, and the keyboard
+                // would snap back on its own in the middle of use.
+                if signals.has_input() {
                     continue;
                 }
-                if houve_cliente {
-                    println!("  ninguem voltou em {prazo}s; encerrando");
+                if had_client {
+                    println!("  nobody came back in {deadline}s; shutting down");
                 } else {
-                    println!("  ninguem conectou em {prazo}s; encerrando");
+                    println!("  nobody connected in {deadline}s; shutting down");
                 }
-                sinais.sair.store(true, Ordering::SeqCst);
+                signals.exit.store(true, Ordering::SeqCst);
                 return Ok(());
             }
         };
-        houve_cliente = true;
-        // Handshake que falha NAO e fatal.
+        had_client = true;
+        // A failed handshake is NOT fatal.
         //
-        // Com `?` aqui, um unico `timed out` -- cliente morto no meio do
-        // aperto de mao, pacote perdido, processo encerrado por SIGTERM --
-        // derrubava o laco inteiro. O host seguia VIVO, sem servir
-        // ninguem e sem encerrar: as duas tentativas seguintes de
-        // conectar nao recebiam nem recusa, so silencio. Medido.
-        let conexao = match entrando.await {
+        // With `?` here, a single `timed out` -- client dead mid-handshake,
+        // lost packet, process ended by SIGTERM -- took down the whole
+        // loop. The host stayed ALIVE, serving nobody and not exiting: the
+        // next two connection attempts got not even a refusal, just
+        // silence. Measured.
+        let conn = match incoming.await {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("  handshake falhou ({e}); segue esperando");
+                eprintln!("  handshake failed ({e}); still waiting");
                 continue;
             }
         };
         println!(
-            "  conectado: {} cliente {}",
-            conexao.remote_address(),
-            crate::identity::describe_peer(&conexao, &crate::identity::authorized(&crate::identity::dir()))
+            "  connected: {} client {}",
+            conn.remote_address(),
+            crate::identity::describe_peer(&conn, &crate::identity::authorized(&crate::identity::dir()))
         );
-        // O cliente novo nao tem contexto: o proximo quadro TEM de ser
-        // quadro-chave, senao a janela dele fica preta ate o IDR
-        // seguinte do GOP -- ate 2s olhando nada.
-        // Ordem: `idr` ANTES de `cliente`. A captura le `cliente`
-        // primeiro, entao quando ela decidir codificar o pedido de
-        // quadro-chave ja esta visivel.
-        sinais.idr.store(true, Ordering::SeqCst);
-        sinais.cliente.store(true, Ordering::SeqCst);
+        // The new client has no context: the next frame HAS to be a
+        // keyframe, or its window stays black until the GOP's next IDR --
+        // up to 2s looking at nothing.
+        // Order: `idr` BEFORE `client`. Capture reads `client` first, so
+        // by the time it decides to encode, the keyframe request is
+        // already visible.
+        signals.idr.store(true, Ordering::SeqCst);
+        signals.client.store(true, Ordering::SeqCst);
 
-        // Joga fora o que sobrou da sessao anterior.
+        // Throw away what is left from the previous session.
         //
-        // O canal pode ter ate `CAPACIDADE` quadros codificados antes de
-        // o cliente de antes sair. Para o cliente NOVO eles sao quadros P
-        // sem referencia: o decodificador reclama `non-existing PPS 0
-        // referenced` e `no frame!` ate o IDR chegar. Medido reconectando
-        // no host do Windows.
-        let mut velhos = 0;
+        // The channel can hold up to `CAPACITY` encoded frames from before
+        // the previous client left. For the NEW client they are P frames
+        // with no reference: the decoder complains `non-existing PPS 0
+        // referenced` and `no frame!` until the IDR arrives. Measured by
+        // reconnecting to the Windows host.
+        let mut stale = 0;
         while rx.try_recv().is_ok() {
-            velhos += 1;
+            stale += 1;
         }
-        if velhos > 0 {
-            println!("  descartei {velhos} quadro(s) da sessao anterior");
+        if stale > 0 {
+            println!("  dropped {stale} frame(s) from the previous session");
         }
-        let Some(max) = conexao.max_datagram_size() else {
-            eprintln!("  ERRO: o par nao aceita datagramas QUIC; nada de video vai passar");
+        let Some(max) = conn.max_datagram_size() else {
+            eprintln!("  ERROR: the peer does not accept QUIC datagrams; no video will get through");
             continue;
         };
-        println!("  datagrama maximo: {max} bytes");
+        println!("  max datagram: {max} bytes");
 
-        // Input por stream unidirecional: perder um "tecla solta"
-        // deixaria a tecla presa no host, entao nao pode ser datagrama.
-        let entrada = abrir_input(&conexao);
+        // Input over a unidirectional stream: losing a "key up" would
+        // leave the key stuck on the host, so it cannot be a datagram.
+        let input = open_input(&conn);
 
-        let mut quadro: u32 = 0;
-        let mut enviados = 0u64;
-        // Nada sai antes do primeiro quadro-chave. GARANTIA, nao
-        // tentativa.
+        let mut frame: u32 = 0;
+        let mut sent = 0u64;
+        // Nothing goes out before the first keyframe. A GUARANTEE, not an
+        // attempt.
         //
-        // Pedir IDR e drenar o canal cobre o caso comum, mas nao fecha a
-        // corrida: a captura le "ha cliente" no topo da volta e so manda
-        // o quadro ~20 ms depois, entao um P da sessao anterior pode
-        // entrar no canal DEPOIS da drenagem. Medido -- o cliente
-        // registrava `recebi quadro 0 P 6342 bytes` seguido de
-        // `non-existing PPS 0 referenced`, e o host concordava que havia
-        // mandado um P.
+        // Requesting an IDR and draining the channel covers the common
+        // case, but does not close the race: capture reads "there is a
+        // client" at the top of its loop and only sends the frame ~20 ms
+        // later, so a P from the previous session can enter the channel
+        // AFTER the drain. Measured -- the client logged frame 0 as a P of
+        // 6342 bytes, followed by `non-existing PPS 0 referenced`, and
+        // the host agreed it had sent a P.
         //
-        // Descartar aqui nao custa nada: quadro P sem referencia e
-        // inutil para quem acabou de chegar, decodificador nenhum
-        // aproveita. E a garantia fica LOCAL -- nao depende de ordem de
-        // bandeira nem de janela de tempo.
-        let mut esperando_chave = true;
+        // Dropping here costs nothing: a P frame with no reference is
+        // useless to whoever just arrived, no decoder can use it. And the
+        // guarantee stays LOCAL -- it depends on neither flag ordering nor
+        // a time window.
+        let mut awaiting_key = true;
         let mut bytes = 0u64;
-        let mut recusados = 0u64;
+        let mut refused = 0u64;
         let t0 = Instant::now();
 
         loop {
@@ -260,149 +262,152 @@ pub async fn serve_video(
                 Ok(Some(c)) => c,
                 Ok(None) => break,
                 Err(_) => {
-                    if conexao.close_reason().is_some() {
+                    if conn.close_reason().is_some() {
                         break;
                     }
                     continue;
                 }
             };
 
-            if esperando_chave {
+            if awaiting_key {
                 if !c.keyframe {
                     continue;
                 }
-                esperando_chave = false;
+                awaiting_key = false;
             }
 
-            // Os primeiros quadros de cada conexao, um a um.
+            // The first frames of each connection, one by one.
             //
-            // A metade que faltava: o cliente dizia "recebi um P antes do
-            // quadro-chave" e eu nao tinha como saber se o host mandou
-            // errado ou se a rede entregou fora de ordem. Com os dois
-            // lados falando, sobra um suspeito.
-            if enviados < 3 {
+            // The missing half: the client said "got a P before the
+            // keyframe" and I had no way of knowing whether the host sent
+            // it wrong or the network delivered out of order. With both
+            // sides talking, one suspect is left.
+            if sent < 3 {
                 println!(
-                    "  enviando quadro {quadro} {} {} bytes",
-                    if c.keyframe { "CHAVE" } else { "P" },
+                    "  sending frame {frame} {} {} bytes",
+                    if c.keyframe { "KEY" } else { "P" },
                     c.data.len()
                 );
             }
-            let cab = SliceHeader {
-                frame: quadro,
+            let header = SliceHeader {
+                frame,
                 piece: 0,
                 pieces: 0,
                 keyframe: c.keyframe,
                 captured_at_ns: c.captured_at_ns,
             };
-            for fatia in net::slice(&c.data, cab, max) {
-                bytes += fatia.len() as u64;
-                if let Err(err) = conexao.send_datagram(fatia) {
+            for slice in net::slice(&c.data, header, max) {
+                bytes += slice.len() as u64;
+                if let Err(err) = conn.send_datagram(slice) {
                     if !matches!(err, quinn::SendDatagramError::TooLarge) {
-                        eprintln!("  datagrama recusado: {err}");
+                        eprintln!("  datagram refused: {err}");
                     }
-                    recusados += 1;
+                    refused += 1;
                     break;
                 }
             }
-            quadro = quadro.wrapping_add(1);
-            enviados += 1;
-            if enviados % 120 == 0 {
+            frame = frame.wrapping_add(1);
+            sent += 1;
+            if sent % 120 == 0 {
                 let s = t0.elapsed().as_secs_f64();
                 println!(
-                    "  {enviados} quadros, {:.1} fps, {:.1} Mbps, {recusados} recusado(s)",
-                    enviados as f64 / s,
+                    "  {sent} frames, {:.1} fps, {:.1} Mbps, {refused} refused",
+                    sent as f64 / s,
                     bytes as f64 * 8.0 / s / 1_000_000.0
                 );
             }
-            if conexao.close_reason().is_some() {
+            if conn.close_reason().is_some() {
                 break;
             }
         }
-        entrada.abort();
-        sinais.cliente.store(false, Ordering::SeqCst);
-        println!("  cliente saiu");
+        input.abort();
+        signals.client.store(false, Ordering::SeqCst);
+        println!("  client left");
 
-        // Volta ao topo do laco: sem ninguem assistindo, capturar e
-        // codificar so queima GPU na maquina de outra pessoa, e o
-        // `has_client` ja desligou o encoder. O prazo curto decide se
-        // vale continuar de pe -- cair o wifi por dois segundos nao
-        // deveria exigir voltar ao painel, e fechar a janela de verdade
-        // nao deveria deixar processo esquecido.
-        println!("  aguardando {IDLE_S}s por outro cliente antes de sair");
+        // Back to the top of the loop: with nobody watching, capturing and
+        // encoding only burns GPU on someone else's machine, and
+        // `has_client` has already turned the encoder off. The short
+        // deadline decides whether it is worth staying up -- Wi-Fi
+        // dropping for two seconds should not require going back to the
+        // panel, and really closing the window should not leave a
+        // forgotten process behind.
+        println!("  waiting {IDLE_S}s for another client before exiting");
     }
-    // Endpoint fechado por fora. Pedir parada mesmo assim: a captura e
-    // quem encerra na ordem certa, e matar do lado da rede travava no
-    // meio da destruicao do NVENC.
-    sinais.sair.store(true, Ordering::SeqCst);
+    // Endpoint closed from outside. Ask for a stop anyway: capture is the
+    // one that shuts down in the right order, and killing from the network
+    // side hung halfway through tearing down NVENC.
+    signals.exit.store(true, Ordering::SeqCst);
     Ok(())
 }
 
-/// Porta de input, separada da de video.
+/// Input port, separate from the video one.
 ///
-/// `porta + 1`. Existe porque o host serve **um cliente de video por
-/// vez**, em sequencia -- e o KVM por LAN competia por essa vaga com o
-/// visualizador.
+/// `port + 1`. It exists because the host serves **one video client at a
+/// time**, in sequence -- and the LAN KVM competed for that slot with the
+/// viewer.
 ///
-/// O sintoma foi exatamente o que o usuario descreveu: clicou para
-/// mandar o input para a windows-host, o teclado e o mouse sumiram daqui
-/// (o grab pegou), e "no windows parece nao ter mexido". Tinha mexido:
-/// o log do host registrou cada `MouseRel`, e medindo o cursor dentro
-/// da sessao interativa ele andou 210 px para 200 pedidos. O que nao
-/// funcionou foi **ver**: o KVM ocupou a vaga unica e o visualizador
-/// nao conseguiu conectar, entao a janela que ele olhava ficou parada.
+/// The symptom was exactly what the user described: they clicked to send
+/// input to the windows-host machine, the keyboard and mouse vanished from
+/// here (the grab took them), and "on windows it doesn't seem to have
+/// moved". It had moved: the host log recorded every `MouseRel`, and
+/// measuring the cursor inside the interactive session it moved 210 px
+/// for 200 requests. What did not work was **seeing**: the KVM took the
+/// single slot and the viewer could not connect, so the window they were
+/// looking at froze.
 ///
-/// Separar as portas resolve dois problemas de uma vez:
+/// Splitting the ports solves two problems at once:
 ///
-/// - assistir e controlar deixam de competir;
-/// - a maquina alvo para de codificar video para um cliente que nunca
-///   vai draw nada. Para jogar no Windows com o KVM, isso era GPU
-///   queimada em nome de ninguem.
+/// - watching and controlling stop competing;
+/// - the target machine stops encoding video for a client that will
+///   never draw anything. For gaming on Windows with the KVM, that was
+///   GPU burned on behalf of nobody.
 ///
-/// Varios clientes de input ao mesmo tempo sao permitidos e inofensivos
-/// -- os eventos se intercalam, que e o mesmo que acontece com dois
-/// teclados fisicos na mesma maquina.
+/// Several input clients at once are allowed and harmless -- the events
+/// interleave, which is the same thing that happens with two physical
+/// keyboards on the same machine.
 pub async fn serve_input(
     ep: &quinn::Endpoint,
-    sinais: std::sync::Arc<Signals>,
-    mut abrir_input: impl FnMut(&quinn::Connection) -> tokio::task::JoinHandle<()>,
+    signals: std::sync::Arc<Signals>,
+    mut open_input: impl FnMut(&quinn::Connection) -> tokio::task::JoinHandle<()>,
 ) {
-    while let Some(entrando) = ep.accept().await {
-        if sinais.should_exit() {
+    while let Some(incoming) = ep.accept().await {
+        if signals.should_exit() {
             break;
         }
-        let conexao = match entrando.await {
+        let conn = match incoming.await {
             Ok(c) => c,
             Err(e) => {
-                // Handshake ruim nao derruba o laco: o proximo cliente
-                // merece a mesma chance. Mesma decisao de `atender`.
-                eprintln!("  input: handshake falhou: {e}");
+                // A bad handshake does not take the loop down: the next
+                // client deserves the same chance. Same decision as in
+                // `serve_video`.
+                eprintln!("  input: handshake failed: {e}");
                 continue;
             }
         };
         println!(
-            "  input conectado: {} cliente {}",
-            conexao.remote_address(),
-            crate::identity::describe_peer(&conexao, &crate::identity::authorized(&crate::identity::dir()))
+            "  input connected: {} client {}",
+            conn.remote_address(),
+            crate::identity::describe_peer(&conn, &crate::identity::authorized(&crate::identity::dir()))
         );
-        sinais.input_joined();
-        let tarefa = abrir_input(&conexao);
+        signals.input_joined();
+        let task = open_input(&conn);
 
-        // Descontar na SAIDA, e por um vigia proprio.
+        // Decrement on EXIT, through a watcher of its own.
         //
-        // Sem isto a contagem so sobe, e `has_input()` fica verdadeiro
-        // para sempre -- o host nunca mais encerraria por ociosidade e
-        // ficaria de pe segurando a GPU depois que todo mundo foi
-        // embora. O vigia espera a tarefa de leitura terminar, que e
-        // exatamente quando o stream fechou.
-        // `tokio::spawn` e nao `spawn_local`: o host do Windows roda
-        // num current_thread SEM LocalSet, e `spawn_local` entra em
-        // panico fora de um. O futuro aqui e Send (um JoinHandle e um
-        // Arc de atomicos), entao o spawn comum serve nos dois hosts.
-        let s = std::sync::Arc::clone(&sinais);
+        // Without this the count only goes up, and `has_input()` stays
+        // true forever -- the host would never again exit for idleness
+        // and would stay up holding the GPU after everyone left. The
+        // watcher waits for the reading task to finish, which is exactly
+        // when the stream closed.
+        // `tokio::spawn` and not `spawn_local`: the Windows host runs in a
+        // current_thread runtime WITHOUT a LocalSet, and `spawn_local`
+        // panics outside one. The future here is Send (a JoinHandle and an
+        // Arc of atomics), so the plain spawn works on both hosts.
+        let s = std::sync::Arc::clone(&signals);
         tokio::spawn(async move {
-            let _ = tarefa.await;
+            let _ = task.await;
             s.input_left();
-            println!("  input desconectado");
+            println!("  input disconnected");
         });
     }
 }

@@ -1,24 +1,25 @@
-//! Host no Windows: DXGI -> NVENC -> QUIC.
+//! Host on Windows: DXGI -> NVENC -> QUIC.
 //!
 //! Spec: ../specs/010-remote-desktop.md
 //!
-//! ## Mais simples que o do Linux, e o motivo importa
+//! ## Simpler than the Linux one, and the reason matters
 //!
-//! No Linux a captura e o input passam pelo compositor, e as duas sessoes
-//! do Mutter tem de nascer na ordem certa, amarradas por `SessionId`, com
-//! a de input pertencendo a conexao D-Bus que a criou. Dai a coreografia
-//! entre threads naquele arquivo.
+//! On Linux capture and input go through the compositor, and the two
+//! Mutter sessions have to be born in the right order, tied by `SessionId`,
+//! with the input one belonging to the D-Bus connection that created it.
+//! Hence the choreography between threads in that file.
 //!
-//! Aqui nao ha intermediario: o DXGI entrega a textura e o `SendInput`
-//! injeta de qualquer thread. Entao e um laco de captura e uma thread de
-//! rede, sem negociacao.
+//! Here there is no middleman: DXGI hands over the texture and `SendInput`
+//! injects from any thread. So it is one capture loop and one network
+//! thread, with no negotiation.
 //!
-//! ## Precisa da sessao interativa
+//! ## Needs the interactive session
 //!
-//! O Desktop Duplication nao existe na sessao 0, e `SendInput` ali nao
-//! chega a desktop nenhum. Lancar este processo por SSH NAO funciona --
-//! o SSH cai na sessao 0. Quem o acorda e uma tarefa agendada com `/IT`,
-//! o mesmo mecanismo que levanta o `logid` (ver `screen::acordar_host`).
+//! Desktop Duplication does not exist in session 0, and `SendInput` there
+//! reaches no desktop at all. Launching this process over SSH does NOT work
+//! -- SSH lands in session 0. What wakes it is a scheduled task with `/IT`,
+//! the same mechanism that brings up `logid` (see `screen::acordar_host` in
+//! logid).
 
 #![cfg(windows)]
 
@@ -31,224 +32,226 @@ use crate::input_win::Injector;
 use crate::nvenc::NvencEncoder;
 use crate::serve::{self, now_ns, EncodedFrame, Signals};
 
-/// Dois quadros de folga. Mais que isso seria fila de coisa velha.
-const CAPACIDADE: usize = 2;
+/// Two frames of slack. More than that would be a queue of stale stuff.
+const CAPACITY: usize = 2;
 
-/// Com a tela parada, reenvia o ultimo quadro a cada tanto.
+/// With a still screen, resend the last frame every so often.
 ///
-/// Sem isto, um cliente que conecta diante de uma tela imovel ficaria com
-/// a janela preta: o DXGI nao entrega quadro quando nada muda, e nosso
-/// laco nao teria nada para codificar. A batida tambem sai IDR, entao ela
-/// serve de "comeco" para quem acabou de entrar.
-const BATIDA: Duration = Duration::from_millis(500);
+/// Without this, a client that connects in front of a motionless screen
+/// would be left with a black window: DXGI delivers no frame when nothing
+/// changes, and our loop would have nothing to encode. The heartbeat also
+/// goes out as an IDR, so it serves as a "start" for whoever just joined.
+const HEARTBEAT: Duration = Duration::from_millis(500);
 
-/// Quanto esperar por quadro novo em cada volta. Um quadro a 60 Hz.
-const ESPERA_MS: u32 = 16;
+/// How long to wait for a new frame on each turn. One frame at 60 Hz.
+const WAIT_MS: u32 = 16;
 
-/// Com cliente esperando e NENHUM quadro capturado ainda, de quanto em
-/// quanto tempo cutucar a tela para acordar.
+/// With a client waiting and NO frame captured yet, how often to nudge the
+/// screen awake.
 ///
-/// O caso real: a maquina ficou sozinha, a economia de energia desligou
-/// a saida de video, e o DXGI passa a devolver `Parado` para sempre --
-/// `DuplicateOutput` nem recusa. Sem isto o cliente conectava e ficava
-/// na tela preta indefinidamente, e o host ficava de pe sem nada a
-/// fazer. Medido: zero quadro em oito segundos com a tela apagada.
-const CUTUCADA: Duration = Duration::from_secs(3);
+/// The real case: the machine was left alone, power saving turned the
+/// video output off, and DXGI starts returning `Idle` forever --
+/// `DuplicateOutput` does not even refuse. Without this the client
+/// connected and stayed on a black screen indefinitely, and the host stayed
+/// up with nothing to do. Measured: zero frames in eight seconds with the
+/// screen off.
+const NUDGE: Duration = Duration::from_secs(3);
 
-/// Depois disto, a duplicacao e recriada em vez de so cutucar.
+/// After this, the duplication is recreated instead of just nudging.
 ///
-/// Acordar a tela pode invalidar a duplicacao que nasceu com a saida
-/// desligada. Cutucar sozinho nao resolveria esse caso, e recriar e
-/// barato perto de deixar o usuario olhando para o nada.
-const RECRIAR_APOS: Duration = Duration::from_secs(9);
+/// Waking the screen can invalidate a duplication that was born with the
+/// output off. Nudging alone would not fix that case, and recreating is
+/// cheap compared to leaving the user staring at nothing.
+const RECREATE_AFTER: Duration = Duration::from_secs(9);
 
-pub fn run(porta: u16, monitor: u32) -> anyhow::Result<()> {
-    // PRIMEIRA COISA: acordar a tela, e segura-la acordada.
+pub fn run(port: u16, monitor: u32) -> anyhow::Result<()> {
+    // FIRST THING: wake the screen, and keep it awake.
     //
-    // Com a tela apagada por economia de energia nao ha saida de video
-    // ligada, e `DuplicateOutput` recusa as cinco tentativas -- o host
-    // morria dizendo "tela bloqueada", que era diagnostico errado: nao
-    // havia senha nenhuma, so o monitor desligado. E justamente quando a
-    // maquina ficou sozinha um tempo que voce quer alcanca-la de longe.
+    // With the screen off for power saving there is no video output on,
+    // and `DuplicateOutput` refuses all five attempts -- the host died
+    // saying "screen locked", which was the wrong diagnosis: there was no
+    // password at all, just the monitor off. And it is precisely when the
+    // machine has been left alone for a while that you want to reach it
+    // from afar.
     //
-    // Antes de QUALQUER coisa de DXGI, inclusive de enumerar a saida:
-    // acordar depois de uma chamada que ja falhou nao ajudaria. O guarda
-    // vive ate o fim da funcao porque a tela apagando no meio da sessao
-    // derrubaria a duplicacao com ACCESS_LOST -- nao basta acordar na
-    // partida. Sai no `Drop`, entao nao prendemos a maquina acordada
-    // depois que o host morre.
+    // Before ANY DXGI call, including enumerating the output: waking after
+    // a call that already failed would not help. The guard lives until the
+    // end of the function because the screen going off mid-session would
+    // take the duplication down with ACCESS_LOST -- waking at startup is
+    // not enough. It is released in `Drop`, so we do not keep the machine
+    // awake after the host dies.
     //
-    // NAO resolve sessao realmente bloqueada: ali o desktop seguro esta
-    // na frente e o DXGI nao o captura por desenho. Limite conhecido.
-    let _acesa = crate::input_win::ScreenAwake::new();
+    // It does NOT solve a really locked session: there the secure desktop
+    // is in front and DXGI does not capture it, by design. Known limit.
+    let _awake = crate::input_win::ScreenAwake::new();
     crate::input_win::wake_screen();
-    // E o protetor de tela, que e problema DIFERENTE da tela apagada:
-    // ele roda num desktop proprio e o DXGI recusa duplicar para quem
-    // nao esta no desktop de input. `wake_screen()` nao o dispensa,
-    // porque `SendInput` vai para o desktop da thread que chama.
+    // And the screensaver, which is a DIFFERENT problem from the screen
+    // being off: it runs on its own desktop and DXGI refuses to duplicate
+    // for whoever is not on the input desktop. `wake_screen()` does not
+    // dismiss it, because `SendInput` goes to the calling thread's desktop.
     crate::input_win::end_screensaver();
 
-    // ORDEM IMPORTA: o encoder primeiro, a duplicacao depois.
+    // ORDER MATTERS: the encoder first, the duplication after.
     //
-    // Segurar a duplicacao do DXGI enquanto o CUDA inicializa travava o
-    // processo -- parava em "DXGI: monitor 0" com 0,2 s de CPU e nunca
-    // mais saia de la, enquanto a sonda de NVENC sozinha rodava a 111 fps
-    // na mesma sessao. Abrir o monitor (barato) da o tamanho sem comecar
-    // a capturar; a captura comeca quando ja ha para onde mandar.
+    // Holding the DXGI duplication while CUDA initialized hung the process
+    // -- it stopped at "DXGI: monitor 0" with 0.2 s of CPU and never got
+    // past it, while the NVENC probe alone ran at 111 fps in the same
+    // session. Opening the monitor (cheap) gives the size without starting
+    // to capture; capture starts when there is already somewhere to send.
     let mon = Monitor::open(monitor)?;
     let (w, h) = mon.size();
-    // Compartilhada com a thread de rede: o input converte pixel do
-    // stream em posicao do desktop virtual, e isso depende de onde este
-    // monitor esta.
-    let origem = Arc::new(Mutex::new(mon.origin()));
-    let mut cod = NvencEncoder::new(w, h)?;
-    println!("  NVENC pronto para {w}x{h}, {:.1} Mbps alvo", cod.target_mbps());
-    let mut tela = mon.duplicate()?;
+    // Shared with the network thread: input converts stream pixels into a
+    // position on the virtual desktop, and that depends on where this
+    // monitor is.
+    let origin = Arc::new(Mutex::new(mon.origin()));
+    let mut enc = NvencEncoder::new(w, h)?;
+    println!("  NVENC ready for {w}x{h}, {:.1} Mbps target", enc.target_mbps());
+    let mut screen = mon.duplicate()?;
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<EncodedFrame>(CAPACIDADE);
-    let sinais = Arc::new(Signals::default());
+    let (tx, rx) = tokio::sync::mpsc::channel::<EncodedFrame>(CAPACITY);
+    let signals = Arc::new(Signals::default());
 
-    let rede = {
-        let sinais = Arc::clone(&sinais);
-        let origem = Arc::clone(&origem);
+    let network = {
+        let signals = Arc::clone(&signals);
+        let origin = Arc::clone(&origin);
         std::thread::spawn(move || {
-            if let Err(e) = servir(porta, rx, Arc::clone(&sinais), origem) {
-                eprintln!("  rede: {e}");
+            if let Err(e) = run_network(port, rx, Arc::clone(&signals), origin) {
+                eprintln!("  network: {e}");
             }
-            // A rede acabou -- por sucesso ou por erro. Em qualquer caso
-            // nao ha mais para quem mandar quadro, e quem encerra na
-            // ordem certa e a captura. Sem esta linha, um erro na rede
-            // deixava o processo vivo para sempre, capturando para
-            // ninguem.
-            sinais.shutdown();
+            // The network is done -- by success or by error. Either way
+            // there is nobody left to send frames to, and the one who shuts
+            // down in the right order is the capture. Without this line, a
+            // network error left the process alive forever, capturing for
+            // nobody.
+            signals.shutdown();
         })
     };
 
-    println!("  host na porta {porta}; ctrl-c para parar");
-    let mut ultimo_envio = Instant::now();
-    let mut descartados = 0u64;
-    // Vigia de tela muda: desde quando ha cliente esperando sem que a
-    // captura tenha produzido um unico quadro.
-    let mut mudo_desde: Option<Instant> = None;
-    let mut ultima_cutucada: Option<Instant> = None;
-    let mut ja_recriou = false;
+    println!("  host on port {port}; ctrl-c to stop");
+    let mut last_send = Instant::now();
+    let mut dropped = 0u64;
+    // Mute-screen watchdog: since when a client has been waiting without
+    // the capture having produced a single frame.
+    let mut mute_since: Option<Instant> = None;
+    let mut last_nudge: Option<Instant> = None;
+    let mut already_recreated = false;
 
-    while !sinais.should_exit() {
-        // Sem ninguem assistindo, nao codifica: o quadro iria para um
-        // canal que ninguem drena. O `AcquireNextFrame` continua sendo
-        // chamado porque e ele que mantem a duplicacao viva e detecta
-        // perda de acesso -- so o NVENC e que fica parado.
-        let assistindo = sinais.has_client();
-        if sinais.take_idr() {
-            cod.request_idr();
+    while !signals.should_exit() {
+        // With nobody watching, do not encode: the frame would go into a
+        // channel nobody drains. `AcquireNextFrame` keeps being called
+        // because it is what keeps the duplication alive and detects loss
+        // of access -- only NVENC sits idle.
+        let watching = signals.has_client();
+        if signals.take_idr() {
+            enc.request_idr();
         }
 
-        // Vigia de tela muda.
+        // Mute-screen watchdog.
         //
-        // `tem_imagem()` falso com cliente conectado significa que nunca
-        // capturamos nada para mandar -- a batida de tela parada nao tem
-        // o que reenviar e o laco faria `continue` para sempre. Era
-        // exatamente isso que acontecia com a tela apagada: o cliente
-        // ficava no preto e o host nao reclamava.
-        if assistindo && !tela.has_image() {
-            // Dois relogios: o total decide quando recriar, o da
-            // cutucada decide quando cutucar de novo. Com um so, reiniciar
-            // o relogio para espacar as cutucadas apagaria o total e o
-            // `recriar` nunca chegaria.
-            let desde = *mudo_desde.get_or_insert_with(Instant::now);
-            let mudo_ha = desde.elapsed();
-            let cutucar = ultima_cutucada.map_or(mudo_ha >= CUTUCADA, |t: Instant| {
-                t.elapsed() >= CUTUCADA
+        // `has_image()` false with a client connected means we never
+        // captured anything to send -- the still-screen heartbeat has
+        // nothing to resend and the loop would `continue` forever. That is
+        // exactly what happened with the screen off: the client sat on
+        // black and the host did not complain.
+        if watching && !screen.has_image() {
+            // Two clocks: the total decides when to recreate, the nudge one
+            // decides when to nudge again. With just one, resetting the
+            // clock to space out the nudges would wipe the total and the
+            // recreate would never come.
+            let since = *mute_since.get_or_insert_with(Instant::now);
+            let mute_for = since.elapsed();
+            let nudge = last_nudge.map_or(mute_for >= NUDGE, |t: Instant| {
+                t.elapsed() >= NUDGE
             });
 
-            if mudo_ha >= RECRIAR_APOS && !ja_recriou {
-                ja_recriou = true;
-                println!("  nenhum quadro em {}s; recriando a duplicacao", mudo_ha.as_secs());
-                if let Err(e) = tela.recreate() {
-                    eprintln!("  recriar apos tela muda: {e}");
+            if mute_for >= RECREATE_AFTER && !already_recreated {
+                already_recreated = true;
+                println!("  no frame in {}s; recreating the duplication", mute_for.as_secs());
+                if let Err(e) = screen.recreate() {
+                    eprintln!("  recreate after mute screen: {e}");
                 }
-            } else if cutucar {
-                println!("  nenhum quadro em {}s; acordando a tela", mudo_ha.as_secs());
+            } else if nudge {
+                println!("  no frame in {}s; waking the screen", mute_for.as_secs());
                 crate::input_win::wake_screen();
-                ultima_cutucada = Some(Instant::now());
+                last_nudge = Some(Instant::now());
             }
-        } else if tela.has_image() {
-            mudo_desde = None;
-            ultima_cutucada = None;
-            ja_recriou = false;
+        } else if screen.has_image() {
+            mute_since = None;
+            last_nudge = None;
+            already_recreated = false;
         }
 
-        let estado = match tela.next_frame(ESPERA_MS) {
+        let state = match screen.next_frame(WAIT_MS) {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("  captura: {e}");
+                eprintln!("  capture: {e}");
                 std::thread::sleep(Duration::from_millis(200));
                 continue;
             }
         };
 
-        match estado {
+        match state {
             CaptureState::Lost => {
-                // Screen de UAC, mudanca de resolucao, jogo assumindo o
-                // display. Nao e erro: e recriar e seguir. Falhar aqui e
-                // normal enquanto o desktop seguro esta na frente, por
-                // isso a pausa antes de tentar de novo.
-                println!("  captura perdida; recriando");
-                match tela.recreate() {
-                    Ok(mudou) => {
-                        if let Ok(mut g) = origem.lock() {
-                            *g = tela.origin();
+                // UAC screen, resolution change, a game taking over the
+                // display. Not an error: recreate and carry on. Failing here
+                // is normal while the secure desktop is in front, hence the
+                // pause before trying again.
+                println!("  capture lost; recreating");
+                match screen.recreate() {
+                    Ok(changed) => {
+                        if let Ok(mut g) = origin.lock() {
+                            *g = screen.origin();
                         }
-                        if mudou {
-                            let (w, h) = tela.size();
-                            cod = NvencEncoder::new(w, h)?;
-                            println!("  NVENC refeito para {w}x{h}");
+                        if changed {
+                            let (w, h) = screen.size();
+                            enc = NvencEncoder::new(w, h)?;
+                            println!("  NVENC rebuilt for {w}x{h}");
                         }
                     }
                     Err(e) => {
-                        eprintln!("  recriar: {e}");
+                        eprintln!("  recreate: {e}");
                         std::thread::sleep(Duration::from_millis(300));
                     }
                 }
                 continue;
             }
             CaptureState::Idle => {
-                if !assistindo || !tela.has_image() || ultimo_envio.elapsed() < BATIDA {
+                if !watching || !screen.has_image() || last_send.elapsed() < HEARTBEAT {
                     continue;
                 }
-                // Batida de tela parada: sai IDR para servir de comeco a
-                // quem conectou agora.
-                cod.request_idr();
+                // Still-screen heartbeat: goes out as an IDR to serve as a
+                // start for whoever just connected.
+                enc.request_idr();
             }
             CaptureState::New => {
-                if !assistindo {
+                if !watching {
                     continue;
                 }
             }
         }
 
-        let capturado = now_ns();
-        let codificado = {
-            let m = match tela.map_frame() {
+        let captured = now_ns();
+        let encoded = {
+            let m = match screen.map_frame() {
                 Ok(m) => m,
                 Err(e) => {
-                    eprintln!("  mapear: {e}");
+                    eprintln!("  map: {e}");
                     continue;
                 }
             };
-            cod.encode(m.px, m.stride)
+            enc.encode(m.px, m.stride)
         };
-        match codificado {
+        match encoded {
             Ok(data) => {
-                let keyframe = cod.last_was_idr();
-                ultimo_envio = Instant::now();
-                // `try_send`: se a rede nao acompanha, o quadro novo e
-                // descartado AQUI em vez de virar fila. EncodedFrame atrasado
-                // nao tem valor numa tela remota.
-                if tx.try_send(EncodedFrame { data, keyframe, captured_at_ns: capturado }).is_err() {
-                    descartados += 1;
-                    if descartados % 120 == 0 {
-                        println!("  {descartados} quadros descartados (rede mais lenta que a GPU)");
+                let keyframe = enc.last_was_idr();
+                last_send = Instant::now();
+                // `try_send`: if the network cannot keep up, the new frame
+                // is dropped HERE instead of becoming a queue. A late frame
+                // has no value on a remote screen.
+                if tx.try_send(EncodedFrame { data, keyframe, captured_at_ns: captured }).is_err() {
+                    dropped += 1;
+                    if dropped % 120 == 0 {
+                        println!("  {dropped} frames dropped (network slower than the GPU)");
                     }
                 }
             }
@@ -256,85 +259,85 @@ pub fn run(porta: u16, monitor: u32) -> anyhow::Result<()> {
         }
     }
 
-    println!("  captura encerrada");
-    let _ = rede.join();
+    println!("  capture ended");
+    let _ = network.join();
     Ok(())
 }
 
-/// Rede: serve video por datagrama e recebe input por stream.
+/// Network: serves video by datagram and receives input by stream.
 ///
-/// Diferente do Linux, aqui o `tokio::spawn` normal serve: o `SendInput`
-/// nao tem dono de thread nem sessao de D-Bus para respeitar.
-fn servir(
-    porta: u16,
+/// Unlike Linux, here a plain `tokio::spawn` works: `SendInput` has no
+/// owning thread nor a D-Bus session to respect.
+fn run_network(
+    port: u16,
     mut rx: tokio::sync::mpsc::Receiver<EncodedFrame>,
-    sinais: Arc<Signals>,
-    origem: Arc<Mutex<(i32, i32)>>,
+    signals: Arc<Signals>,
+    origin: Arc<Mutex<(i32, i32)>>,
 ) -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     rt.block_on(async move {
-        let escuta = crate::bind::listen_addr();
-        let ep = crate::net::server((escuta, porta).into())?;
-        // O endereco REAL, nao "0.0.0.0" fixo: com --bind overlay o
-        // host escuta em outro lugar, e um log que diz 0.0.0.0
-        // mandaria quem diagnostica procurar no lugar errado.
-        println!("  escutando em {escuta}:{porta}");
+        let listen = crate::bind::listen_addr();
+        let ep = crate::net::server((listen, port).into())?;
+        // The REAL address, not a hardcoded "0.0.0.0": with --bind overlay
+        // the host listens somewhere else, and a log saying 0.0.0.0 would
+        // send whoever is diagnosing to look in the wrong place.
+        println!("  listening on {listen}:{port}");
 
-        // Porta de input, ao lado da de video.
+        // Input port, next to the video one.
         //
-        // O host serve um cliente de VIDEO por vez, e o KVM por LAN
-        // disputava essa vaga com o visualizador. Em portas separadas,
-        // assistir e controlar deixam de competir -- e a maquina para
-        // de codificar video para um cliente que nunca desenha nada.
-        let porta_input = porta + 1;
-        let ep_in = crate::net::server((escuta, porta_input).into())?;
-        println!("  input em {escuta}:{porta_input}");
+        // The host serves one VIDEO client at a time, and the LAN KVM
+        // fought the viewer for that slot. On separate ports, watching and
+        // controlling stop competing -- and the machine stops encoding
+        // video for a client that never draws anything.
+        let input_port = port + 1;
+        let ep_in = crate::net::server((listen, input_port).into())?;
+        println!("  input on {listen}:{input_port}");
         {
-            let sinais_in = Arc::clone(&sinais);
-            let origem_in = Arc::clone(&origem);
+            let signals_in = Arc::clone(&signals);
+            let origin_in = Arc::clone(&origin);
             tokio::spawn(async move {
-                serve::serve_input(&ep_in, Arc::clone(&sinais_in), |conexao| {
-                    let conexao = conexao.clone();
-                    let origem = Arc::clone(&origem_in);
-                    tokio::spawn(async move { receber_input(conexao, origem).await })
+                serve::serve_input(&ep_in, Arc::clone(&signals_in), |conn| {
+                    let conn = conn.clone();
+                    let origin = Arc::clone(&origin_in);
+                    tokio::spawn(async move { receive_input(conn, origin).await })
                 })
                 .await;
             });
         }
 
-        serve::serve_video(&ep, &mut rx, &sinais, |conexao| {
-            let conexao = conexao.clone();
-            let origem = Arc::clone(&origem);
-            tokio::spawn(async move { receber_input(conexao, origem).await })
+        serve::serve_video(&ep, &mut rx, &signals, |conn| {
+            let conn = conn.clone();
+            let origin = Arc::clone(&origin);
+            tokio::spawn(async move { receive_input(conn, origin).await })
         })
         .await
     })
 }
 
-/// Le o stream de input de uma conexao e injeta ate ela fechar.
+/// Reads a connection's input stream and injects until it closes.
 ///
-/// Um so para as duas portas: o visualizador manda input pela conexao
-/// de video, o KVM manda pela porta de input, e os dois merecem o
-/// mesmo tratamento. Duplicar isto seria convidar as duas copias a
-/// divergirem -- e uma delas e a que o usuario usa para digitar.
-async fn receber_input(conexao: quinn::Connection, origem: Arc<Mutex<(i32, i32)>>) {
-    let Ok(mut recv) = conexao.accept_uni().await else { return };
-    let mut teclado = Injector::new(origem);
-    let mut leitor = Reader::default();
+/// One for both ports: the viewer sends input over the video connection,
+/// the KVM sends it over the input port, and both deserve the same
+/// treatment. Duplicating this would invite the two copies to diverge --
+/// and one of them is the one the user types with.
+async fn receive_input(conn: quinn::Connection, origin: Arc<Mutex<(i32, i32)>>) {
+    let Ok(mut recv) = conn.accept_uni().await else { return };
+    let mut injector = Injector::new(origin);
+    let mut reader = Reader::default();
     let mut buf = vec![0u8; 4096];
     let mut n = 0u64;
-    while let Ok(Some(lidos)) = recv.read(&mut buf).await {
-        leitor.feed(&buf[..lidos]);
-        while let Some(e) = leitor.next_frame() {
-            teclado.apply(e);
+    while let Ok(Some(read)) = recv.read(&mut buf).await {
+        reader.feed(&buf[..read]);
+        while let Some(e) = reader.next_event() {
+            injector.apply(e);
             n += 1;
-            // Os primeiros, um a um: "nao deu erro" e prova fraca de
-            // que o input chegou. Depois so o agregado, para nao
-            // encher o log a 60 Hz.
+            // The first ones, one by one: "no error" is weak proof that the
+            // input arrived. After that only the aggregate, so as not to
+            // flood the log at 60 Hz.
             if n <= 8 {
                 println!("  input #{n}: {e:?}");
             } else if n % 500 == 0 {
-                println!("  {n} eventos de input aplicados");
+                println!("  {n} input events applied");
             }
         }
     }

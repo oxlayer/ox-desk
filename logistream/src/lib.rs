@@ -1,20 +1,20 @@
-//! Tela remota propria. Spec: ../specs/010-remote-desktop.md
+//! Our own remote screen. Spec: ../specs/010-remote-desktop.md
 //!
-//! As fronteiras importam mais que a primeira implementacao: o primeiro
-//! encoder que funcionar nao sera o ultimo, e trocar NVENC por
-//! VideoToolbox ou x264 nao pode significar reescrever o pipeline.
+//! The boundaries matter more than the first implementation: the first
+//! encoder that works will not be the last, and swapping NVENC for
+//! VideoToolbox or x264 must not mean rewriting the pipeline.
 //!
-//! ## Como os pedacos se dividem
+//! ## How the pieces split
 //!
-//! O que e IGUAL nas plataformas mora em `serve` (laco de video, fatias,
-//! saida por ociosidade) e `nvenc` (codificacao e qualidade). O que
-//! genuinamente difere mora em par: `capture`/`capture_win` para a
-//! origem do quadro, e a injecao de input (`host_linux` fala com o
-//! Mutter por D-Bus, `input_win` chama `SendInput`).
+//! What is the SAME across platforms lives in `serve` (video loop, slices,
+//! exit on idle) and `nvenc` (encoding and quality). What genuinely
+//! differs lives in pairs: `capture`/`capture_win` for the frame source,
+//! and input injection (`host_linux` talks to Mutter over D-Bus,
+//! `input_win` calls `SendInput`).
 //!
-//! Os modulos de plataforma sao `#![cfg(...)]` por dentro, entao no SO
-//! errado compilam VAZIOS em vez de dar erro -- o Mac compila esta
-//! biblioteca inteira para gerar so o visualizador.
+//! Platform modules are `#![cfg(...)]` inside, so on the wrong OS they
+//! compile EMPTY instead of failing -- the Mac compiles this whole
+//! library just to build the viewer.
 
 pub mod bind;
 pub mod capture;

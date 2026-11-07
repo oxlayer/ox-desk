@@ -1,16 +1,16 @@
-//! Captura de tela no Wayland: Mutter negocia, PipeWire entrega.
+//! Screen capture on Wayland: Mutter negotiates, PipeWire delivers.
 //!
-//! **Pela API privada do Mutter, nao pelo portal.** O portal
-//! `ScreenCast` exige aprovacao interativa -- abriria um dialogo na tela
-//! da maquina capturada, que e exatamente a maquina onde pode nao haver
-//! ninguem. O `org.gnome.Mutter.ScreenCast` e o que o proprio portal usa
-//! por baixo e nao pergunta nada.
+//! **Through Mutter's private API, not the portal.** The `ScreenCast` portal
+//! requires interactive approval -- it would open a dialog on the screen of
+//! the captured machine, which is exactly the machine where there may be
+//! nobody. `org.gnome.Mutter.ScreenCast` is what the portal itself uses
+//! underneath, and it asks nothing.
 //!
-//! Mesmo precedente da borda: o `border.rs` fala com o
-//! `org.gnome.Mutter.InputCapture` direto porque o portal equivalente
-//! aceita `CreateSession` e nunca responde.
+//! Same precedent as the edge: `border.rs` talks to
+//! `org.gnome.Mutter.InputCapture` directly because the equivalent portal
+//! accepts `CreateSession` and never answers.
 //!
-//!   cargo run --release --bin capture-probe -- [quadros] [conector]
+//!   cargo run --release --bin capture-probe -- [frames] [connector]
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -35,23 +35,23 @@ const STREAM: &str = "org.gnome.Mutter.ScreenCast.Stream";
 const T: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
-struct Estado {
-    quadros: u64,
+struct State {
+    frames: u64,
     bytes: u64,
-    largura: u32,
-    altura: u32,
-    formato: String,
-    primeiro: Option<Instant>,
-    ultimo: Option<Instant>,
-    intervalos_ms: Vec<f64>,
+    width: u32,
+    height: u32,
+    format: String,
+    first: Option<Instant>,
+    last: Option<Instant>,
+    intervals_ms: Vec<f64>,
 }
 
 fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().skip(1).collect();
-    let alvo: u64 = a.first().and_then(|v| v.parse().ok()).unwrap_or(120);
-    let conector = a.get(1).cloned().unwrap_or_else(|| "DP-1".into());
+    let target: u64 = a.first().and_then(|v| v.parse().ok()).unwrap_or(120);
+    let connector = a.get(1).cloned().unwrap_or_else(|| "DP-1".into());
 
-    // --- 1. Mutter: negociar e descobrir o node -------------------------
+    // --- 1. Mutter: negotiate and discover the node ---------------------
     let conn = Connection::new_session()?;
     let root = conn.with_proxy(SC, SC_OBJ, T);
     let (sess_path,): (Path,) =
@@ -65,39 +65,40 @@ fn main() -> anyhow::Result<()> {
         dbus::arg::Variant(Box::new(1u32) as Box<dyn dbus::arg::RefArg>),
     );
     let (stream_path,): (Path,) =
-        sp.method_call(SESSION, "RecordMonitor", (conector.as_str(), props))?;
+        sp.method_call(SESSION, "RecordMonitor", (connector.as_str(), props))?;
     let stream_path = stream_path.into_static();
 
-    // Registrar ANTES do Start: o sinal chega logo depois, e ouvir so
-    // depois e corrida perdida.
-    // Arc+Mutex e nao Rc: o callback do dbus exige `Send`.
+    // Register BEFORE Start: the signal arrives right after, and listening
+    // only afterwards is a lost race.
+    // Arc+Mutex and not Rc: the dbus callback requires `Send`.
     let node = std::sync::Arc::new(std::sync::Mutex::new(None::<u32>));
     let node2 = std::sync::Arc::clone(&node);
-    let mut regra = MatchRule::new_signal(STREAM, "PipeWireStreamAdded");
-    regra.path = Some(stream_path.clone());
-    conn.add_match(regra, move |(id,): (u32,), _, _| {
+    let mut rule = MatchRule::new_signal(STREAM, "PipeWireStreamAdded");
+    rule.path = Some(stream_path.clone());
+    conn.add_match(rule, move |(id,): (u32,), _, _| {
         *node2.lock().unwrap() = Some(id);
         true
     })?;
     sp.method_call::<(), _, _, _>(SESSION, "Start", ())?;
 
-    let limite = Instant::now() + Duration::from_secs(5);
-    while node.lock().unwrap().is_none() && Instant::now() < limite {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while node.lock().unwrap().is_none() && Instant::now() < deadline {
         conn.process(Duration::from_millis(100))?;
     }
     let node_id = (*node.lock().unwrap()).ok_or_else(|| {
-        anyhow::anyhow!("o Mutter nao emitiu PipeWireStreamAdded em 5s")
+        anyhow::anyhow!("Mutter did not emit PipeWireStreamAdded within 5s")
     })?;
 
     let stp = conn.with_proxy(SC, stream_path, T);
     let params: dbus::arg::PropMap = stp.get(STREAM, "Parameters").unwrap_or_default();
-    println!("  node {node_id}, {} ({conector})",
+    println!("  node {node_id}, {} ({connector})",
         params.get("size").map(|v| format!("{v:?}")).unwrap_or_default());
 
-    // A conexao D-Bus fica viva ate o fim: o Mutter fecha a sessao quando
-    // o par some do barramento, e ai o node evapora no meio da captura.
+    // The D-Bus connection stays alive until the end: Mutter closes the
+    // session when the peer leaves the bus, and then the node evaporates
+    // mid-capture.
 
-    // --- 2. PipeWire: consumir os quadros -------------------------------
+    // --- 2. PipeWire: consume the frames --------------------------------
     pipewire::init();
     let mainloop = pipewire::main_loop::MainLoop::new(None)?;
     let context = pipewire::context::Context::new(&mainloop)?;
@@ -113,10 +114,10 @@ fn main() -> anyhow::Result<()> {
         },
     )?;
 
-    let estado = Rc::new(RefCell::new(Estado::default()));
+    let state = Rc::new(RefCell::new(State::default()));
     let loop_ = mainloop.clone();
-    let est_fmt = Rc::clone(&estado);
-    let est_proc = Rc::clone(&estado);
+    let st_fmt = Rc::clone(&state);
+    let st_proc = Rc::clone(&state);
 
     let _listener = stream
         .add_local_listener_with_user_data(())
@@ -133,38 +134,39 @@ fn main() -> anyhow::Result<()> {
             }
             let mut info = pipewire::spa::param::video::VideoInfoRaw::default();
             if info.parse(pod).is_ok() {
-                let mut e = est_fmt.borrow_mut();
-                e.largura = info.size().width;
-                e.altura = info.size().height;
-                e.formato = format!("{:?}", info.format());
-                println!("  formato negociado: {}x{} {}", e.largura, e.altura, e.formato);
+                let mut e = st_fmt.borrow_mut();
+                e.width = info.size().width;
+                e.height = info.size().height;
+                e.format = format!("{:?}", info.format());
+                println!("  negotiated format: {}x{} {}", e.width, e.height, e.format);
             }
         })
         .process(move |stream, ()| {
             let Some(mut buf) = stream.dequeue_buffer() else { return };
             let datas = buf.datas_mut();
             let Some(d) = datas.first_mut() else { return };
-            let tamanho = d.chunk().size() as u64;
-            if tamanho == 0 {
-                return; // quadro vazio: o PipeWire sinaliza assim quando nada mudou
+            let size = d.chunk().size() as u64;
+            if size == 0 {
+                return; // empty frame: this is how PipeWire signals that nothing changed
             }
-            let agora = Instant::now();
-            let mut e = est_proc.borrow_mut();
-            if let Some(ant) = e.ultimo {
-                e.intervalos_ms.push((agora - ant).as_secs_f64() * 1000.0);
+            let now = Instant::now();
+            let mut e = st_proc.borrow_mut();
+            if let Some(prev) = e.last {
+                e.intervals_ms.push((now - prev).as_secs_f64() * 1000.0);
             }
-            e.ultimo = Some(agora);
-            e.primeiro.get_or_insert(agora);
-            e.quadros += 1;
-            e.bytes += tamanho;
-            if e.quadros >= alvo {
+            e.last = Some(now);
+            e.first.get_or_insert(now);
+            e.frames += 1;
+            e.bytes += size;
+            if e.frames >= target {
                 loop_.quit();
             }
         })
         .register()?;
 
-    // Pedimos BGRx e RGBx: e o que o Mutter entrega e o que o NVENC
-    // consome sem conversao de cor na CPU, que seria o gargalo obvio.
+    // We ask for BGRx and RGBx: that is what Mutter delivers and what NVENC
+    // consumes without color conversion on the CPU, which would be the
+    // obvious bottleneck.
     let obj = pod::object!(
         SpaTypes::ObjectParamFormat,
         pipewire::spa::param::ParamType::EnumFormat,
@@ -182,13 +184,13 @@ fn main() -> anyhow::Result<()> {
             VideoFormat::RGBA
         ),
     );
-    let valores = pod::serialize::PodSerializer::serialize(
+    let values = pod::serialize::PodSerializer::serialize(
         std::io::Cursor::new(Vec::new()),
         &pod::Value::Object(obj),
     )?
     .0
     .into_inner();
-    let mut params = [Pod::from_bytes(&valores).ok_or_else(|| anyhow::anyhow!("pod invalido"))?];
+    let mut params = [Pod::from_bytes(&values).ok_or_else(|| anyhow::anyhow!("invalid pod"))?];
 
     stream.connect(
         Direction::Input,
@@ -200,18 +202,18 @@ fn main() -> anyhow::Result<()> {
     let t0 = Instant::now();
     mainloop.run();
 
-    let e = estado.borrow();
-    let dur = e.primeiro.map(|p| (Instant::now() - p).as_secs_f64()).unwrap_or(0.0);
-    println!("  {} quadros em {:.2}s = {:.1} fps", e.quadros, dur, e.quadros as f64 / dur.max(0.001));
-    if !e.intervalos_ms.is_empty() {
-        let mut v = e.intervalos_ms.clone();
+    let e = state.borrow();
+    let dur = e.first.map(|p| (Instant::now() - p).as_secs_f64()).unwrap_or(0.0);
+    println!("  {} frames in {:.2}s = {:.1} fps", e.frames, dur, e.frames as f64 / dur.max(0.001));
+    if !e.intervals_ms.is_empty() {
+        let mut v = e.intervals_ms.clone();
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        println!("  intervalo entre quadros: p50 {:.1}ms  p95 {:.1}ms",
+        println!("  interval between frames: p50 {:.1}ms  p95 {:.1}ms",
             v[v.len() / 2], v[v.len() * 95 / 100]);
     }
-    println!("  {:.1} MB crus ({} bytes/quadro)", e.bytes as f64 / 1_048_576.0,
-        e.bytes.checked_div(e.quadros).unwrap_or(0));
-    println!("  negociacao + captura em {:.2}s", t0.elapsed().as_secs_f64());
+    println!("  {:.1} MB raw ({} bytes/frame)", e.bytes as f64 / 1_048_576.0,
+        e.bytes.checked_div(e.frames).unwrap_or(0));
+    println!("  negotiation + capture in {:.2}s", t0.elapsed().as_secs_f64());
     let _ = sp.method_call::<(), _, _, _>(SESSION, "Stop", ());
     Ok(())
 }

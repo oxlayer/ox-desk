@@ -1,86 +1,86 @@
-//! Decodificacao, com a plataforma escolhendo o caminho.
+//! Decoding, with the platform picking the path.
 //!
 //! Spec: ../specs/010-remote-desktop.md
 //!
-//! | onde | como | por que |
+//! | where | how | why |
 //! |---|---|---|
-//! | macOS | `ffmpeg` (libavcodec do brew) | nao tem NVIDIA |
-//! | Linux, Windows | NVDEC | a GPU esta ali e o decodificador vem com o driver |
+//! | macOS | `ffmpeg` (libavcodec from brew) | it has no NVIDIA |
+//! | Linux, Windows | NVDEC | the GPU is right there and the decoder ships with the driver |
 //!
-//! **Um por plataforma, nao os dois em todo lugar.** Carregar os dois
-//! significaria `libavcodec` instalado no Windows -- que e exactamente o
-//! que mantinha aquele lado no RDP. E ter dois caminhos ativos na mesma
-//! maquina multiplicaria os modos de falha sem ninguem ganhar nada: o Mac
-//! nao tem como usar NVDEC e as outras duas nao precisam do ffmpeg.
+//! **One per platform, not both everywhere.** Loading both would mean
+//! `libavcodec` installed on Windows -- which is exactly what kept that
+//! side on RDP. And two active paths on the same machine would multiply
+//! the failure modes with no one gaining anything: the Mac cannot use
+//! NVDEC and the other two do not need ffmpeg.
 //!
-//! A fronteira e esta: entra unidade de acesso H.264, sai pixel pronto
-//! para a janela, JA no tamanho e na posicao em que vai ser desenhado.
-//! Quem decide esse tamanho e a janela, entao ela passa a conta como
-//! funcao -- o decodificador e o unico que sabe o tamanho da origem, e
-//! sem isso a conta nao fecha.
+//! The boundary is this: an H.264 access unit goes in, pixels ready for
+//! the window come out, ALREADY at the size and position where they will
+//! be drawn. The window decides that size, so it passes the math in as a
+//! function -- the decoder is the only one that knows the source size,
+//! and without it the math does not work out.
 
-/// Um quadro pronto para o `Slot` do visualizador.
+/// A frame ready for the viewer's `Slot`.
 pub struct DecodedFrame {
     pub rgb: Vec<u32>,
-    /// Canto onde a imagem comeca dentro da janela.
+    /// Corner where the image starts inside the window.
     pub ox: u32,
     pub oy: u32,
-    /// Tamanho desenhado.
+    /// Drawn size.
     pub w: u32,
     pub h: u32,
-    /// Tamanho da tela remota -- o espaco em que o host fala.
+    /// Remote screen size -- the space the host speaks in.
     pub rw: u32,
     pub rh: u32,
 }
 
-/// Dado o tamanho da ORIGEM, devolve `(ox, oy, w, h)` do destino.
+/// Given the SOURCE size, returns `(ox, oy, w, h)` of the destination.
 pub type Fit<'a> = &'a mut dyn FnMut(u32, u32) -> (u32, u32, u32, u32);
 
 #[cfg(target_os = "macos")]
-mod interno {
+mod inner {
     use super::{Fit, DecodedFrame};
 
-    /// Caminho do Mac: libavcodec decodifica, swscale converte e escala.
+    /// The Mac path: libavcodec decodes, swscale converts and scales.
     pub struct Decoder {
         dec: ffmpeg_next::decoder::Video,
-        escalador: Option<ffmpeg_next::software::scaling::Context>,
-        /// (origem_w, origem_h, destino_w, destino_h) do escalador atual.
-        /// Recriar custa caro; so quando de fato mudou.
-        chave: (u32, u32, u32, u32),
+        scaler: Option<ffmpeg_next::software::scaling::Context>,
+        /// (source_w, source_h, dest_w, dest_h) of the current scaler.
+        /// Recreating it is expensive; only when it actually changed.
+        key: (u32, u32, u32, u32),
     }
 
     impl Decoder {
         pub fn new() -> Result<Self, String> {
             ffmpeg_next::init().map_err(|e| format!("ffmpeg: {e}"))?;
             let codec = ffmpeg_next::decoder::find(ffmpeg_next::codec::Id::H264)
-                .ok_or("sem decoder H.264")?;
+                .ok_or("no H.264 decoder")?;
             let ctx = ffmpeg_next::codec::context::Context::new_with_codec(codec);
             let dec = ctx.decoder().video().map_err(|e| format!("decoder: {e}"))?;
-            Ok(Decoder { dec, escalador: None, chave: (0, 0, 0, 0) })
+            Ok(Decoder { dec, scaler: None, key: (0, 0, 0, 0) })
         }
 
         pub fn name(&self) -> &'static str {
             "ffmpeg"
         }
 
-        pub fn feed(&mut self, bytes: &[u8], encaixe: Fit) -> Result<Vec<DecodedFrame>, String> {
-            let pacote = ffmpeg_next::Packet::copy(bytes);
-            if self.dec.send_packet(&pacote).is_err() {
-                // Quadro sem referencia (entrou no meio do fluxo): nao e
-                // erro, e so nao da nada. O proximo quadro-chave resolve.
+        pub fn feed(&mut self, bytes: &[u8], fit: Fit) -> Result<Vec<DecodedFrame>, String> {
+            let packet = ffmpeg_next::Packet::copy(bytes);
+            if self.dec.send_packet(&packet).is_err() {
+                // Frame without a reference (joined mid-stream): not an
+                // error, it just yields nothing. The next keyframe fixes it.
                 return Ok(Vec::new());
             }
-            let mut saida = Vec::new();
-            let mut quadro = ffmpeg_next::frame::Video::empty();
-            while self.dec.receive_frame(&mut quadro).is_ok() {
-                let (rw, rh) = (quadro.width(), quadro.height());
-                let (ox, oy, dw, dh) = encaixe(rw, rh);
+            let mut out = Vec::new();
+            let mut frame = ffmpeg_next::frame::Video::empty();
+            while self.dec.receive_frame(&mut frame).is_ok() {
+                let (rw, rh) = (frame.width(), frame.height());
+                let (ox, oy, dw, dh) = fit(rw, rh);
                 if dw == 0 || dh == 0 {
                     continue;
                 }
-                if self.escalador.is_none() || self.chave != (rw, rh, dw, dh) {
-                    self.escalador = ffmpeg_next::software::scaling::Context::get(
-                        quadro.format(),
+                if self.scaler.is_none() || self.key != (rw, rh, dw, dh) {
+                    self.scaler = ffmpeg_next::software::scaling::Context::get(
+                        frame.format(),
                         rw,
                         rh,
                         ffmpeg_next::format::Pixel::BGRA,
@@ -89,66 +89,66 @@ mod interno {
                         ffmpeg_next::software::scaling::Flags::BILINEAR,
                     )
                     .ok();
-                    self.chave = (rw, rh, dw, dh);
+                    self.key = (rw, rh, dw, dh);
                 }
-                let Some(sc) = self.escalador.as_mut() else { continue };
+                let Some(sc) = self.scaler.as_mut() else { continue };
                 let mut bgra = ffmpeg_next::frame::Video::empty();
-                if sc.run(&quadro, &mut bgra).is_err() {
+                if sc.run(&frame, &mut bgra).is_err() {
                     continue;
                 }
-                // Copia por LINHA, nao por pixel.
+                // Copy per ROW, not per pixel.
                 //
-                // Era um laco por pixel com verificacao de limite dentro:
-                // 921 mil iteracoes por quadro numa janela de 1280x720, a
-                // 60-80 quadros por segundo, para produzir bytes que o
-                // `swscale` JA entregou no layout certo. BGRA em bytes e
-                // exatamente `0xAARRGGBB` em little-endian, que e o que o
-                // softbuffer espera.
+                // It was a per-pixel loop with a bounds check inside:
+                // 921 thousand iterations per frame in a 1280x720 window,
+                // at 60-80 frames per second, to produce bytes that
+                // `swscale` had ALREADY delivered in the right layout. BGRA
+                // in bytes is exactly `0xAARRGGBB` in little-endian, which
+                // is what softbuffer expects.
                 //
-                // Entao sao 720 `copy_from_slice` em vez de 921 mil
-                // conversoes. O `unsafe` e uma reinterpretacao de
-                // `[u32]` como `[u8]`: mesmo tamanho total, e ir de
-                // alinhamento 4 para 1 e sempre valido.
+                // So it is 720 `copy_from_slice` calls instead of 921
+                // thousand conversions. The `unsafe` reinterprets `[u32]`
+                // as `[u8]`: same total size, and going from alignment 4
+                // to 1 is always valid.
                 //
-                // Little-endian esta assumido aqui e nas duas pontas que
-                // nos interessam (x86-64 e Apple Silicon). Num alvo
-                // big-endian isto inverteria os canais -- barulhento o
-                // bastante para alguem notar na primeira imagem.
-                let linha = bgra.stride(0);
+                // Little-endian is assumed here and on both ends we care
+                // about (x86-64 and Apple Silicon). On a big-endian target
+                // this would swap the channels -- loud enough for someone
+                // to notice on the first image.
+                let stride = bgra.stride(0);
                 let data = bgra.data(0);
-                let largura_bytes = dw as usize * 4;
+                let row_bytes = dw as usize * 4;
                 let mut rgb = vec![0u32; (dw * dh) as usize];
                 {
-                    let destino: &mut [u8] = unsafe {
+                    let dest: &mut [u8] = unsafe {
                         std::slice::from_raw_parts_mut(
                             rgb.as_mut_ptr() as *mut u8,
                             rgb.len() * 4,
                         )
                     };
                     for y in 0..dh as usize {
-                        let o = y * linha;
-                        let d = y * largura_bytes;
-                        if o + largura_bytes > data.len() || d + largura_bytes > destino.len() {
+                        let o = y * stride;
+                        let d = y * row_bytes;
+                        if o + row_bytes > data.len() || d + row_bytes > dest.len() {
                             break;
                         }
-                        destino[d..d + largura_bytes]
-                            .copy_from_slice(&data[o..o + largura_bytes]);
+                        dest[d..d + row_bytes]
+                            .copy_from_slice(&data[o..o + row_bytes]);
                     }
                 }
-                saida.push(DecodedFrame { rgb, ox, oy, w: dw, h: dh, rw, rh });
+                out.push(DecodedFrame { rgb, ox, oy, w: dw, h: dh, rw, rh });
             }
-            Ok(saida)
+            Ok(out)
         }
     }
 }
 
 #[cfg(any(target_os = "linux", windows))]
-mod interno {
+mod inner {
     use super::{Fit, DecodedFrame};
     use crate::decode_nv;
 
-    /// Caminho das maquinas NVIDIA: NVDEC decodifica, e a conversao de
-    /// cor ja escala no mesmo passo.
+    /// The path for the NVIDIA machines: NVDEC decodes, and the color
+    /// conversion scales in the same pass.
     pub struct Decoder {
         dec: decode_nv::Decoder,
     }
@@ -162,20 +162,20 @@ mod interno {
             "nvdec"
         }
 
-        pub fn feed(&mut self, bytes: &[u8], encaixe: Fit) -> Result<Vec<DecodedFrame>, String> {
-            let mut saida = Vec::new();
+        pub fn feed(&mut self, bytes: &[u8], fit: Fit) -> Result<Vec<DecodedFrame>, String> {
+            let mut out = Vec::new();
             for q in self.dec.feed(bytes)? {
-                let (ox, oy, dw, dh) = encaixe(q.w, q.h);
+                let (ox, oy, dw, dh) = fit(q.w, q.h);
                 if dw == 0 || dh == 0 {
                     continue;
                 }
                 let mut rgb = vec![0u32; (dw * dh) as usize];
                 decode_nv::nv12_to_bgra(&q, &mut rgb, dw, dh);
-                saida.push(DecodedFrame { rgb, ox, oy, w: dw, h: dh, rw: q.w, rh: q.h });
+                out.push(DecodedFrame { rgb, ox, oy, w: dw, h: dh, rw: q.w, rh: q.h });
             }
-            Ok(saida)
+            Ok(out)
         }
     }
 }
 
-pub use interno::Decoder;
+pub use inner::Decoder;
