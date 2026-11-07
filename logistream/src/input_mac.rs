@@ -1,23 +1,24 @@
-//! Injecao de teclado e mouse no macOS, por CoreGraphics.
+//! Keyboard and mouse injection on macOS, through CoreGraphics.
 //!
 //! Spec: ../specs/010-remote-desktop.md
 //!
-//! ## Precisa de Acessibilidade, e isso nao tem contorno
+//! ## Needs Accessibility, and there is no way around it
 //!
-//! `CGEventPost` so chega a outros programas se o processo tiver
-//! permissao de **Acessibilidade**. Sem ela os eventos sao aceitos e
-//! descartados em silencio -- a chamada devolve sucesso e nada
-//! acontece. E o mesmo modo de falha da Gravacao de Tela: o macOS nao
-//! avisa, so ignora.
+//! `CGEventPost` only reaches other programs if the process has the
+//! **Accessibility** permission. Without it the events are accepted and
+//! silently discarded -- the call returns success and nothing happens.
+//! It is the same failure mode as Screen Recording: macOS does not warn,
+//! it just ignores.
 //!
-//! Por isso o host **verifica na partida** e diz o que falta, em vez
-//! de deixar o usuario descobrir movendo o mouse e nao vendo nada.
+//! That is why the host **checks at startup** and says what is missing,
+//! instead of letting the user find out by moving the mouse and seeing
+//! nothing.
 //!
-//! ## FFI cru, sem crate
+//! ## Raw FFI, no crate
 //!
-//! Tres funcoes e dois tipos opacos. Uma crate de bindings traria
-//! centenas de simbolos que nao usamos e mais uma versao para
-//! acompanhar; o `winput` do lado Windows seguiu o mesmo raciocinio.
+//! Three functions and two opaque types. A bindings crate would bring
+//! hundreds of symbols we do not use and one more version to keep up
+//! with; `winput` on the Windows side followed the same reasoning.
 
 #![cfg(target_os = "macos")]
 
@@ -34,7 +35,7 @@ struct CGPoint {
     y: f64,
 }
 
-// Tipos de evento de mouse, da `CGEventType`.
+// Mouse event types, from `CGEventType`.
 const MOUSE_MOVED: u32 = 5;
 const L_DOWN: u32 = 1;
 const L_UP: u32 = 2;
@@ -45,18 +46,18 @@ const OTHER_UP: u32 = 26;
 const L_DRAG: u32 = 6;
 const R_DRAG: u32 = 7;
 
-// Botoes, da `CGMouseButton`.
-const BTN_ESQ: u32 = 0;
-const BTN_DIR: u32 = 1;
-const BTN_MEIO: u32 = 2;
+// Buttons, from `CGMouseButton`.
+const BTN_L: u32 = 0;
+const BTN_R: u32 = 1;
+const BTN_M: u32 = 2;
 
-// Campos de `CGEventField` para o delta relativo.
+// `CGEventField` fields for the relative delta.
 const DELTA_X: u32 = 4;
 const DELTA_Y: u32 = 5;
 
 type CGDisplayModeRef = *mut std::ffi::c_void;
 
-/// `kCGHIDEventTap`: entra na fila como se viesse do hardware.
+/// `kCGHIDEventTap`: enters the queue as if it came from the hardware.
 const TAP_HID: u32 = 0;
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -64,36 +65,36 @@ extern "C" {
     fn CGEventSourceCreate(state: i32) -> CGEventSourceRef;
     fn CGEventCreateMouseEvent(
         source: CGEventSourceRef,
-        tipo: u32,
+        kind: u32,
         pos: CGPoint,
-        botao: u32,
+        button: u32,
     ) -> CGEventRef;
     fn CGEventCreateKeyboardEvent(
         source: CGEventSourceRef,
-        tecla: u16,
+        key: u16,
         pressed: bool,
     ) -> CGEventRef;
     fn CGEventCreateScrollWheelEvent(
         source: CGEventSourceRef,
-        unidade: u32,
-        eixos: u32,
+        unit: u32,
+        axes: u32,
         a: i32,
         b: i32,
     ) -> CGEventRef;
-    fn CGEventPost(tap: u32, evento: CGEventRef);
-    fn CGEventSetIntegerValueField(evento: CGEventRef, campo: u32, valor: i64);
-    fn CGEventGetLocation(evento: CGEventRef) -> CGPoint;
+    fn CGEventPost(tap: u32, event: CGEventRef);
+    fn CGEventSetIntegerValueField(event: CGEventRef, field: u32, value: i64);
+    fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
     fn CGEventCreate(source: CGEventSourceRef) -> CGEventRef;
     fn CGDisplayPixelsWide(display: u32) -> usize;
     fn CGDisplayPixelsHigh(display: u32) -> usize;
     fn CGMainDisplayID() -> u32;
-    // O modo de video e o unico lugar que conta os DOIS tamanhos da
-    // mesma tela. `CGDisplayPixelsWide`, apesar do nome, devolve
-    // PONTOS (medido: 1680 num display cujo modo tem 3360 pixels).
+    // The display mode is the only place that reports BOTH sizes of the
+    // same screen. `CGDisplayPixelsWide`, despite its name, returns
+    // POINTS (measured: 1680 on a display whose mode has 3360 pixels).
     fn CGDisplayCopyDisplayMode(display: u32) -> CGDisplayModeRef;
-    fn CGDisplayModeGetPixelWidth(modo: CGDisplayModeRef) -> usize;
-    fn CGDisplayModeGetWidth(modo: CGDisplayModeRef) -> usize;
-    fn CGDisplayModeRelease(modo: CGDisplayModeRef);
+    fn CGDisplayModeGetPixelWidth(mode: CGDisplayModeRef) -> usize;
+    fn CGDisplayModeGetWidth(mode: CGDisplayModeRef) -> usize;
+    fn CGDisplayModeRelease(mode: CGDisplayModeRef);
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -106,32 +107,32 @@ extern "C" {
     fn CFRelease(obj: CFTypeRef);
 }
 
-/// O processo pode injetar input?
+/// Can the process inject input?
 ///
-/// Publico porque quem avisa e o host, na partida: um KVM que aceita
-/// eventos e os descarta em silencio e pior que um que recusa.
+/// Public because the host is the one that warns, at startup: a KVM that
+/// accepts events and silently discards them is worse than one that refuses.
 pub fn has_accessibility() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
-/// Pixels de captura por ponto, lido do modo de video do display.
+/// Capture pixels per point, read from the display's video mode.
 ///
-/// `CGDisplayPixelsWide` NAO serve para isto: apesar do nome ela
-/// devolve pontos. Medido no MacBook Air -- 1680 num display cujo modo
-/// declara 3360 pixels. Foi essa confusao de nome que deixou o bug
-/// passar: o clamp de borda usa a funcao certa por acidente, e so o
-/// caminho absoluto quebrou.
+/// `CGDisplayPixelsWide` does NOT work for this: despite its name it
+/// returns points. Measured on the MacBook Air -- 1680 on a display whose
+/// mode declares 3360 pixels. That naming confusion is what let the bug
+/// through: the edge clamp uses the right function by accident, and only
+/// the absolute path broke.
 ///
-/// Devolve 1.0 quando nao da para saber. Ver `point_from_pixel`.
+/// Returns 1.0 when it cannot tell. See `point_from_pixel`.
 pub fn display_scale() -> f64 {
     unsafe {
-        let modo = CGDisplayCopyDisplayMode(CGMainDisplayID());
-        if modo.is_null() {
+        let mode = CGDisplayCopyDisplayMode(CGMainDisplayID());
+        if mode.is_null() {
             return 1.0;
         }
-        let px = CGDisplayModeGetPixelWidth(modo) as f64;
-        let pt = CGDisplayModeGetWidth(modo) as f64;
-        CGDisplayModeRelease(modo);
+        let px = CGDisplayModeGetPixelWidth(mode) as f64;
+        let pt = CGDisplayModeGetWidth(mode) as f64;
+        CGDisplayModeRelease(mode);
         if px > 0.0 && pt > 0.0 {
             px / pt
         } else {
@@ -141,30 +142,30 @@ pub fn display_scale() -> f64 {
 }
 
 pub struct Injector {
-    fonte: CGEventSourceRef,
-    /// Ultima posicao conhecida do ponteiro.
+    source: CGEventSourceRef,
+    /// Last known pointer position.
     ///
-    /// Mantida por nos porque o movimento RELATIVO precisa de um ponto
-    /// de partida, e perguntar ao sistema a cada evento custaria uma
-    /// chamada a mais no caminho quente. Sincronizada com o real na
-    /// criacao e sempre que chega posicao absoluta.
+    /// Kept by us because RELATIVE movement needs a starting point, and
+    /// asking the system on every event would cost one more call on the hot
+    /// path. Synced with the real one at creation and whenever an absolute
+    /// position arrives.
     pos: CGPoint,
-    /// Botoes apertados, para o arraste sair como arraste.
-    esq: bool,
-    dir: bool,
-    /// Pixels de captura por ponto do CoreGraphics. 2.0 num Retina.
+    /// Pressed buttons, so a drag comes out as a drag.
+    left: bool,
+    right: bool,
+    /// Capture pixels per CoreGraphics point. 2.0 on a Retina.
     ///
-    /// Lido uma vez: trocar de modo de video no meio de uma sessao
-    /// derrubaria a captura de qualquer forma, e o host sobe de novo.
-    escala: f64,
+    /// Read once: changing the video mode in the middle of a session would
+    /// bring the capture down anyway, and the host starts again.
+    scale: f64,
 }
 
 impl Injector {
     pub fn new() -> Self {
-        // 1 = kCGEventSourceStateHIDSystemState: o estado dos
-        // modificadores vem do teclado real, entao um Shift que o
-        // usuario esteja segurando localmente nao se perde.
-        let fonte = unsafe { CGEventSourceCreate(1) };
+        // 1 = kCGEventSourceStateHIDSystemState: the modifier state comes
+        // from the real keyboard, so a Shift the user is holding locally
+        // is not lost.
+        let source = unsafe { CGEventSourceCreate(1) };
         let pos = unsafe {
             let e = CGEventCreate(std::ptr::null_mut());
             if e.is_null() {
@@ -175,21 +176,21 @@ impl Injector {
                 p
             }
         };
-        Injector { fonte, pos, esq: false, dir: false, escala: display_scale() }
+        Injector { source, pos, left: false, right: false, scale: display_scale() }
     }
 
     pub fn apply(&mut self, e: Event) {
         match e {
             Event::MouseRel { dx, dy } => self.move_relative(dx, dy),
-            Event::Mouse { x, y } => self.mover_absoluto(x, y),
-            Event::Button { code, pressed } => self.botao(code, pressed),
-            Event::Scroll { dx, dy } => self.rolar(dx, dy),
-            Event::Key { keycode, pressed } => self.tecla(keycode, pressed),
+            Event::Mouse { x, y } => self.move_absolute(x, y),
+            Event::Button { code, pressed } => self.button(code, pressed),
+            Event::Scroll { dx, dy } => self.scroll(dx, dy),
+            Event::Key { keycode, pressed } => self.key(keycode, pressed),
         }
     }
 
-    /// Posta um evento e o libera. Esquecer o release vaza por evento.
-    fn postar(&self, ev: CGEventRef) {
+    /// Posts an event and releases it. Forgetting the release leaks per event.
+    fn post(&self, ev: CGEventRef) {
         if ev.is_null() {
             return;
         }
@@ -204,107 +205,108 @@ impl Injector {
             let d = CGMainDisplayID();
             (CGDisplayPixelsWide(d) as f64, CGDisplayPixelsHigh(d) as f64)
         };
-        // Prender na tela: sem isto a posicao acumulada sai do display
-        // e o ponteiro "gruda" numa borda ate o usuario mover o mesmo
-        // tanto de volta -- parece travado, e nao esta.
+        // Clamp to the screen: without this the accumulated position leaves
+        // the display and the pointer "sticks" to an edge until the user
+        // moves the same amount back -- it looks frozen, and it is not.
         self.pos.x = (self.pos.x + dx).clamp(0.0, w - 1.0);
         self.pos.y = (self.pos.y + dy).clamp(0.0, h - 1.0);
 
-        // Arrastando? O tipo do evento muda, senao o sistema entende
-        // "mover com botao pressed" como mover simples e o arraste nao
-        // acontece.
-        let tipo = if self.esq {
+        // Dragging? The event type changes, otherwise the system reads
+        // "move with button pressed" as a plain move and the drag does not
+        // happen.
+        let kind = if self.left {
             L_DRAG
-        } else if self.dir {
+        } else if self.right {
             R_DRAG
         } else {
             MOUSE_MOVED
         };
-        let ev = unsafe { CGEventCreateMouseEvent(self.fonte, tipo, self.pos, BTN_ESQ) };
+        let ev = unsafe { CGEventCreateMouseEvent(self.source, kind, self.pos, BTN_L) };
         if !ev.is_null() {
-            // O delta tem de ir EXPLICITO: jogo que le entrada bruta
-            // olha este campo, nao a diferenca de posicao. Sem ele, a
-            // mira nao se move mesmo com o ponteiro andando.
+            // The delta has to go EXPLICITLY: a game that reads raw input
+            // looks at this field, not at the position difference. Without
+            // it, the aim does not move even with the pointer moving.
             unsafe {
                 CGEventSetIntegerValueField(ev, DELTA_X, dx as i64);
                 CGEventSetIntegerValueField(ev, DELTA_Y, dy as i64);
             }
         }
-        self.postar(ev);
+        self.post(ev);
     }
 
-    fn mover_absoluto(&mut self, x: f64, y: f64) {
-        // O quadro vem em pixel; o CGEvent quer ponto. Ver
-        // `point_from_pixel` e o porque em logistream/src/input.rs.
-        let (x, y) = crate::input::point_from_pixel(x, y, self.escala);
+    fn move_absolute(&mut self, x: f64, y: f64) {
+        // The frame comes in pixels; CGEvent wants points. See
+        // `point_from_pixel` and the why in logistream/src/input.rs.
+        let (x, y) = crate::input::point_from_pixel(x, y, self.scale);
         self.pos = CGPoint { x, y };
-        let ev = unsafe { CGEventCreateMouseEvent(self.fonte, MOUSE_MOVED, self.pos, BTN_ESQ) };
-        self.postar(ev);
+        let ev = unsafe { CGEventCreateMouseEvent(self.source, MOUSE_MOVED, self.pos, BTN_L) };
+        self.post(ev);
     }
 
-    fn botao(&mut self, code: i32, pressed: bool) {
-        let (tipo, botao) = match (code, pressed) {
+    fn button(&mut self, code: i32, pressed: bool) {
+        let (kind, button) = match (code, pressed) {
             (c, true) if c == BTN_LEFT => {
-                self.esq = true;
-                (L_DOWN, BTN_ESQ)
+                self.left = true;
+                (L_DOWN, BTN_L)
             }
             (c, false) if c == BTN_LEFT => {
-                self.esq = false;
-                (L_UP, BTN_ESQ)
+                self.left = false;
+                (L_UP, BTN_L)
             }
             (c, true) if c == BTN_RIGHT => {
-                self.dir = true;
-                (R_DOWN, BTN_DIR)
+                self.right = true;
+                (R_DOWN, BTN_R)
             }
             (c, false) if c == BTN_RIGHT => {
-                self.dir = false;
-                (R_UP, BTN_DIR)
+                self.right = false;
+                (R_UP, BTN_R)
             }
-            (c, true) if c == BTN_MIDDLE => (OTHER_DOWN, BTN_MEIO),
-            (c, false) if c == BTN_MIDDLE => (OTHER_UP, BTN_MEIO),
+            (c, true) if c == BTN_MIDDLE => (OTHER_DOWN, BTN_M),
+            (c, false) if c == BTN_MIDDLE => (OTHER_UP, BTN_M),
             _ => return,
         };
-        let ev = unsafe { CGEventCreateMouseEvent(self.fonte, tipo, self.pos, botao) };
-        self.postar(ev);
+        let ev = unsafe { CGEventCreateMouseEvent(self.source, kind, self.pos, button) };
+        self.post(ev);
     }
 
-    fn rolar(&self, dx: f64, dy: f64) {
-        // Unidade 0 = pixel. O protocolo manda "pixels" de rolagem e o
-        // macOS aceita a mesma unidade, entao nao ha conversao.
+    fn scroll(&self, dx: f64, dy: f64) {
+        // Unit 0 = pixel. The protocol sends scroll "pixels" and macOS
+        // accepts the same unit, so there is no conversion.
         //
-        // Sinal invertido: no nosso protocolo (e no Wayland) Y positivo
-        // desce; no macOS, positivo sobe.
+        // Inverted sign: in our protocol (and in Wayland) positive Y goes
+        // down; on macOS, positive goes up.
         let ev = unsafe {
-            CGEventCreateScrollWheelEvent(self.fonte, 0, 2, -dy as i32, dx as i32)
+            CGEventCreateScrollWheelEvent(self.source, 0, 2, -dy as i32, dx as i32)
         };
-        self.postar(ev);
+        self.post(ev);
     }
 
-    fn tecla(&self, keycode: u32, pressed: bool) {
-        // Sem traducao, nao manda nada: postar um keycode qualquer
-        // digitaria uma letra ERRADA na maquina de outra pessoa, que e
-        // pior que nao digitar.
+    fn key(&self, keycode: u32, pressed: bool) {
+        // No translation, nothing is sent: posting an arbitrary keycode
+        // would type a WRONG letter on someone else's machine, which is
+        // worse than not typing.
         let Some(mac) = mac_key_from_evdev(keycode) else { return };
-        let ev = unsafe { CGEventCreateKeyboardEvent(self.fonte, mac, pressed) };
-        self.postar(ev);
+        let ev = unsafe { CGEventCreateKeyboardEvent(self.source, mac, pressed) };
+        self.post(ev);
     }
 }
 
-// A fonte de eventos vive enquanto o host viver; nao ha caminho em que
-// um `Injector` seja descartado e recriado, entao nao ha Drop. Se um dia
-// houver, ele precisa de `CFRelease(self.fonte)`.
+// The event source lives as long as the host lives; there is no path in
+// which an `Injector` is dropped and recreated, so there is no Drop. If one
+// day there is, it needs `CFRelease(self.source)`.
 
-/// Thread dona do `Injector`, alimentada por canal.
+/// Thread that owns the `Injector`, fed by a channel.
 ///
-/// Os tipos do CoreGraphics sao ponteiros crus e portanto `!Send`, e a
-/// tarefa de rede do host e `tokio::spawn` -- que exige `Send`. Daria
-/// para declarar `unsafe impl Send` apostando que `CGEventPost` e
-/// thread-safe, mas e uma afirmacao que nao da para verificar daqui.
+/// CoreGraphics types are raw pointers and therefore `!Send`, and the
+/// host's network task is `tokio::spawn` -- which requires `Send`. We could
+/// declare `unsafe impl Send` betting that `CGEventPost` is thread-safe,
+/// but that is a claim that cannot be verified from here.
 ///
-/// Uma thread dona resolve sem aposta nenhuma, e e a mesma forma que o
-/// host do Linux ja usa para a conexao D-Bus (que tambem e `!Send` e
-/// cuja sessao pertence a conexao que a criou). O custo e um salto de
-/// canal por evento -- microssegundos, contra ~300 ms de rede.
+/// An owning thread solves it with no bet at all, and it is the same shape
+/// the Linux host already uses for the D-Bus connection (which is also
+/// `!Send` and whose session belongs to the connection that created it).
+/// The cost is one channel hop per event -- microseconds, against ~300 ms
+/// of network.
 pub fn thread() -> std::sync::mpsc::Sender<Event> {
     let (tx, rx) = std::sync::mpsc::channel::<Event>();
     std::thread::spawn(move || {
@@ -316,21 +318,23 @@ pub fn thread() -> std::sync::mpsc::Sender<Event> {
     tx
 }
 
-// ------------------------------------------------- permissões, sem adivinhar
+// ------------------------------------------------- permissions, no guessing
 //
-// O TCC amarra a concessão ao BINÁRIO (ao designated requirement dele),
-// não ao usuário nem ao app que pergunta. Então só este executável pode
-// responder se ELE tem permissão: o `logid` perguntando pela própria
-// conta daria uma resposta certa sobre o programa errado.
+// TCC ties the grant to the BINARY (to its designated requirement), not to
+// the user nor to the app that asks. So only this executable can answer
+// whether IT has permission: `logid` asking on its own account would give a
+// right answer about the wrong program.
 //
-// É o que torna `--conferir` necessário em vez de uma função no daemon.
+// That is what makes `--conferir` necessary instead of a function in the
+// daemon.
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
-    /// Diz se há permissão de Gravação de Tela. **Não** mostra diálogo.
+    /// Says whether there is Screen Recording permission. Does **not** show a dialog.
     fn CGPreflightScreenCaptureAccess() -> bool;
-    /// Pede a permissão. Mostra o diálogo do sistema UMA vez na vida do
-    /// binário; depois disso devolve o que já foi decidido, calado.
+    /// Asks for the permission. Shows the system dialog ONCE in the
+    /// binary's lifetime; after that it returns what was already decided,
+    /// silently.
     fn CGRequestScreenCaptureAccess() -> bool;
 }
 
@@ -338,44 +342,44 @@ pub fn has_screen_recording() -> bool {
     unsafe { CGPreflightScreenCaptureAccess() }
 }
 
-/// Pede as duas permissões que o host precisa.
+/// Asks for the two permissions the host needs.
 ///
-/// Roda no processo do HOST de propósito, e tem de ser lançado da sessão
-/// gráfica: pelo SSH não há diálogo nenhum para mostrar, e a chamada
-/// volta `false` sem que ninguém tenha visto nada
+/// Runs in the HOST process on purpose, and has to be launched from the
+/// graphical session: over SSH there is no dialog to show, and the call
+/// returns `false` without anyone having seen anything
 /// ([[../../.claude/rules/graphical-session]]).
 ///
-/// A de Acessibilidade usa a variante com `kAXTrustedCheckOptionPrompt`,
-/// que é o que faz o macOS abrir o painel certo em vez de só responder
-/// "não". Sem o prompt a pessoa teria de encontrar o item na lista à
-/// mão, e o nome que aparece lá é `logistream-host`, não "logi".
+/// Accessibility uses the variant with `kAXTrustedCheckOptionPrompt`, which
+/// is what makes macOS open the right pane instead of just answering "no".
+/// Without the prompt the person would have to find the item in the list
+/// by hand, and the name shown there is `logistream-host`, not "logi".
 pub fn request_permissions() -> (bool, bool) {
-    let tela = unsafe { CGRequestScreenCaptureAccess() };
+    let screen = unsafe { CGRequestScreenCaptureAccess() };
     let input = unsafe {
-        // Byte string com NUL explícito, e não o literal `c"..."`: o
-        // literal exige rustc 1.77+, e este arquivo só compila NO MAC,
-        // onde a versão do toolchain é outra e eu não tenho como
-        // conferir antes de mandar. Um `\0` à mão compila em qualquer
-        // versão e custa um comentário.
-        let chave = CFStringCreateWithCString(
+        // Byte string with an explicit NUL, and not the `c"..."` literal:
+        // the literal needs rustc 1.77+, and this file only compiles ON THE
+        // MAC, where the toolchain version is different and I had no way to
+        // check before sending. A hand-written `\0` compiles on any version
+        // and costs a comment.
+        let key = CFStringCreateWithCString(
             std::ptr::null(),
             b"AXTrustedCheckOptionPrompt\0".as_ptr() as *const std::ffi::c_char,
             0x0800_0100, // kCFStringEncodingUTF8
         );
-        let opcoes = CFDictionaryCreate(
+        let options = CFDictionaryCreate(
             std::ptr::null(),
-            [chave].as_ptr(),
+            [key].as_ptr(),
             [kCFBooleanTrue].as_ptr(),
             1,
             std::ptr::null(),
             std::ptr::null(),
         );
-        let r = AXIsProcessTrustedWithOptions(opcoes);
-        CFRelease(opcoes as CFTypeRef);
-        CFRelease(chave as CFTypeRef);
+        let r = AXIsProcessTrustedWithOptions(options);
+        CFRelease(options as CFTypeRef);
+        CFRelease(key as CFTypeRef);
         r
     };
-    (tela, input)
+    (screen, input)
 }
 
 type CFStringRef = *const std::ffi::c_void;
@@ -383,18 +387,18 @@ type CFDictionaryRef = *const std::ffi::c_void;
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
-    // O nome é o do símbolo da Apple; renomear quebraria o link.
+    // The name is Apple's symbol; renaming it would break the link.
     #[allow(non_upper_case_globals)]
     static kCFBooleanTrue: *const std::ffi::c_void;
     fn CFStringCreateWithCString(
-        aloc: *const std::ffi::c_void,
+        alloc: *const std::ffi::c_void,
         cstr: *const std::ffi::c_char,
         enc: u32,
     ) -> CFStringRef;
     fn CFDictionaryCreate(
-        aloc: *const std::ffi::c_void,
-        chaves: *const CFStringRef,
-        valores: *const *const std::ffi::c_void,
+        alloc: *const std::ffi::c_void,
+        keys: *const CFStringRef,
+        values: *const *const std::ffi::c_void,
         n: isize,
         kcb: *const std::ffi::c_void,
         vcb: *const std::ffi::c_void,
@@ -403,5 +407,5 @@ extern "C" {
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
-    fn AXIsProcessTrustedWithOptions(opcoes: CFDictionaryRef) -> bool;
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
 }
