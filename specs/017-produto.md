@@ -243,6 +243,21 @@ Lido em parsec.app/pricing, em 07/11:
 | Bloquear que máquinas da rede da empresa sirvam a tela | Política da equipe que o host obedece |
 | Relay dentro do firewall do cliente (Empresa) | O `logi-encontro` hospedado pelo cliente, que é o mesmo binário open source |
 
+## O que aproveitar dos repositórios abertos do Parsec (lidos em 07/11)
+
+Clonados e só lidos, sem compilar nem rodar:
+
+| Repositório | Licença | Para nós |
+|---|---|---|
+| `libmatoya` (C, ativo) | MIT: dá para portar, com o aviso de copyright | Controle em `src/hid/` (PS4, PS5, Switch, Xbox, vibração); áudio no cliente (`windows/audio.c`, `resample.c`); cursor RGBA desenhado no cliente, gancho de Alt+Tab e tecla Windows, `keyboard.lock` e pointer lock (`windows/appw.c`, `unix/web/matoya.js`) |
+| `go-stun` (Go, 2018) | MIT | Formato do Binding Response com `XOR-MAPPED-ADDRESS`, para o `logi-encontro`. STUN e QUIC no mesmo socket se separam pelo primeiro byte (RFC 7983) |
+| `Parsec-Cloud-Preparation-Tool` (PowerShell) | sem licença: só referência | Lista de ajustes de VM: auto-logon, tirar o bloqueio, desligar o adaptador básico de vídeo, instalar o driver de monitor virtual |
+| `Cloud-GPU-Updater` (PowerShell) | sem licença: só referência | GPU de nuvem em modo TCC não tem saída de vídeo; trocar para WDDM é um item do `doctor` para host em VM |
+
+Nenhum deles cobre o lado do host que nos falta: captura de áudio, tela de bloqueio e
+UAC, Ctrl+Alt+Del e o serviço SYSTEM. O "MouseKeys como cursor" do Preparation Tool
+foi medido aqui e não funciona (`.claude/rules/cursor-without-mouse.md`).
+
 ## O que esta spec não decide
 
 - O preço em reais, e o que entra no limite do relay grátis.
@@ -253,5 +268,5 @@ Lido em parsec.app/pricing, em 07/11:
 ## Veja também
 
 - [[008-security]] — o trust model que esta spec muda
-- [[012-fora-da-lan]] — por que overlay, e o que falta
-- [[016-sessao-e-visual]] — a sessão em aba, que passa a levar a digital
+- [[012-outside-the-lan]] — por que overlay, e o que falta
+- [[016-session-and-visuals]] — a sessão em aba, que passa a levar a digital
