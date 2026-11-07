@@ -104,18 +104,29 @@ fn relogio() -> Result<String, String> {
 fn binarios() -> Medida {
     let dir = bin_dir();
     let faltam: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
-    if faltam.is_empty() {
-        Medida::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
-    } else {
-        Medida::falta("binarios", format!("faltam: {}", faltam.join(", ")))
+    if !faltam.is_empty() {
+        return Medida::falta("binarios", format!("faltam: {}", faltam.join(", ")));
     }
+    // Existir no disco não é estar no ar. Ver
+    // `setup_comum::veredito_do_carimbo`: um deploy pode instalar o
+    // arquivo novo e ninguém executá-lo.
+    if let Some(p) = crate::setup_comum::daemon_do_disco(&dir.join("logid")) {
+        return Medida::falta("binarios", p);
+    }
+    Medida::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
 }
 
 fn daemon() -> Medida {
     let rotulo = "ai.logi.logid";
     let carregado = rodar("/bin/launchctl", &["print", &format!("gui/{}/{rotulo}", uid())], 5);
     match carregado {
-        Ok(_) => Medida::ok("daemon", format!("{rotulo} carregado na sessão gráfica")),
+        // Carregado não é rodando. O `print` traz `state` e
+        // `last exit code`; ignorá-los aprovava um job em crash-loop --
+        // ver `setup_comum::veredito_do_launchd`.
+        Ok(saida) => match crate::setup_comum::veredito_do_launchd(&saida) {
+            Some(p) => Medida::falta("daemon", format!("{rotulo}: {p}")),
+            None => Medida::ok("daemon", format!("{rotulo} rodando na sessão gráfica")),
+        },
         // Processo vivo sem LaunchAgent é o caso que engana: funciona
         // agora e não volta no próximo login.
         Err(_) if crate::setup_comum::processo_vivo("logid") => {

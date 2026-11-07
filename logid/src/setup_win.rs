@@ -72,11 +72,16 @@ fn relogio() -> Result<String, String> {
 fn binarios() -> Medida {
     let dir = bin_dir();
     let faltam: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
-    if faltam.is_empty() {
-        Medida::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
-    } else {
-        Medida::falta("binarios", format!("faltam: {}", faltam.join(", ")))
+    if !faltam.is_empty() {
+        return Medida::falta("binarios", format!("faltam: {}", faltam.join(", ")));
     }
+    // Existir no disco não é estar no ar. Ver
+    // `setup_comum::veredito_do_carimbo`: um deploy pode instalar o
+    // arquivo novo e ninguém executá-lo.
+    if let Some(p) = crate::setup_comum::daemon_do_disco(&dir.join("logid.exe")) {
+        return Medida::falta("binarios", p);
+    }
+    Medida::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
 }
 
 /// A tarefa existe E roda na sessão interativa?

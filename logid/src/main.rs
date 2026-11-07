@@ -170,6 +170,18 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
                 }
             }
         }
+        // Mesma FORMA do `/healthz` de propósito. Quem pergunta "o daemon
+        // no ar é o binário que está no disco?" compara duas respostas
+        // com um parser só, em vez de inventar um segundo jeito de dizer
+        // a mesma coisa. Ver `setup_comum::daemon_do_disco`.
+        Some("versao") | Some("--versao") => {
+            println!(
+                "{{\"build\":\"{}\",\"n\":{}}}",
+                env!("LOGI_BUILD"),
+                env!("LOGI_BUILD_N").parse::<u64>().unwrap_or(0)
+            );
+            Some(ExitCode::SUCCESS)
+        }
         Some("-h") | Some("--help") | Some("help") => {
             // stderr: stdout e reservado para o JSON do protocolo.
             eprintln!(
@@ -177,6 +189,7 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
 
   (sem comando)  sobe o daemon e serve a API em 127.0.0.1
   serve          idem, explicito
+  versao         o carimbo deste binario, na forma do /healthz
 
   kvm-soltar     devolve o input desta maquina para ela mesma
                  (usado por um par que quer o input de volta)

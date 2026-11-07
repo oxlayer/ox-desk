@@ -64,6 +64,21 @@ pub struct Plano {
     pub recusa: Option<&'static str>,
     /// O argv que reinicia o daemon.
     pub reiniciar: Vec<String>,
+    /// O argv que tira da frente qualquer daemon que o supervisor **nao**
+    /// conhece, antes de reiniciar.
+    ///
+    /// Existe porque o `kickstart -k` (e o `systemctl restart`) so matam
+    /// a copia que o supervisor criou. Um `logid` orfao -- tipicamente
+    /// subido pela GUI numa corrida de boot -- continua com a porta, o
+    /// daemon novo morre com `Address already in use`, o `/healthz`
+    /// segue respondendo o build VELHO, e este programa conclui que a
+    /// atualizacao falhou e **reverte uma atualizacao correta**.
+    ///
+    /// Matar por nome exato nao e brutalidade: o `-k` do passo seguinte
+    /// ja mata a copia supervisionada de qualquer forma, entao o efeito
+    /// liquido desta linha e exatamente "tambem as que o supervisor nao
+    /// conhece".
+    pub limpar: Vec<String>,
 }
 
 pub fn plano(s: Sistema, uid: u32) -> Plano {
@@ -79,6 +94,7 @@ pub fn plano(s: Sistema, uid: u32) -> Plano {
                 "restart".into(),
                 "logid.service".into(),
             ],
+            limpar: vec!["pkill".into(), "-x".into(), "logid".into()],
         },
         Sistema::Mac => Plano {
             sistema: s,
@@ -91,6 +107,7 @@ pub fn plano(s: Sistema, uid: u32) -> Plano {
                 "-k".into(),
                 format!("gui/{uid}/ai.logi.logid"),
             ],
+            limpar: vec!["pkill".into(), "-x".into(), "logid".into()],
         },
         // A chave do Authenticode nao sai do Ubuntu (specs/008), e `.exe`
         // sem assinatura valida e o que o Defender apagou no instante da
@@ -105,6 +122,7 @@ pub fn plano(s: Sistema, uid: u32) -> Plano {
             assina: false,
             recusa: Some("nao assino aqui: a chave do Authenticode vive no Ubuntu (specs/008); rode o deploy"),
             reiniciar: vec![],
+            limpar: vec![],
         },
     }
 }
@@ -174,6 +192,22 @@ mod testes {
                 assert!(!p.reiniciar.is_empty(), "{s:?} aplica e nao reinicia");
             }
         }
+    }
+
+    /// Quem aplica tem de saber tirar da frente o dono antigo da porta.
+    /// Reiniciar sem isso foi o que deixou o Mac servindo build velho
+    /// enquanto todo deploy dizia `ok`.
+    #[test]
+    fn quem_aplica_sabe_limpar_a_porta() {
+        for s in [Sistema::Linux, Sistema::Mac] {
+            let p = plano(s, 501);
+            assert!(!p.limpar.is_empty(), "{s:?} aplica e nao limpa a porta");
+            assert_eq!(p.limpar[0], "pkill", "{s:?}");
+            // `-x`: nome EXATO. Sem ele o `pkill` casaria o proprio
+            // `logi-ota` e qualquer linha de comando que mencione logid.
+            assert!(p.limpar.contains(&"-x".to_string()), "{s:?}: {:?}", p.limpar);
+        }
+        assert!(plano(Sistema::Windows, 0).limpar.is_empty(), "quem recusa nao mata nada");
     }
 
     /// O `kickstart` do launchd precisa do uid no caminho do servico:

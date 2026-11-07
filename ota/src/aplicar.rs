@@ -519,6 +519,17 @@ fn fumaca_do_daemon(bin: &Path) -> Result<(), String> {
 }
 
 fn reiniciar(ctx: &Contexto) -> Result<(), String> {
+    // Antes de pedir o reinicio, tirar da frente quem o supervisor nao
+    // conhece. Ver `plano::Plano::limpar`: sem isto um `logid` orfao
+    // segura a porta, o `/healthz` responde o build velho e nos
+    // revertemos uma atualizacao que estava certa.
+    //
+    // Falha aqui e ignorada de proposito: `pkill` devolve 1 quando nao
+    // achou ninguem, que e o caso normal.
+    if let Some((prog, args)) = ctx.plano.limpar.split_first() {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let _ = exec::rodar(prog, &args, 15);
+    }
     let argv = &ctx.plano.reiniciar;
     let (prog, args) = argv.split_first().ok_or_else(|| "sem comando de reinicio".to_string())?;
     let args: Vec<&str> = args.iter().map(String::as_str).collect();

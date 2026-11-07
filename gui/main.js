@@ -107,23 +107,70 @@ function ping(timeout = 800) {
   });
 }
 
+// Quem supervisiona o daemon e o SO -- systemd no Linux, launchd no
+// macOS, schtasks no Windows. A GUI pede ao supervisor; ela nao e um
+// segundo supervisor.
+//
+// Isto nao e estilo: subir um filho nosso cria um SEGUNDO dono da porta.
+// No boot do Mac a GUI ganhou a corrida contra o LaunchAgent, o filho
+// ficou orfao (o launchd nao o conhece, `launchctl print` dizia
+// `state = spawn scheduled`) e a copia supervisionada passou o dia
+// morrendo em loop com `Address already in use`. Resultado: o deploy
+// instalava o binario novo, dizia `ok` em todos os passos, e a maquina
+// seguia servindo um build de dez dias atras. Quem notou foi o usuario.
+//
+// Pior ainda para o OTA: ele reinicia pelo launchd, pergunta o
+// `/healthz`, ouve o build velho do orfao e REVERTE uma atualizacao que
+// estava correta.
+function comandoDoSupervisor() {
+  if (process.platform === 'darwin') {
+    return ['launchctl', ['kickstart', `gui/${process.getuid()}/ai.logi.logid`]];
+  }
+  if (process.platform === 'linux') {
+    return ['systemctl', ['--user', 'start', 'logid.service']];
+  }
+  return ['schtasks', ['/run', '/tn', 'logid']];
+}
+
+function pedir(cmd, args) {
+  return new Promise((resolve) => {
+    const p = spawn(cmd, args, { stdio: 'ignore', windowsHide: true });
+    p.on('error', () => resolve(false));
+    p.on('exit', (code) => resolve(code === 0));
+  });
+}
+
+async function esperarPorta(tentativas) {
+  for (let i = 0; i < tentativas; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    if (await ping(400)) return true;
+  }
+  return false;
+}
+
 async function ensureBackend() {
-  // O systemd (logid.service) normalmente ja o tem no ar. So subimos um
-  // filho se nao houver ninguem respondendo -- e so entao o matamos no fim.
   if (await ping()) return 'ja rodando';
+
+  // Primeiro o supervisor. Se ele sobe o daemon, quem fica no ar e a
+  // copia que o deploy e o OTA sabem reiniciar.
+  if (await pedir(...comandoDoSupervisor())) {
+    if (await esperarPorta(25)) return 'o supervisor subiu';
+  }
+
+  // Sem supervisor instalado (maquina nova, antes do assistente) a GUI
+  // ainda tem de abrir -- e justamente pela GUI que se chega ao
+  // assistente que instala o supervisor. Ai sim, filho avulso, e matado
+  // no `will-quit`.
   const bin = fs.existsSync(LOGID) ? LOGID : 'logid';
   // windowsHide: o daemon e console app, e sem isto uma janela preta
   // pisca na tela a cada vez que a GUI o sobe.
   child = spawn(bin, [], { stdio: 'ignore', detached: false, windowsHide: true });
   let died = false;
   child.on('exit', () => { died = true; child = null; });
-  for (let i = 0; i < 25; i++) {
-    await new Promise((r) => setTimeout(r, 200));
-    if (await ping(400)) {
-      // Se o filho morreu mas a porta responde, quem atende e outro
-      // (tipicamente o lan-monitor.service). Nao reivindicar o credito.
-      return died ? 'ja rodando (nosso filho saiu: porta ocupada)' : 'subimos agora';
-    }
+  if (await esperarPorta(25)) {
+    // Se o filho morreu mas a porta responde, quem atende e outro.
+    // Nao reivindicar o credito.
+    return died ? 'ja rodando (nosso filho saiu: porta ocupada)' : 'subimos agora (sem supervisor)';
   }
   return 'nao respondeu';
 }

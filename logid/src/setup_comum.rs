@@ -291,6 +291,101 @@ pub fn veredito(linha: &str, relogio: &str) -> Medida {
     }
 }
 
+// -------------------------------------- quem serve vs. o que foi instalado
+
+/// O carimbo do daemon que ESTÁ servindo, contra o do arquivo no disco.
+///
+/// `None` quando são o mesmo build.
+///
+/// Existe porque o Mac passou um dia inteiro servindo um binário de dez
+/// dias atrás enquanto **todo** deploy dizia `ok`: a GUI subia um
+/// `logid` filho dela, esse filho ficava com a porta, e a cópia do
+/// launchd morria em loop com `Address already in use`. O arquivo novo
+/// era instalado e ninguém o executava. Quem notou foi o usuário.
+///
+/// Comparar os dois carimbos transforma um dia de confusão numa linha do
+/// painel. E é o mesmo buraco que o OTA tem: ele reinicia, pergunta o
+/// `/healthz`, ouve o build velho e **reverte uma atualização boa**.
+pub fn veredito_do_carimbo(no_ar: (u64, &str), no_disco: (u64, &str)) -> Option<String> {
+    let (n_ar, b_ar) = no_ar;
+    let (n_disco, b_disco) = no_disco;
+    if b_ar == b_disco {
+        return None;
+    }
+    Some(format!(
+        "quem responde é o #{n_ar} {b_ar}, mas o arquivo instalado é o #{n_disco} {b_disco}: \
+         algum processo antigo está com a porta"
+    ))
+}
+
+/// Pergunta o carimbo ao binário instalado e compara com o meu.
+///
+/// Eu sou o daemon que serve este painel, então o lado "no ar" é o meu
+/// próprio carimbo compilado -- não preciso falar com a porta para saber
+/// quem sou.
+///
+/// Binário que não entende `versao` devolve `None`: durante a transição
+/// a resposta honesta é "não sei", não um alarme.
+pub fn daemon_do_disco(bin: &std::path::Path) -> Option<String> {
+    let s = std::process::Command::new(bin).arg("versao").output().ok()?;
+    if !s.status.success() {
+        return None;
+    }
+    let t = String::from_utf8_lossy(&s.stdout);
+    let (n, b) = ler_carimbo(&t)?;
+    veredito_do_carimbo(
+        (env!("LOGI_BUILD_N").parse::<u64>().unwrap_or(0), env!("LOGI_BUILD")),
+        (n, &b),
+    )
+}
+
+/// `{"build":"abc1234","n":131}` -> `(131, "abc1234")`.
+pub fn ler_carimbo(json: &str) -> Option<(u64, String)> {
+    let v: serde_json::Value = serde_json::from_str(json.trim()).ok()?;
+    let b = v.get("build")?.as_str()?.to_string();
+    let n = v.get("n")?.as_u64()?;
+    Some((n, b))
+}
+
+/// O `launchctl print` diz que o job está carregado -- mas carregado não
+/// é rodando.
+///
+/// `None` quando está rodando de verdade.
+///
+/// A medição antiga reprovava só o caso "processo vivo fora do launchd" e
+/// aprovava o inverso: job carregado, `state = spawn scheduled`,
+/// `last exit code = 1`, morrendo em loop. Foi exatamente esse o estado
+/// do Mac enquanto o painel dizia "carregado na sessão gráfica".
+// Só o Mac tem launchd; o teste dela roda em qualquer máquina.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn veredito_do_launchd(print: &str) -> Option<String> {
+    let campo = |nome: &str| -> Option<String> {
+        print
+            .lines()
+            .map(str::trim)
+            .find(|l| l.starts_with(nome) && l[nome.len()..].trim_start().starts_with('='))
+            .and_then(|l| l.split_once('='))
+            .map(|(_, v)| v.trim().to_string())
+    };
+    let estado = campo("state").unwrap_or_default();
+    if estado.contains("running") {
+        return None;
+    }
+    let saida = campo("last exit code").unwrap_or_default();
+    let sem_zero = !saida.is_empty() && saida != "0";
+    if sem_zero {
+        return Some(format!(
+            "carregado mas não roda: state = {estado}, last exit code = {saida} \
+             (porta ocupada por outro processo é a causa de sempre)"
+        ));
+    }
+    if estado.is_empty() {
+        // Sem `state` no print não há o que afirmar; não inventar falha.
+        return None;
+    }
+    Some(format!("carregado mas não está rodando agora: state = {estado}"))
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -356,5 +451,64 @@ mod testes {
     #[test]
     fn idade_ilegivel_nao_passa_por_fresca() {
         assert_eq!(veredito("igual\tabc\tfrase", "x").estado, crate::setup::Estado::Falta);
+    }
+    /// O caso do Mac: a GUI subiu um `logid` filho dela, o filho ficou
+    /// com a porta, e a cópia do launchd morria em loop. Os dois
+    /// carimbos divergem -- e isso tem de chegar ao painel, porque foi
+    /// o usuário quem notou, não o deploy.
+    #[test]
+    fn carimbo_divergente_aparece() {
+        let p = veredito_do_carimbo((121, "2f1409d"), (131, "25512f1")).expect("tem de reprovar");
+        assert!(p.contains("#121 2f1409d"), "{p}");
+        assert!(p.contains("#131 25512f1"), "{p}");
+    }
+
+    #[test]
+    fn carimbo_igual_cala() {
+        assert!(veredito_do_carimbo((131, "25512f1"), (131, "25512f1")).is_none());
+    }
+
+    /// Árvore suja instala o próprio binário sujo. Ignorar o sufixo faria
+    /// `abc` e `abc-sujo` passarem por iguais -- e é entre esses dois que
+    /// a troca acontece durante um deploy do laptop.
+    #[test]
+    fn sujo_nao_e_o_mesmo_que_limpo() {
+        assert!(veredito_do_carimbo((131, "25512f1"), (131, "25512f1-sujo")).is_some());
+    }
+
+    #[test]
+    fn carimbo_ilegivel_nao_vira_alarme() {
+        assert!(ler_carimbo("{}").is_none());
+        assert!(ler_carimbo("nao e json").is_none());
+        assert_eq!(ler_carimbo("{\"build\":\"abc\",\"n\":7}\n"), Some((7, "abc".to_string())));
+    }
+
+    /// Saída real do `launchctl print` do Mac enquanto ele servia o build
+    /// velho. O painel dizia "carregado na sessão gráfica" porque olhava
+    /// só se o comando teve sucesso.
+    #[test]
+    fn job_carregado_e_morrendo_nao_e_ok() {
+        let print = "\tstate = spawn scheduled\n\tpath = /Users/x/Library/LaunchAgents/ai.logi.logid.plist\n\tlast exit code = 1\n";
+        let p = veredito_do_launchd(print).expect("tem de reprovar");
+        assert!(p.contains("last exit code = 1"), "{p}");
+        assert!(p.contains("spawn scheduled"), "{p}");
+    }
+
+    #[test]
+    fn job_rodando_e_ok() {
+        assert!(veredito_do_launchd("\tstate = running\n\tpid = 911\n\tlast exit code = 0\n").is_none());
+    }
+
+    /// `running` com saída anterior != 0 é normal: caiu uma vez e voltou.
+    /// Quem está no ar agora é o que importa.
+    #[test]
+    fn rodando_agora_vale_mais_que_a_saida_passada() {
+        assert!(veredito_do_launchd("\tstate = running\n\tlast exit code = 1\n").is_none());
+    }
+
+    /// Campo que só COMEÇA com o nome não é o campo.
+    #[test]
+    fn print_sem_state_nao_inventa_falha() {
+        assert!(veredito_do_launchd("\tpath = /x.plist\n\tstateful = sim\n").is_none());
     }
 }

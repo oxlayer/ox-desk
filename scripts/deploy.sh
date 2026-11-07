@@ -56,8 +56,22 @@ psrun() {
 passo "ubuntu: compilar"
 if out=$(cargo build --release --manifest-path logid/Cargo.toml 2>&1); then ok; else erro "$out"; fi
 passo "ubuntu: instalar e reiniciar"
-if out=$(install -m755 logid/target/release/logid ~/.local/bin/logid 2>&1 &&
-         systemctl --user restart logid.service 2>&1); then ok; else erro "$out"; fi
+# `pkill -x logid` antes do restart: o `systemctl restart` so mata a copia
+# que o systemd criou. Um `logid` orfao (a GUI subia um filho dela numa
+# corrida de boot) fica com a porta, o daemon novo morre com
+# `Address already in use` e a maquina serve binario velho dizendo `ok`.
+# Ver .claude/rules/um-supervisor-por-daemon.md.
+if out=$( { install -m755 logid/target/release/logid ~/.local/bin/logid &&
+            { pkill -x logid || true; } &&
+            systemctl --user restart logid.service &&
+            for _ in $(seq 10); do
+              sleep 1
+              curl -s --max-time 2 "localhost:8787/healthz" | grep -q "$BUILD" && break
+            done &&
+            curl -s --max-time 2 "localhost:8787/healthz" | grep -q "$BUILD" ||
+            echo "ERRO: /healthz do Ubuntu nao confirmou $BUILD"; } 2>&1 ); then
+  if ruim "$out"; then erro "$out"; else ok; fi
+else erro "$out"; fi
 
 passo "ubuntu: atualizador (logi-ota)"
 # Quem baixa a Release, confere a soma, troca e reverte. Vai para as
@@ -368,10 +382,27 @@ else
   passo "mac: compilar e reiniciar"
   # Sem cross-compile de Linux para macOS: exige o SDK da Apple, entao o
   # build acontece la. O LOGI_BUILD viaja junto porque a copia nao tem .git.
+  # Duas coisas que este passo aprendeu num dia em que disse `ok` sete
+  # vezes seguidas sobre um Mac que servia binario de dez dias atras:
+  #
+  # 1. `pkill -x logid` antes do kickstart. O `-k` so mata a copia do
+  #    launchd; o filho orfao da GUI segue com a porta e o daemon novo
+  #    morre com `Address already in use`.
+  # 2. Conferir o `/healthz`. Mandar reiniciar nao e ter reiniciado --
+  #    ver .claude/rules/verificar-o-que-chegou.md.
   if out=$(timeout 420 ssh -n -o BatchMode=yes mac \
             "cd ~/logi/logid && LOGI_BUILD='$BUILD' LOGI_BUILD_N='$LOGI_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
-             install -m755 target/release/logid ~/.local/bin/logid &&
-             launchctl kickstart -k gui/\$(id -u)/ai.logi.logid" 2>&1); then ok; else erro "$out"; fi
+             install -m755 target/release/logid ~/.local/bin/logid || exit 1
+             pkill -x logid
+             launchctl kickstart -k gui/\$(id -u)/ai.logi.logid
+             for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+               sleep 2
+               curl -s --max-time 2 localhost:8787/healthz | grep -q '$BUILD' && exit 0
+             done
+             echo \"ERRO: /healthz do Mac nao confirmou $BUILD: \$(curl -s --max-time 2 localhost:8787/healthz)\"
+             exit 1" 2>&1); then
+    if ruim "$out"; then erro "$out"; else ok; fi
+  else erro "$out"; fi
 
   passo "mac: tela (logistream, cliente e host)"
   # PKG_CONFIG_PATH do brew: o `ffmpeg-next` so acha o libavcodec por
