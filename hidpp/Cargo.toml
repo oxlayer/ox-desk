@@ -2,14 +2,15 @@
 name = "hidpp"
 version = "0.1.0"
 edition = "2021"
-description = "HID++ 2.0 sobre HID cru: inventario e troca de canal Easy-Switch"
+description = "HID++ 2.0 over raw HID: inventory and Easy-Switch channel switching"
 license = "MIT"
 
 [dependencies]
-# Enumeracao e I/O de HID em Linux (hidraw) e Windows (SetupAPI + HidD_*).
-# Integrar em vez de reimplementar ~300 linhas de FFI por plataforma.
+# HID enumeration and I/O on Linux (hidraw) and Windows (SetupAPI + HidD_*).
+# Integrate instead of reimplementing ~300 lines of FFI per platform.
 hidapi = "2"
-# O JSON do protocolo entre os pares vive aqui (protocol.rs). Estava
-# duplicado no agente e teria uma segunda copia no logid -- e justamente o
-# contrato entre as duas maquinas, o pior lugar para duas versoes.
+# The JSON protocol between peers lives here (protocol.rs). It was
+# duplicated in the agent and would have had a second copy in logid -- it is
+# precisely the contract between the two machines, the worst place for two
+# versions.
 serde_json = "1.0"
