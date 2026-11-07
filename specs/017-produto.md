@@ -171,10 +171,14 @@ auditoria). Os preços do Parsec em 07/11, por usuário e por mês: US$ 9,99
 
 | Plano | O que tem |
 |---|---|
-| **Grátis** | Tudo que roda entre as máquinas da pessoa: LAN, conexão direta pela internet pelo nosso encontro, servidor próprio sem limite. Relay nosso com limite de banda |
+| **Grátis** | O núcleo inteiro, como no Parsec: 60 fps com baixa latência, teclado, mouse e controle, conexão ponta a ponta cifrada, host em Windows, macOS e Linux, compartilhar a tela por link. Mais: LAN, conexão direta pelo nosso encontro e servidor próprio sem limite. Relay nosso com limite de banda |
 | **Individual** | Relay sem limite, vários monitores, monitor virtual, cor 4:4:4, modo privado (tela física apagada) |
 | **Times** | Computadores da equipe num lugar só, permissões por pessoa e por máquina, login único (SAML/OIDC), registro de acessos de 7 dias |
 | **Empresa** | Relay dedicado ou na região do cliente, registro completo de acessos, papéis de administrador, API para automação |
+
+Do núcleo, ainda não temos: controle (gamepad) e compartilhar por link,
+que é um convite de uso único, com prazo, que dá acesso a uma máquina sem
+pareamento permanente.
 
 O que fica grátis é o que não custa para nós. Hospedar o próprio servidor é
 sempre grátis, e é o que mantém o projeto open source de verdade.
