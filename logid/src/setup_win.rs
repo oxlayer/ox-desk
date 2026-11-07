@@ -19,7 +19,7 @@
 //! "ESTADO" em vez de "STATE".
 
 use crate::config::Config;
-use crate::setup::Medida;
+use crate::setup::{Estado, Medida};
 use crate::setup_comum::rodar;
 use std::path::PathBuf;
 
