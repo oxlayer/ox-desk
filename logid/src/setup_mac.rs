@@ -65,6 +65,7 @@ pub fn medir(cfg: &Config) -> Vec<Medida> {
         launchagent(),
         crate::setup_comum::clipboard(),
         login_remoto(),
+        tailscale(),
         crate::setup_comum::pares(cfg),
         ota(),
     ]
@@ -316,6 +317,23 @@ fn login_remoto() -> Medida {
         format!("sshd responde em {:.0} ms", ms.unwrap_or(0.0)),
         "nada escutando na porta 22",
     )
+}
+
+fn tailscale() -> Medida {
+    // Só os caminhos do brew. O `/usr/local/bin/tailscale` que o app
+    // instala é um script que abre o app, e abrir o app é o que dispara
+    // o pedido de VPN: medir por ele muda o que está sendo medido.
+    let app = std::path::Path::new("/Applications/Tailscale.app").exists();
+    let cli = ["/opt/homebrew/bin/tailscale", "/usr/local/opt/tailscale/bin/tailscale"]
+        .into_iter()
+        .find(|c| std::path::Path::new(c).exists());
+    let Some(cli) = cli else {
+        return Medida::falta("tailscale", "tailscale do brew não instalado");
+    };
+    match rodar(cli, &["status", "--json"], 5) {
+        Ok(json) => crate::setup_comum::veredito_tailscale(&json, app),
+        Err(e) => Medida::falta("tailscale", format!("o tailscaled não respondeu: {e}")),
+    }
 }
 
 // ------------------------------------------------------------------ reparos

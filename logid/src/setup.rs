@@ -476,6 +476,18 @@ fn mac() -> Vec<Passo> {
             essencial: true,
         },
         Passo {
+            id: "tailscale",
+            titulo: "Tailscale (fora da LAN)",
+            porque: "é o que alcança as outras máquinas fora de casa. Vai pelo \
+                     brew, com serviço próprio, e nunca pelo app: a extensão \
+                     de rede do app, sem login, derrubou a internet do Mac.",
+            arrumo: Arrumo::Receita {
+                linha: "brew install tailscale && sudo bash scripts/instalar-tailscale-mac.sh",
+            },
+            depende: &[],
+            essencial: false,
+        },
+        Passo {
             id: "pares",
             titulo: "SSH alcança as outras máquinas",
             porque: "SSH é o transporte de tudo que cruza máquina.",

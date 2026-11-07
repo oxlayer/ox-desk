@@ -27,7 +27,7 @@ use dbus::Path;
 use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
 use pipewire::spa::param::video::VideoFormat;
 use pipewire::spa::pod::{self, Pod};
-use pipewire::spa::utils::{Direction, SpaTypes};
+use pipewire::spa::utils::{Direction, Rectangle, SpaTypes};
 use pipewire::stream::{Stream, StreamFlags};
 
 use crate::input::{Evento, Leitor};
@@ -42,6 +42,48 @@ const RD: &str = "org.gnome.Mutter.RemoteDesktop";
 const RD_OBJ: &str = "/org/gnome/Mutter/RemoteDesktop";
 const RD_SESSION: &str = "org.gnome.Mutter.RemoteDesktop.Session";
 const T: Duration = Duration::from_secs(10);
+/// Tamanho da tela quando nao ha monitor ligado na maquina.
+const VIRTUAL_L: u32 = 1920;
+const VIRTUAL_A: u32 = 1080;
+
+/// O Mutter recusou o conector porque ele nao existe agora?
+///
+/// E o que acontece com o monitor desligado ou desconectado: as saidas
+/// ficam `disconnected` e o `RecordMonitor` responde "Unknown monitor".
+/// Qualquer outro erro (sessao, permissao) continua sendo erro.
+fn monitor_ausente(msg: Option<&str>) -> bool {
+    msg.is_some_and(|m| m.contains("Unknown monitor"))
+}
+
+/// Pede o stream ao Mutter: o monitor pedido, ou um virtual se ele nao
+/// existir. Devolve o caminho do stream e se ele e virtual.
+///
+/// Sem isto a maquina sem monitor ligado, que e justamente a que se quer
+/// alcancar de longe, nao tinha tela remota: o host morria na partida.
+fn gravar(
+    sp: &dbus::blocking::Proxy<'_, &Connection>,
+    conector: &str,
+) -> anyhow::Result<(Path<'static>, bool)> {
+    let props = || {
+        let mut p = dbus::arg::PropMap::new();
+        p.insert(
+            "cursor-mode".into(),
+            dbus::arg::Variant(Box::new(1u32) as Box<dyn dbus::arg::RefArg>),
+        );
+        p
+    };
+    let pedido: Result<(Path,), dbus::Error> =
+        sp.method_call(SESSION, "RecordMonitor", (conector, props()));
+    match pedido {
+        Ok((caminho,)) => Ok((caminho.into_static(), false)),
+        Err(e) if monitor_ausente(e.message()) => {
+            eprintln!("sem monitor {conector}: usando tela virtual {VIRTUAL_L}x{VIRTUAL_A}");
+            let (caminho,): (Path,) = sp.method_call(SESSION, "RecordVirtual", (props(),))?;
+            Ok((caminho.into_static(), true))
+        }
+        Err(e) => Err(e.into()),
+    }
+}
 /// Dois quadros de folga. Mais que isso seria fila de coisa velha.
 const CAPACIDADE: usize = 2;
 
@@ -124,14 +166,7 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
     );
     let (sess_path,): (Path,) = root.method_call(SC, "CreateSession", (sc_props,))?;
     let sp = conn.with_proxy(SC, sess_path.into_static(), T);
-    let mut props = dbus::arg::PropMap::new();
-    props.insert(
-        "cursor-mode".into(),
-        dbus::arg::Variant(Box::new(1u32) as Box<dyn dbus::arg::RefArg>),
-    );
-    let (stream_path,): (Path,) =
-        sp.method_call(SESSION, "RecordMonitor", (conector, props))?;
-    let stream_path = stream_path.into_static();
+    let (stream_path, tela_virtual) = gravar(&sp, conector)?;
     let node = std::sync::Arc::new(std::sync::Mutex::new(None::<u32>));
     let node2 = std::sync::Arc::clone(&node);
     let mut regra = MatchRule::new_signal(STREAM, "PipeWireStreamAdded");
@@ -248,7 +283,7 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
         })
         .register()?;
 
-    let obj = pod::object!(
+    let mut obj = pod::object!(
         SpaTypes::ObjectParamFormat,
         pipewire::spa::param::ParamType::EnumFormat,
         pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
@@ -263,6 +298,19 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
             VideoFormat::BGRA
         ),
     );
+    // Monitor de verdade dita o tamanho. O virtual nao tem tamanho
+    // nenhum ate o cliente pedir um, e sem pedir ele nasce em 1280x720.
+    if tela_virtual {
+        obj.properties.push(pod::property!(
+            FormatProperties::VideoSize,
+            Choice,
+            Range,
+            Rectangle,
+            Rectangle { width: VIRTUAL_L, height: VIRTUAL_A },
+            Rectangle { width: 640, height: 480 },
+            Rectangle { width: 7680, height: 4320 }
+        ));
+    }
     let valores = pod::serialize::PodSerializer::serialize(
         std::io::Cursor::new(Vec::new()),
         &pod::Value::Object(obj),
@@ -499,5 +547,17 @@ async fn receber_input(
         if aplicados_agora > 0 {
             dbus.channel().flush();
         }
+    }
+}
+
+#[cfg(test)]
+mod testes {
+    use super::monitor_ausente;
+
+    #[test]
+    fn so_o_monitor_ausente_cai_para_o_virtual() {
+        assert!(monitor_ausente(Some("Unknown monitor")));
+        assert!(!monitor_ausente(Some("Permission denied")));
+        assert!(!monitor_ausente(None));
     }
 }
