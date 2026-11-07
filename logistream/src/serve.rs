@@ -195,7 +195,11 @@ pub async fn atender(
                 continue;
             }
         };
-        println!("  conectado: {}", conexao.remote_address());
+        println!(
+            "  conectado: {} cliente {}",
+            conexao.remote_address(),
+            crate::identity::describe_peer(&conexao, &crate::identity::authorized(&crate::identity::dir()))
+        );
         // O cliente novo nao tem contexto: o proximo quadro TEM de ser
         // quadro-chave, senao a janela dele fica preta ate o IDR
         // seguinte do GOP -- ate 2s olhando nada.
@@ -375,7 +379,11 @@ pub async fn atender_input(
                 continue;
             }
         };
-        println!("  input conectado: {}", conexao.remote_address());
+        println!(
+            "  input conectado: {} cliente {}",
+            conexao.remote_address(),
+            crate::identity::describe_peer(&conexao, &crate::identity::authorized(&crate::identity::dir()))
+        );
         sinais.entrou_input();
         let tarefa = abrir_input(&conexao);
 
