@@ -54,7 +54,13 @@ try {
   $store.Close()
 
   New-Item -ItemType Directory -Force -Path $Settings | Out-Null
-  Copy-Item (Join-Path $dir 'vdd_settings.xml') $Settings -Force
+  # The driver starts at the first resolution listed, and 800x600 is no use
+  # for a remote desktop. Windows keeps whatever mode it took first.
+  $xml = [xml](Get-Content -Raw (Join-Path $dir 'vdd_settings.xml'))
+  foreach ($r in @($xml.SelectNodes('//resolutions/resolution'))) {
+    if ([int]$r.width -lt 1920) { [void]$r.ParentNode.RemoveChild($r) }
+  }
+  $xml.Save((Join-Path $Settings 'vdd_settings.xml'))
 
   Add-Type -TypeDefinition @'
 using System;
