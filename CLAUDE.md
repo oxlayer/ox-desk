@@ -23,6 +23,7 @@ remota própria, e o controle de tudo num painel só.
 6. [O que depende da sessão gráfica não nasce por SSH](.claude/rules/sessao-grafica.md)
 7. [Mandar não é ter chegado; número que ninguém imprime ninguém confere](.claude/rules/verificar-o-que-chegou.md)
 8. [Pixel de captura ≠ ponto de injeção](.claude/rules/espaco-de-coordenadas.md)
+9. [Código de outro sistema compila aqui — troque o `cfg` e confira](.claude/rules/checar-o-cfg-do-outro.md)
 
 ## Skills (procedimentos)
 
