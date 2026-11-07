@@ -423,7 +423,9 @@ fn mac() -> Vec<Passo> {
             porque: "sem ela o AVFoundation TRAVA em vez de falhar: o log \
                      para em \"abrindo a tela 1\" e a última linha é uma \
                      mensagem do ffmpeg sobre formato de pixel, que não tem \
-                     nada a ver com o problema.",
+                     nada a ver com o problema. Cuidado: COM a permissão a \
+                     abertura ainda leva ~30 s, e o log fica parado na \
+                     mesma frase -- espere 30 s antes de culpar o TCC.",
             arrumo: Arrumo::Clique {
                 rotulo: "Pedir a permissão",
                 onde: "Ajustes > Privacidade e Segurança > Gravação de Tela > logistream-host",
