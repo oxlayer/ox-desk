@@ -1,13 +1,19 @@
-//! logid-agent -- o lado Windows.
+//! logid-agent -- the Windows side.
 //!
 //! Spec: ../specs/005-input-switch.md
 //!
-//! E uma CLI, nao um servidor, de proposito: o `logid` o invoca por SSH,
-//! que ja temos autenticado por chave. Zero porta nova, zero auth nova,
-//! zero superficie de rede. Saida em JSON para o control plane consumir.
+//! It is a CLI, not a server, on purpose: `logid` invokes it over SSH,
+//! which we already have authenticated by key. Zero new ports, zero new
+//! auth, zero network surface. JSON output for the control plane to
+//! consume.
 //!
-//! A excecao e o `guard`, que precisa ficar residente -- e na sessao
-//! interativa, porque GetLastInputInfo nao ve input de outra sessao.
+//! The exception is `guard`, which has to stay resident -- and in the
+//! interactive session, because GetLastInputInfo does not see input from
+//! another session.
+//!
+//! The JSON `error`/`reason` values stay pt-BR: they travel to `logid`
+//! and can reach the panel. The log lines are English; `watch-edge START`
+//! is the marker people grep for (specs/005).
 
 use winput as input;
 
@@ -15,11 +21,11 @@ use hidpp::hidapi::HidApi;
 use serde_json::json;
 use std::process::ExitCode;
 
-/// Log em arquivo para os modos residentes.
+/// File log for the resident modes.
 ///
-/// Lancado por atalho do Startup, stdout e stderr vao para o nada -- e
-/// foi exatamente por isso que passei a diagnosticar o lado Windows no
-/// escuro. O lado Linux tem journal; este e o equivalente.
+/// Launched from a Startup shortcut, stdout and stderr go nowhere -- and
+/// that is exactly why I ended up diagnosing the Windows side in the
+/// dark. The Linux side has the journal; this is the equivalent.
 fn logline(msg: &str) {
     use std::io::Write;
     let ts = std::time::SystemTime::now()
@@ -47,28 +53,28 @@ fn fail(msg: impl AsRef<str>) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "logid-agent <comando>
+        "logid-agent <command>
 
-  devices                      interfaces HID++ e host atual de cada slot
-  host-info <slot>             numero de hosts e canal atual (slot 1..6)
+  devices                      HID++ interfaces and current host of each slot
+  host-info <slot>             number of hosts and current channel (slot 1..6)
   set-host <slot> <host> --confirm
-                               troca o canal. 1-based no CLI.
-                               IRREVERSIVEL: o dispositivo sai deste
-                               receptor e nao responde mais aqui.
-  input-age                    ms desde o ultimo input nesta sessao
+                               switches the channel. 1-based on the CLI.
+                               IRREVERSIBLE: the device leaves this
+                               receiver and no longer answers here.
+  input-age                    ms since the last input in this session
   watch-edge <edge> <slots> <host> [hold_ms]
-                               vigia a borda e manda os dispositivos para
-                               <host> ao encostar. Ex: watch-edge left 1,2 1
-                               Roda na sessao interativa.
-  guard <slot> <host> <segundos>
-                               dead-man's switch: se nao houver input em
-                               <segundos>, devolve o dispositivo para
-                               <host>. Rode na sessao interativa."
+                               watches the edge and sends the devices to
+                               <host> on touch. E.g.: watch-edge left 1,2 1
+                               Runs in the interactive session.
+  guard <slot> <host> <seconds>
+                               dead-man's switch: if there is no input in
+                               <seconds>, returns the device to
+                               <host>. Run it in the interactive session."
     );
     ExitCode::FAILURE
 }
 
-/// Varre os slots 1..6 colhendo host info de quem responder.
+/// Scans slots 1..6 collecting host info from whoever answers.
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(cmd) = args.first().map(String::as_str) else {
@@ -87,9 +93,9 @@ fn main() -> ExitCode {
         Err(e) => return fail(format!("hidapi: {e}")),
     };
 
-    // Os comandos que o PAR consome -- devices, host-info, set-host -- vem
-    // da crate compartilhada. O formato deles e o contrato entre as duas
-    // maquinas, e duas copias dele divergiriam (ver hidpp/src/protocol.rs).
+    // The commands the PEER consumes -- devices, host-info, set-host -- come
+    // from the shared crate. Their format is the contract between the two
+    // machines, and two copies of it would drift (see hidpp/src/protocol.rs).
     if let hidpp::protocol::Handled::Json(v) = hidpp::protocol::run(&api, &args) {
         let ok = v.get("ok").and_then(|b| b.as_bool()) == Some(true);
         println!("{v}");
@@ -98,8 +104,8 @@ fn main() -> ExitCode {
 
     match cmd {
 
-        // Sondagem: imprime os bytes crus para eu confirmar layout de
-        // feature antes de escrever parser em cima de suposicao.
+        // Probing: prints the raw bytes so I can confirm a feature's
+        // layout before writing a parser on top of a guess.
         "raw" => {
             let slot = args.get(1).and_then(|s| s.parse::<u8>().ok());
             let feat = args.get(2).and_then(|s| u16::from_str_radix(s.trim_start_matches("0x"), 16).ok());
@@ -156,33 +162,33 @@ fn main() -> ExitCode {
 
             let (vx, vy, vw, vh) = input::virtual_screen();
             logline(&format!(
-                "watch-edge START borda='{edge}' area=({vx},{vy} {vw}x{vh}) \
+                "watch-edge START edge='{edge}' area=({vx},{vy} {vw}x{vh}) \
                  slots={slots:?} -> host {host} hold={hold_ms}ms"
             ));
 
             let mut touching_since: Option<std::time::Instant> = None;
             let mut cooldown_until: Option<std::time::Instant> = None;
 
-            // Dead-man's switch. A spec 005 o exige e eu nunca o havia
-            // ativado, porque descobri que ele NAO pode ser lancado por
-            // SSH: GetLastInputInfo nao ve a sessao do usuario de fora
-            // dela. Aqui dentro funciona -- este processo ja e residente
-            // na sessao e ja faz polling.
+            // Dead-man's switch. Spec 005 requires it and I had never
+            // enabled it, because I found it CANNOT be launched over SSH:
+            // GetLastInputInfo does not see the user's session from
+            // outside it. In here it works -- this process is already
+            // resident in the session and already polling.
             //
-            // Logica: quando os dispositivos CHEGAM nesta maquina, damos
-            // uma janela. Se nenhum input aparecer nela, devolvemos -- quem
-            // os mandou nao pode desfazer, so quem os detem.
+            // Logic: when the devices ARRIVE on this machine, we give a
+            // window. If no input shows up in it, we send them back -- the
+            // sender cannot undo, only the holder can.
             let guard_secs: u64 = std::env::var("LOGID_GUARD_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(25);
-            let mut presente_antes = false;
-            let mut chegou_em: Option<std::time::Instant> = None;
-            // O loop gira a cada 30 ms para o cursor responder rapido, mas
-            // a checagem de presenca e HID++: a 33 Hz seria martelar o
-            // radio sem motivo. Uma vez por segundo basta -- a janela do
-            // guard e de dezenas de segundos.
-            let mut ultima_checagem = std::time::Instant::now()
+            let mut present_before = false;
+            let mut arrived_at: Option<std::time::Instant> = None;
+            // The loop spins every 30 ms so the cursor responds fast, but
+            // the presence check is HID++: at 33 Hz it would hammer the
+            // radio for no reason. Once per second is enough -- the guard
+            // window is tens of seconds.
+            let mut last_check = std::time::Instant::now()
                 - std::time::Duration::from_secs(2);
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(30));
@@ -194,36 +200,36 @@ fn main() -> ExitCode {
                     cooldown_until = None;
                 }
 
-                // --- dead-man's switch: detecta chegada e vigia o input
-                if ultima_checagem.elapsed() >= std::time::Duration::from_secs(1) {
-                    ultima_checagem = std::time::Instant::now();
+                // --- dead-man's switch: detect arrival and watch for input
+                if last_check.elapsed() >= std::time::Duration::from_secs(1) {
+                    last_check = std::time::Instant::now();
                 if let Ok(link) = hidpp::Receiver::open(&api) {
-                    let presente = slots.iter().any(|s| link.present(*s, 2));
-                    if presente && !presente_antes {
-                        let idle_na_chegada = input::idle_ms().unwrap_or(0);
-                        chegou_em = Some(std::time::Instant::now());
+                    let present = slots.iter().any(|s| link.present(*s, 2));
+                    if present && !present_before {
+                        let idle_on_arrival = input::idle_ms().unwrap_or(0);
+                        arrived_at = Some(std::time::Instant::now());
                         logline(&format!(
-                            "dispositivos CHEGARAM -- vigiando input por {guard_secs}s \
-                             (idle na chegada: {idle_na_chegada}ms)"
+                            "devices ARRIVED -- watching input for {guard_secs}s \
+                             (idle on arrival: {idle_on_arrival}ms)"
                         ));
-                    } else if !presente && presente_antes {
-                        chegou_em = None;
-                        logline("dispositivos SAIRAM -- vigilancia encerrada");
+                    } else if !present && present_before {
+                        arrived_at = None;
+                        logline("devices LEFT -- watch ended");
                     }
-                    presente_antes = presente;
+                    present_before = present;
 
-                    if let Some(t0) = chegou_em {
+                    if let Some(t0) = arrived_at {
                         match input::idle_ms() {
-                            // Input novo: o idle caiu abaixo do tempo desde
-                            // a chegada, logo houve atividade depois dela.
+                            // New input: idle dropped below the time since
+                            // arrival, so there was activity after it.
                             Ok(idle) if idle < t0.elapsed().as_millis() as u64 => {
-                                logline("input detectado -- dead-man's switch desarmado");
-                                chegou_em = None;
+                                logline("input detected -- dead-man's switch disarmed");
+                                arrived_at = None;
                             }
                             Ok(idle) if t0.elapsed().as_secs() >= guard_secs => {
                                 logline(&format!(
-                                    "SEM INPUT em {guard_secs}s (idle {idle}ms) -- \
-                                     devolvendo para o host {host}"
+                                    "NO INPUT in {guard_secs}s (idle {idle}ms) -- \
+                                     returning to host {host}"
                                 ));
                                 for slot in &slots {
                                     if link.ping(*slot).is_err() {
@@ -231,14 +237,14 @@ fn main() -> ExitCode {
                                     }
                                     match link.set_host(*slot, host) {
                                         Ok(()) => logline(&format!(
-                                            "resgate: slot {slot} -> host {host}"
+                                            "rescue: slot {slot} -> host {host}"
                                         )),
                                         Err(e) => logline(&format!(
-                                            "resgate do slot {slot} FALHOU: {e}"
+                                            "rescue of slot {slot} FAILED: {e}"
                                         )),
                                     }
                                 }
-                                chegou_em = None;
+                                arrived_at = None;
                                 cooldown_until = Some(
                                     std::time::Instant::now()
                                         + std::time::Duration::from_secs(15),
@@ -257,7 +263,7 @@ fn main() -> ExitCode {
                     continue;
                 }
 
-                // Exige permanencia: evita troca por raspao na borda.
+                // Require dwell: avoids switching on a graze of the edge.
                 let since = *touching_since.get_or_insert_with(std::time::Instant::now);
                 if (since.elapsed().as_millis() as u64) < hold_ms {
                     continue;
@@ -267,55 +273,55 @@ fn main() -> ExitCode {
                 let link = match hidpp::Receiver::open(&api) {
                     Ok(l) => l,
                     Err(e) => {
-                        logline(&format!("sem HID++ agora: {e}"));
+                        logline(&format!("no HID++ right now: {e}"));
                         cooldown_until =
                             Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
                         continue;
                     }
                 };
 
-                // Presenca ANTES de tentar. Sem isto, encostar na borda com
-                // os dispositivos em outra maquina reportava
+                // Presence BEFORE trying. Without this, touching the edge
+                // with the devices on another machine reported
                 // "sem resposta para feature 0x00 func 0x00 ... switch_failed"
-                // -- que e ausencia, nao falha. Tambem cobre numeracao de
-                // slot divergente: slot e por receptor e nao coincide entre
-                // maquinas.
-                // `present` com retry, nao `host_info`: ver a doc dele no
-                // crate. Era esta linha que fazia a borda "nao funcionar".
-                let presentes: Vec<u8> = slots
+                // -- which is absence, not failure. It also covers diverging
+                // slot numbers: the slot is per receiver and does not match
+                // across machines.
+                // `present` with retry, not `host_info`: see its doc in the
+                // crate. This line is what made the edge "not work".
+                let present_now: Vec<u8> = slots
                     .iter()
                     .copied()
                     .filter(|s| link.present(*s, 3))
                     .collect();
-                if presentes.is_empty() {
+                if present_now.is_empty() {
                     logline(&format!(
-                        "BORDA TOCADA em ({},{}) mas nenhum dos slots {slots:?} esta \
-                         neste receptor -- nada a enviar",
+                        "EDGE TOUCHED at ({},{}) but none of slots {slots:?} is \
+                         on this receiver -- nothing to send",
                         p.x, p.y
                     ));
                     cooldown_until =
                         Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
                     continue;
                 }
-                if presentes.len() < slots.len() {
+                if present_now.len() < slots.len() {
                     logline(&format!(
-                        "so {presentes:?} de {slots:?} estao aqui -- enviando esses; \
-                         os outros ficam onde estao (ESTADO DIVIDIDO)"
+                        "only {present_now:?} of {slots:?} are here -- sending those; \
+                         the others stay where they are (SPLIT STATE)"
                     ));
                 }
 
                 logline(&format!(
-                    "BORDA TOCADA em ({},{}) -- enviando {presentes:?} para o host {host}",
+                    "EDGE TOUCHED at ({},{}) -- sending {present_now:?} to host {host}",
                     p.x, p.y
                 ));
-                for slot in &presentes {
+                for slot in &present_now {
                     match link.set_host(*slot, host) {
-                        Ok(()) => logline(&format!("slot {slot} -> host {host} enviado")),
-                        Err(e) => logline(&format!("slot {slot} FALHOU: {e}")),
+                        Ok(()) => logline(&format!("slot {slot} -> host {host} sent")),
+                        Err(e) => logline(&format!("slot {slot} FAILED: {e}")),
                     }
                 }
-                // Os dispositivos acabaram de sair: nao ha input aqui para
-                // disparar de novo, mas se voltarem queremos vigiar outra vez.
+                // The devices just left: there is no input here to fire
+                // again, but if they come back we want to watch again.
                 cooldown_until =
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
             }
@@ -334,7 +340,7 @@ fn main() -> ExitCode {
                 std::thread::sleep(std::time::Duration::from_millis(400));
                 match input::idle_ms() {
                     Ok(idle) if idle < budget_ms => {
-                        // Houve input: o usuario chegou, missao cumprida.
+                        // There was input: the user arrived, mission done.
                         return out(json!({ "ok": true, "action": "none",
                                            "reason": "input detectado",
                                            "idle_ms": idle }));

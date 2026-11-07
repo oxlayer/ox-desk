@@ -1,13 +1,15 @@
-//! Onde o daemon fala.
+//! Where the daemon speaks.
 //!
-//! No Linux o journal timbra e guarda, e um `println!` basta. No Windows
-//! nao existe journal: se o daemon so escrevesse em stdout, a GUI de la
-//! nao teria log nenhum -- e foi justamente a falta de log que, do lado
-//! Linux, me fez diagnosticar errado uma troca de 105 s.
+//! On Linux the journal timestamps and stores, and a `println!` is
+//! enough. On Windows there is no journal: if the daemon only wrote to
+//! stdout, the GUI there would have no log at all -- and it was precisely
+//! the lack of a log that, on the Linux side, made me misdiagnose a 105 s
+//! switch.
 //!
-//! Dai estes macros: uma linha, dois destinos. O stdout continua para
-//! quem roda o daemon na mao, e `sys::log_sink` persiste onde a
-//! plataforma precisar (no Linux, nada -- o journal ja fez).
+//! Hence these macros: one line, two destinations. stdout stays for
+//! whoever runs the daemon by hand, and `sys::log_sink` persists wherever
+//! the platform needs (on Linux, nothing -- the journal already did it).
+
 
 #[macro_export]
 macro_rules! say {

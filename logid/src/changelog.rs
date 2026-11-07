@@ -1,49 +1,54 @@
-//! Novidades, embutidas no binario.
+//! What's new, embedded in the binary.
 //!
-//! `include_str!` e nao arquivo em disco de proposito: o que o painel
-//! mostra tem de ser o que AQUELA maquina esta rodando. Lendo de disco,
-//! uma maquina com binario velho mostraria novidades que ela nao tem --
-//! que e exatamente o engano que o numero de build existe para evitar.
+//! `include_str!` and not a file on disk on purpose: what the panel shows
+//! has to be what THAT machine is running. Reading from disk, a machine
+//! with an old binary would show news it does not have -- which is exactly
+//! the mistake the build number exists to avoid.
 
 use serde::Serialize;
 
-const TEXTO: &str = include_str!("../CHANGELOG.md");
+const TEXT: &str = include_str!("../CHANGELOG.md");
 
+/// The wire names (`data`, `titulo`, `descricao`) are read by the panel.
 #[derive(Debug, Serialize, PartialEq)]
-pub struct Entrada {
-    pub data: String,
-    pub titulo: String,
-    pub descricao: String,
+pub struct Entry {
+    #[serde(rename = "data")]
+    pub date: String,
+    #[serde(rename = "titulo")]
+    pub title: String,
+    #[serde(rename = "descricao")]
+    pub description: String,
 }
 
-/// Lê `## <data> · <titulo>` seguido das linhas de descricao.
-pub fn entradas() -> Vec<Entrada> {
+/// Reads `## <date> · <title>` followed by the description lines.
+pub fn entries() -> Vec<Entry> {
     let mut v = Vec::new();
-    let mut atual: Option<Entrada> = None;
-    for linha in TEXTO.lines() {
-        if let Some(cab) = linha.strip_prefix("## ") {
-            if let Some(e) = atual.take() {
+    let mut current: Option<Entry> = None;
+    for line in TEXT.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            if let Some(e) = current.take() {
                 v.push(e);
             }
-            // O separador e `·`; sem ele, tudo vira titulo e a data fica
-            // vazia -- melhor que descartar a entrada.
-            let (data, titulo) = match cab.split_once('·') {
+            // The separator is `·`; without it, everything becomes the
+            // title and the date stays empty -- better than dropping the
+            // entry.
+            let (date, title) = match heading.split_once('·') {
                 Some((d, t)) => (d.trim().to_string(), t.trim().to_string()),
-                None => (String::new(), cab.trim().to_string()),
+                None => (String::new(), heading.trim().to_string()),
             };
-            atual = Some(Entrada { data, titulo, descricao: String::new() });
-        } else if let Some(e) = atual.as_mut() {
-            let t = linha.trim();
+            current = Some(Entry { date, title, description: String::new() });
+        } else if let Some(e) = current.as_mut() {
+            let t = line.trim();
             if t.is_empty() {
                 continue;
             }
-            if !e.descricao.is_empty() {
-                e.descricao.push(' ');
+            if !e.description.is_empty() {
+                e.description.push(' ');
             }
-            e.descricao.push_str(t);
+            e.description.push_str(t);
         }
     }
-    if let Some(e) = atual {
+    if let Some(e) = current {
         v.push(e);
     }
     v
@@ -54,24 +59,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn o_arquivo_de_verdade_parseia() {
-        let v = entradas();
-        assert!(v.len() >= 5, "poucas entradas: {}", v.len());
-        // Se o formato quebrar, o painel mostraria titulos vazios em
-        // silencio -- este assert e o que torna isso barulhento.
+    fn the_real_file_parses() {
+        let v = entries();
+        assert!(v.len() >= 5, "too few entries: {}", v.len());
+        // If the format broke, the panel would show empty titles silently
+        // -- this assert is what makes that loud.
         for e in &v {
-            assert!(!e.titulo.is_empty(), "entrada sem titulo: {e:?}");
-            assert!(!e.descricao.is_empty(), "entrada sem descricao: {e:?}");
-            assert!(e.data.starts_with("20"), "data estranha: {e:?}");
+            assert!(!e.title.is_empty(), "entry without a title: {e:?}");
+            assert!(!e.description.is_empty(), "entry without a description: {e:?}");
+            assert!(e.date.starts_with("20"), "odd date: {e:?}");
         }
     }
 
     #[test]
-    fn descricao_de_varias_linhas_vira_uma() {
-        // O markdown quebra linha por largura; a UI quer um paragrafo.
-        let v = entradas();
-        let multi = v.iter().find(|e| e.descricao.len() > 80);
-        assert!(multi.is_some(), "esperava ao menos uma descricao longa");
-        assert!(!multi.unwrap().descricao.contains('\n'));
+    fn multi_line_description_becomes_one() {
+        // Markdown wraps lines by width; the UI wants a paragraph.
+        let v = entries();
+        let multi = v.iter().find(|e| e.description.len() > 80);
+        assert!(multi.is_some(), "expected at least one long description");
+        assert!(!multi.unwrap().description.contains('\n'));
     }
 }

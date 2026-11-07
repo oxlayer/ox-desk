@@ -1,23 +1,24 @@
-// Casca nativa sobre o logid. Nao duplica logica: o daemon coleta e serve
-// a UI, o Electron da janela, bandeja e atalhos.
+// Native shell over logid. It duplicates no logic: the daemon collects data
+// and serves the UI, Electron provides the window, tray and shortcuts.
 //
-// Roda nas duas maquinas. O daemon e o mesmo binario nos dois SOs (ver
-// specs/001), entao a casca tambem tem de ser -- a alternativa seria a
-// GUI existir so no Ubuntu, que foi exatamente a assimetria reclamada.
-// O que muda por SO sao caminhos, e so eles ficam em `paths()`.
+// Runs on both machines. The daemon is the same binary on both OSes (see
+// specs/001), so the shell has to be as well -- the alternative was a GUI
+// that only existed on Ubuntu, which was exactly the asymmetry people
+// complained about. What changes per OS is paths, and only those live in
+// `paths()`.
 const { app, BrowserWindow, Tray, Menu, shell, nativeImage } = require('electron');
 
-/// No Linux a bandeja e nativa (ksni dentro do logid). Windows e macOS
-/// seguem com a do Electron ate ganharem a sua.
-const BANDEJA_NATIVA = process.platform === 'linux';
+/// On Linux the tray is native (ksni inside logid). Windows and macOS keep
+/// Electron's tray until they get their own.
+const NATIVE_TRAY = process.platform === 'linux';
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
 
-// Os dois caminhos que mudam por SO. Tem de bater com o que o daemon usa
-// -- `sys::config_dir` e onde o install poe o binario. Divergir aqui
-// significa a GUI ler a config errada e nao achar o daemon.
+// The two paths that change per OS. They must match what the daemon uses
+// -- `sys::config_dir` and where the installer puts the binary. Diverging
+// here means the GUI reads the wrong config and cannot find the daemon.
 function paths() {
   if (process.platform === 'win32') {
     const appdata = process.env.APPDATA || process.env.USERPROFILE || '.';
@@ -39,13 +40,13 @@ function paths() {
 
 const PATHS = paths();
 
-// A porta vem da config do logid (TOML). Regex em vez de parser: e uma
-// linha escalar num arquivo que nos mesmos geramos.
+// The port comes from logid's config (TOML). A regex instead of a parser:
+// it is one scalar line in a file we generate ourselves.
 function readPort() {
   try {
     const m = fs.readFileSync(PATHS.config, 'utf8').match(/^\s*port\s*=\s*(\d+)/m);
     if (m) return parseInt(m[1], 10);
-  } catch { /* sem config ainda: o logid grava o default no primeiro boot */ }
+  } catch { /* no config yet: logid writes the default on first boot */ }
   return 8787;
 }
 
@@ -53,30 +54,30 @@ const PORT = readPort();
 const URL = `http://127.0.0.1:${PORT}/`;
 const LOGID = PATHS.logid;
 
-/// Caminho de uma URL nossa, sem usar a classe `URL`.
+/// Path of one of our URLs, without using the `URL` class.
 ///
-/// `const URL = 'http://127.0.0.1:...'` ali em cima **sombreia** a
-/// classe global com mesmo nome: `new URL(x)` aqui dentro morre com
-/// "URL is not a constructor". Foi o que aconteceu, e o erro virou
-/// `UnhandledPromiseRejectionWarning` no log -- a janela abria, so a
-/// tela cheia nunca acontecia. Sintoma mudo, causa a dois arquivos de
-/// distancia do nome.
+/// `const URL = 'http://127.0.0.1:...'` above **shadows** the global
+/// class of the same name: `new URL(x)` in here dies with "URL is not a
+/// constructor". That is what happened, and the error became an
+/// `UnhandledPromiseRejectionWarning` in the log -- the window opened,
+/// only full screen never happened. A silent symptom, with the cause two
+/// files away from the name.
 ///
-/// `globalThis.URL` resolveria, mas uma funcao nomeada deixa o motivo
-/// escrito onde a proxima pessoa vai olhar.
-function caminhoDe(u) {
+/// `globalThis.URL` would solve it, but a named function leaves the reason
+/// written where the next person will look.
+function pathOf(u) {
   return new globalThis.URL(String(u)).pathname;
 }
 
 let win = null;
 let tray = null;
-let child = null;      // backend que NOS subimos (se subimos)
+let child = null;      // backend that WE started (if we did)
 let quitting = false;
 
 // --- backend ---------------------------------------------------------------
 
-/// GET + JSON do logid. Devolve null em qualquer falha: a bandeja
-/// degrada para "sem dados" em vez de quebrar.
+/// GET + JSON from logid. Returns null on any failure: the tray degrades
+/// to "no data" instead of breaking.
 function getJson(path, timeout = 4000) {
   return new Promise((resolve) => {
     const req = http.get(
@@ -107,22 +108,21 @@ function ping(timeout = 800) {
   });
 }
 
-// Quem supervisiona o daemon e o SO -- systemd no Linux, launchd no
-// macOS, schtasks no Windows. A GUI pede ao supervisor; ela nao e um
-// segundo supervisor.
+// The OS supervises the daemon -- systemd on Linux, launchd on macOS,
+// schtasks on Windows. The GUI asks the supervisor; it is not a second
+// supervisor.
 //
-// Isto nao e estilo: subir um filho nosso cria um SEGUNDO dono da porta.
-// No boot do Mac a GUI ganhou a corrida contra o LaunchAgent, o filho
-// ficou orfao (o launchd nao o conhece, `launchctl print` dizia
-// `state = spawn scheduled`) e a copia supervisionada passou o dia
-// morrendo em loop com `Address already in use`. Resultado: o deploy
-// instalava o binario novo, dizia `ok` em todos os passos, e a maquina
-// seguia servindo um build de dez dias atras. Quem notou foi o usuario.
+// This is not style: spawning a child of our own creates a SECOND owner of
+// the port. At Mac boot the GUI won the race against the LaunchAgent, the
+// child was orphaned (launchd does not know it, `launchctl print` said
+// `state = spawn scheduled`) and the supervised copy spent the day dying in
+// a loop with `Address already in use`. Result: deploy installed the new
+// binary, said `ok` at every step, and the machine kept serving a build
+// from ten days earlier. The user was the one who noticed.
 //
-// Pior ainda para o OTA: ele reinicia pelo launchd, pergunta o
-// `/healthz`, ouve o build velho do orfao e REVERTE uma atualizacao que
-// estava correta.
-function comandoDoSupervisor() {
+// Worse for OTA: it restarts through launchd, asks `/healthz`, hears the
+// orphan's old build and REVERTS an update that was correct.
+function supervisorCommand() {
   if (process.platform === 'darwin') {
     return ['launchctl', ['kickstart', `gui/${process.getuid()}/ai.logi.logid`]];
   }
@@ -132,7 +132,7 @@ function comandoDoSupervisor() {
   return ['schtasks', ['/run', '/tn', 'logid']];
 }
 
-function pedir(cmd, args) {
+function request(cmd, args) {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { stdio: 'ignore', windowsHide: true });
     p.on('error', () => resolve(false));
@@ -140,8 +140,8 @@ function pedir(cmd, args) {
   });
 }
 
-async function esperarPorta(tentativas) {
-  for (let i = 0; i < tentativas; i++) {
+async function waitForPort(attempts) {
+  for (let i = 0; i < attempts; i++) {
     await new Promise((r) => setTimeout(r, 200));
     if (await ping(400)) return true;
   }
@@ -149,35 +149,35 @@ async function esperarPorta(tentativas) {
 }
 
 async function ensureBackend() {
-  if (await ping()) return 'ja rodando';
+  if (await ping()) return 'already running';
 
-  // Primeiro o supervisor. Se ele sobe o daemon, quem fica no ar e a
-  // copia que o deploy e o OTA sabem reiniciar.
-  if (await pedir(...comandoDoSupervisor())) {
-    if (await esperarPorta(25)) return 'o supervisor subiu';
+  // Supervisor first. If it starts the daemon, the copy left running is
+  // the one deploy and OTA know how to restart.
+  if (await request(...supervisorCommand())) {
+    if (await waitForPort(25)) return 'started by the supervisor';
   }
 
-  // Sem supervisor instalado (maquina nova, antes do assistente) a GUI
-  // ainda tem de abrir -- e justamente pela GUI que se chega ao
-  // assistente que instala o supervisor. Ai sim, filho avulso, e matado
-  // no `will-quit`.
+  // With no supervisor installed (new machine, before the wizard) the GUI
+  // still has to open -- the GUI is precisely how one reaches the wizard
+  // that installs the supervisor. Only then a standalone child, killed
+  // on `will-quit`.
   const bin = fs.existsSync(LOGID) ? LOGID : 'logid';
-  // windowsHide: o daemon e console app, e sem isto uma janela preta
-  // pisca na tela a cada vez que a GUI o sobe.
+  // windowsHide: the daemon is a console app, and without this a black
+  // window flashes on screen every time the GUI starts it.
   child = spawn(bin, [], { stdio: 'ignore', detached: false, windowsHide: true });
   let died = false;
   child.on('exit', () => { died = true; child = null; });
-  if (await esperarPorta(25)) {
-    // Se o filho morreu mas a porta responde, quem atende e outro.
-    // Nao reivindicar o credito.
-    return died ? 'ja rodando (nosso filho saiu: porta ocupada)' : 'subimos agora (sem supervisor)';
+  if (await waitForPort(25)) {
+    // If the child died but the port answers, someone else is serving.
+    // Do not claim the credit.
+    return died ? 'already running (our child exited: port in use)' : 'started now (no supervisor)';
   }
-  return 'nao respondeu';
+  return 'did not respond';
 }
 
-// --- janela ----------------------------------------------------------------
+// --- window ----------------------------------------------------------------
 
-function createWindow(rota = '/') {
+function createWindow(route = '/') {
   win = new BrowserWindow({
     width: 1000,
     height: 780,
@@ -188,61 +188,60 @@ function createWindow(rota = '/') {
     backgroundColor: '#0c0e12',
     autoHideMenuBar: true,
     webPreferences: {
-      // A pagina e local e nao recebe nada nosso: sem node, com isolamento.
+      // The page is local and receives nothing of ours: no node, isolated.
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
     },
   });
 
-  win.loadURL(URL.slice(0, -1) + rota);
+  win.loadURL(URL.slice(0, -1) + route);
 
-  // Tela cheia so na configuracao, e so enquanto ela estiver aberta.
+  // Full screen only on the setup page, and only while it is open.
   //
-  // Quem decide e a ROTA, por `did-navigate`, e nao a chamada: o link
-  // "painel" no pe da pagina e a saida natural, e ele teria de tirar a
-  // tela cheia por conta propria -- coisa que uma pagina nao pode
-  // fazer. Amarrando no evento, voltar para `/` devolve a janela
-  // normal sozinho, e ir para `/setup` pelo menu da bandeja entra em
-  // tela cheia sem caminho especial.
+  // The ROUTE decides, via `did-navigate`, not the call: the "painel" link
+  // at the bottom of the page is the natural exit, and it would have to
+  // leave full screen on its own -- something a page cannot do. Tied to
+  // the event, going back to `/` restores the normal window by itself, and
+  // going to `/setup` from the tray menu enters full screen with no
+  // special path.
   //
-  // Tela cheia sem saida visivel seria sequestro de tela; a pagina
-  // sempre mostra o link do painel, e o Esc continua valendo.
-  const ajustarTela = (url) => {
-    const cheia = caminhoDe(url).startsWith('/setup');
-    if (win.isFullScreen() === cheia) return;
-    win.setFullScreen(cheia);
-    // Uma linha no log por troca: sem ela, "a tela cheia nao
-    // aconteceu" nao se distingue de "a navegacao nao chegou aqui" --
-    // e a primeira versao disto falhava calada, por sombreamento de
-    // nome.
-    console.log(`janela: ${cheia ? 'tela cheia' : 'normal'} (${caminhoDe(url)})`);
+  // Full screen with no visible exit would be hijacking the screen; the
+  // page always shows the panel link, and Esc still works.
+  const adjustScreen = (url) => {
+    const full = pathOf(url).startsWith('/setup');
+    if (win.isFullScreen() === full) return;
+    win.setFullScreen(full);
+    // One log line per switch: without it, "full screen did not happen"
+    // is indistinguishable from "navigation never got here" -- and the
+    // first version of this failed silently, through name shadowing.
+    console.log(`window: ${full ? 'full screen' : 'normal'} (${pathOf(url)})`);
   };
-  win.webContents.on('did-navigate', (_e, url) => ajustarTela(url));
-  ajustarTela(URL.slice(0, -1) + rota);
+  win.webContents.on('did-navigate', (_e, url) => adjustScreen(url));
+  adjustScreen(URL.slice(0, -1) + route);
 
-  // Link externo abre no navegador, nunca dentro do app.
+  // External links open in the browser, never inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
   });
 
-  // Fechar esconde na bandeja -- mas so onde ELA existe.
+  // Closing hides to the tray -- but only where THAT tray exists.
   //
-  // No Linux a bandeja agora e nativa, dentro do logid, e esta casca
-  // nao cria mais a dela. Esconder a janela sem bandeja propria
-  // deixaria um processo invisivel e sem caminho de volta: o menu
-  // nativo abre o painel no navegador, nao esta janela. Entao aqui
-  // fechar e fechar.
+  // On Linux the tray is now native, inside logid, and this shell no
+  // longer creates its own. Hiding the window without a tray of our own
+  // would leave an invisible process with no way back: the native menu
+  // opens the panel in the browser, not this window. So here closing
+  // means closing.
   win.on('close', (e) => {
-    if (!quitting && !BANDEJA_NATIVA) { e.preventDefault(); win.hide(); }
+    if (!quitting && !NATIVE_TRAY) { e.preventDefault(); win.hide(); }
   });
 }
 
-/// Abre uma rota do painel na janela, criando-a se preciso.
-function abrir(rota) {
-  if (!win || win.isDestroyed()) return createWindow(rota);
-  win.loadURL(URL.slice(0, -1) + rota);
+/// Opens a panel route in the window, creating it if needed.
+function open(route) {
+  if (!win || win.isDestroyed()) return createWindow(route);
+  win.loadURL(URL.slice(0, -1) + route);
   win.show();
   win.focus();
 }
@@ -253,31 +252,32 @@ function toggle() {
   else { win.show(); win.focus(); }
 }
 
-// --- bandeja ---------------------------------------------------------------
+// --- tray ------------------------------------------------------------------
 
-/// Linha de bateria de um dispositivo, para o menu.
+/// Battery line of a device, for the menu.
 function batteryLabel(d) {
   const parts = [];
   if (d.battery_percent != null) parts.push(d.battery_percent + '%');
-  // O status vem do dispositivo e pode contradizer a realidade: medido,
-  // um MX Keys no cabo subiu de 5% para 50% dizendo "descarregando".
-  // Marcamos de quem e a afirmacao.
+  // The status comes from the device and can contradict reality: measured,
+  // an MX Keys on the cable went from 5% to 50% saying "discharging". We
+  // mark whose claim it is.
   if (d.charging) parts.push('carregando');
   else if (d.battery_status) parts.push(`diz: ${d.battery_status}`);
   if (d.battery_next_level != null) parts.push(`prox ${d.battery_next_level}%`);
-  // Idade da leitura: com o dispositivo ausente, isto e memoria, e dizer
-  // "5% (2min)" vale mais que "?" -- mas fingir que e agora seria pior.
+  // Age of the reading: with the device absent this is memory, and saying
+  // "5% (2min)" is worth more than "?" -- but pretending it is current
+  // would be worse.
   if (d.battery_age_s > 60) {
     const m = Math.round(d.battery_age_s / 60);
     parts.push(m >= 60 ? `ha ${Math.round(m / 60)}h` : `ha ${m}min`);
   }
   const bat = parts.length ? parts.join(' ') : 'bateria ?';
-  const onde = d.online ? ('canal ' + (d.current_host ?? '?')) : 'em outra maquina';
-  return `${d.name} - ${bat} - ${onde}`;
+  const where = d.online ? ('canal ' + (d.current_host ?? '?')) : 'em outra maquina';
+  return `${d.name} - ${bat} - ${where}`;
 }
 
-/// Manda o foco para um host. `fast` usa o cache de pares: a bandeja e
-/// caminho interativo, nao vale esperar SSH.
+/// Sends focus to a host. `fast` uses the peer cache: the tray is an
+/// interactive path, not worth waiting on SSH.
 async function focus(host) {
   const body = JSON.stringify({ host, confirm: true, fast: true });
   await new Promise((resolve) => {
@@ -302,7 +302,7 @@ async function refreshTray() {
     getJson('/api/config'),
     getJson('/api/kvm'),
   ]);
-  const porLan = kvm?.mode === 'lan';
+  const viaLan = kvm?.mode === 'lan';
 
   const items = [];
   const list = (devs?.receivers ?? []).flatMap((r) => r.devices ?? []);
@@ -315,39 +315,39 @@ async function refreshTray() {
     for (const d of list) items.push({ label: batteryLabel(d), enabled: false });
   }
 
-  // Troca rapida: um item por host remoto declarado na config.
+  // Quick switch: one item per remote host declared in the config.
   const remotes = (cfg?.hosts ?? []).filter(
     (h) => !['127.0.0.1', 'localhost', '::1'].includes(h.addr)
   );
-  const aqui = (cfg?.hosts ?? []).find(
+  const here = (cfg?.hosts ?? []).find(
     (h) => ['127.0.0.1', 'localhost', '::1'].includes(h.addr)
   );
   if (remotes.length) {
     items.push({ type: 'separator' });
     for (const h of remotes) {
-      const ativo = porLan && kvm?.target === h.name;
+      const active = viaLan && kvm?.target === h.name;
       items.push({
-        label: (ativo ? '\u25cf ' : '') + `Mandar para ${h.name}`,
+        label: (active ? '● ' : '') + `Mandar para ${h.name}`,
         click: () => focus(h.name),
       });
     }
-    // Quando mostrar "trazer de volta" depende do MECANISMO.
+    // When to show "bring back" depends on the MECHANISM.
     //
-    // No HID++ o dispositivo troca de canal e some do nosso receptor,
-    // entao "algum dispositivo offline" e o sinal certo. No modo LAN
-    // ele nunca sai daqui -- continua online -- e esse teste nunca
-    // seria verdadeiro: o item sumiria justamente no modo em que ele e
-    // o unico caminho de volta pelo menu.
-    const fora = porLan ? Boolean(kvm?.target) : list.some((d) => !d.online);
-    if (aqui && fora) {
-      items.push({ label: `Trazer para ${aqui.name}`, click: () => focus(aqui.name) });
+    // With HID++ the device switches channel and disappears from our
+    // receiver, so "some device offline" is the right signal. In LAN mode
+    // it never leaves here -- it stays online -- and that test would never
+    // be true: the item would vanish precisely in the mode where it is the
+    // only way back through the menu.
+    const away = viaLan ? Boolean(kvm?.target) : list.some((d) => !d.online);
+    if (here && away) {
+      items.push({ label: `Trazer para ${here.name}`, click: () => focus(here.name) });
     }
   }
 
   items.push(
     { type: 'separator' },
     { label: 'Mostrar / esconder', click: toggle },
-    { label: 'Configurar esta maquina', click: () => abrir('/setup') },
+    { label: 'Configurar esta maquina', click: () => open('/setup') },
     { label: 'Recarregar', click: () => win && win.reload() },
     { label: 'Abrir no navegador', click: () => shell.openExternal(URL) },
     { type: 'separator' },
@@ -356,58 +356,59 @@ async function refreshTray() {
 
   tray.setContextMenu(Menu.buildFromTemplate(items));
 
-  // Tooltip resume o que importa sem abrir o menu.
+  // The tooltip summarizes what matters without opening the menu.
   const low = list.filter((d) => (d.battery_percent ?? 100) <= 15);
-  const resumo = list.length
+  const summary = list.length
     ? list.map((d) => `${d.name}: ${d.battery_percent ?? '?'}%`).join(' | ')
     : 'sem dispositivos';
   tray.setToolTip(
-    'logid' + (low.length ? '  [BATERIA BAIXA]' : '') + '\n' + resumo
+    'logid' + (low.length ? '  [BATERIA BAIXA]' : '') + '\n' + summary
   );
 }
 
-// --- recarregar quando o daemon mudar de build ----------------------------
+// --- reload when the daemon changes build ---------------------------------
 //
-// A pagina tambem sabe se recarregar, mas isso nao basta: o codigo que
-// recarrega VIAJA NA PAGINA. Uma janela aberta antes de o recurso existir
-// nunca o recebe -- foi o que aconteceu, e o usuario ficou olhando um
-// painel de ontem enquanto o daemon estava quinze builds adiante, com
-// razao de achar que o binario estava velho.
+// The page also knows how to reload itself, but that is not enough: the
+// code that reloads TRAVELS IN THE PAGE. A window opened before the feature
+// existed never receives it -- that is what happened, and the user kept
+// looking at yesterday's panel while the daemon was fifteen builds ahead,
+// rightly thinking the binary was stale.
 //
-// Aqui, no processo principal, o relogio nao depende do que a pagina
-// carregou: ele e dono da janela e recarrega do servidor.
-let buildVisto = null;
-async function vigiaBuild() {
+// Here, in the main process, the clock does not depend on what the page
+// loaded: it owns the window and reloads from the server.
+let seenBuild = null;
+async function watchBuild() {
   const h = await getJson('/healthz', 3000);
-  if (!h || !h.build) return;                 // daemon reiniciando
-  const atual = `${h.n ?? '?'} ${h.build}`;
-  if (buildVisto === null) { buildVisto = atual; return; }
-  if (atual === buildVisto) return;
-  buildVisto = atual;                         // marca ANTES, para nao virar laco
+  if (!h || !h.build) return;                 // daemon restarting
+  const current = `${h.n ?? '?'} ${h.build}`;
+  if (seenBuild === null) { seenBuild = current; return; }
+  if (current === seenBuild) return;
+  seenBuild = current;                        // mark FIRST, so it cannot loop
   if (win && !win.isDestroyed()) {
-    // Ignorando cache: a pagina vem com `no-store`, mas um recarregamento
-    // que revalida ainda poderia servir o mesmo HTML de um proxy local.
+    // Ignoring cache: the page comes with `no-store`, but a revalidating
+    // reload could still serve the same HTML from a local proxy.
     win.webContents.reloadIgnoringCache();
   }
 }
 
-/// Mede o setup e leva para a configuracao se faltar algo local.
-async function conferirSetup() {
-  // Se o daemon nao responder, nao abre nada: um wizard que aparece
-  // porque a medicao falhou e pior que nenhum wizard.
+/// Measures the setup and goes to the setup page if something local is missing.
+async function checkSetup() {
+  // If the daemon does not answer, open nothing: a wizard that shows up
+  // because the measurement failed is worse than no wizard.
   const d = await getJson('/api/setup', 90000);
   if (!d || !d.passos) return;
   const local = d.passos.filter(
     (p) => p.essencial && p.id !== 'pares' && p.estado !== 'ok' && p.estado !== 'fora'
   );
   if (!local.length) return;
-  console.log(`setup: falta ${local.map((p) => p.id).join(', ')} -- abrindo a configuracao`);
-  // So se a pessoa ainda estiver na pagina inicial: se ela ja navegou,
-  // mandar a janela para outro lugar seria tirar a tela da mao dela.
+  console.log(`setup: missing ${local.map((p) => p.id).join(', ')} -- opening the setup page`);
+  // Only if the person is still on the home page: if they already
+  // navigated, moving the window elsewhere would take the screen out of
+  // their hands.
   if (!win || win.isDestroyed()) return;
-  const onde = caminhoDe(win.webContents.getURL() || URL);
-  if (onde !== '/' && onde !== '/index.html') return;
-  abrir('/setup');
+  const where = pathOf(win.webContents.getURL() || URL);
+  if (where !== '/' && where !== '/index.html') return;
+  open('/setup');
 }
 
 function createTray() {
@@ -416,14 +417,14 @@ function createTray() {
   tray.setToolTip('logid');
   tray.on('click', toggle);
   refreshTray();
-  // A bandeja e lida de relance: manter fresca sem o usuario pedir.
+  // The tray is read at a glance: keep it fresh without the user asking.
   setInterval(refreshTray, 15000);
-  // Mesma ideia para o build: a janela nao pode ficar atras do daemon.
-  vigiaBuild();
-  setInterval(vigiaBuild, 5000);
+  // Same idea for the build: the window cannot lag behind the daemon.
+  watchBuild();
+  setInterval(watchBuild, 5000);
 }
 
-// --- ciclo de vida ---------------------------------------------------------
+// --- lifecycle -------------------------------------------------------------
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -432,42 +433,42 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     const how = await ensureBackend();
-    console.log(`backend em ${URL}: ${how}`);
-    // `--setup` abre direto na configuracao. Serve para quem chamou o
-    // app de proposito para configurar, e e como esta tela se testa
-    // sem depender de clicar na bandeja.
-    const direto = process.argv.includes('--setup');
-    createWindow(direto ? '/setup' : '/');
-    if (direto) return;
-    // A configuracao se abre sozinha quando falta algo nesta maquina --
-    // DEPOIS da janela, nunca antes.
+    console.log(`backend at ${URL}: ${how}`);
+    // `--setup` opens straight on the setup page. It is for whoever
+    // launched the app on purpose to configure it, and it is how this
+    // screen gets tested without clicking the tray.
+    const direct = process.argv.includes('--setup');
+    createWindow(direct ? '/setup' : '/');
+    if (direct) return;
+    // The setup page opens by itself when something is missing on this
+    // machine -- AFTER the window, never before.
     //
-    // `/api/setup` mede SSH para cada par e leva segundos; esperar por
-    // ela para so entao abrir a janela faria o app parecer travado toda
-    // vez. A janela nasce no painel e troca se for o caso.
+    // `/api/setup` measures SSH to every peer and takes seconds; waiting
+    // for it before opening the window would make the app look frozen
+    // every time. The window is born on the panel and switches if needed.
     //
-    // E `pares` NAO conta para abrir sozinho. Ele fala das OUTRAS
-    // maquinas: com o MacBook dormindo, uma maquina perfeitamente
-    // montada cairia na tela de configuracao a cada login -- e a
-    // segunda vez que isso acontece a pessoa ja aprendeu a fechar sem
-    // ler. Falta de verdade e o que esta errado AQUI.
-    conferirSetup();
-    // Bandeja so onde nao ha nativa. No Linux o logid registra a dele
-    // por StatusNotifierItem; criar a do Electron junto poria DOIS
-    // icones iguais na barra, cada um com um menu que o outro nao
-    // atualiza.
-    if (!BANDEJA_NATIVA) createTray();
+    // And `pares` does NOT count for opening on its own. It is about the
+    // OTHER machines: with the MacBook asleep, a perfectly set-up machine
+    // would land on the setup page at every login -- and by the second
+    // time the person has learned to close it without reading. A real
+    // gap is what is wrong HERE.
+    checkSetup();
+    // A tray only where there is no native one. On Linux logid registers
+    // its own via StatusNotifierItem; creating Electron's as well would put
+    // TWO identical icons in the bar, each with a menu the other does not
+    // update.
+    if (!NATIVE_TRAY) createTray();
   });
 
-  // Sem bandeja propria, fechar a ultima janela tem de encerrar: um
-  // Electron invisivel sem icone nenhum e um processo que so o
-  // gerenciador de tarefas acha.
+  // Without a tray of our own, closing the last window must quit: an
+  // invisible Electron with no icon at all is a process only the task
+  // manager finds.
   app.on('window-all-closed', () => {
-    if (BANDEJA_NATIVA) app.quit();
+    if (NATIVE_TRAY) app.quit();
   });
 
   app.on('before-quit', () => { quitting = true; });
 
-  // Mata o backend so se o filho for nosso; o do systemd segue vivo.
+  // Kill the backend only if the child is ours; systemd's stays alive.
   app.on('will-quit', () => { if (child) child.kill(); });
 }

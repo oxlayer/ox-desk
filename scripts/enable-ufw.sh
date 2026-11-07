@@ -1,64 +1,63 @@
 #!/usr/bin/env bash
-# Liga o ufw com as portas desta infra, e so da LAN.
+# Turns on ufw with this infra's ports, LAN only.
 #
-# Rode:  sudo bash scripts/enable-ufw.sh
+# Run:  sudo bash scripts/enable-ufw.sh
 #
-# Por que agora: o enable-sshd.sh achou o ufw inativo e seguiu em frente,
-# entao as regras de escopo que ele tentou criar nunca existiram. Com
-# sshd (22) e RDP do GNOME (3389) escutando em `*`, isso deixou de ser
-# detalhe.
+# Why now: enable-sshd.sh found ufw inactive and moved on, so the scoping
+# rules it tried to create never existed. With sshd (22) and GNOME's RDP
+# (3389) listening on `*`, that stopped being a detail.
 #
-# CUIDADO QUE ESTE SCRIPT TOMA: mDNS.
-#   Todo o desenho desta infra usa NOME, nunca IP (specs/007) -- e nome
-#   aqui e `.local`, que e mDNS na 5353/udp. Um `ufw enable` com a politica
-#   padrao de negar entrada mata as RESPOSTAS de mDNS, e o resultado seria
-#   "nada resolve mais" com cara de problema de rede. Por isso a 5353 entra
-#   explicitamente, antes do enable.
+# THE CARE THIS SCRIPT TAKES: mDNS.
+#   This infra's whole design uses NAMES, never IPs (specs/007) -- and a
+#   name here is `.local`, which is mDNS on 5353/udp. A `ufw enable` with
+#   the default deny-incoming policy kills the mDNS REPLIES, and the result
+#   would be "nothing resolves anymore" looking like a network problem.
+#   That is why 5353 is allowed explicitly, before the enable.
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "rode com sudo: sudo bash $0" >&2
+  echo "run with sudo: sudo bash $0" >&2
   exit 1
 fi
 
 LAN="${LAN:-192.168.1.0/24}"
-echo "== LAN considerada: $LAN =="
+echo "== LAN in use: $LAN =="
 
 if ! command -v ufw >/dev/null 2>&1; then
-  echo "instalando ufw"
+  echo "installing ufw"
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ufw
 fi
 
-echo "== politica =="
+echo "== policy =="
 ufw --force reset >/dev/null
 ufw default deny incoming  >/dev/null
 ufw default allow outgoing >/dev/null
 
-echo "== mDNS (sem isto, nenhum nome .local resolve) =="
-ufw allow in  5353/udp comment 'mDNS: nomes .local, base de specs/007' >/dev/null
-ufw allow out 5353/udp comment 'mDNS'                                  >/dev/null
+echo "== mDNS (without this, no .local name resolves) =="
+ufw allow in  5353/udp comment 'mDNS: .local names, basis of specs/007' >/dev/null
+ufw allow out 5353/udp comment 'mDNS'                                   >/dev/null
 
-echo "== servicos, so da LAN =="
-ufw allow from "$LAN" to any port 22   proto tcp comment 'ssh: par sonda o agente' >/dev/null
+echo "== services, LAN only =="
+ufw allow from "$LAN" to any port 22   proto tcp comment 'ssh: the peer probes the agent' >/dev/null
 ufw allow from "$LAN" to any port 3389 proto tcp comment 'rdp: gnome-remote-desktop' >/dev/null
-# KDE Connect usa a faixa 1716-1764 em TCP e UDP (descoberta + payload).
+# KDE Connect uses the 1716-1764 range on TCP and UDP (discovery + payload).
 ufw allow from "$LAN" to any port 1716:1764 proto tcp comment 'kde connect' >/dev/null
 ufw allow from "$LAN" to any port 1716:1764 proto udp comment 'kde connect' >/dev/null
 
-# A API do logid NAO entra: ela escuta em 127.0.0.1 de proposito
-# (specs/008). Se um dia precisar de regra aqui, algo esta errado.
+# The logid API is NOT included: it listens on 127.0.0.1 on purpose
+# (specs/008). If it ever needs a rule here, something is wrong.
 
-echo "== ligando =="
+echo "== enabling =="
 ufw --force enable >/dev/null
 ufw status verbose
 
 cat <<EOF
 
-== conferencia =="
+== check ==
 EOF
-echo -n "  mDNS ainda resolve o Windows?  "
-getent hosts windows-host.local >/dev/null 2>&1 && echo "sim" || echo "NAO -- revise a regra 5353"
-echo -n "  22 escutando?                  "
-ss -tln | grep -q ':22 ' && echo "sim" || echo "nao"
-echo -n "  8787 so em loopback?           "
-ss -tln | grep ':8787' | grep -q '127.0.0.1' && echo "sim" || echo "revise: deveria ser so loopback"
+echo -n "  mDNS still resolves Windows?   "
+getent hosts windows-host.local >/dev/null 2>&1 && echo "yes" || echo "NO -- review the 5353 rule"
+echo -n "  22 listening?                  "
+ss -tln | grep -q ':22 ' && echo "yes" || echo "no"
+echo -n "  8787 only on loopback?         "
+ss -tln | grep ':8787' | grep -q '127.0.0.1' && echo "yes" || echo "review: it should be loopback only"

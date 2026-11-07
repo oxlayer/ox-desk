@@ -1,7 +1,7 @@
 #!/bin/bash
 # Puts this Mac in the overlay without the Tailscale app.
 #
-# Spec: ../specs/012-fora-da-lan.md
+# Spec: ../specs/012-outside-the-lan.md
 #
 #   brew install tailscale
 #   sudo bash logid/setup/instalar-tailscale-mac.sh
@@ -16,8 +16,8 @@
 # If the internet stops working at any step, this script undoes that step.
 set -u
 
-[ "$(id -u)" = 0 ] || { echo "precisa de root: sudo bash $0"; exit 1; }
-[ -n "${SUDO_USER:-}" ] || { echo "rode com sudo, não como root direto"; exit 1; }
+[ "$(id -u)" = 0 ] || { echo "needs root: sudo bash $0"; exit 1; }
+[ -n "${SUDO_USER:-}" ] || { echo "run with sudo, not as root directly"; exit 1; }
 
 LABEL=ai.logi.tailscaled
 PLIST="/Library/LaunchDaemons/$LABEL.plist"
@@ -27,16 +27,16 @@ SOCK=/var/run/tailscaled.socket
 PREFIX=$(sudo -u "$SUDO_USER" -i brew --prefix 2>/dev/null)
 TS="$PREFIX/bin/tailscale"
 TSD="$PREFIX/bin/tailscaled"
-[ -x "$TSD" ] && [ -x "$TS" ] || { echo "falta o brew: brew install tailscale"; exit 1; }
+[ -x "$TSD" ] && [ -x "$TS" ] || { echo "tailscale from brew is missing: brew install tailscale"; exit 1; }
 
 if [ -e /Applications/Tailscale.app ] || scutil --nc list | grep -qi tailscale; then
-  echo "o app Tailscale ainda está aqui. Apague-o pelo Finder (o macOS remove a extensão"
-  echo "junto), remova a VPN em Ajustes > VPN, e rode de novo."
+  echo "the Tailscale app is still here. Delete it in Finder (macOS removes the extension"
+  echo "with it), remove the VPN in System Settings > VPN, and run again."
   exit 1
 fi
 
 IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
-[ -n "$IFACE" ] || { echo "esta máquina não tem rota padrão: nada foi alterado"; exit 1; }
+[ -n "$IFACE" ] || { echo "this machine has no default route: nothing was changed"; exit 1; }
 
 net_ok() {
   local n=0 h
@@ -52,22 +52,22 @@ backend() {
 }
 
 rollback() {
-  echo ">> desfazendo: $1"
+  echo ">> rolling back: $1"
   launchctl bootout "system/$LABEL" 2>/dev/null
   rm -f "$PLIST"
   sleep 3
-  net_ok && echo ">> internet ok, nada ficou instalado" || echo ">> ATENÇÃO: a internet ainda falha"
+  net_ok && echo ">> internet ok, nothing left installed" || echo ">> WARNING: the internet still fails"
   exit 1
 }
 
-net_ok || { echo "a internet já falha antes de começar: nada foi alterado"; exit 1; }
+net_ok || { echo "the internet already fails before starting: nothing was changed"; exit 1; }
 
 if [ "$(backend)" = Running ]; then
-  echo "o Tailscale já está de pé nesta máquina: nada a fazer"
+  echo "Tailscale is already up on this machine: nothing to do"
   exit 0
 fi
 
-echo "==> serviço"
+echo "==> service"
 install -d -m 700 -o root -g wheel "$STATE"
 cat > "$PLIST" <<PLISTEND
 <?xml version="1.0" encoding="UTF-8"?>
@@ -84,33 +84,33 @@ cat > "$PLIST" <<PLISTEND
 </dict></plist>
 PLISTEND
 chown root:wheel "$PLIST"; chmod 644 "$PLIST"
-launchctl bootstrap system "$PLIST" || rollback "o launchd recusou o serviço"
+launchctl bootstrap system "$PLIST" || rollback "launchd refused the service"
 
 for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 2
   [ -n "$(backend)" ] && break
-  [ "$i" = 10 ] && rollback "o serviço não respondeu em 20 s"
+  [ "$i" = 10 ] && rollback "the service did not respond within 20 s"
 done
 
-echo "==> login: abra o link que aparecer"
+echo "==> login: open the link that appears"
 "$TS" --socket="$SOCK" up --accept-routes=false --accept-dns=false --operator="$SUDO_USER" ||
-  rollback "o login não terminou"
-[ "$(backend)" = Running ] || rollback "o serviço não chegou a Running"
+  rollback "the login did not finish"
+[ "$(backend)" = Running ] || rollback "the service never reached Running"
 
-echo "==> conferindo a internet com o túnel ligado"
-for i in 1 2 3 4; do sleep 5; net_ok || rollback "a internet falhou com o túnel ligado"; done
+echo "==> checking the internet with the tunnel up"
+for i in 1 2 3 4; do sleep 5; net_ok || rollback "the internet failed with the tunnel up"; done
 
-echo "==> nomes do tailnet"
+echo "==> tailnet names"
 "$TS" --socket="$SOCK" set --accept-dns=true
 for i in 1 2 3; do
   sleep 4
   net_ok || {
     "$TS" --socket="$SOCK" set --accept-dns=false
-    echo ">> os nomes derrubaram a internet: desliguei. Use os endereços 100.x."
+    echo ">> the names broke the internet: turned them off. Use the 100.x addresses."
     break
   }
 done
 
-echo "túnel: $(ifconfig | awk '/^[a-z]/{n=$1} /inet 100\./{print n, $2}')"
-echo "rota padrão: $(route -n get default | awk '/interface:/{print $2}')"
-echo "CONCLUÍDO"
+echo "tunnel: $(ifconfig | awk '/^[a-z]/{n=$1} /inet 100\./{print n, $2}')"
+echo "default route: $(route -n get default | awk '/interface:/{print $2}')"
+echo "DONE"

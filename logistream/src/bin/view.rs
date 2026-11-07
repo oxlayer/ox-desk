@@ -1,34 +1,34 @@
-//! Visualizador: QUIC -> H.264 -> janela. Fecha a v2.
+//! Viewer: QUIC -> H.264 -> window. Closes out v2.
 //!
 //! Spec: ../specs/010-remote-desktop.md
 //!
-//! ## Onde cada coisa roda
+//! ## Where each thing runs
 //!
-//! Rede e decodificacao numa thread, desenho na thread da interface. O
-//! laco de janela e dono da thread principal (exigencia do macOS, boa
-//! pratica no resto) e nao pode bloquear -- se decodificasse ali, cada
-//! quadro travaria a interface.
+//! Network and decoding on one thread, drawing on the UI thread. The
+//! window loop owns the main thread (a macOS requirement, good practice
+//! elsewhere) and must not block -- if it decoded there, every frame would
+//! freeze the UI.
 //!
-//! ## Onde ele compila
+//! ## Where it compiles
 //!
-//! Nas tres. Quem decodifica muda por plataforma e esta em
-//! `logistream::decode`: NVDEC no Linux e no Windows (vem com o driver
-//! NVIDIA), `ffmpeg` no Mac (que nao tem NVIDIA). Foi o NVDEC que tirou
-//! o Windows do RDP -- la nao existe `libavcodec` e levar as DLLs para
-//! la seria encanamento sem ganho.
+//! On all three. Who decodes changes per platform and lives in
+//! `logistream::decode`: NVDEC on Linux and Windows (it ships with the
+//! NVIDIA driver), `ffmpeg` on the Mac (which has no NVIDIA). NVDEC is what
+//! took Windows off RDP -- there is no `libavcodec` there and shipping the
+//! DLLs would be plumbing with no gain.
 //!
-//! Entre as duas ha **um slot**, nao uma fila: quadro novo sobrescreve o
-//! que ainda nao foi desenhado. Fila so acumularia atraso, e numa tela
-//! remota quadro velho nao tem valor -- ja passou.
+//! Between the two there is **a slot**, not a queue: a new frame
+//! overwrites one not yet drawn. A queue would only pile up delay, and on
+//! a remote screen an old frame has no value -- it is already past.
 //!
-//!   cargo run --release --bin view -- <host:porta>
+//!   cargo run --release --bin view -- <host:port>
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn main() {
     eprintln!(
-        "o visualizador nao compila neste sistema: ele precisa de NVDEC \
-         (Linux/Windows com GPU NVIDIA) ou do libavcodec (macOS). \
-         Ver specs/010."
+        "the viewer does not build on this system: it needs NVDEC \
+         (Linux/Windows with an NVIDIA GPU) or libavcodec (macOS). \
+         See specs/010."
     );
 }
 
@@ -43,7 +43,7 @@ mod visual {
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
-    use logistream::input::{evdev_de_winit, Evento, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+    use logistream::input::{evdev_from_winit, Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
     use logistream::net::{self, Reassembler};
     use winit::event::{ElementState, MouseButton, MouseScrollDelta};
     use winit::keyboard::PhysicalKey;
@@ -52,72 +52,73 @@ mod visual {
     use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
     use winit::window::{Window, WindowId};
 
-    /// O quadro pronto para desenhar, com a geometria que o explica.
+    /// The frame ready to draw, with the geometry that explains it.
     ///
-    /// Tres tamanhos diferentes vivem aqui, e confundi-los foi um bug
-    /// visivel: a tela REMOTA (`rw`x`rh`), a IMAGEM desenhada (`w`x`h`,
-    /// a remota ajustada a janela sem distorcer) e a JANELA (`jw`x`jh`).
+    /// Three different sizes live here, and mixing them up was a visible
+    /// bug: the REMOTE screen (`rw`x`rh`), the drawn IMAGE (`w`x`h`, the
+    /// remote one fitted to the window without distortion) and the WINDOW
+    /// (`win_w`x`win_h`).
     ///
-    /// O calculo da posicao do mouse usava o tamanho da imagem como se
-    /// fosse o da tela remota. Como a imagem tem o tamanho da janela,
-    /// `posicao / janela * imagem` devolvia a propria posicao -- numa
-    /// janela de 1280x720 contra uma tela de 2560x1440, o cursor so
-    /// alcancava o QUARTO superior esquerdo do desktop remoto. Era o que
-    /// o usuario via como "a posicao nao bate".
+    /// The mouse position math used the image size as if it were the
+    /// remote screen's. Since the image is the size of the window,
+    /// `position / window * image` returned the position itself -- in a
+    /// 1280x720 window against a 2560x1440 screen, the cursor only reached
+    /// the top-left QUARTER of the remote desktop. That is what the user
+    /// saw as "the position doesn't match".
     #[derive(Default)]
     pub struct Slot {
         pub rgb: Vec<u32>,
-        /// Tamanho da imagem desenhada.
+        /// Size of the drawn image.
         pub w: u32,
         pub h: u32,
-        /// Canto onde a imagem comeca dentro da janela (barras laterais).
+        /// Corner where the image starts inside the window (side bars).
         pub ox: u32,
         pub oy: u32,
-        /// Tamanho da tela remota -- o espaco de coordenadas do host.
+        /// Remote screen size -- the host's coordinate space.
         pub rw: u32,
         pub rh: u32,
-        /// Janela para a qual esta geometria foi calculada.
-        pub jw: u32,
-        pub jh: u32,
-        /// Sobe a cada quadro novo; a janela so redesenha quando muda.
-        pub geracao: u64,
-        /// Instante da captura do quadro no slot, para `LOGI_MEDIR`.
-        pub capturado_ns: u64,
+        /// Window this geometry was computed for.
+        pub win_w: u32,
+        pub win_h: u32,
+        /// Goes up on every new frame; the window only redraws when it changes.
+        pub generation: u64,
+        /// Capture instant of the frame in the slot, for `LOGI_MEDIR`.
+        pub captured_ns: u64,
     }
 
-    /// Cor das barras quando a proporcao da janela nao bate com a da tela
-    /// remota. Escura e neutra: barra clara puxa o olho para fora da
-    /// imagem.
-    const FUNDO: u32 = 0x0010_1014;
+    /// Color of the bars when the window's aspect ratio does not match the
+    /// remote screen's. Dark and neutral: a light bar pulls the eye away
+    /// from the image.
+    const BACKGROUND: u32 = 0x0010_1014;
 
-    /// Imagem ajustada a janela SEM distorcer: escala pelo lado que
-    /// aperta, centraliza o resto.
+    /// Image fitted to the window WITHOUT distortion: scale by the tighter
+    /// side, center the rest.
     ///
-    /// Antes a imagem era esticada para o tamanho exato da janela. Numa
-    /// tela 16:10 mostrando um desktop 16:9 isso deforma tudo -- e, pior,
-    /// um circulo no host nao e um circulo aqui, o que atrapalha
-    /// justamente quem esta tentando trabalhar na outra maquina.
-    fn encaixa(rw: u32, rh: u32, jw: u32, jh: u32) -> (u32, u32, u32, u32) {
-        if rw == 0 || rh == 0 || jw == 0 || jh == 0 {
+    /// Before, the image was stretched to the exact window size. On a
+    /// 16:10 screen showing a 16:9 desktop that deforms everything -- and,
+    /// worse, a circle on the host is not a circle here, which gets in the
+    /// way of exactly the person trying to work on the other machine.
+    fn fit(rw: u32, rh: u32, win_w: u32, win_h: u32) -> (u32, u32, u32, u32) {
+        if rw == 0 || rh == 0 || win_w == 0 || win_h == 0 {
             return (0, 0, 0, 0);
         }
-        let e = (jw as f64 / rw as f64).min(jh as f64 / rh as f64);
-        let w = ((rw as f64 * e).round() as u32).clamp(1, jw);
-        let h = ((rh as f64 * e).round() as u32).clamp(1, jh);
-        ((jw - w) / 2, (jh - h) / 2, w, h)
+        let e = (win_w as f64 / rw as f64).min(win_h as f64 / rh as f64);
+        let w = ((rw as f64 * e).round() as u32).clamp(1, win_w);
+        let h = ((rh as f64 * e).round() as u32).clamp(1, win_h);
+        ((win_w - w) / 2, (win_h - h) / 2, w, h)
     }
 
-    /// Posicao na janela -> posicao na tela remota.
+    /// Position in the window -> position on the remote screen.
     ///
-    /// `None` quando o cursor esta sobre a barra e nao sobre a imagem:
-    /// nao ha ponto remoto correspondente, e grudar na beirada inventaria
-    /// um movimento que a pessoa nao fez.
+    /// `None` when the cursor is over the bar and not over the image:
+    /// there is no matching remote point, and clamping to the edge would
+    /// invent a movement the person did not make.
     ///
-    /// Pura e separada do laco de eventos porque foi exatamente aqui que
-    /// o bug morou -- e um erro de escala nao da erro, so poe o cursor
-    /// no lugar errado, o que se descobre usando.
+    /// Pure and separate from the event loop because this is exactly where
+    /// the bug lived -- and a scale error raises no error, it just puts the
+    /// cursor in the wrong place, which you only find out by using it.
     #[allow(clippy::type_complexity)]
-    fn ponto_remoto(
+    fn remote_point(
         px: f64,
         py: f64,
         (ox, oy, iw, ih, rw, rh): (f64, f64, f64, f64, f64, f64),
@@ -134,183 +135,182 @@ mod visual {
     }
 
     #[cfg(test)]
-    mod testes {
+    mod tests {
         use super::*;
 
         #[test]
-        fn mesma_proporcao_preenche_sem_barra() {
-            // 2560x1440 numa janela 1280x720: cabe exato, sem barra.
-            assert_eq!(encaixa(2560, 1440, 1280, 720), (0, 0, 1280, 720));
+        fn same_aspect_fills_without_bars() {
+            // 2560x1440 in a 1280x720 window: fits exactly, no bar.
+            assert_eq!(fit(2560, 1440, 1280, 720), (0, 0, 1280, 720));
         }
 
         #[test]
-        fn janela_mais_larga_ganha_barra_lateral() {
-            // 16:9 numa janela 2:1 -> aperta pela altura, sobra largura.
-            // 1920 * (1000/1080) = 1777,8 -> 1778, arredondado e nao
-            // truncado: truncar encolhe a imagem um pixel a cada
-            // redimensionamento e a conta do cursor herda o erro.
-            let (ox, oy, w, h) = encaixa(1920, 1080, 2000, 1000);
+        fn wider_window_gets_side_bars() {
+            // 16:9 in a 2:1 window -> limited by height, width left over.
+            // 1920 * (1000/1080) = 1777.8 -> 1778, rounded and not
+            // truncated: truncating shrinks the image one pixel on every
+            // resize and the cursor math inherits the error.
+            let (ox, oy, w, h) = fit(1920, 1080, 2000, 1000);
             assert_eq!((w, h), (1778, 1000));
-            assert_eq!(oy, 0, "sem barra em cima quando aperta pela altura");
-            assert_eq!(ox, (2000 - 1778) / 2, "centralizada");
+            assert_eq!(oy, 0, "no bar on top when limited by height");
+            assert_eq!(ox, (2000 - 1778) / 2, "centered");
         }
 
         #[test]
-        fn janela_mais_alta_ganha_barra_acima() {
-            let (ox, oy, w, h) = encaixa(1920, 1080, 1000, 1000);
+        fn taller_window_gets_bars_above() {
+            let (ox, oy, w, h) = fit(1920, 1080, 1000, 1000);
             assert_eq!((w, h), (1000, 563));
             assert_eq!(ox, 0);
             assert_eq!(oy, (1000 - 563) / 2);
         }
 
         #[test]
-        fn a_imagem_nunca_passa_da_janela() {
-            // Arredondar para cima nao pode criar imagem maior que a
-            // janela: o desenho recortaria e a conta do cursor mentiria.
-            for (rw, rh, jw, jh) in
+        fn the_image_never_exceeds_the_window() {
+            // Rounding up must not create an image larger than the
+            // window: drawing would clip and the cursor math would lie.
+            for (rw, rh, win_w, win_h) in
                 [(2560u32, 1440u32, 1281u32, 721u32), (1366, 768, 999, 1), (3, 7, 100, 100)]
             {
-                let (ox, oy, w, h) = encaixa(rw, rh, jw, jh);
-                assert!(w <= jw && h <= jh, "{rw}x{rh} em {jw}x{jh} deu {w}x{h}");
-                assert!(ox + w <= jw && oy + h <= jh);
+                let (ox, oy, w, h) = fit(rw, rh, win_w, win_h);
+                assert!(w <= win_w && h <= win_h, "{rw}x{rh} in {win_w}x{win_h} gave {w}x{h}");
+                assert!(ox + w <= win_w && oy + h <= win_h);
             }
         }
 
         #[test]
-        fn tamanho_zero_nao_divide_por_zero() {
-            assert_eq!(encaixa(0, 0, 100, 100), (0, 0, 0, 0));
-            assert_eq!(encaixa(100, 100, 0, 0), (0, 0, 0, 0));
-            assert_eq!(ponto_remoto(1.0, 1.0, (0.0, 0.0, 0.0, 0.0, 10.0, 10.0)), None);
+        fn zero_size_does_not_divide_by_zero() {
+            assert_eq!(fit(0, 0, 100, 100), (0, 0, 0, 0));
+            assert_eq!(fit(100, 100, 0, 0), (0, 0, 0, 0));
+            assert_eq!(remote_point(1.0, 1.0, (0.0, 0.0, 0.0, 0.0, 10.0, 10.0)), None);
         }
 
         #[test]
-        fn o_cursor_cobre_a_tela_remota_inteira() {
-            // O bug: numa janela de 1280x720 contra 2560x1440, o cursor
-            // so alcancava o quarto superior esquerdo. O canto inferior
-            // direito da janela tem de chegar ao canto da tela remota.
+        fn the_cursor_covers_the_whole_remote_screen() {
+            // The bug: in a 1280x720 window against 2560x1440, the cursor
+            // only reached the top-left quarter. The bottom-right corner
+            // of the window has to reach the corner of the remote screen.
             let g = (0.0, 0.0, 1280.0, 720.0, 2560.0, 1440.0);
-            assert_eq!(ponto_remoto(0.0, 0.0, g), Some((0.0, 0.0)));
-            assert_eq!(ponto_remoto(640.0, 360.0, g), Some((1280.0, 720.0)));
-            let (x, y) = ponto_remoto(1279.0, 719.0, g).expect("dentro");
-            assert!(x > 2550.0 && y > 1430.0, "canto virou {x},{y}");
+            assert_eq!(remote_point(0.0, 0.0, g), Some((0.0, 0.0)));
+            assert_eq!(remote_point(640.0, 360.0, g), Some((1280.0, 720.0)));
+            let (x, y) = remote_point(1279.0, 719.0, g).expect("inside");
+            assert!(x > 2550.0 && y > 1430.0, "corner became {x},{y}");
         }
 
         #[test]
-        fn sobre_a_barra_nao_manda_nada() {
-            // Imagem de 800x600 centralizada numa janela de 1000x600:
-            // barra de 100px em cada lado.
+        fn over_the_bar_sends_nothing() {
+            // 800x600 image centered in a 1000x600 window: a 100px bar
+            // on each side.
             let g = (100.0, 0.0, 800.0, 600.0, 1920.0, 1440.0);
-            assert_eq!(ponto_remoto(50.0, 300.0, g), None, "barra esquerda");
-            assert_eq!(ponto_remoto(950.0, 300.0, g), None, "barra direita");
-            assert!(ponto_remoto(100.0, 300.0, g).is_some(), "primeira coluna da imagem");
-            // E o inicio da imagem e o inicio da tela remota, nao um
-            // deslocamento de 100px.
-            assert_eq!(ponto_remoto(100.0, 0.0, g), Some((0.0, 0.0)));
+            assert_eq!(remote_point(50.0, 300.0, g), None, "left bar");
+            assert_eq!(remote_point(950.0, 300.0, g), None, "right bar");
+            assert!(remote_point(100.0, 300.0, g).is_some(), "first column of the image");
+            // And the start of the image is the start of the remote
+            // screen, not a 100px offset.
+            assert_eq!(remote_point(100.0, 0.0, g), Some((0.0, 0.0)));
         }
     }
 
     pub fn run() -> anyhow::Result<()> {
-        let alvo = std::env::args().nth(1).unwrap_or_else(|| "ubuntu-host.local:9777".into());
+        let target = std::env::args().nth(1).unwrap_or_else(|| "ubuntu-host.local:9777".into());
         let slot: Arc<Mutex<Slot>> = Arc::new(Mutex::new(Slot::default()));
-        let slot_rede = Arc::clone(&slot);
+        let slot_net = Arc::clone(&slot);
 
-        // Canal do tokio usado de codigo SINCRONO (o laco de janela):
-        // `try_send` nao bloqueia, e se encher e porque o input esta
-        // chegando mais rapido que a rede -- descartar movimento de
-        // mouse e aceitavel, e os eventos de tecla sao raros o bastante
-        // para nunca encherem isto.
-        let (tx_in, rx_in) = tokio::sync::mpsc::channel::<Evento>(256);
+        // A tokio channel used from SYNCHRONOUS code (the window loop):
+        // `try_send` does not block, and if it fills up it is because
+        // input is arriving faster than the network -- dropping mouse
+        // movement is acceptable, and key events are rare enough to never
+        // fill it.
+        let (tx_in, rx_in) = tokio::sync::mpsc::channel::<Event>(256);
 
-        // O tamanho da JANELA, compartilhado com quem escala.
+        // The WINDOW size, shared with whoever scales.
         //
-        // Eu dimensionava a superficie pelo tamanho do QUADRO: numa
-        // janela de 1280x720 mostrando um stream de 2560x1440, o buffer
-        // nao casa com a janela e o resultado e indefinido -- foi o que
-        // o usuario viu como "imagem bugada". Quem redimensiona agora e
-        // o `swscale`, que ja estava no caminho de qualquer forma.
-        let tam: Arc<Mutex<(u32, u32)>> = Arc::new(Mutex::new((1280, 720)));
-        let tam_rede = Arc::clone(&tam);
+        // I sized the surface by the FRAME size: in a 1280x720 window
+        // showing a 2560x1440 stream, the buffer does not match the window
+        // and the result is undefined -- that is what the user saw as
+        // "glitched image". `swscale` does the resizing now; it was
+        // already on the path anyway.
+        let size: Arc<Mutex<(u32, u32)>> = Arc::new(Mutex::new((1280, 720)));
+        let size_net = Arc::clone(&size);
 
-        // O laco da janela tem de ser criado ANTES da thread de rede: e
-        // dele que sai o `proxy`, e e por ele que a rede acorda a
-        // interface quando chega quadro.
+        // The window loop has to be created BEFORE the network thread: the
+        // `proxy` comes from it, and it is through the proxy that the
+        // network wakes the UI when a frame arrives.
         let ev = EventLoop::new()?;
         let proxy = ev.create_proxy();
 
         std::thread::spawn(move || {
-            if let Err(e) = receber(&alvo, slot_rede, rx_in, tam_rede, proxy) {
-                eprintln!("rede: {e}");
+            if let Err(e) = receive(&target, slot_net, rx_in, size_net, proxy) {
+                eprintln!("network: {e}");
                 std::process::exit(1);
             }
         });
 
-        // `Wait` e nao `Poll`: acordamos quando chega quadro, nao a
-        // 100% de CPU perguntando se chegou.
+        // `Wait` and not `Poll`: we wake when a frame arrives, not at 100%
+        // CPU asking whether one arrived.
         ev.set_control_flow(ControlFlow::Wait);
         let mut app = App {
-            janela: None,
+            window: None,
             surface: None,
             slot,
-            desenhada: 0,
+            drawn: 0,
             n: 0,
             t0: Instant::now(),
             tx_in,
-            tam_janela: (1280.0, 720.0),
-            tam,
-            medir: std::env::var_os("LOGI_MEDIR").is_some(),
-            atrasos: Vec::new(),
+            window_size: (1280.0, 720.0),
+            size,
+            measure: std::env::var_os("LOGI_MEDIR").is_some(),
+            delays: Vec::new(),
         };
         ev.run_app(&mut app)?;
         Ok(())
     }
 
     struct App {
-        janela: Option<Arc<Window>>,
+        window: Option<Arc<Window>>,
         surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
         slot: Arc<Mutex<Slot>>,
-        desenhada: u64,
+        drawn: u64,
         n: u64,
         t0: Instant,
-        tx_in: tokio::sync::mpsc::Sender<Evento>,
-        /// Tamanho atual da janela, para converter a posicao do cursor
-        /// no espaco do stream.
-        tam_janela: (f64, f64),
-        /// Mesmo tamanho, em pixels fisicos, para a thread que escala.
-        tam: Arc<Mutex<(u32, u32)>>,
-        /// `LOGI_MEDIR=1`: imprime o atraso da captura ate a tela.
-        medir: bool,
-        atrasos: Vec<f64>,
+        tx_in: tokio::sync::mpsc::Sender<Event>,
+        /// Current window size, to convert the cursor position into the
+        /// stream's space.
+        window_size: (f64, f64),
+        /// Same size, in physical pixels, for the scaling thread.
+        size: Arc<Mutex<(u32, u32)>>,
+        /// `LOGI_MEDIR=1`: prints the delay from capture to screen.
+        measure: bool,
+        delays: Vec<f64>,
     }
 
     impl ApplicationHandler for App {
         fn resumed(&mut self, ev: &ActiveEventLoop) {
-            let atrib = Window::default_attributes()
+            let attrs = Window::default_attributes()
                 .with_title("logistream")
                 .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
-            let janela = Arc::new(ev.create_window(atrib).expect("janela"));
-            let ctx = softbuffer::Context::new(janela.clone()).expect("contexto");
-            let surface = softbuffer::Surface::new(&ctx, janela.clone()).expect("surface");
-            self.janela = Some(janela);
+            let window = Arc::new(ev.create_window(attrs).expect("window"));
+            let ctx = softbuffer::Context::new(window.clone()).expect("context");
+            let surface = softbuffer::Surface::new(&ctx, window.clone()).expect("surface");
+            self.window = Some(window);
             self.surface = Some(surface);
         }
 
-        fn window_event(&mut self, ev: &ActiveEventLoop, _: WindowId, evento: WindowEvent) {
-            match evento {
+        fn window_event(&mut self, ev: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+            match event {
                 WindowEvent::CloseRequested => ev.exit(),
-                WindowEvent::RedrawRequested => self.desenhar(),
+                WindowEvent::RedrawRequested => self.draw(),
                 WindowEvent::Resized(t) => {
-                    self.tam_janela = (t.width as f64, t.height as f64);
-                    if let Ok(mut g) = self.tam.lock() {
+                    self.window_size = (t.width as f64, t.height as f64);
+                    if let Ok(mut g) = self.size.lock() {
                         *g = (t.width.max(1), t.height.max(1));
                     }
                 }
                 WindowEvent::CursorMoved { position, .. } => {
-                    // A posicao vai em coordenadas da TELA REMOTA -- e o
-                    // host que define o espaco, nao nos. E a conversao e
-                    // pela IMAGEM desenhada, nao pela janela: com barras
-                    // laterais as duas diferem, e usar a janela jogaria o
-                    // cursor remoto para o lugar errado por todo o
-                    // tamanho da barra.
+                    // The position goes in REMOTE SCREEN coordinates -- the
+                    // host defines the space, not us. And the conversion is
+                    // through the drawn IMAGE, not the window: with side
+                    // bars the two differ, and using the window would throw
+                    // the remote cursor off by the whole width of the bar.
                     let (rw, rh, ox, oy, iw, ih) = match self.slot.lock() {
                         Ok(s) if s.rw > 0 && s.w > 0 => {
                             (s.rw as f64, s.rh as f64, s.ox as f64, s.oy as f64,
@@ -319,78 +319,78 @@ mod visual {
                         _ => return,
                     };
                     let Some((x, y)) =
-                        ponto_remoto(position.x, position.y, (ox, oy, iw, ih, rw, rh))
+                        remote_point(position.x, position.y, (ox, oy, iw, ih, rw, rh))
                     else {
                         return;
                     };
-                    self.manda(Evento::Mouse { x, y });
+                    self.send(Event::Mouse { x, y });
                 }
                 WindowEvent::MouseInput { state, button, .. } => {
-                    let codigo = match button {
+                    let code = match button {
                         MouseButton::Left => BTN_LEFT,
                         MouseButton::Right => BTN_RIGHT,
                         MouseButton::Middle => BTN_MIDDLE,
                         _ => return,
                     };
-                    self.manda(Evento::Botao {
-                        codigo,
-                        apertado: state == ElementState::Pressed,
+                    self.send(Event::Button {
+                        code,
+                        pressed: state == ElementState::Pressed,
                     });
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
-                    // O trackpad do Mac manda pixels; a roda manda
-                    // linhas. O Mutter quer um deslocamento continuo,
-                    // entao a linha vira um passo de ~15 px.
+                    // The Mac trackpad sends pixels; the wheel sends
+                    // lines. Mutter wants a continuous offset, so a line
+                    // becomes a step of ~15 px.
                     let (dx, dy) = match delta {
                         MouseScrollDelta::LineDelta(x, y) => (-x as f64 * 15.0, -y as f64 * 15.0),
                         MouseScrollDelta::PixelDelta(p) => (-p.x, -p.y),
                     };
-                    self.manda(Evento::Rolagem { dx, dy });
+                    self.send(Event::Scroll { dx, dy });
                 }
                 WindowEvent::KeyboardInput { event, is_synthetic, .. } => {
-                    // Sintetico e o que o sistema inventa ao focar a
-                    // janela; repassar isso apertaria tecla que ninguem
-                    // apertou.
+                    // Synthetic is what the system makes up when the
+                    // window gets focus; forwarding it would press a key
+                    // nobody pressed.
                     if is_synthetic {
                         return;
                     }
                     let PhysicalKey::Code(code) = event.physical_key else { return };
-                    let Some(keycode) = evdev_de_winit(code) else { return };
-                    self.manda(Evento::Tecla {
+                    let Some(keycode) = evdev_from_winit(code) else { return };
+                    self.send(Event::Key {
                         keycode,
-                        apertado: event.state == ElementState::Pressed,
+                        pressed: event.state == ElementState::Pressed,
                     });
                 }
                 _ => {}
             }
         }
 
-        /// A rede avisou que chegou quadro.
+        /// The network signaled that a frame arrived.
         ///
-        /// Sem isto a imagem CONGELAVA. O laco usa `ControlFlow::Wait`,
-        /// que bloqueia esperando evento do sistema; a thread de rede
-        /// enchia o slot e nao acordava ninguem. O `about_to_wait` roda
-        /// ANTES de o laco dormir, entao o quadro que chegasse depois
-        /// esperava o proximo evento do sistema -- um movimento de mouse,
-        /// uma tecla. O usuario descreveu exatamente isso: "congela numa
-        /// mensagem do chat ate eu mexer o mouse".
+        /// Without this the image FROZE. The loop uses `ControlFlow::Wait`,
+        /// which blocks waiting for a system event; the network thread
+        /// filled the slot and woke nobody. `about_to_wait` runs BEFORE the
+        /// loop sleeps, so a frame arriving after that waited for the next
+        /// system event -- a mouse movement, a key. The user described
+        /// exactly that: "it freezes on a chat message until I move the
+        /// mouse".
         ///
-        /// Pedir redesenho aqui e nao desenhar direto: desenhar fora do
-        /// `RedrawRequested` briga com o compositor em algumas
-        /// plataformas, e o caminho de pintura ja existe num lugar so.
+        /// Request a redraw here rather than drawing directly: drawing
+        /// outside `RedrawRequested` fights the compositor on some
+        /// platforms, and the painting path already lives in one place.
         fn user_event(&mut self, _: &ActiveEventLoop, _: ()) {
-            if let Some(j) = &self.janela {
+            if let Some(j) = &self.window {
                 j.request_redraw();
             }
         }
 
         fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-            // Rede de seguranca para o quadro que chegou entre o ultimo
-            // desenho e o laco dormir. O aviso do `user_event` e o
-            // caminho normal; esta comparacao cobre a corrida.
-            let g = self.slot.lock().map(|s| s.geracao).unwrap_or(0);
-            if g != self.desenhada {
-                if let Some(j) = &self.janela {
+            // Safety net for a frame that arrived between the last draw
+            // and the loop going to sleep. The `user_event` signal is the
+            // normal path; this comparison covers the race.
+            let g = self.slot.lock().map(|s| s.generation).unwrap_or(0);
+            if g != self.drawn {
+                if let Some(j) = &self.window {
                     j.request_redraw();
                 }
             }
@@ -398,22 +398,22 @@ mod visual {
     }
 
     impl App {
-        /// `try_send` e nao `send`: o laco de janela nao pode bloquear
-        /// esperando a rede -- travaria a interface inteira.
-        fn manda(&self, e: Evento) {
+        /// `try_send` and not `send`: the window loop must not block
+        /// waiting for the network -- it would freeze the whole UI.
+        fn send(&self, e: Event) {
             let _ = self.tx_in.try_send(e);
         }
 
-        fn desenhar(&mut self) {
-            let (Some(janela), Some(surface)) = (self.janela.as_ref(), self.surface.as_mut())
+        fn draw(&mut self) {
+            let (Some(window), Some(surface)) = (self.window.as_ref(), self.surface.as_mut())
             else {
                 return;
             };
-            // Primeiro garante que a thread de escala conhece o tamanho
-            // atual: na primeira pintura ainda nao houve `Resized`.
-            let fisico = janela.inner_size();
-            if let Ok(mut g) = self.tam.lock() {
-                *g = (fisico.width.max(1), fisico.height.max(1));
+            // First make sure the scaling thread knows the current size:
+            // on the first paint there has been no `Resized` yet.
+            let physical = window.inner_size();
+            if let Ok(mut g) = self.size.lock() {
+                *g = (physical.width.max(1), physical.height.max(1));
             }
             let s = match self.slot.lock() {
                 Ok(s) => s,
@@ -422,20 +422,20 @@ mod visual {
             if s.w == 0 || s.h == 0 {
                 return;
             }
-            // A superficie e do tamanho da JANELA, nao do quadro.
+            // The surface is the size of the WINDOW, not the frame.
             //
-            // Antes eu dimensionava pelo quadro e ABANDONAVA a pintura
-            // quando os dois nao batiam. Ao entrar em tela cheia a janela
-            // crescia, todo quadro em voo era descartado, e o que ficava
-            // na tela era o buffer antigo -- pequeno, no canto superior
-            // esquerdo, sem esticar. Era o que o usuario via.
+            // Before, I sized it by the frame and ABANDONED the paint when
+            // the two did not match. On entering full screen the window
+            // grew, every frame in flight was discarded, and what stayed
+            // on screen was the old buffer -- small, in the top-left
+            // corner, not stretched. That is what the user saw.
             //
-            // Agora pinta SEMPRE: a janela recebe fundo, a imagem vai no
-            // lugar dela, e um quadro de tamanho velho aparece
-            // ligeiramente fora de escala por um quadro em vez de travar
-            // a tela. Nao existe mais estado preso.
+            // Now it ALWAYS paints: the window gets the background, the
+            // image goes in its place, and a frame of a stale size shows
+            // slightly off-scale for one frame instead of freezing the
+            // screen. There is no stuck state anymore.
             let (Some(sw), Some(sh)) =
-                (NonZeroU32::new(fisico.width.max(1)), NonZeroU32::new(fisico.height.max(1)))
+                (NonZeroU32::new(physical.width.max(1)), NonZeroU32::new(physical.height.max(1)))
             else {
                 return;
             };
@@ -443,161 +443,162 @@ mod visual {
                 return;
             }
             let Ok(mut buf) = surface.buffer_mut() else { return };
-            let (jw, jh) = (fisico.width as usize, fisico.height as usize);
-            buf.fill(FUNDO);
+            let (win_w, win_h) = (physical.width as usize, physical.height as usize);
+            buf.fill(BACKGROUND);
             let (ox, oy) = (s.ox as usize, s.oy as usize);
             let (iw, ih) = (s.w as usize, s.h as usize);
             for y in 0..ih {
                 let dy = oy + y;
-                if dy >= jh {
+                if dy >= win_h {
                     break;
                 }
-                let largura = iw.min(jw.saturating_sub(ox));
-                let origem = y * iw;
-                let destino = dy * jw + ox;
-                if origem + largura > s.rgb.len() || destino + largura > buf.len() {
+                let width = iw.min(win_w.saturating_sub(ox));
+                let src = y * iw;
+                let dst = dy * win_w + ox;
+                if src + width > s.rgb.len() || dst + width > buf.len() {
                     break;
                 }
-                buf[destino..destino + largura]
-                    .copy_from_slice(&s.rgb[origem..origem + largura]);
+                buf[dst..dst + width]
+                    .copy_from_slice(&s.rgb[src..src + width]);
             }
-            self.desenhada = s.geracao;
-            let capturado = s.capturado_ns;
+            self.drawn = s.generation;
+            let captured = s.captured_ns;
             drop(s);
             let _ = buf.present();
-            if self.medir {
-                // Com sinal: entre maquinas o relogio do host pode estar
-                // adiantado, e zerar o negativo escondia isso.
-                let agora = logistream::serve::agora_ns() as i128;
-                self.atrasos.push((agora - capturado as i128) as f64 / 1e6);
-                if self.atrasos.len() == 120 {
-                    self.atrasos.sort_by(f64::total_cmp);
+            if self.measure {
+                // Signed: between machines the host's clock may be ahead,
+                // and clamping negatives to zero hid that.
+                let now = logistream::serve::now_ns() as i128;
+                self.delays.push((now - captured as i128) as f64 / 1e6);
+                if self.delays.len() == 120 {
+                    self.delays.sort_by(f64::total_cmp);
                     eprintln!(
-                        "captura ate a tela: p50 {:.1} ms, p95 {:.1} ms",
-                        self.atrasos[60], self.atrasos[114]
+                        "capture to screen: p50 {:.1} ms, p95 {:.1} ms",
+                        self.delays[60], self.delays[114]
                     );
-                    self.atrasos.clear();
+                    self.delays.clear();
                 }
             }
 
             self.n += 1;
             if self.n % 120 == 0 {
-                let seg = self.t0.elapsed().as_secs_f64();
-                // No log tambem, nao so no titulo: foi justamente esta
-                // taxa que ficou em zero enquanto a de decodificacao
-                // subia, e um numero que so existe no titulo da janela
-                // nao serve para medir nada remotamente.
-                println!("  {} quadros desenhados, {:.0} fps", self.n, self.n as f64 / seg);
-                janela.set_title(&format!(
+                let secs = self.t0.elapsed().as_secs_f64();
+                // In the log too, not just the title: this is exactly the
+                // rate that sat at zero while the decoding rate climbed,
+                // and a number that only exists in the window title is no
+                // use for measuring anything remotely.
+                println!("  {} frames drawn, {:.0} fps", self.n, self.n as f64 / secs);
+                // The title is shown to the person: stays pt-BR.
+                window.set_title(&format!(
                     "logistream — {:.0} fps desenhados",
-                    self.n as f64 / seg
+                    self.n as f64 / secs
                 ));
             }
         }
     }
 
-    /// Recebe, remonta, decodifica e deixa no slot.
+    /// Receives, reassembles, decodes and leaves the result in the slot.
     #[tokio::main(flavor = "current_thread")]
-    async fn receber(
-        alvo: &str,
+    async fn receive(
+        target: &str,
         slot: Arc<Mutex<Slot>>,
-        mut rx_in: tokio::sync::mpsc::Receiver<Evento>,
-        tam: Arc<Mutex<(u32, u32)>>,
+        mut rx_in: tokio::sync::mpsc::Receiver<Event>,
+        size: Arc<Mutex<(u32, u32)>>,
         proxy: winit::event_loop::EventLoopProxy<()>,
     ) -> anyhow::Result<()> {
-        // Decodificador montado ANTES de conectar.
+        // Decoder set up BEFORE connecting.
         //
-        // Ele ficava depois da conexao, e isso perdia o primeiro
-        // quadro-chave: o host comeca a despejar o IDR no instante do
-        // handshake, e enquanto montavamos o decodificador os datagramas
-        // iam chegando. O que nao cabia na fila era descartado, o IDR
-        // chegava incompleto, e o log enchia de `non-existing PPS 0
-        // referenced`.
-        let mut dec = logistream::decode::Decodificador::novo()
-            .map_err(|e| anyhow::anyhow!("sem decodificador: {e}"))?;
-        println!("decodificando por {}", dec.nome());
+        // It used to come after the connection, and that lost the first
+        // keyframe: the host starts pouring out the IDR the instant the
+        // handshake completes, and while we were setting up the decoder
+        // the datagrams kept arriving. Whatever did not fit in the queue
+        // was dropped, the IDR arrived incomplete, and the log filled with
+        // `non-existing PPS 0 referenced`.
+        let mut dec = logistream::decode::Decoder::new()
+            .map_err(|e| anyhow::anyhow!("no decoder: {e}"))?;
+        println!("decoding with {}", dec.name());
 
-        let mut enderecos: Vec<std::net::SocketAddr> =
-            tokio::net::lookup_host(alvo).await?.collect();
-        // IPv4 na frente: nome `.local` resolve nas duas familias e o
-        // socket local tem de nascer da familia do destino.
-        enderecos.sort_by_key(|a| !a.is_ipv4());
-        let destino = *enderecos.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
+        let mut addrs: Vec<std::net::SocketAddr> =
+            tokio::net::lookup_host(target).await?.collect();
+        // IPv4 first: a `.local` name resolves in both families and the
+        // local socket has to be born in the destination's family.
+        addrs.sort_by_key(|a| !a.is_ipv4());
+        let dest = *addrs.first().ok_or_else(|| anyhow::anyhow!("could not resolve {target}"))?;
         let bind: std::net::SocketAddr =
-            if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
-        let ep = net::cliente(bind)?;
-        let conexao = ep.connect(destino, "logistream")?.await?;
-        println!("conectado em {destino}");
+            if dest.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
+        let ep = net::client(bind)?;
+        let conn = ep.connect(dest, "logistream")?.await?;
+        println!("connected to {dest}");
 
-        // Input por stream unidirecional: confiavel e ordenado. Perder
-        // um "tecla solta" deixaria a tecla presa no host.
+        // Input over a unidirectional stream: reliable and ordered. Losing
+        // a "key released" would leave the key stuck on the host.
         //
-        // O `open_uni` entra na tarefa, e nao aqui: ele custa uma ida e
-        // volta, e pagar isso antes do laco de datagramas era perder o
-        // comeco do video. Quem digita no primeiro milissegundo nao
-        // existe; quem perde o quadro-chave ve tela preta.
-        let conexao_in = conexao.clone();
+        // `open_uni` goes inside the task, not here: it costs a round
+        // trip, and paying that before the datagram loop meant losing the
+        // start of the video. Nobody types in the first millisecond;
+        // whoever loses the keyframe sees a black screen.
+        let conn_in = conn.clone();
         tokio::spawn(async move {
-            let Ok(mut envio) = conexao_in.open_uni().await else { return };
+            let Ok(mut send) = conn_in.open_uni().await else { return };
             let mut buf = bytes::BytesMut::new();
             while let Some(e) = rx_in.recv().await {
                 buf.clear();
-                e.escrever(&mut buf);
-                if envio.write_all(&buf).await.is_err() {
+                e.write(&mut buf);
+                if send.write_all(&buf).await.is_err() {
                     break;
                 }
             }
         });
 
         let mut r = Reassembler::default();
-        let mut quadros = 0u64;
+        let mut frames = 0u64;
 
         loop {
-            let d = match conexao.read_datagram().await {
+            let d = match conn.read_datagram().await {
                 Ok(d) => d,
                 Err(e) => {
-                    println!("conexao encerrada: {e}");
+                    println!("connection closed: {e}");
                     return Ok(());
                 }
             };
-            let Some((cab, unidade)) = r.push(&d) else { continue };
-            // Os primeiros quadros, um a um.
+            let Some((hdr, unit)) = r.push(&d) else { continue };
+            // The first frames, one by one.
             //
-            // "A imagem nao aparece" tem causas diferentes com sintomas
-            // iguais, e so estes tres numeros as separam: se o primeiro
-            // quadro inteiro NAO e chave, o host mandou P para um cliente
-            // sem contexto; se e chave mas `perdidos` ja subiu, ele veio
-            // picado; se esta tudo certo aqui, o problema e do
-            // decodificador.
-            if quadros < 3 {
+            // "The image does not show up" has different causes with the
+            // same symptoms, and only these three numbers tell them apart:
+            // if the first whole frame is NOT a keyframe, the host sent a
+            // P-frame to a client with no context; if it is a keyframe but
+            // `lost` has already gone up, it arrived in pieces; if
+            // everything is right here, the problem is the decoder's.
+            if frames < 3 {
                 println!(
-                    "  recebi quadro {} {} {} bytes, {} perdido(s) ate aqui",
-                    cab.frame,
-                    if cab.keyframe { "CHAVE" } else { "P" },
-                    unidade.len(),
-                    r.perdidos
+                    "  received frame {} {} {} bytes, {} lost so far",
+                    hdr.frame,
+                    if hdr.keyframe { "KEY" } else { "P" },
+                    unit.len(),
+                    r.lost
                 );
             }
 
-            // O encaixe depende do tamanho da ORIGEM, que so o
-            // decodificador conhece, e do da JANELA, que so a interface
-            // conhece. Dai passar a conta como funcao em vez de um
-            // numero: cada lado contribui com o que sabe.
-            let tam_agora = Arc::clone(&tam);
-            let mut encaixe = move |rw: u32, rh: u32| {
-                let (jw, jh) = tam_agora.lock().map(|g| *g).unwrap_or((rw, rh));
-                encaixa(rw, rh, jw.max(1), jh.max(1))
+            // The fit depends on the SOURCE size, which only the decoder
+            // knows, and on the WINDOW size, which only the UI knows. Hence
+            // passing the math as a function instead of a number: each
+            // side contributes what it knows.
+            let size_now = Arc::clone(&size);
+            let mut fit_fn = move |rw: u32, rh: u32| {
+                let (win_w, win_h) = size_now.lock().map(|g| *g).unwrap_or((rw, rh));
+                fit(rw, rh, win_w.max(1), win_h.max(1))
             };
-            let prontos = match dec.alimentar(&unidade, &mut encaixe) {
+            let ready = match dec.feed(&unit, &mut fit_fn) {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("decodificar: {e}");
+                    eprintln!("decode: {e}");
                     continue;
                 }
             };
-            for pr in prontos {
+            for pr in ready {
                 if let Ok(mut s) = slot.lock() {
-                    let (jw, jh) = tam.lock().map(|g| *g).unwrap_or((pr.w, pr.h));
+                    let (win_w, win_h) = size.lock().map(|g| *g).unwrap_or((pr.w, pr.h));
                     s.rgb = pr.rgb;
                     s.w = pr.w;
                     s.h = pr.h;
@@ -605,20 +606,20 @@ mod visual {
                     s.oy = pr.oy;
                     s.rw = pr.rw;
                     s.rh = pr.rh;
-                    s.jw = jw;
-                    s.jh = jh;
-                    s.geracao += 1;
-                    s.capturado_ns = cab.captured_at_ns;
+                    s.win_w = win_w;
+                    s.win_h = win_h;
+                    s.generation += 1;
+                    s.captured_ns = hdr.captured_at_ns;
                 }
-                // Acorda a interface. `Err` aqui significa que o laco da
-                // janela acabou -- a pessoa fechou -- e ai nao ha mais
-                // para quem desenhar.
+                // Wake the UI. `Err` here means the window loop ended --
+                // the person closed it -- and then there is no one left to
+                // draw for.
                 if proxy.send_event(()).is_err() {
                     return Ok(());
                 }
-                quadros += 1;
-                if quadros % 120 == 0 {
-                    println!("  {quadros} quadros decodificados");
+                frames += 1;
+                if frames % 120 == 0 {
+                    println!("  {frames} frames decoded");
                 }
             }
         }

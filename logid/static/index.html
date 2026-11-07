@@ -1,13 +1,13 @@
 <!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">
-<!-- CSP explicita. O Electron avisava no console do renderer que a pagina
-     nao tinha politica, o que equivale a permitir `unsafe-eval` -- e esta
-     pagina nao usa eval nenhum (conferido: zero ocorrencias), entao
-     declarar custa nada e fecha a porta.
-     `unsafe-inline` fica porque o CSS e o JS sao inline de proposito: a
-     pagina e um arquivo unico embutido no binario do daemon.
-     `connect-src 'self'` limita o fetch a 127.0.0.1:porta, que e o unico
-     lugar de onde ela le. -->
+<!-- Explicit CSP. Electron warned in the renderer console that the page
+     had no policy, which amounts to allowing `unsafe-eval` -- and this
+     page uses no eval at all (checked: zero occurrences), so declaring
+     it costs nothing and closes the door.
+     `unsafe-inline` stays because the CSS and JS are inline on purpose:
+     the page is a single file embedded in the daemon binary.
+     `connect-src 'self'` limits fetch to 127.0.0.1:port, the only place
+     it reads from. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:*; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Maquinas</title>
@@ -20,9 +20,9 @@
     --upbg:#e6f6ec; --downbg:#fdeaea;
     --shadow:0 1px 2px rgba(16,20,28,.05), 0 8px 24px rgba(16,20,28,.05);
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-    /* Barra lateral translucida: alfa sobre o fundo da pagina, nao cor
-       solida. E o que da a sensacao de camada da referencia -- a lateral
-       mais clara que o conteudo, nao um bloco de outra cor. */
+    /* Translucent sidebar: alpha over the page background, not a solid
+       color. That is what gives the layered feel of the reference -- the
+       sidebar lighter than the content, not a block of another color. */
     --sidebg:rgba(255,255,255,.66); --selbg:rgba(16,20,28,.07);
     --accent:#2563eb;
   }
@@ -38,8 +38,8 @@
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--fg);
-    /* Gradiente discreto: sem nada atras, translucidez nao aparece --
-       a lateral ficaria de uma cor chapada e a camada nao se leria. */
+    /* Subtle gradient: with nothing behind it, translucency does not show --
+       the sidebar would be a flat color and the layer would not read. */
     background-image:radial-gradient(1200px 600px at 12% -10%,
       color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%);
     font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -65,7 +65,7 @@
     transition:border-color .15s ease}
   .card:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
   .card.off .hero svg{opacity:.32}
-  /* A maquina e o que se reconhece de longe: o resto do cartao e detalhe. */
+  /* The machine is what you recognize from afar: the rest of the card is detail. */
   .hero{margin:0 -18px;height:124px;display:grid;place-items:center;
     color:var(--accent);border-bottom:1px solid var(--line);
     background:radial-gradient(240px 120px at 50% 120%,
@@ -81,8 +81,8 @@
   .mais[open] .corpo{display:flex;flex-direction:column;gap:12px}
   .mais .end{font:11px var(--mono);color:var(--faint)}
 
-  /* Pulo da lateral para o cartao: um brilho curto, senao a pessoa nao
-     sabe qual dos tres cartoes era. */
+  /* Jump from the sidebar to the card: a short flash, otherwise the person
+     does not know which of the three cards it was. */
   .card.flash{box-shadow:0 0 0 2px var(--accent), var(--shadow)}
   .top{display:flex;align-items:flex-start;gap:12px}
   .dot{width:9px;height:9px;border-radius:50%;flex:none;margin-top:6px;
@@ -114,8 +114,8 @@
     background:var(--inset);border:1px solid var(--line);color:var(--faint)}
   .u.active{color:var(--up);border-color:color-mix(in srgb,var(--up) 25%,var(--line))}
   .u.bad{color:var(--down);border-color:color-mix(in srgb,var(--down) 25%,var(--line))}
-  /* Ambar para KVM LIGADO, nao verde: aqui "ligado" e o estado que troca
-     seu teclado de maquina sozinho -- merece ser notado, nao celebrado. */
+  /* Amber for KVM ON, not green: here "on" is the state that moves your
+     keyboard to another machine by itself -- worth noticing, not celebrating. */
   .u.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,var(--line))}
 
   .det{display:flex;flex-wrap:wrap;gap:4px 16px;color:var(--dim);font-size:12px;
@@ -152,7 +152,7 @@
 
   .scr{
     display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  /* Conectar e a acao do cartao. Tudo o mais e secundario a ela. */
+  /* Connect is the card's action. Everything else is secondary to it. */
   .scr button{font:inherit;font-weight:620;padding:9px 12px;border-radius:10px;
     width:100%;cursor:pointer;color:#fff;border:1px solid transparent;
     background:color-mix(in srgb,var(--accent) 88%,#000)}
@@ -311,12 +311,12 @@
   .err{background:var(--downbg);color:var(--down);padding:12px 14px;
     border-radius:10px;font-size:13px}
 
-  /* --- Barra lateral: maquinas, favoritos, paineis ------------------
-     O painel era um rolo unico com cinco secoes empilhadas: para ver o
-     log era preciso passar por tudo. A referencia que o usuario deu (o
-     app do Windows) resolve diferente -- lateral com as maquinas em
-     cima, favoritos logo abaixo, e o conteudo TROCA no lugar em vez de
-     crescer para baixo. */
+  /* --- Sidebar: machines, favorites, panels -------------------------
+     The panel was one long scroll with five stacked sections: to see the
+     log you had to go through everything. The reference the user gave
+     (the Windows app) solves it differently -- a sidebar with machines
+     on top, favorites right below, and the content SWAPS in place
+     instead of growing downward. */
   .app{display:grid;grid-template-columns:238px minmax(0,1fr);min-height:100vh}
   .side{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
     padding:16px 10px 24px;border-right:1px solid var(--line);
@@ -341,8 +341,8 @@
   .navit .lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .navit .sdot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--down)}
   .navit .sdot.on{background:var(--up)}
-  /* Acoes aparecem no hover, nao sempre: a lista fica legivel e o clique
-     principal continua sendo "mostre esta maquina". */
+  /* Actions show on hover, not always: the list stays readable and the
+     main click is still "show this machine". */
   .navit .act{display:flex;gap:2px;opacity:0;transition:opacity .12s}
   .navit:hover .act,.navit:focus-within .act{opacity:1}
   .navit .act button{all:unset;cursor:pointer;width:20px;height:20px;
@@ -352,9 +352,9 @@
   .navit .act button.fav{color:var(--warn)}
   .sidenote{font-size:11px;color:var(--faint);padding:10px 10px 0;line-height:1.5}
 
-  /* Uma secao por vez. O conteudo e o MESMO de antes -- so deixou de
-     estar todo visivel ao mesmo tempo. */
-  /* A sessao e uma aba: o painel some e a tela remota ocupa o lugar dele. */
+  /* One section at a time. The content is the SAME as before -- it just
+     stopped being all visible at once. */
+  /* The session is a tab: the panel goes away and the remote screen takes its place. */
   .abas{display:flex;gap:4px;margin:-12px 0 16px;padding-bottom:8px;overflow-x:auto;
     border-bottom:1px solid var(--line)}
   .aba{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:9px;
@@ -366,7 +366,7 @@
   .aba .x:hover{opacity:1}
   .palco{position:relative;height:calc(100vh - 92px);background:#000;border-radius:12px;
     overflow:hidden}
-  /* A barra fica fora do canvas: clique nela nunca vira clique remoto. */
+  /* The bar sits outside the canvas: a click on it never becomes a remote click. */
   .barra{height:40px;display:flex;align-items:center;gap:4px;padding:0 8px;
     background:#16191f;border-bottom:1px solid #262b34;color:#d7dbe2}
   .barra button{font:inherit;font-size:12.5px;color:inherit;background:none;border:0;
@@ -378,7 +378,7 @@
   .barra .nome{font-weight:620;font-size:13px;padding:0 8px}
   .palco .tela{position:absolute;inset:40px 0 0 0}
   .palco:fullscreen{border-radius:0;height:100vh}
-  /* Gerenciador sobre a tela remota: duas pastas e a fila embaixo. */
+  /* File manager over the remote screen: two folders and the queue below. */
   .arq{position:absolute;inset:0;z-index:2;display:grid;gap:10px;padding:12px;
     grid-template-columns:minmax(0,1fr) 92px minmax(0,1fr);
     grid-template-rows:minmax(0,1fr) auto;background:var(--bg);color:var(--fg)}
@@ -427,9 +427,9 @@
 
   .wrap{max-width:none;margin:0;padding:24px 26px 40px}
 
-  /* Estreito (a janela do Electron abre pequena, e da para apertar
-     mais): a lateral vira uma fila horizontal de paineis. Maquinas e
-     favoritos saem porque a visao geral ja mostra as maquinas. */
+  /* Narrow (the Electron window opens small, and can be squeezed
+     further): the sidebar becomes a horizontal row of panels. Machines
+     and favorites go away because the overview already shows the machines. */
   @media (max-width:880px){
     .app{grid-template-columns:1fr}
     .side{position:static;height:auto;overflow:visible;
@@ -621,10 +621,10 @@ function card(h){
     return `<span class="u ${c}">${esc(u.unit.replace('.service',''))} &middot; ${esc(u.state)}</span>`;
   }).join('');
 
-  // Borda e reconciliador DAQUELE host. A borda e comportamento de par:
-  // a do Windows apontada para ca devolvia tudo a cada encostada
-  // enquanto este painel dizia, com razao, que a daqui estava desligada.
-  // Ver o estado de um host so nao bastava para entender o que acontecia.
+  // Border and reconciler of THAT host. The border is pair behavior:
+  // the Windows one pointed here sent everything back on every touch
+  // while this panel said, correctly, that the one here was off.
+  // Seeing a single host's state was not enough to understand what happened.
   const k = h.kvm || {}, kvm = [];
   if (k.error){
     kvm.push(`<span class="u" title="${esc(k.error)}">KVM &middot; nao sei</span>`);
@@ -640,12 +640,12 @@ function card(h){
     }
   }
 
-  // A linha de detalhe aparece SEMPRE, com travessao no que nao sabemos.
+  // The detail line shows ALWAYS, with a dash for what we do not know.
   //
-  // Antes ela era omitida quando vinha vazia, e o usuario leu isso como
-  // "nao da para ver a RAM desta maquina" -- ele via a do MacBook pelo
-  // Windows e nao pelo proprio MacBook. Ausencia silenciosa nao
-  // distingue "nao consegui ler" de "nao existe"; travessao distingue.
+  // It used to be omitted when empty, and the user read that as "you
+  // can't see this machine's RAM" -- he saw the MacBook's from Windows
+  // and not from the MacBook itself. Silent absence does not tell
+  // "could not read" from "does not exist"; a dash does.
   const d = h.detail || {}, det = [];
   if (d.uptime_min != null){
     const m = d.uptime_min, dd = Math.floor(m/1440), hh = Math.floor((m%1440)/60);
@@ -663,9 +663,9 @@ function card(h){
       : 'host offline: nada a ler')}">RAM <b>&mdash;</b></span>`);
   }
   if (d.cpu_pct != null){
-    // A janela de amostragem difere por SO (ver `probe::Detail`): o
-    // numero responde "esta ocupada?", nao serve para comparar decimais
-    // entre maquinas.
+    // The sampling window differs per OS (see `probe::Detail`): the
+    // number answers "is it busy?", it is not for comparing decimals
+    // across machines.
     det.push(`<span title="janela de amostragem difere por sistema">CPU
               <b>${Math.round(d.cpu_pct)}%</b>
               <span class="bar"><i style="width:${Math.round(d.cpu_pct)}%"></i></span></span>`);
@@ -674,7 +674,7 @@ function card(h){
   }
 
   return `<div class="card${h.online ? '' : ' off'}">
-    <div class="hero">${maquinaSvg(h)}</div>
+    <div class="hero">${machineSvg(h)}</div>
     <div class="top">
       <span class="dot ${h.online ? 'on' : ''}"></span>
       <div class="ident">
@@ -684,7 +684,7 @@ function card(h){
       <span class="estado ${h.online ? 'on' : ''}">${h.online ? 'online' : 'offline'}</span>
     </div>
     <div class="scr" data-scr="${esc(h.name)}"></div>
-    <details class="mais" data-mais="${esc(h.name)}"${MAIS.has(h.name) ? ' open' : ''}>
+    <details class="mais" data-mais="${esc(h.name)}"${OPEN_DETAILS.has(h.name) ? ' open' : ''}>
       <summary>Detalhes</summary>
       <div class="corpo">
         <div class="end">${esc(h.addr)}</div>
@@ -697,22 +697,22 @@ function card(h){
   </div>`;
 }
 
-// O grid e refeito a cada leitura, e um <details> aberto fecharia sozinho
-// na cara de quem esta lendo. O que esta aberto mora aqui, fora do DOM.
-const MAIS = new Set();
+// The grid is rebuilt on every read, and an open <details> would close by
+// itself in the reader's face. What is open lives here, outside the DOM.
+const OPEN_DETAILS = new Set();
 document.getElementById('grid').addEventListener('toggle', ev => {
   const d = ev.target;
   if (!d.dataset || !d.dataset.mais) return;
-  if (d.open) MAIS.add(d.dataset.mais); else MAIS.delete(d.dataset.mais);
+  if (d.open) OPEN_DETAILS.add(d.dataset.mais); else OPEN_DETAILS.delete(d.dataset.mais);
 }, true);
 
-function maquinaSvg(h){
+function machineSvg(h){
   const laptop = /macos|mac os|macbook/i.test(h.role + ' ' + h.name);
-  const corpo = laptop
+  const shape = laptop
     ? `<rect x="16" y="16" width="48" height="33" rx="3"/><path d="M8 57h64l-5-8H13z"/>`
     : `<rect x="10" y="12" width="60" height="40" rx="3"/><path d="M33 52l-2 11h18l-2-11"/><path d="M26 64h28"/>`;
   return `<svg viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-width="2.4"
-    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${corpo}</svg>`;
+    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shape}</svg>`;
 }
 
 let ctlBusy = false;
@@ -725,7 +725,7 @@ async function remap(slot, cid, to, statusEl){
     const r = await fetch('/api/controls/remap', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      // confirm exigido pela API: isto escreve no dispositivo.
+      // confirm required by the API: this writes to the device.
       body: JSON.stringify({slot, cid, to, confirm: true}),
     });
     const d = await r.json();
@@ -759,17 +759,17 @@ async function controls(){
       return;
     }
     box.innerHTML = d.devices.map(dev => {
-      const alvos = dev.controls;
+      const targets = dev.controls;
       const rows = dev.controls.map(c => {
-        const atual = c.remapped_to || '';
+        const current = c.remapped_to || '';
         if (!c.reprogrammable){
           return `<div class="ctlrow"><span class="cid">${esc(c.cid)}</span>` +
                  `<span class="nm">${esc(c.name)}</span>` +
                  `<span class="fix">fixo (flags ${esc(c.flags)})</span></div>`;
         }
         const opts = ['<option value="0">padrao</option>'].concat(
-          alvos.filter(t => t.cid !== c.cid).map(t =>
-            `<option value="${esc(t.cid)}"${t.cid === atual ? ' selected' : ''}>` +
+          targets.filter(t => t.cid !== c.cid).map(t =>
+            `<option value="${esc(t.cid)}"${t.cid === current ? ' selected' : ''}>` +
             `age como ${esc(t.name)}</option>`)
         ).join('');
         return `<div class="ctlrow"><span class="cid">${esc(c.cid)}</span>` +
@@ -804,7 +804,7 @@ async function logs(){
     if (!d.entries.length){
       box.innerHTML = '<div class="empty">sem entradas</div>';
     } else {
-      // Guarda a posicao: so rolamos para o fim se "acompanhar" estiver on.
+      // Keep the position: only scroll to the end if "acompanhar" is on.
       const follow = document.getElementById('follow').checked;
       box.innerHTML = d.entries.map(e =>
         `<div class="${e.level}"><span class="t">${esc(e.time)}</span>` +
@@ -841,60 +841,60 @@ async function tick(){
     document.getElementById('stamp').textContent = '--:--:--';
   }
 }
-// --- tela remota ------------------------------------------------------
-// O GET responde "da para clicar?"; o botao so fica ativo quando sim, e
-// o motivo de nao aparece do lado. Botao que abre nada e pior que botao
-// desabilitado explicado.
+// --- remote screen ----------------------------------------------------
+// The GET answers "can it be clicked?"; the button is enabled only when
+// yes, and the reason for no shows beside it. A button that opens nothing
+// is worse than a disabled button with an explanation.
 async function screens(){
   let plans = [];
   try{
     const r = await fetch('/api/screen', {cache:'no-store'});
     if (r.ok) plans = await r.json();
-  }catch(e){ /* sem tela: os cards seguem uteis */ }
+  }catch(e){ /* no screen: the cards are still useful */ }
   for (const box of document.querySelectorAll('[data-scr]')){
     const p = plans.find(x => x.host === box.dataset.scr);
     if (!p){ box.innerHTML = ''; box.style.display = 'none'; continue; }
     box.style.display = '';
     const lat = p.ms != null ? ` ${p.ms}ms` : '';
     const caps = p.caps || {};
-    // Um check que nao faz nada e pior que nenhum check: o que o cliente
-    // escolhido nao expoe fica desabilitado, com o motivo no title.
-    const opt = (id, rotulo, marcado, pode, porque) =>
-      `<label class="opt${pode ? '' : ' off'}" title="${esc(pode ? rotulo : porque)}">` +
-      `<input type="checkbox" data-opt="${id}"${marcado ? ' checked' : ''}` +
-      `${pode ? '' : ' disabled'}>${esc(rotulo)}</label>`;
-    const semSuporte = `${p.client || 'o cliente'} nao expoe isso`;
-    // So aparece a opcao que o cliente sabe cumprir: tres caixas apagadas
-    // em todo cartao disputavam atencao com o botao, sem mudar nada.
-    const opcoes =
+    // A checkbox that does nothing is worse than no checkbox: what the
+    // chosen client does not expose is disabled, with the reason in the title.
+    const opt = (id, label, isChecked, can, reason) =>
+      `<label class="opt${can ? '' : ' off'}" title="${esc(can ? label : reason)}">` +
+      `<input type="checkbox" data-opt="${id}"${isChecked ? ' checked' : ''}` +
+      `${can ? '' : ' disabled'}>${esc(label)}</label>`;
+    const unsupported = `${p.client || 'o cliente'} nao expoe isso`;
+    // Only the options the client can honor show up: three greyed-out boxes
+    // on every card competed with the button for attention, changing nothing.
+    const options =
       (caps.view_only ? opt('control', 'teclado+mouse', true, true, '') : '') +
-      (caps.audio ? opt('audio', 'som', false, true, semSuporte) : '') +
-      (caps.mic ? opt('mic', 'microfone', false, true, semSuporte) : '');
+      (caps.audio ? opt('audio', 'som', false, true, unsupported) : '') +
+      (caps.mic ? opt('mic', 'microfone', false, true, unsupported) : '');
     const via = p.ready ? `${p.kind} ${p.port}${lat} via ${p.client}` : '';
     box.innerHTML =
       `<button data-open="${esc(p.host)}" title="${esc(via)}"` +
       `${p.ready ? '' : ' disabled'}>Conectar</button>` +
       (p.kind === 'logistream' && p.ready
         ? `<button class="alt" data-janela="${esc(p.host)}">Abrir em janela separada</button>` : '') +
-      opcoes +
+      options +
       `<span class="why${p.ready ? '' : ' er'}">` +
       (p.ready ? '' : esc(p.blocker || 'indisponivel')) + `</span>`;
   }
 }
 
 document.getElementById('grid').addEventListener('click', async ev => {
-  const aba = ev.target.closest('button[data-open]');
-  if (aba && !aba.disabled && !ev.shiftKey){
-    if (await abrirAba(aba.dataset.open)) return;
+  const tabBtn = ev.target.closest('button[data-open]');
+  if (tabBtn && !tabBtn.disabled && !ev.shiftKey){
+    if (await openTab(tabBtn.dataset.open)) return;
   }
-  const b = aba || ev.target.closest('button[data-janela]');
+  const b = tabBtn || ev.target.closest('button[data-janela]');
   if (!b || b.disabled) return;
   const box = b.parentElement;
   const why = box.querySelector('.why');
-  // Um check desabilitado nao muda o pedido: mandamos o default dele.
-  const marcado = (id, padrao) => {
+  // A disabled checkbox does not change the request: we send its default.
+  const isChecked = (id, fallback) => {
     const el = box.querySelector(`input[data-opt="${id}"]`);
-    return (!el || el.disabled) ? padrao : el.checked;
+    return (!el || el.disabled) ? fallback : el.checked;
   };
   b.disabled = true; why.textContent = 'abrindo...';
   try{
@@ -902,9 +902,9 @@ document.getElementById('grid').addEventListener('click', async ev => {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         host: b.dataset.open || b.dataset.janela,
-        control: marcado('control', true),
-        audio: marcado('audio', false),
-        mic: marcado('mic', false),
+        control: isChecked('control', true),
+        audio: isChecked('audio', false),
+        mic: isChecked('mic', false),
       })
     });
     const d = await r.json();
@@ -918,16 +918,16 @@ document.getElementById('grid').addEventListener('click', async ev => {
   setTimeout(screens, 2500);
 });
 
-// --- sessao em aba -----------------------------------------------------
-// A ponte entrega H.264 Annex B e recebe os eventos no formato do host.
-// Ver specs/016-sessao-e-visual.md.
-const SESSOES = new Map();
-let abaAtual = null;
-const T_MOUSE = 1, T_BOTAO = 2, T_ROLAGEM = 3, T_TECLA = 4;
-const BOTOES = {0: 0x110, 1: 0x112, 2: 0x111};
-// KeyboardEvent.code para keycode do evdev: a mesma tabela de
-// `evdev_de_winit`, em logistream/src/input.rs.
-const TECLAS = (() => {
+// --- session in a tab -------------------------------------------------
+// The bridge delivers H.264 Annex B and takes events in the host's format.
+// See specs/016-session-and-visuals.md.
+const SESSIONS = new Map();
+let currentTab = null;
+const T_MOUSE = 1, T_BUTTON = 2, T_SCROLL = 3, T_KEY = 4;
+const BUTTONS = {0: 0x110, 1: 0x112, 2: 0x111};
+// KeyboardEvent.code to evdev keycode: the same table as
+// `evdev_from_winit`, in logistream/src/input.rs.
+const KEYS = (() => {
   const t = {Escape:1, Minus:12, Equal:13, Backspace:14, Tab:15, BracketLeft:26,
     BracketRight:27, Enter:28, ControlLeft:29, Semicolon:39, Quote:40, Backquote:41,
     ShiftLeft:42, Backslash:43, Comma:51, Period:52, Slash:53, ShiftRight:54,
@@ -947,18 +947,18 @@ const TECLAS = (() => {
   return t;
 })();
 
-function evento(tipo, a, b){
-  const curto = tipo === T_BOTAO || tipo === T_TECLA;
-  const v = new DataView(new ArrayBuffer(curto ? 6 : 17));
-  v.setUint8(0, tipo);
-  if (curto){ v.setUint32(1, a); v.setUint8(5, b ? 1 : 0); }
+function encodeEvent(type, a, b){
+  const isShort = type === T_BUTTON || type === T_KEY;
+  const v = new DataView(new ArrayBuffer(isShort ? 6 : 17));
+  v.setUint8(0, type);
+  if (isShort){ v.setUint32(1, a); v.setUint8(5, b ? 1 : 0); }
   else { v.setFloat64(1, a); v.setFloat64(9, b); }
   return v.buffer;
 }
 
-// O codec sai do SPS do proprio fluxo, e nao de um valor fixo: perfil e
-// nivel mudam com a resolucao e o codificador de cada maquina.
-function codecDe(u){
+// The codec comes from the stream's own SPS, not a fixed value: profile and
+// level change with the resolution and each machine's encoder.
+function codecFrom(u){
   for (let i = 0; i + 7 < u.length; i++){
     if (u[i] === 0 && u[i+1] === 0 && u[i+2] === 1 && (u[i+3] & 31) === 7){
       const h = n => n.toString(16).padStart(2, '0');
@@ -968,9 +968,9 @@ function codecDe(u){
   return null;
 }
 
-// Canvas com `object-fit:contain`: o ponto da janela vira pixel do quadro,
-// descontadas as barras. Fora da imagem nao ha evento.
-function pontoRemoto(ev, c){
+// Canvas with `object-fit:contain`: the window point becomes a frame pixel,
+// minus the bars. Outside the image there is no event.
+function remotePoint(ev, c){
   const r = c.getBoundingClientRect();
   const e = Math.min(r.width / c.width, r.height / c.height);
   const w = c.width * e, h = c.height * e;
@@ -979,123 +979,123 @@ function pontoRemoto(ev, c){
   return (x < 0 || y < 0 || x >= c.width || y >= c.height) ? null : [x, y];
 }
 
-function ligarInput(s){
+function wireInput(s){
   const c = s.canvas;
-  const manda = b => { if (s.ws.readyState === 1) s.ws.send(b); };
-  const presas = new Set();
-  // Sai na hora: esperar o proximo quadro somaria ate 16 ms a cada movimento.
+  const send = b => { if (s.ws.readyState === 1) s.ws.send(b); };
+  const held = new Set();
+  // Sent right away: waiting for the next frame would add up to 16 ms per move.
   c.addEventListener('pointermove', ev => {
-    const p = pontoRemoto(ev, c);
-    if (p) manda(evento(T_MOUSE, p[0], p[1]));
+    const p = remotePoint(ev, c);
+    if (p) send(encodeEvent(T_MOUSE, p[0], p[1]));
   });
-  const botao = apertado => ev => {
-    const k = BOTOES[ev.button]; if (k == null) return;
+  const onButton = pressed => ev => {
+    const k = BUTTONS[ev.button]; if (k == null) return;
     ev.preventDefault(); c.focus();
-    const p = pontoRemoto(ev, c);
-    if (p) manda(evento(T_MOUSE, p[0], p[1]));
-    manda(evento(T_BOTAO, k, apertado));
+    const p = remotePoint(ev, c);
+    if (p) send(encodeEvent(T_MOUSE, p[0], p[1]));
+    send(encodeEvent(T_BUTTON, k, pressed));
   };
-  c.addEventListener('pointerdown', botao(true));
-  c.addEventListener('pointerup', botao(false));
+  c.addEventListener('pointerdown', onButton(true));
+  c.addEventListener('pointerup', onButton(false));
   c.addEventListener('contextmenu', ev => ev.preventDefault());
   c.addEventListener('wheel', ev => {
     ev.preventDefault();
     const f = ev.deltaMode === 1 ? 15 : 1;
-    manda(evento(T_ROLAGEM, ev.deltaX * f, ev.deltaY * f));
+    send(encodeEvent(T_SCROLL, ev.deltaX * f, ev.deltaY * f));
   }, {passive:false});
-  const tecla = apertado => ev => {
-    const k = TECLAS[ev.code]; if (k == null) return;
+  const onKey = pressed => ev => {
+    const k = KEYS[ev.code]; if (k == null) return;
     ev.preventDefault();
-    if (apertado) presas.add(k); else presas.delete(k);
-    manda(evento(T_TECLA, k, apertado));
+    if (pressed) held.add(k); else held.delete(k);
+    send(encodeEvent(T_KEY, k, pressed));
   };
-  c.addEventListener('keydown', tecla(true));
-  c.addEventListener('keyup', tecla(false));
-  // Sair da aba com a tecla apertada a deixaria presa na outra maquina.
-  s.soltar = () => { presas.forEach(k => manda(evento(T_TECLA, k, false))); presas.clear(); };
-  c.addEventListener('blur', s.soltar);
+  c.addEventListener('keydown', onKey(true));
+  c.addEventListener('keyup', onKey(false));
+  // Leaving the tab with a key held would leave it stuck on the other machine.
+  s.releaseKeys = () => { held.forEach(k => send(encodeEvent(T_KEY, k, false))); held.clear(); };
+  c.addEventListener('blur', s.releaseKeys);
 }
 
-function ligarVideo(s){
+function wireVideo(s){
   const c = s.canvas, ctx = c.getContext('2d', {alpha:false, desynchronized:true});
-  let pronto = false, n = 0;
-  const chegada = new Map();
-  s.atrasos = [];
+  let configured = false, n = 0;
+  const arrivals = new Map();
+  s.delays = [];
   const dec = new VideoDecoder({
     output: f => {
       if (c.width !== f.displayWidth || c.height !== f.displayHeight){
         c.width = f.displayWidth; c.height = f.displayHeight;
       }
       ctx.drawImage(f, 0, 0);
-      const m = chegada.get(f.timestamp);
-      chegada.delete(f.timestamp);
+      const m = arrivals.get(f.timestamp);
+      arrivals.delete(f.timestamp);
       if (m){
-        s.decodMs = performance.now() - m.t0;
-        s.atrasos.push(Date.now() - m.capturado);
-        if (s.atrasos.length > 600) s.atrasos.shift();
+        s.decodeMs = performance.now() - m.t0;
+        s.delays.push(Date.now() - m.capturedAt);
+        if (s.delays.length > 600) s.delays.shift();
       }
       f.close();
-      s.quadros++;
-      s.aviso.hidden = true;
+      s.frames++;
+      s.notice.hidden = true;
     },
-    error: e => { s.aviso.hidden = false; s.aviso.textContent = 'decodificador: ' + e.message; }
+    error: e => { s.notice.hidden = false; s.notice.textContent = 'decodificador: ' + e.message; }
   });
   s.dec = dec;
   s.ws.onmessage = ev => {
-    const b = new Uint8Array(ev.data), chave = (b[0] & 1) === 1, u = b.subarray(9);
-    const capturado = Number(new DataView(ev.data).getBigUint64(1)) / 1e6;
-    if (!pronto){
-      if (!chave) return;
-      const codec = codecDe(u);
+    const b = new Uint8Array(ev.data), isKey = (b[0] & 1) === 1, u = b.subarray(9);
+    const capturedAt = Number(new DataView(ev.data).getBigUint64(1)) / 1e6;
+    if (!configured){
+      if (!isKey) return;
+      const codec = codecFrom(u);
       if (!codec) return;
-      // Por software, e nao por hardware: o fluxo nao declara que nao
-      // reordena, e o decodificador de hardware segura ~4 quadros. Medido
-      // no Mac em 1080p: 172 ms contra 1,9 ms, com a mesma imagem.
+      // Software, not hardware: the stream does not declare that it does
+      // not reorder, and the hardware decoder holds ~4 frames. Measured on
+      // the Mac at 1080p: 172 ms versus 1.9 ms, with the same image.
       dec.configure({codec, optimizeForLatency:true, hardwareAcceleration:'prefer-software'});
-      s.codec = codec; pronto = true;
+      s.codec = codec; configured = true;
     }
     const ts = ++n * 1000;
-    chegada.set(ts, {t0: performance.now(), capturado});
-    dec.decode(new EncodedVideoChunk({type: chave ? 'key' : 'delta', timestamp: ts, data: u}));
+    arrivals.set(ts, {t0: performance.now(), capturedAt});
+    dec.decode(new EncodedVideoChunk({type: isKey ? 'key' : 'delta', timestamp: ts, data: u}));
   };
 }
 
-function pintaAbas(){
-  const barra = document.getElementById('abas');
-  barra.hidden = SESSOES.size === 0;
-  barra.innerHTML = `<button class="aba${abaAtual ? '' : ' on'}" data-aba="">Maquinas</button>` +
-    [...SESSOES.keys()].map(h =>
-      `<button class="aba${abaAtual === h ? ' on' : ''}" data-aba="${esc(h)}">${esc(h)}` +
+function paintTabs(){
+  const bar = document.getElementById('abas');
+  bar.hidden = SESSIONS.size === 0;
+  bar.innerHTML = `<button class="aba${currentTab ? '' : ' on'}" data-aba="">Maquinas</button>` +
+    [...SESSIONS.keys()].map(h =>
+      `<button class="aba${currentTab === h ? ' on' : ''}" data-aba="${esc(h)}">${esc(h)}` +
       `<span class="x" data-fecha="${esc(h)}" title="encerrar sessao">&times;</span></button>`).join('');
-  document.querySelector('.wrap').classList.toggle('emsessao', !!abaAtual);
-  document.getElementById('palco').hidden = !abaAtual;
-  document.getElementById('barranome').textContent = abaAtual || '';
-  if (!document.getElementById('arq').hidden) arqMostra(false);
-  SESSOES.forEach((s, h) => {
-    const on = h === abaAtual;
+  document.querySelector('.wrap').classList.toggle('emsessao', !!currentTab);
+  document.getElementById('palco').hidden = !currentTab;
+  document.getElementById('barranome').textContent = currentTab || '';
+  if (!document.getElementById('arq').hidden) xferShow(false);
+  SESSIONS.forEach((s, h) => {
+    const on = h === currentTab;
     s.canvas.classList.toggle('on', on);
-    s.medida.hidden = !on;
-    s.aviso.style.display = on ? '' : 'none';
-    if (on) s.canvas.focus(); else s.soltar && s.soltar();
+    s.stats.hidden = !on;
+    s.notice.style.display = on ? '' : 'none';
+    if (on) s.canvas.focus(); else s.releaseKeys && s.releaseKeys();
   });
 }
 
-function fechaAba(h){
-  const s = SESSOES.get(h);
+function closeTab(h){
+  const s = SESSIONS.get(h);
   if (!s) return;
-  if (s.soltar) s.soltar();
-  clearInterval(s.relogio);
+  if (s.releaseKeys) s.releaseKeys();
+  clearInterval(s.timer);
   s.ws.close();
   if (s.dec && s.dec.state !== 'closed') s.dec.close();
-  s.canvas.remove(); s.aviso.remove(); s.medida.remove();
-  SESSOES.delete(h);
-  if (abaAtual === h) abaAtual = null;
-  pintaAbas();
+  s.canvas.remove(); s.notice.remove(); s.stats.remove();
+  SESSIONS.delete(h);
+  if (currentTab === h) currentTab = null;
+  paintTabs();
 }
 
-// Devolve `false` quando a aba nao da, e quem chamou usa a janela nativa.
-async function abrirAba(host){
-  if (SESSOES.has(host)){ abaAtual = host; pintaAbas(); return true; }
+// Returns `false` when a tab is not possible, and the caller uses the native window.
+async function openTab(host){
+  if (SESSIONS.has(host)){ currentTab = host; paintTabs(); return true; }
   if (typeof VideoDecoder === 'undefined') return false;
   let d;
   try{
@@ -1104,63 +1104,63 @@ async function abrirAba(host){
     if (!r.ok) return false;
     d = await r.json();
   }catch(e){ return false; }
-  const s = {host, quadros:0, decodMs:null};
+  const s = {host, frames:0, decodeMs:null};
   s.canvas = document.createElement('canvas');
   s.canvas.tabIndex = 0; s.canvas.width = 1280; s.canvas.height = 720;
-  s.aviso = document.createElement('div'); s.aviso.className = 'aviso';
-  s.aviso.textContent = 'Conectando em ' + host + '...';
-  s.medida = document.createElement('div'); s.medida.className = 'medida';
-  document.getElementById('tela').append(s.canvas, s.aviso, s.medida);
+  s.notice = document.createElement('div'); s.notice.className = 'aviso';
+  s.notice.textContent = 'Conectando em ' + host + '...';
+  s.stats = document.createElement('div'); s.stats.className = 'medida';
+  document.getElementById('tela').append(s.canvas, s.notice, s.stats);
   s.ws = new WebSocket(`ws://127.0.0.1:${d.porta}/${d.token}`);
   s.ws.binaryType = 'arraybuffer';
-  ligarVideo(s); ligarInput(s);
+  wireVideo(s); wireInput(s);
   s.ws.onclose = () => {
-    if (!SESSOES.has(host)) return;
-    s.aviso.hidden = false; s.aviso.textContent = 'Sessao encerrada';
+    if (!SESSIONS.has(host)) return;
+    s.notice.hidden = false; s.notice.textContent = 'Sessao encerrada';
   };
-  let antes = 0;
-  s.relogio = setInterval(() => {
-    const fps = s.quadros - antes; antes = s.quadros;
-    s.medida.textContent = `${s.canvas.width}x${s.canvas.height} · ${fps} fps` +
-      (s.decodMs != null ? ` · decodifica ${s.decodMs.toFixed(1)} ms` : '');
+  let prev = 0;
+  s.timer = setInterval(() => {
+    const fps = s.frames - prev; prev = s.frames;
+    s.stats.textContent = `${s.canvas.width}x${s.canvas.height} · ${fps} fps` +
+      (s.decodeMs != null ? ` · decodifica ${s.decodeMs.toFixed(1)} ms` : '');
   }, 1000);
-  SESSOES.set(host, s);
-  abaAtual = host;
-  pintaAbas();
+  SESSIONS.set(host, s);
+  currentTab = host;
+  paintTabs();
   return true;
 }
 
-// Atalho que o sistema local engoliria: vai pela barra. Ctrl+Alt+Del nao
-// esta aqui porque o Windows nao aceita essa combinacao injetada.
+// Shortcuts the local system would swallow go through the bar. Ctrl+Alt+Del
+// is not here because Windows does not accept that combination injected.
 const COMBOS = {alttab:[56, 15], super:[125], tarefas:[29, 42, 1]};
 document.getElementById('barra').addEventListener('click', ev => {
   const b = ev.target.closest('button[data-combo]');
-  const s = SESSOES.get(abaAtual);
+  const s = SESSIONS.get(currentTab);
   if (!b || !s || s.ws.readyState !== 1) return;
-  const teclas = COMBOS[b.dataset.combo];
-  teclas.forEach(k => s.ws.send(evento(T_TECLA, k, true)));
-  [...teclas].reverse().forEach(k => s.ws.send(evento(T_TECLA, k, false)));
+  const keys = COMBOS[b.dataset.combo];
+  keys.forEach(k => s.ws.send(encodeEvent(T_KEY, k, true)));
+  [...keys].reverse().forEach(k => s.ws.send(encodeEvent(T_KEY, k, false)));
   s.canvas.focus();
 });
 document.getElementById('barrafim').addEventListener('click', () => {
-  if (abaAtual) fechaAba(abaAtual);
+  if (currentTab) closeTab(currentTab);
 });
 document.getElementById('barracheia').addEventListener('click', () => {
   const p = document.getElementById('palco');
   if (document.fullscreenElement) document.exitFullscreen(); else p.requestFullscreen();
-  const s = SESSOES.get(abaAtual);
+  const s = SESSIONS.get(currentTab);
   if (s) s.canvas.focus();
 });
 
-// --- gerenciador de arquivos -------------------------------------------
-// Esta maquina a esquerda, a da aba a direita. So copia: a rota recusa
-// sobrescrever, e quem diz que chegou e o destino.
-const ARQ = {esq:{host:'', path:'', sel:null, d:null}, dir:{host:'', path:'', sel:null, d:null},
-             relogio:0, erro:''};
-const painelDe = l => document.querySelector(`.pane[data-lado="${l}"]`);
+// --- file manager -----------------------------------------------------
+// This machine on the left, the tab's machine on the right. Copy only: the
+// route refuses to overwrite, and the destination is what says it arrived.
+const XFER = {esq:{host:'', path:'', sel:null, d:null}, dir:{host:'', path:'', sel:null, d:null},
+             timer:0, error:''};
+const paneOf = l => document.querySelector(`.pane[data-lado="${l}"]`);
 
-async function arqLista(lado){
-  const p = ARQ[lado], box = painelDe(lado);
+async function xferList(side){
+  const p = XFER[side], box = paneOf(side);
   const q = new URLSearchParams({host:p.host}); if (p.path) q.set('path', p.path);
   box.innerHTML = `<div class="ptop"><div class="pquem">${esc(p.host)}</div></div>` +
     `<div class="nota">carregando...</div>`;
@@ -1169,138 +1169,138 @@ async function arqLista(lado){
   catch(e){ d = {error:e.message, entries:[]}; }
   p.d = d; p.sel = null;
   if (d.path) p.path = d.path;
-  const quem = lado === 'esq' ? `${esc(p.host)} (esta maquina)` : esc(p.host);
-  const itens = (d.entries || []).map((e, i) =>
+  const who = side === 'esq' ? `${esc(p.host)} (esta maquina)` : esc(p.host);
+  const items = (d.entries || []).map((e, i) =>
     `<button class="item" data-i="${i}"><span>${e.kind === 'dir' ? '&#128193;' : '&#128196;'}</span>` +
     `<span class="n">${esc(e.name)}</span>` +
     `<span class="t">${e.kind === 'dir' ? '' : fsSize(e.size)}</span></button>`).join('');
   box.innerHTML =
-    `<div class="ptop"><div class="pquem">${quem}</div><div class="pnav">` +
+    `<div class="ptop"><div class="pquem">${who}</div><div class="pnav">` +
     `<button data-subir${d.parent ? '' : ' disabled'} title="Pasta acima">&uarr;</button>` +
     `<button data-recarrega title="Recarregar">&#8635;</button>` +
     `<span class="pcam" title="${esc(d.display || '')}">${esc(d.display || '')}</span></div></div>` +
     `<div class="plista">${d.error ? `<div class="nota">${esc(d.error)}</div>`
-      : (itens || '<div class="nota">Pasta vazia</div>')}</div>`;
-  arqBotoes();
+      : (items || '<div class="nota">Pasta vazia</div>')}</div>`;
+  xferButtons();
 }
 
-function arqBotoes(){
-  document.getElementById('arqenviar').disabled = !ARQ.esq.sel;
-  document.getElementById('arqreceber').disabled = !ARQ.dir.sel;
+function xferButtons(){
+  document.getElementById('arqenviar').disabled = !XFER.esq.sel;
+  document.getElementById('arqreceber').disabled = !XFER.dir.sel;
 }
 
-async function arqFila(){
+async function xferQueue(){
   let t = [];
   try{ t = await (await fetch('/api/files/transferencias', {cache:'no-store'})).json(); }catch(e){}
-  const andando = t.some(x => x.estado === 'andando');
-  const rotulo = {andando:'copiando...', ok:'chegou', erro:'falhou'};
-  const fila = document.getElementById('arqfila');
-  const linhas = t.slice(-4).reverse().map(x =>
+  const busy = t.some(x => x.estado === 'andando');
+  const label = {andando:'copiando...', ok:'chegou', erro:'falhou'};
+  const queue = document.getElementById('arqfila');
+  const lines = t.slice(-4).reverse().map(x =>
     `<div class="${x.estado}">${esc(x.nome)}: ${esc(x.de)} &rarr; ${esc(x.para)} &middot; ` +
-    `${rotulo[x.estado]}${x.detalhe ? ' &middot; ' + esc(x.detalhe) : ''}</div>`).join('');
-  fila.innerHTML = (ARQ.erro ? `<div class="erro">${esc(ARQ.erro)}</div>` : '') + linhas;
-  if (ARQ.andava && !andando){ arqLista('esq'); arqLista('dir'); }
-  ARQ.andava = andando;
+    `${label[x.estado]}${x.detalhe ? ' &middot; ' + esc(x.detalhe) : ''}</div>`).join('');
+  queue.innerHTML = (XFER.error ? `<div class="erro">${esc(XFER.error)}</div>` : '') + lines;
+  if (XFER.wasBusy && !busy){ xferList('esq'); xferList('dir'); }
+  XFER.wasBusy = busy;
 }
 
-async function arqCopia(de, para){
-  const o = ARQ[de], e = o.d.entries[o.sel];
-  ARQ.erro = '';
+async function xferCopy(from, to){
+  const o = XFER[from], e = o.d.entries[o.sel];
+  XFER.error = '';
   const r = await fetch('/api/files/transferir', {method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({de:o.host, caminho:o.path.replace(/[\/\\]+$/, '') + '/' + e.name,
-      para:ARQ[para].host, pasta:ARQ[para].path})});
-  if (!r.ok) ARQ.erro = (await r.json()).error || ('HTTP ' + r.status);
-  arqFila();
+      para:XFER[to].host, pasta:XFER[to].path})});
+  if (!r.ok) XFER.error = (await r.json()).error || ('HTTP ' + r.status);
+  xferQueue();
 }
 
-function arqMostra(abrir){
+function xferShow(show){
   const a = document.getElementById('arq');
-  a.hidden = !abrir;
-  clearInterval(ARQ.relogio);
-  if (!abrir){ const s = SESSOES.get(abaAtual); if (s) s.canvas.focus(); return; }
+  a.hidden = !show;
+  clearInterval(XFER.timer);
+  if (!show){ const s = SESSIONS.get(currentTab); if (s) s.canvas.focus(); return; }
   const local = (window.HOSTS || []).find(h => h.addr === '127.0.0.1' || h.addr === 'localhost');
-  ARQ.erro = '';
-  if (ARQ.dir.host !== abaAtual) Object.assign(ARQ.dir, {host:abaAtual, path:''});
-  ARQ.esq.host = local ? local.name : '';
-  arqLista('esq'); arqLista('dir'); arqFila();
-  ARQ.relogio = setInterval(arqFila, 1000);
+  XFER.error = '';
+  if (XFER.dir.host !== currentTab) Object.assign(XFER.dir, {host:currentTab, path:''});
+  XFER.esq.host = local ? local.name : '';
+  xferList('esq'); xferList('dir'); xferQueue();
+  XFER.timer = setInterval(xferQueue, 1000);
 }
 
 document.getElementById('barraarq').addEventListener('click', () => {
-  arqMostra(document.getElementById('arq').hidden);
+  xferShow(document.getElementById('arq').hidden);
 });
-document.getElementById('arqenviar').addEventListener('click', () => arqCopia('esq', 'dir'));
-document.getElementById('arqreceber').addEventListener('click', () => arqCopia('dir', 'esq'));
+document.getElementById('arqenviar').addEventListener('click', () => xferCopy('esq', 'dir'));
+document.getElementById('arqreceber').addEventListener('click', () => xferCopy('dir', 'esq'));
 document.getElementById('arq').addEventListener('click', ev => {
   const box = ev.target.closest('.pane');
   if (!box) return;
-  const lado = box.dataset.lado, p = ARQ[lado];
-  if (ev.target.closest('[data-recarrega]')) return arqLista(lado);
-  if (ev.target.closest('[data-subir]')){ p.path = p.d.parent; return arqLista(lado); }
+  const side = box.dataset.lado, p = XFER[side];
+  if (ev.target.closest('[data-recarrega]')) return xferList(side);
+  if (ev.target.closest('[data-subir]')){ p.path = p.d.parent; return xferList(side); }
   const b = ev.target.closest('.item');
   if (!b) return;
   const e = p.d.entries[+b.dataset.i];
   if (e.kind === 'dir' && p.sel === +b.dataset.i){
     p.path = p.path.replace(/[\/\\]+$/, '') + '/' + e.name;
-    return arqLista(lado);
+    return xferList(side);
   }
   box.querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel'));
   b.classList.add('sel'); p.sel = +b.dataset.i;
-  arqBotoes();
+  xferButtons();
 });
 document.getElementById('arq').addEventListener('dblclick', ev => {
   const b = ev.target.closest('.item'), box = ev.target.closest('.pane');
   if (!b || !box) return;
-  const p = ARQ[box.dataset.lado], e = p.d.entries[+b.dataset.i];
+  const p = XFER[box.dataset.lado], e = p.d.entries[+b.dataset.i];
   if (e.kind !== 'dir') return;
   p.path = p.path.replace(/[\/\\]+$/, '') + '/' + e.name;
-  arqLista(box.dataset.lado);
+  xferList(box.dataset.lado);
 });
 
 document.getElementById('abas').addEventListener('click', ev => {
   const x = ev.target.closest('[data-fecha]');
-  if (x){ fechaAba(x.dataset.fecha); return; }
+  if (x){ closeTab(x.dataset.fecha); return; }
   const a = ev.target.closest('[data-aba]');
   if (!a) return;
-  abaAtual = a.dataset.aba || null;
-  pintaAbas();
+  currentTab = a.dataset.aba || null;
+  paintTabs();
 });
 
-// --- novidades ---------------------------------------------------------
-// O changelog vem do binario (include_str!), nao de disco: o que aparece
-// aqui e o que ESTA maquina roda. Lendo de arquivo, uma maquina atrasada
-// anunciaria novidade que ela nao tem.
-async function novidades(){
-  let itens = [];
+// --- what's new -------------------------------------------------------
+// The changelog comes from the binary (include_str!), not from disk: what
+// shows here is what THIS machine runs. Reading from a file, a machine
+// that is behind would announce news it does not have.
+async function whatsNew(){
+  let items = [];
   try{
     const r = await fetch('/api/changelog', {cache:'no-store'});
-    if (r.ok) itens = await r.json();
+    if (r.ok) items = await r.json();
   }catch(e){ return; }
-  if (!itens.length) return;
+  if (!items.length) return;
 
-  // "Visto" por titulo da entrada mais recente, no armazenamento do
-  // navegador: e conveniencia por pessoa, nao estado que precise durar.
-  let visto = null;
-  try{ visto = localStorage.getItem('logi.novidades.visto'); }catch(e){}
-  const corte = itens.findIndex(i => i.titulo === visto);
-  const novos = corte < 0 ? (visto ? itens.length : 0) : corte;
+  // "Seen" by the title of the newest entry, in browser storage: it is a
+  // per-person convenience, not state that needs to last.
+  let seen = null;
+  try{ seen = localStorage.getItem('logi.novidades.visto'); }catch(e){}
+  const cut = items.findIndex(i => i.titulo === seen);
+  const unseen = cut < 0 ? (seen ? items.length : 0) : cut;
 
-  document.getElementById('novlist').innerHTML = itens.map((i, n) =>
-    `<div class="novitem${n < novos ? ' novo' : ''}">` +
+  document.getElementById('novlist').innerHTML = items.map((i, n) =>
+    `<div class="novitem${n < unseen ? ' novo' : ''}">` +
     `<div class="d">${esc(i.data)}</div>` +
     `<div class="t">${esc(i.titulo)}</div>` +
     `<div class="x">${esc(i.descricao)}</div></div>`).join('');
 
   const badge = document.getElementById('novbadge');
-  badge.textContent = novos;
-  badge.hidden = novos === 0;
+  badge.textContent = unseen;
+  badge.hidden = unseen === 0;
 
   document.getElementById('novbtn').onclick = () => {
     const pop = document.getElementById('novpop');
     pop.classList.toggle('on');
     if (pop.classList.contains('on')){
-      try{ localStorage.setItem('logi.novidades.visto', itens[0].titulo); }catch(e){}
+      try{ localStorage.setItem('logi.novidades.visto', items[0].titulo); }catch(e){}
       badge.hidden = true;
       for (const el of pop.querySelectorAll('.novitem.novo')) el.classList.remove('novo');
     }
@@ -1310,34 +1310,34 @@ document.addEventListener('click', ev => {
   if (!ev.target.closest('.novwrap')) document.getElementById('novpop').classList.remove('on');
 });
 
-// --- disposicao --------------------------------------------------------
-// A grade diz a mesma coisa que `edge = "right"` + `target = "..."`, mas
-// do jeito que a pessoa ja pensa: "o Windows fica a direita".
+// --- layout -----------------------------------------------------------
+// The grid says the same as `edge = "right"` + `target = "..."`, but the
+// way the person already thinks: "Windows is on the right".
 const LY = {cols:4, rows:3, pos:{}, hosts:[]};
 
-function lyDesenha(){
+function lyRender(){
   const g = document.getElementById('lygrid');
   g.style.gridTemplateColumns = `repeat(${LY.cols}, minmax(0,1fr))`;
-  const porCelula = {};
+  const byCell = {};
   for (const h of LY.hosts){
     const c = LY.pos[h.name];
-    if (c) (porCelula[`${c.col},${c.row}`] ||= []).push(h);
+    if (c) (byCell[`${c.col},${c.row}`] ||= []).push(h);
   }
   let html = '';
   for (let r = 0; r < LY.rows; r++){
     for (let c = 0; c < LY.cols; c++){
-      const dentro = (porCelula[`${c},${r}`] || []).map(lyTile).join('');
-      html += `<div class="lycell" data-col="${c}" data-row="${r}">${dentro}</div>`;
+      const inside = (byCell[`${c},${r}`] || []).map(lyTile).join('');
+      html += `<div class="lycell" data-col="${c}" data-row="${r}">${inside}</div>`;
     }
   }
   g.innerHTML = html;
 
-  const soltos = LY.hosts.filter(h => !LY.pos[h.name]);
-  document.getElementById('lytray').innerHTML = soltos.length
-    ? soltos.map(lyTile).join('')
+  const unplaced = LY.hosts.filter(h => !LY.pos[h.name]);
+  document.getElementById('lytray').innerHTML = unplaced.length
+    ? unplaced.map(lyTile).join('')
     : '';
   document.getElementById('lymeta').textContent =
-    soltos.length ? `${soltos.length} sem posicao` : 'todas posicionadas';
+    unplaced.length ? `${unplaced.length} sem posicao` : 'todas posicionadas';
 }
 
 function lyTile(h){
@@ -1346,23 +1346,23 @@ function lyTile(h){
          `<span class="o">${esc(h.os)}${h.local ? ' - esta' : ''}</span></div>`;
 }
 
-function lyEdges(edges, ligada){
+function lyEdges(edges, enabled){
   const box = document.getElementById('lyedges');
   if (!edges || !edges.length){
-    box.innerHTML = ligada
+    box.innerHTML = enabled
       ? '<span class="lyedge">nenhuma borda derivada</span>'
       : '<span class="lyedge">borda desligada na config</span>';
     return;
   }
-  const nome = {right:'direita', left:'esquerda', top:'cima', bottom:'baixo'};
-  // Vizinho que nao RECEBE aparece, mas apagado e com o motivo: a grade
-  // nao pode mentir em silencio sobre um lado que nao vai funcionar.
+  const edgeNames = {right:'direita', left:'esquerda', top:'cima', bottom:'baixo'};
+  // A neighbor that does not RECEIVE shows, but greyed out and with the
+  // reason: the grid must not silently lie about a side that will not work.
   box.innerHTML = edges.map(e => {
-    const rot = `${esc(nome[e.edge] || e.edge)} &rarr; ${esc(e.target)}`;
+    const edgeText = `${esc(edgeNames[e.edge] || e.edge)} &rarr; ${esc(e.target)}`;
     return e.ativa === false
       ? `<span class="lyedge off" title="sem ssh+agent: nao ha quem devolva o dispositivo, ` +
-        `entao nao criamos borda para la">${rot} &middot; nao recebe</span>`
-      : `<span class="lyedge">${rot}</span>`;
+        `entao nao criamos borda para la">${edgeText} &middot; nao recebe</span>`
+      : `<span class="lyedge">${edgeText}</span>`;
   }).join('');
 }
 
@@ -1374,40 +1374,40 @@ async function layout(){
     LY.hosts = d.hosts;
     LY.pos = {};
     for (const h of d.hosts) if (h.layout) LY.pos[h.name] = h.layout;
-    // A grade cresce para caber o que ja existe, nunca encolhe abaixo do
-    // minimo -- senao uma maquina salva em col=4 sumiria da tela.
+    // The grid grows to fit what already exists, never shrinks below the
+    // minimum -- otherwise a machine saved at col=4 would vanish from view.
     for (const c of Object.values(LY.pos)){
       LY.cols = Math.max(LY.cols, c.col + 1);
       LY.rows = Math.max(LY.rows, c.row + 1);
     }
-    lyDesenha();
+    lyRender();
     lyEdges(d.edges, d.border_enabled);
     document.getElementById('lykvmon').checked = !!d.border_enabled;
-    // Quem manda depende de COMO voce troca: pela borda e o mouse que
-    // atravessa; pelo Easy-Switch do teclado, tem de ser o teclado --
-    // senao o reconciliador desfaz o que voce acabou de fazer.
+    // Who leads depends on HOW you switch: by the border it is the mouse
+    // that crosses; by the keyboard's Easy-Switch it has to be the keyboard
+    // -- otherwise the reconciler undoes what you just did.
     const sel = document.getElementById('lyleader');
-    const nomes = d.devices || [];
-    if (sel.dataset.nomes !== nomes.join('|')){
-      sel.dataset.nomes = nomes.join('|');
-      sel.innerHTML = nomes.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    const names = d.devices || [];
+    if (sel.dataset.nomes !== names.join('|')){
+      sel.dataset.nomes = names.join('|');
+      sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
     }
     if (d.follow_leader) sel.value = d.follow_leader;
     document.getElementById('lyfollowon').checked = !!d.follow_enabled;
-    PAUSA_S = d.hidpp_pausado_s ?? null;
-    pintaPausa();
+    PAUSED_S = d.hidpp_pausado_s ?? null;
+    paintPause();
   }catch(e){
     document.getElementById('lymeta').textContent = 'inacessivel: ' + e.message;
   }
 }
 
-async function lySalva(){
-  const posicoes = {};
-  for (const [h, c] of Object.entries(LY.pos)) posicoes[h] = c;
+async function lySave(){
+  const positions = {};
+  for (const [h, c] of Object.entries(LY.pos)) positions[h] = c;
   try{
     const r = await fetch('/api/layout', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({posicoes})
+      body: JSON.stringify({posicoes: positions})
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
@@ -1437,7 +1437,7 @@ document.getElementById('lykvmon').addEventListener('change', async ev => {
   }
 });
 
-async function salvaFollow(){
+async function saveFollow(){
   const meta = document.getElementById('lymeta');
   try{
     const r = await fetch('/api/follow', {
@@ -1452,21 +1452,21 @@ async function salvaFollow(){
     meta.textContent = d.nota;
   }catch(e){ meta.textContent = e.message; }
 }
-document.getElementById('lyfollowon').addEventListener('change', salvaFollow);
-document.getElementById('lyleader').addEventListener('change', salvaFollow);
+document.getElementById('lyfollowon').addEventListener('change', saveFollow);
+document.getElementById('lyleader').addEventListener('change', saveFollow);
 
-let lyArrastando = null;
+let lyDragging = null;
 document.addEventListener('dragstart', ev => {
   const t = ev.target.closest('.lytile');
   if (!t) return;
-  lyArrastando = t.dataset.host;
+  lyDragging = t.dataset.host;
   ev.dataTransfer.effectAllowed = 'move';
-  // Firefox so inicia o arrasto se houver dado.
-  ev.dataTransfer.setData('text/plain', lyArrastando);
+  // Firefox only starts the drag if there is data.
+  ev.dataTransfer.setData('text/plain', lyDragging);
 });
 document.addEventListener('dragover', ev => {
   const c = ev.target.closest('.lycell');
-  if (!c || !lyArrastando) return;
+  if (!c || !lyDragging) return;
   ev.preventDefault();
   c.classList.add('alvo');
 });
@@ -1476,17 +1476,17 @@ document.addEventListener('dragleave', ev => {
 });
 document.addEventListener('drop', ev => {
   const c = ev.target.closest('.lycell');
-  if (!c || !lyArrastando) return;
+  if (!c || !lyDragging) return;
   ev.preventDefault();
   c.classList.remove('alvo');
-  LY.pos[lyArrastando] = {col: Number(c.dataset.col), row: Number(c.dataset.row)};
-  lyArrastando = null;
-  lyDesenha();
-  lySalva();
+  LY.pos[lyDragging] = {col: Number(c.dataset.col), row: Number(c.dataset.row)};
+  lyDragging = null;
+  lyRender();
+  lySave();
 });
 
-// --- tarefas -----------------------------------------------------------
-const TK = {host:null, pendente:null};
+// --- tasks ------------------------------------------------------------
+const TK = {host:null, pending:null};
 
 function tkHosts(hosts){
   const box = document.getElementById('tkhost');
@@ -1497,7 +1497,7 @@ function tkHosts(hosts){
     `<button data-host="${esc(h.name)}">${esc(h.name)}</button>`).join('');
 }
 
-async function tarefas(){
+async function tasks(){
   const body = document.getElementById('tkbody');
   const q = TK.host ? ('?host=' + encodeURIComponent(TK.host)) : '';
   try{
@@ -1507,8 +1507,8 @@ async function tarefas(){
     TK.host = d.host;
     for (const b of document.querySelectorAll('#tkhost button'))
       b.classList.toggle('on', b.dataset.host === d.host);
-    // A unidade de CPU muda por SO: percentual no Unix, segundos
-    // acumulados no Windows. Rotular errado seria mentira plausivel.
+    // The CPU unit changes per OS: percent on Unix, accumulated seconds
+    // on Windows. A wrong label would be a plausible lie.
     document.getElementById('tkcpu').textContent =
       d.cpu_kind === 'seconds' ? 'cpu s' : 'cpu %';
     if (d.error){
@@ -1517,8 +1517,8 @@ async function tarefas(){
       return;
     }
     body.innerHTML = d.procs.map(p => {
-      const confirmando = TK.pendente === p.pid;
-      const acao = confirmando
+      const confirming = TK.pending === p.pid;
+      const action = confirming
         ? `<button class="sim" data-kill="${p.pid}">encerrar</button>` +
           `<button class="sim" data-kill="${p.pid}" data-force="1">forcado</button>`
         : `<button data-ask="${p.pid}">encerrar</button>`;
@@ -1526,7 +1526,7 @@ async function tarefas(){
              `<span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>` +
              `<span class="cpu">${p.cpu}</span>` +
              `<span class="mem">${p.mem_mb}</span>` +
-             `<span class="act">${acao}</span></div>`;
+             `<span class="act">${action}</span></div>`;
     }).join('') || '<div class="tknote">nada rodando?</div>';
     document.getElementById('tkmeta').textContent =
       d.procs.length + ' processos - ' + d.source;
@@ -1538,14 +1538,14 @@ async function tarefas(){
 document.getElementById('tkhost').addEventListener('click', ev => {
   const b = ev.target.closest('button[data-host]');
   if (!b || b.dataset.host === TK.host) return;
-  TK.host = b.dataset.host; TK.pendente = null;
-  tarefas();
+  TK.host = b.dataset.host; TK.pending = null;
+  tasks();
 });
 
 document.getElementById('tkbody').addEventListener('click', async ev => {
-  // Dois passos de proposito: o primeiro clique so arma, o segundo age.
+  // Two steps on purpose: the first click only arms, the second acts.
   const ask = ev.target.closest('button[data-ask]');
-  if (ask){ TK.pendente = Number(ask.dataset.ask); return tarefas(); }
+  if (ask){ TK.pending = Number(ask.dataset.ask); return tasks(); }
   const kill = ev.target.closest('button[data-kill]');
   if (!kill) return;
   const pid = Number(kill.dataset.kill);
@@ -1561,13 +1561,13 @@ document.getElementById('tkbody').addEventListener('click', async ev => {
   }catch(e){
     document.getElementById('tkmeta').textContent = e.message;
   }
-  TK.pendente = null;
-  setTimeout(tarefas, 600);
+  TK.pending = null;
+  setTimeout(tasks, 600);
 });
 
-// --- arquivos ---------------------------------------------------------
-// Navegacao e explicita: sem timer. Um refresh automatico brigaria com
-// quem esta navegando -- voce clica numa pasta e o tick te joga de volta.
+// --- files ------------------------------------------------------------
+// Navigation is explicit: no timer. An auto-refresh would fight whoever
+// is browsing -- you click a folder and the tick throws you back.
 const FS = {host:null, path:''};
 
 function fsSize(n){
@@ -1580,8 +1580,8 @@ function fsSize(n){
 }
 
 function fsWhen(e){
-  // Local sabe dizer a epoca; o SFTP so entrega o texto do `ls`. Mostrar
-  // o que cada origem de fato sabe, em vez de inventar precisao.
+  // Local knows the epoch; SFTP only gives the `ls` text. Show what each
+  // source actually knows, instead of inventing precision.
   if (e.mtime != null){
     const d = new Date(e.mtime * 1000);
     return d.toLocaleDateString([], {day:'2-digit', month:'short'}) + ' ' +
@@ -1593,7 +1593,7 @@ function fsWhen(e){
 function fsHosts(hosts){
   const box = document.getElementById('fshost');
   const want = hosts.map(h => h.name).join('|');
-  if (box.dataset.hosts === want) return;   // nao redesenha a cada tick
+  if (box.dataset.hosts === want) return;   // do not redraw on every tick
   box.dataset.hosts = want;
   box.innerHTML = hosts.map(h =>
     `<button data-host="${esc(h.name)}">${esc(h.name)}</button>`).join('');
@@ -1642,8 +1642,8 @@ async function files(){
   }
 }
 
-// Delegacao: as linhas sao reescritas a cada navegacao, e listener por
-// linha vazaria handler em cada troca de pasta.
+// Delegation: the rows are rewritten on every navigation, and a listener
+// per row would leak a handler on every folder change.
 document.getElementById('fsbody').addEventListener('click', ev => {
   const row = ev.target.closest('[data-go]');
   if (!row) return;
@@ -1654,135 +1654,135 @@ document.getElementById('fshost').addEventListener('click', ev => {
   const b = ev.target.closest('button[data-host]');
   if (!b || b.dataset.host === FS.host) return;
   FS.host = b.dataset.host;
-  FS.path = '';           // cada host comeca no proprio home
+  FS.path = '';           // each host starts in its own home
   files();
 });
 
-// Versao do build: as tres maquinas tem de estar no mesmo commit, e ja
-// aconteceu de uma ficar para tras sem ninguem notar.
-// Versao do build, e recarga quando ela muda.
+// Build version: the three machines must be on the same commit, and one
+// has fallen behind before without anyone noticing.
+// Build version, and reload when it changes.
 //
-// A janela do Electron carrega a pagina UMA vez e fica com ela: depois
-// de um deploy o daemon ja serve HTML novo e a tela continua velha --
-// foi exatamente o que o usuario viu no Mac. Conferir a cada tick
-// resolve nos dois lugares, app e navegador.
-let BUILD_INICIAL = null;
-async function versao(){
+// The Electron window loads the page ONCE and keeps it: after a deploy
+// the daemon already serves new HTML and the screen stays old -- exactly
+// what the user saw on the Mac. Checking on every tick fixes it in both
+// places, app and browser.
+let INITIAL_BUILD = null;
+async function checkVersion(){
   try{
     const d = await (await fetch('/healthz', {cache:'no-store'})).json();
-    // Numero antes do hash: ele diz QUAL maquina esta atras, nao so que
-    // estao diferentes.
-    const atual = (d.n ? '#' + d.n + ' ' : '') + (d.build || '?');
+    // Number before the hash: it says WHICH machine is behind, not just
+    // that they differ.
+    const current = (d.n ? '#' + d.n + ' ' : '') + (d.build || '?');
     const el = document.getElementById('build');
-    if (BUILD_INICIAL === null){ BUILD_INICIAL = atual; el.textContent = atual; return; }
-    if (atual !== BUILD_INICIAL){
-      // Marcar ANTES de recarregar: se algo falhar no caminho, nao vira
-      // laco de recarga.
-      BUILD_INICIAL = atual;
-      el.textContent = atual + ' - recarregando';
+    if (INITIAL_BUILD === null){ INITIAL_BUILD = current; el.textContent = current; return; }
+    if (current !== INITIAL_BUILD){
+      // Mark BEFORE reloading: if something fails on the way, it does not
+      // become a reload loop.
+      INITIAL_BUILD = current;
+      el.textContent = current + ' - recarregando';
       setTimeout(() => location.reload(), 400);
       return;
     }
-    el.textContent = atual;
-  }catch(e){ /* daemon reiniciando: tenta no proximo tick */ }
+    el.textContent = current;
+  }catch(e){ /* daemon restarting: try on the next tick */ }
 }
-// --- barra lateral -----------------------------------------------------
+// --- sidebar ----------------------------------------------------------
 //
-// Troca de painel, lista de maquinas e favoritos. Tudo no `localStorage`:
-// e preferencia de QUEM esta olhando, por maquina, e nao tem por que
-// atravessar a rede nem virar linha de config. Se o armazenamento falhar
-// (janela privada, dados limpos), a pagina volta ao padrao em vez de
-// quebrar -- dai o try/catch em cada acesso.
-const SEC_PADRAO = 'geral';
+// Panel switching, machine list and favorites. All in `localStorage`:
+// it is the preference of WHOEVER is looking, per machine, and has no
+// reason to cross the network or become a config line. If storage fails
+// (private window, cleared data), the page falls back to the default
+// instead of breaking -- hence the try/catch on every access.
+const DEFAULT_SEC = 'geral';
 
-function guardado(chave, padrao){
-  try{ const v = localStorage.getItem(chave); return v === null ? padrao : v; }
-  catch(e){ return padrao; }
+function stored(key, fallback){
+  try{ const v = localStorage.getItem(key); return v === null ? fallback : v; }
+  catch(e){ return fallback; }
 }
-function guarda(chave, valor){
-  try{ localStorage.setItem(chave, valor); }catch(e){ /* sem storage: so nao lembra */ }
+function store(key, value){
+  try{ localStorage.setItem(key, value); }catch(e){ /* no storage: it just does not remember */ }
 }
-function favoritos(){
-  try{ return JSON.parse(guardado('favs', '[]')) || []; }catch(e){ return []; }
+function favorites(){
+  try{ return JSON.parse(stored('favs', '[]')) || []; }catch(e){ return []; }
 }
-function salvaFavoritos(v){ guarda('favs', JSON.stringify(v)); }
+function saveFavorites(v){ store('favs', JSON.stringify(v)); }
 
-function mostra(sec){
-  let achou = false;
+function showSec(sec){
+  let found = false;
   for (const el of document.querySelectorAll('.sec')){
     const on = el.dataset.sec === sec;
     el.classList.toggle('on', on);
-    achou = achou || on;
+    found = found || on;
   }
-  // Secao guardada que nao existe mais (renomeei um painel): cai no
-  // padrao em vez de deixar a tela vazia.
-  if (!achou){ mostra(SEC_PADRAO); return; }
+  // A stored section that no longer exists (I renamed a panel): fall back
+  // to the default instead of leaving the screen empty.
+  if (!found){ showSec(DEFAULT_SEC); return; }
   for (const n of document.querySelectorAll('.navit[data-sec]'))
     n.classList.toggle('on', n.dataset.sec === sec);
-  guarda('sec', sec);
+  store('sec', sec);
 }
 
-/// Linha da lateral para uma maquina.
-function linhaMaq(h, favorito){
-  const fav = favorito ? ' fav' : '';
-  const tem = h.kvm && h.kvm.border != null;
-  const alerta = tem && (h.kvm.border || h.kvm.follow);
+/// Sidebar row for a machine.
+function machineRow(h, isFav){
+  const fav = isFav ? ' fav' : '';
+  const hasKvm = h.kvm && h.kvm.border != null;
+  const flagged = hasKvm && (h.kvm.border || h.kvm.follow);
   return `<div class="navit" data-maq="${esc(h.name)}" title="${esc(h.role)}">` +
     `<span class="sdot${h.online ? ' on' : ''}"></span>` +
-    `<span class="lbl">${esc(h.name)}${alerta ? ' &middot;' : ''}</span>` +
+    `<span class="lbl">${esc(h.name)}${flagged ? ' &middot;' : ''}</span>` +
     `<span class="act">` +
       `<button data-tela="${esc(h.name)}" title="abrir a tela desta maquina">&#9654;</button>` +
       `<button class="fav${fav}" data-fav="${esc(h.name)}" ` +
-      `title="${favorito ? 'tirar dos favoritos' : 'fixar em favoritos'}">` +
-      `${favorito ? '&#9733;' : '&#9734;'}</button>` +
+      `title="${isFav ? 'tirar dos favoritos' : 'fixar em favoritos'}">` +
+      `${isFav ? '&#9733;' : '&#9734;'}</button>` +
     `</span></div>`;
 }
 
-/// Redesenha maquinas e favoritos. Chamada do `tick`, que e quem tem os
-/// dados -- a lateral nao faz requisicao propria.
+/// Redraws machines and favorites. Called from `tick`, which has the
+/// data -- the sidebar makes no request of its own.
 function renderSide(hosts){
-  const favs = favoritos().filter(n => hosts.some(h => h.name === n));
-  const fixos = favs.map(n => hosts.find(h => h.name === n));
+  const favs = favorites().filter(n => hosts.some(h => h.name === n));
+  const pinned = favs.map(n => hosts.find(h => h.name === n));
   document.getElementById('favlist').innerHTML =
-    fixos.length ? fixos.map(h => linhaMaq(h, true)).join('')
+    pinned.length ? pinned.map(h => machineRow(h, true)).join('')
                  : `<div class="sidenote">nenhum ainda</div>`;
-  document.getElementById('favn').textContent = fixos.length ? fixos.length : '';
+  document.getElementById('favn').textContent = pinned.length ? pinned.length : '';
   document.getElementById('maqlist').innerHTML =
-    hosts.map(h => linhaMaq(h, favs.includes(h.name))).join('');
+    hosts.map(h => machineRow(h, favs.includes(h.name))).join('');
 }
 
 document.querySelector('.side').addEventListener('click', ev => {
-  const painel = ev.target.closest('.navit[data-sec]');
-  if (painel){ mostra(painel.dataset.sec); return; }
+  const panelNav = ev.target.closest('.navit[data-sec]');
+  if (panelNav){ showSec(panelNav.dataset.sec); return; }
 
-  const estrela = ev.target.closest('button[data-fav]');
-  if (estrela){
-    const nome = estrela.dataset.fav;
-    const atual = favoritos();
-    salvaFavoritos(atual.includes(nome) ? atual.filter(n => n !== nome) : [...atual, nome]);
-    tick();                       // redesenha a lateral com o dado fresco
+  const star = ev.target.closest('button[data-fav]');
+  if (star){
+    const name = star.dataset.fav;
+    const current = favorites();
+    saveFavorites(current.includes(name) ? current.filter(n => n !== name) : [...current, name]);
+    tick();                       // redraw the sidebar with fresh data
     return;
   }
 
-  const tela = ev.target.closest('button[data-tela]');
-  if (tela){
-    // Reaproveita o botao do cartao em vez de repetir a chamada: as
-    // opcoes (teclado, som, microfone) e o relato de erro moram la, e
-    // duas copias divergiriam. Trocar para a visao geral primeiro para a
-    // pessoa VER o que aconteceu.
-    mostra('geral');
-    const b = document.querySelector(`button[data-open="${CSS.escape(tela.dataset.tela)}"]`);
+  const screenBtn = ev.target.closest('button[data-tela]');
+  if (screenBtn){
+    // Reuse the card's button instead of repeating the call: the options
+    // (keyboard, sound, microphone) and the error report live there, and
+    // two copies would diverge. Switch to the overview first so the
+    // person SEES what happened.
+    showSec('geral');
+    const b = document.querySelector(`button[data-open="${CSS.escape(screenBtn.dataset.tela)}"]`);
     if (b && !b.disabled) b.click();
     return;
   }
 
-  const maq = ev.target.closest('.navit[data-maq]');
-  if (maq){
-    mostra('geral');
-    const alvo = [...document.querySelectorAll('.card .nm')]
-      .find(n => n.textContent === maq.dataset.maq);
-    if (alvo){
-      const card = alvo.closest('.card');
+  const machine = ev.target.closest('.navit[data-maq]');
+  if (machine){
+    showSec('geral');
+    const target = [...document.querySelectorAll('.card .nm')]
+      .find(n => n.textContent === machine.dataset.maq);
+    if (target){
+      const card = target.closest('.card');
       card.scrollIntoView({block:'center', behavior:'smooth'});
       card.classList.add('flash');
       setTimeout(() => card.classList.remove('flash'), 1200);
@@ -1790,48 +1790,48 @@ document.querySelector('.side').addEventListener('click', ev => {
   }
 });
 
-// --- pausa de diagnostico ---------------------------------------------
-// Pausa a sondagem HID++ para separar "nossa leitura perturba o radio"
-// de "o hardware troca sozinho". Ver `hidpp::PAUSA`.
-let PAUSA_S = null;
-async function pausaHidpp(minutos){
+// --- diagnostic pause -------------------------------------------------
+// Pauses HID++ polling to tell "our reads disturb the radio" apart from
+// "the hardware switches by itself". See `hidpp::PAUSA`.
+let PAUSED_S = null;
+async function pauseHidpp(minutes){
   try{
     const r = await fetch('/api/hidpp/pause', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ minutes: minutos })
+      body: JSON.stringify({ minutes: minutes })
     });
     const d = await r.json();
-    PAUSA_S = d.pausado_s ?? null;
-    pintaPausa();
+    PAUSED_S = d.pausado_s ?? null;
+    paintPause();
   }catch(e){ document.getElementById('pausamsg').textContent = e.message; }
 }
-function pintaPausa(){
+function paintPause(){
   const b = document.getElementById('pausabtn');
   const m = document.getElementById('pausamsg');
-  if (PAUSA_S){
+  if (PAUSED_S){
     b.textContent = 'retomar leitura';
-    const min = Math.floor(PAUSA_S/60), seg = PAUSA_S%60;
-    m.textContent = `pausada — ${min}m${String(seg).padStart(2,'0')}s restantes`;
+    const min = Math.floor(PAUSED_S/60), secs = PAUSED_S%60;
+    m.textContent = `pausada — ${min}m${String(secs).padStart(2,'0')}s restantes`;
   } else {
     b.textContent = 'pausar leitura dos dispositivos';
     m.textContent = '';
   }
 }
 document.getElementById('pausabtn').addEventListener('click', () =>
-  pausaHidpp(PAUSA_S ? 0 : 10));
+  pauseHidpp(PAUSED_S ? 0 : 10));
 
-mostra(guardado('sec', SEC_PADRAO));
+showSec(stored('sec', DEFAULT_SEC));
 
-versao(); setInterval(versao, 5000);
+checkVersion(); setInterval(checkVersion, 5000);
 
 tick(); setInterval(tick, RS*1000);
 files();
-tarefas();
+tasks();
 layout();
-novidades();
-setInterval(() => { if (TK.pendente === null) tarefas(); }, 10000);
+whatsNew();
+setInterval(() => { if (TK.pending === null) tasks(); }, 10000);
 logs(); setInterval(logs, RS*1000);
-// Controles mudam pouco e a leitura e caro (uma ida e volta HID++ por
-// controle): intervalo bem maior que o do painel.
+// Controls rarely change and reading them is expensive (one HID++ round
+// trip per control): a much longer interval than the panel's.
 controls(); setInterval(controls, 60000);
 </script></body></html>

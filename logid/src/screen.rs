@@ -1,62 +1,65 @@
-//! Tela remota: nao servimos tela, despachamos o cliente certo.
+//! Remote screen: we do not serve a screen, we dispatch the right client.
 //!
 //! Spec: ../specs/006-screen-share.md
 //!
-//! ## A decisao (03/11, do usuario): nativo de cada SO
+//! ## The decision (03/11, the user's): each OS's native one
 //!
-//! Cada maquina ja sabe ser controlada, e por um protocolo diferente:
-//! o GNOME fala RDP pelo `gnome-remote-desktop` (ja ativo, 3389 exposta
-//! na LAN, TLS e credenciais configurados), o Windows fala RDP nativo, o
-//! macOS fala VNC pelo Compartilhamento de Tela. Nao existe protocolo
-//! que os tres sirvam de fabrica.
+//! Each machine already knows how to be controlled, and through a
+//! different protocol: GNOME speaks RDP through `gnome-remote-desktop`
+//! (already active, 3389 exposed on the LAN, TLS and credentials set up),
+//! Windows speaks native RDP, macOS speaks VNC through Screen Sharing.
+//! There is no protocol all three serve out of the box.
 //!
-//! A alternativa considerada era um RustDesk auto-hospedado: um cliente
-//! igual nos tres, e so conexao de saida -- o que importaria num Mac com
-//! MDM. Perdeu porque e uma dependencia externa grande e um relay a
-//! manter, enquanto o nativo nao sobe daemon novo em lugar nenhum.
+//! The alternative considered was a self-hosted RustDesk: the same
+//! client on all three, and only outbound connections -- which would
+//! matter on a Mac with MDM. It lost because it is a big external
+//! dependency and a relay to maintain, while the native route starts no
+//! new daemon anywhere.
 //!
-//! ## O que este modulo faz, e o que nao faz
+//! ## What this module does, and what it does not
 //!
-//! **Nao** implementa protocolo de tela. Ele responde duas perguntas --
-//! "a tela daquele host esta alcancavel?" e "existe cliente aqui para
-//! falar com ela?" -- e, a pedido, lanca o cliente. A parte difícil
-//! (video, input, TLS) e dos programas que ja existem.
+//! It does **not** implement a screen protocol. It answers two questions
+//! -- "is that host's screen reachable?" and "is there a client here to
+//! talk to it?" -- and, on request, launches the client. The hard part
+//! (video, input, TLS) belongs to the programs that already exist.
 //!
-//! Por isso o `GET` e separado do `POST`: a UI precisa saber se o botao
-//! vai funcionar ANTES de a pessoa clicar. Um botao que abre nada e pior
-//! que um botao desabilitado com motivo escrito do lado.
+//! That is why `GET` is separate from `POST`: the UI needs to know whether
+//! the button will work BEFORE the person clicks. A button that opens
+//! nothing is worse than a disabled button with the reason written
+//! beside it.
 
 use crate::config::Config;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Stdio;
 
-/// O que a pessoa pediu na UI, no estilo do Parsec.
+/// What the person asked for in the UI, Parsec-style.
 #[derive(Debug, Clone, Copy)]
 pub struct Opts {
-    /// Entrar com teclado e mouse. `false` = so olhar.
+    /// Come in with keyboard and mouse. `false` = view only.
     pub control: bool,
-    /// Trazer o som da outra maquina.
+    /// Bring the other machine's sound.
     pub audio: bool,
-    /// Mandar o microfone daqui para la.
+    /// Send the microphone from here to there.
     pub mic: bool,
 }
 
 impl Default for Opts {
     fn default() -> Self {
-        // Controlar e o caso comum; som e microfone nao, porque ligar
-        // audio sem pedir e o tipo de surpresa que assusta numa reuniao.
+        // Controlling is the common case; sound and microphone are not,
+        // because turning audio on without asking is the kind of surprise
+        // that scares people in a meeting.
         Opts { control: true, audio: false, mic: false }
     }
 }
 
-/// O que o cliente escolhido consegue honrar. A UI usa isto para
-/// desabilitar o que nao adianta marcar, com o motivo do lado.
+/// What the chosen client can honor. The UI uses this to disable what is
+/// pointless to tick, with the reason beside it.
 #[derive(Debug, Serialize, Default)]
 pub struct Caps {
     pub audio: bool,
     pub mic: bool,
-    /// Consegue entrar SEM teclado e mouse.
+    /// Can come in WITHOUT keyboard and mouse.
     pub view_only: bool,
 }
 
@@ -66,28 +69,28 @@ pub struct Plan {
     /// rdp | vnc
     pub kind: String,
     pub port: u16,
-    /// A porta respondeu agora.
+    /// The port answered just now.
     pub reachable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ms: Option<f64>,
-    /// Cliente escolhido, se achamos algum.
+    /// Chosen client, if we found one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<String>,
-    /// Linha de comando que seria executada -- para a UI poder mostrar.
+    /// Command line that would be run -- so the UI can show it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<Vec<String>>,
-    /// O que este cliente sabe fazer.
+    /// What this client can do.
     pub caps: Caps,
-    /// Pronto para clicar.
+    /// Ready to click.
     pub ready: bool,
-    /// Por que nao esta pronto.
+    /// Why it is not ready.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
 }
 
-/// Procura um executavel no PATH e nos diretorios que a plataforma
-/// indicar. No Windows tenta tambem sem `.exe`, porque o PATHEXT
-/// resolve isso para o shell mas nao para nos.
+/// Looks for an executable in PATH and in the directories the platform
+/// points to. On Windows it also tries without `.exe`, because PATHEXT
+/// resolves that for the shell but not for us.
 fn find_program(name: &str) -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(path) = std::env::var_os("PATH") {
@@ -103,29 +106,29 @@ fn find_program(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Substitui os marcadores do template do cliente.
+/// Replaces the markers in the client's template.
 ///
-/// `{u_flag}` existe porque o freerdp quer `/u:nome` como UM argumento, e
-/// quando nao ha usuario o argumento tem de **desaparecer** -- passar
-/// `/u:` vazio faz ele pedir usuario em prompt e travar sem terminal.
-/// Escreve o `.rdp` num temporario e devolve o caminho.
+/// `{u_flag}` exists because freerdp wants `/u:name` as ONE argument, and
+/// when there is no user the argument has to **disappear** -- passing an
+/// empty `/u:` makes it prompt for a user and hang without a terminal.
+/// Writes the `.rdp` to a temp file and returns the path.
 ///
-/// Arquivo e nao argumento porque ha cliente que so aceita assim -- e
-/// porque e por ele que som e microfone passam. Nome fixo por host: um
-/// arquivo novo a cada clique encheria o temp sem necessidade.
-fn write_rdp(modelo: &str, host: &str, port: u16, user: Option<&str>, opts: Opts) -> Option<String> {
+/// A file and not an argument because some clients only accept it that
+/// way -- and because sound and microphone go through it. A fixed name
+/// per host: a new file on every click would fill temp for no reason.
+fn write_rdp(template: &str, host: &str, port: u16, user: Option<&str>, opts: Opts) -> Option<String> {
     let user_line = user.map(|u| format!("username:s:{u}\n")).unwrap_or_default();
-    let corpo = modelo
+    let body = template
         .replace("{host}", host)
         .replace("{port}", &port.to_string())
         .replace("{user_line}", &user_line)
-        // 0 = tocar aqui, 2 = nao tocar em lugar nenhum.
+        // 0 = play here, 2 = play nowhere.
         .replace("{audiomode}", if opts.audio { "0" } else { "2" })
         .replace("{audiocapture}", if opts.mic { "1" } else { "0" });
-    let seguro: String =
+    let safe: String =
         host.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    let p = std::env::temp_dir().join(format!("logi-{seguro}.rdp"));
-    std::fs::write(&p, corpo).ok()?;
+    let p = std::env::temp_dir().join(format!("logi-{safe}.rdp"));
+    std::fs::write(&p, body).ok()?;
     Some(p.to_string_lossy().into_owned())
 }
 
@@ -148,15 +151,15 @@ fn render(args: &[&str], host: &str, port: u16, user: Option<&str>) -> Vec<Strin
 fn plan_for(cfg: &Config, name: &str, opts: Opts) -> Option<Plan> {
     let h = cfg.hosts.iter().find(|x| x.name == name)?;
     let sc = h.screen.as_ref()?;
-    // A propria maquina nao se controla por tela remota -- e a tela que
-    // voce esta olhando.
+    // This machine is not controlled through a remote screen -- it is the
+    // screen you are looking at.
     if h.is_local() {
         return None;
     }
-    // O nosso protocolo e QUIC, ou seja **UDP**: um probe TCP diria
-    // "fechado" para sempre e o botao nunca acenderia. E o host dele
-    // sobe sob demanda, entao nem estar no ar e pre-requisito -- o que
-    // importa e haver canal SSH para levanta-lo.
+    // Our protocol is QUIC, that is, **UDP**: a TCP probe would say
+    // "closed" forever and the button would never light up. And its host
+    // starts on demand, so not even being up is a prerequisite -- what
+    // matters is having an SSH channel to start it.
     let (reachable, ms) = if sc.kind == "logistream" {
         (h.ssh.is_some(), None)
     } else {
@@ -185,12 +188,12 @@ fn plan_for(cfg: &Config, name: &str, opts: Opts) -> Option<Plan> {
                 args.extend_from_slice(extra);
             }
         }
-        let arquivo = spec.file.and_then(|m| write_rdp(m, &h.addr, sc.port, user, opts));
+        let file = spec.file.and_then(|m| write_rdp(m, &h.addr, sc.port, user, opts));
         let mut cmd = vec![found.to_string_lossy().into_owned()];
         cmd.extend(
             render(&args, &h.addr, sc.port, user)
                 .into_iter()
-                .map(|a| match &arquivo {
+                .map(|a| match &file {
                     Some(f) => a.replace("{file}", f),
                     None => a,
                 })
@@ -207,12 +210,12 @@ fn plan_for(cfg: &Config, name: &str, opts: Opts) -> Option<Plan> {
     }
 
     let blocker = if client.is_none() {
-        let tentados: Vec<&str> =
+        let tried: Vec<&str> =
             crate::sys::screen_clients(&sc.kind).into_iter().map(|c| c.prog).collect();
-        Some(if tentados.is_empty() {
+        Some(if tried.is_empty() {
             format!("protocolo '{}' nao tem cliente conhecido aqui", sc.kind)
         } else {
-            format!("sem cliente {} instalado aqui (procurei: {})", sc.kind, tentados.join(", "))
+            format!("sem cliente {} instalado aqui (procurei: {})", sc.kind, tried.join(", "))
         })
     } else if !reachable {
         Some(if sc.kind == "logistream" {
@@ -244,11 +247,11 @@ fn plan_for(cfg: &Config, name: &str, opts: Opts) -> Option<Plan> {
     })
 }
 
-/// Um plano por host que tenha `[hosts.screen]` e nao seja este.
+/// One plan per host that has `[hosts.screen]` and is not this one.
 pub fn plans(cfg: &Config) -> Vec<Plan> {
-    // Em paralelo: cada plano faz um probe TCP com timeout de 1,5 s, e em
-    // serie tres hosts offline custariam 4,5 s de espera na abertura do
-    // painel.
+    // In parallel: each plan does a TCP probe with a 1.5 s timeout, and in
+    // series three offline hosts would cost 4.5 s of waiting when the
+    // panel opens.
     std::thread::scope(|s| {
         let hs: Vec<_> = cfg
             .hosts
@@ -262,20 +265,20 @@ pub fn plans(cfg: &Config) -> Vec<Plan> {
     })
 }
 
-/// Lanca o cliente. Devolve o que foi executado, para o log e para a UI.
+/// Launches the client. Returns what was run, for the log and the UI.
 pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
     let plan = plan_for(cfg, host, opts)
         .ok_or_else(|| format!("host '{host}' nao tem `[hosts.screen]` na config"))?;
     if let Some(b) = &plan.blocker {
         return Err(b.clone());
     }
-    // O host de tela sobe sob demanda, antes de o cliente tentar
-    // conectar. Capturar e codificar sem ninguem assistindo so gastaria
-    // GPU na maquina do outro.
+    // The screen host starts on demand, before the client tries to
+    // connect. Capturing and encoding with nobody watching would only
+    // burn GPU on the other person's machine.
     let mut pin = None;
     if plan.kind == "logistream" {
         if let Some(h) = cfg.hosts.iter().find(|x| x.name == host) {
-            if let Err(e) = acordar_host(h, plan.port) {
+            if let Err(e) = wake_host(h, plan.port) {
                 return Err(format!("nao consegui levantar o host de tela: {e}"));
             }
             pin = Some(crate::pairing::pin_for(h, &local_host_bin())?);
@@ -285,15 +288,16 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
     let cmd = plan.command.ok_or("sem comando")?;
     let (prog, args) = cmd.split_first().ok_or("comando vazio")?;
 
-    // `spawn` e nao `output`: o cliente de tela e interativo e vive
-    // minutos ou horas. Esperar por ele travaria a thread do servidor.
-    // stdio ignorado para o filho nao herdar o nosso e manter pipe aberto.
-    let mut filho = crate::sys::child(prog);
+    // `spawn` and not `output`: the screen client is interactive and
+    // lives for minutes or hours. Waiting for it would block the server
+    // thread. stdio is ignored so the child does not inherit ours and keep
+    // a pipe open.
+    let mut child = crate::sys::child(prog);
     if let Some(p) = &pin {
         // Spec 017: the viewer refuses a host whose identity is not this one.
-        filho.env("LOGI_PAR", p);
+        child.env("LOGI_PAR", p);
     }
-    filho
+    child
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -301,29 +305,31 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
         .spawn()
         .map_err(|e| format!("nao consegui executar {prog}: {e}"))?;
 
-    let linha = cmd.join(" ");
-    let modo = format!(
+    let line = cmd.join(" ");
+    let mode = format!(
         "{}{}{}",
-        if opts.control { "controle" } else { "so olhar" },
-        if opts.audio { " +som" } else { "" },
-        if opts.mic { " +microfone" } else { "" }
+        if opts.control { "control" } else { "view only" },
+        if opts.audio { " +audio" } else { "" },
+        if opts.mic { " +mic" } else { "" }
     );
-    say!("screen: abrindo {host} ({}, {modo}) -- {linha}", plan.kind);
-    Ok(linha)
+    say!("screen: opening {host} ({}, {mode}) -- {line}", plan.kind);
+    Ok(line)
 }
 
-/// O que a aba precisa para falar com a ponte.
+/// What the tab needs to talk to the bridge.
 #[derive(serde::Serialize)]
-pub struct Sessao {
-    pub porta: u16,
+pub struct Session {
+    #[serde(rename = "porta")]
+    pub port: u16,
     pub token: String,
 }
 
-/// Abre uma sessao em aba: acorda o host e sobe a `logistream-ponte`.
+/// Opens a session in a tab: wakes the host and starts
+/// `logistream-ponte`.
 ///
-/// Sem a ponte instalada devolve erro, e a pagina cai no visualizador
-/// nativo. Ver specs/016-sessao-e-visual.md.
-pub fn abrir_sessao(cfg: &Config, host: &str) -> Result<Sessao, String> {
+/// Without the bridge installed it returns an error, and the page falls
+/// back to the native viewer. See specs/016-session-and-visuals.md.
+pub fn open_session(cfg: &Config, host: &str) -> Result<Session, String> {
     let plan = plan_for(cfg, host, Opts::default())
         .ok_or_else(|| format!("host '{host}' nao tem `[hosts.screen]` na config"))?;
     if let Some(b) = &plan.blocker {
@@ -337,16 +343,16 @@ pub fn abrir_sessao(cfg: &Config, host: &str) -> Result<Sessao, String> {
         .iter()
         .find(|x| x.name == host)
         .ok_or_else(|| format!("host '{host}' nao esta na config"))?;
-    let nome = if cfg!(windows) { "logistream-ponte.exe" } else { "logistream-ponte" };
-    let ponte = find_program(nome).ok_or("logistream-ponte nao instalada")?;
-    acordar_host(h, plan.port).map_err(|e| format!("nao consegui levantar o host de tela: {e}"))?;
+    let name = if cfg!(windows) { "logistream-ponte.exe" } else { "logistream-ponte" };
+    let bridge = find_program(name).ok_or("logistream-ponte nao instalada")?;
+    wake_host(h, plan.port).map_err(|e| format!("nao consegui levantar o host de tela: {e}"))?;
     let pin = crate::pairing::pin_for(h, &local_host_bin())?;
 
     let mut bytes = [0u8; 24];
     getrandom::getrandom(&mut bytes).map_err(|e| format!("token: {e}"))?;
     let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
 
-    let mut filho = crate::sys::child(&ponte.to_string_lossy())
+    let mut child = crate::sys::child(&bridge.to_string_lossy())
         .arg(format!("{}:{}", h.addr, plan.port))
         .env("LOGI_PONTE_TOKEN", &token)
         .env("LOGI_PAR", &pin)
@@ -355,53 +361,56 @@ pub fn abrir_sessao(cfg: &Config, host: &str) -> Result<Sessao, String> {
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| format!("nao consegui executar a ponte: {e}"))?;
-    let saida = filho.stdout.take().ok_or("a ponte nao tem saida")?;
-    let mut linha = String::new();
-    std::io::BufRead::read_line(&mut std::io::BufReader::new(saida), &mut linha)
+    let output = child.stdout.take().ok_or("a ponte nao tem saida")?;
+    let mut line = String::new();
+    std::io::BufRead::read_line(&mut std::io::BufReader::new(output), &mut line)
         .map_err(|e| format!("ler a ponte: {e}"))?;
-    let porta = linha
+    let port = line
         .trim()
         .strip_prefix("porta ")
         .and_then(|p| p.parse().ok())
         .ok_or("a ponte nao disse a porta")?;
-    // A ponte sai sozinha quando a aba fecha; esta thread so colhe o filho.
+    // The bridge exits on its own when the tab closes; this thread only
+    // reaps the child.
     std::thread::spawn(move || {
-        let _ = filho.wait();
+        let _ = child.wait();
     });
-    say!("screen: aba de {host} pela ponte na porta {porta}");
-    Ok(Sessao { porta, token })
+    say!("screen: tab for {host} through the bridge on port {port}");
+    Ok(Session { port, token })
 }
 
 /// This machine's own host binary, which knows this machine's identity.
 /// A missing one only costs the self-authorization step (see `pairing`).
 fn local_host_bin() -> PathBuf {
-    let nome = if cfg!(windows) { "logistream-host.exe" } else { "logistream-host" };
-    find_program(nome).unwrap_or_else(|| PathBuf::from(nome))
+    let name = if cfg!(windows) { "logistream-host.exe" } else { "logistream-host" };
+    find_program(name).unwrap_or_else(|| PathBuf::from(name))
 }
 
-/// Garante que o `logistream-host` esta rodando na outra maquina.
+/// Makes sure `logistream-host` is running on the other machine.
 ///
-/// Idempotente de proposito: o botao pode ser clicado duas vezes, e uma
-/// segunda instancia competiria pela mesma porta e pela mesma captura.
+/// Idempotent on purpose: the button can be clicked twice, and a second
+/// instance would compete for the same port and the same capture.
 ///
-/// Como acordar depende do SO do alvo, e a diferenca nao e cosmetica:
+/// How to wake it depends on the target's OS, and the difference is not
+/// cosmetic:
 ///
-/// - **Unix**: `setsid nohup` solta o processo da sessao SSH. Sem isso
-///   ele morre junto com o comando que o criou -- a mesma armadilha do
-///   Windows matando a arvore ao desconectar (specs/001). O `setsid` e
-///   condicional porque **o macOS nao o tem**: la a linha inteira
-///   morria em "command not found" antes de chegar ao nohup.
-/// - **Windows**: tarefa agendada com `/it`, e **nao** lancamento direto.
-///   O SSH cai na sessao 0, e la o Desktop Duplication nao existe e o
-///   `SendInput` nao chega a desktop nenhum: o processo subiria, nao
-///   falharia, e entregaria uma tela que ninguem esta vendo. E a mesma
-///   fronteira de sessao que obriga o `logid` a subir por `schtasks`.
-pub(crate) fn acordar_host(h: &crate::config::HostCfg, porta: u16) -> Result<(), String> {
+/// - **Unix**: `setsid nohup` detaches the process from the SSH session.
+///   Without it, it dies along with the command that created it -- the
+///   same trap as Windows killing the tree on disconnect (specs/001).
+///   `setsid` is conditional because **macOS does not have it**: there
+///   the whole line died with "command not found" before reaching nohup.
+/// - **Windows**: a scheduled task with `/it`, and **not** a direct
+///   launch. SSH lands in session 0, where Desktop Duplication does not
+///   exist and `SendInput` reaches no desktop: the process would start,
+///   would not fail, and would deliver a screen nobody is seeing. It is
+///   the same session boundary that forces `logid` to start via
+///   `schtasks`.
+pub(crate) fn wake_host(h: &crate::config::HostCfg, port: u16) -> Result<(), String> {
     let cmd = if crate::remote::is_powershell(h) {
-        // Sem aspas duplas em lugar nenhum: tres bugs de quoting nesta
-        // ponte ja custaram tempo (specs/002). Palavra nua vira string
-        // no PowerShell, e `-ErrorAction SilentlyContinue` evita que o
-        // "processo nao existe" vire erro.
+        // No double quotes anywhere: three quoting bugs on this bridge
+        // have already cost time (specs/002). A bare word becomes a
+        // string in PowerShell, and `-ErrorAction SilentlyContinue` keeps
+        // "process does not exist" from becoming an error.
         concat!(
             "if (Get-Process -Name logistream-host -ErrorAction SilentlyContinue) ",
             "{ Write-Output vivo } else { schtasks /run /tn logistream-host | Out-Null; ",
@@ -411,16 +420,16 @@ pub(crate) fn acordar_host(h: &crate::config::HostCfg, porta: u16) -> Result<(),
         )
         .to_string()
     } else if h.os.as_deref() == Some("macos") {
-        // macOS: LaunchAgent, nao `nohup`.
+        // macOS: LaunchAgent, not `nohup`.
         //
-        // A captura de tela depende de permissao TCC (Gravacao de
-        // Tela), concedida a quem LANCOU o processo. Vindo do SSH nao
-        // ha concessao nenhuma -- e o AVFoundation, em vez de falhar,
-        // **trava**. Medido: o proprio `ffmpeg -f avfoundation -i 1`
-        // pendura para sempre por SSH.
+        // Screen capture depends on a TCC permission (Screen Recording),
+        // granted to whoever LAUNCHED the process. Coming from SSH there
+        // is no grant at all -- and AVFoundation, instead of failing,
+        // **hangs**. Measured: `ffmpeg -f avfoundation -i 1` itself hangs
+        // forever over SSH.
         //
-        // Mesma fronteira que obriga o Windows a usar tarefa agendada
-        // com /IT em vez de servico.
+        // Same boundary that forces Windows to use a scheduled task with
+        // /IT instead of a service.
         concat!(
             r#"pgrep -x logistream-host >/dev/null 2>&1 || "#,
             r#"launchctl kickstart "gui/$(id -u)/ai.logi.logistream-host" >/dev/null 2>&1; "#,
@@ -431,28 +440,28 @@ pub(crate) fn acordar_host(h: &crate::config::HostCfg, porta: u16) -> Result<(),
         format!(
             concat!(
                 r#"pgrep -x logistream-host >/dev/null 2>&1 || "#,
-                // `setsid` quando existe, `nohup` sozinho quando nao.
+                // `setsid` when it exists, `nohup` alone when it does not.
                 //
-                // O macOS NAO tem setsid, e a linha inteira morria com
-                // "command not found" -- sem nunca chegar ao nohup. Em
-                // Linux o setsid continua valendo: ele tira o processo
-                // da sessao do SSH, e sem isso ele cai junto quando a
-                // conexao fecha.
+                // macOS does NOT have setsid, and the whole line died with
+                // "command not found" -- never reaching nohup. On Linux
+                // setsid still matters: it takes the process out of the
+                // SSH session, and without it the process goes down when
+                // the connection closes.
                 r#"(S=; command -v setsid >/dev/null 2>&1 && S=setsid; "#,
                 r#"$S nohup "$HOME/.local/bin/logistream-host" {} "#,
                 r#">"$HOME/.local/state/logistream-host.log" 2>&1 &); "#,
                 r#"sleep 1; pgrep -x logistream-host >/dev/null && echo vivo || echo morto"#
             ),
-            porta
+            port
         )
     };
-    let saida = crate::remote::run(h, &cmd, 12)?;
-    if saida.contains("vivo") {
-        say!("screen: host de tela de pe em {}", h.name);
+    let output = crate::remote::run(h, &cmd, 12)?;
+    if output.contains("vivo") {
+        say!("screen: screen host up on {}", h.name);
         return Ok(());
     }
-    // A dica de onde olhar muda com o SO, e dar a errada manda a pessoa
-    // procurar arquivo que nao existe.
+    // The hint about where to look changes with the OS, and giving the
+    // wrong one sends the person looking for a file that does not exist.
     Err(if crate::remote::is_powershell(h) {
         format!(
             "o host de tela nao subiu em {}: confira `schtasks /query /tn logistream-host` \
@@ -472,9 +481,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn template_de_usuario_some_quando_nao_ha_usuario() {
-        // `/u:` vazio faz o freerdp pedir usuario em prompt e travar sem
-        // terminal -- o argumento tem de desaparecer, nao ficar vazio.
+    fn user_template_vanishes_when_there_is_no_user() {
+        // An empty `/u:` makes freerdp prompt for a user and hang without
+        // a terminal -- the argument has to disappear, not stay empty.
         let args = vec!["/v:{host}:{port}", "{u_flag}", "+clipboard"];
         assert_eq!(
             render(&args, "pc.local", 3389, None),
@@ -487,7 +496,8 @@ mod tests {
     }
 
     #[test]
-    fn uri_recebe_usuario_colado() {
+    fn uri_gets_the_user_attached() {
+
         let args = vec!["rdp://{user_at}{host}:{port}"];
         assert_eq!(render(&args, "pc.local", 3389, Some("v")), vec!["rdp://v@pc.local:3389"]);
         assert_eq!(render(&args, "pc.local", 3389, None), vec!["rdp://pc.local:3389"]);

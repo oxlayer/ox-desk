@@ -1,51 +1,51 @@
-//! Captura de teclado e mouse por evdev, para o KVM por LAN.
+//! Keyboard and mouse capture through evdev, for the LAN KVM.
 //!
 //! Spec: ../specs/005-input-switch.md
 //!
-//! ## Por que evdev e nao o InputCapture do Mutter
+//! ## Why evdev and not Mutter's InputCapture
 //!
-//! O GNOME 50 expoe `org.gnome.Mutter.InputCapture`, que e a API feita
-//! exatamente para isto. Introspeccionando a sessao, ela oferece
-//! `AddBarrier`, `Enable`, `Disable`, `ConnectToEIS` e o sinal
-//! `Activated(barrier_id, ...)` -- e **nenhum metodo para ativar a
-//! captura sob demanda**. O compositor so entrega o input quando o
-//! ponteiro cruza uma barreira de borda.
+//! GNOME 50 exposes `org.gnome.Mutter.InputCapture`, which is the API made
+//! exactly for this. Introspecting the session, it offers `AddBarrier`,
+//! `Enable`, `Disable`, `ConnectToEIS` and the signal
+//! `Activated(barrier_id, ...)` -- and **no method to activate capture on
+//! demand**. The compositor only hands over input when the pointer crosses
+//! an edge barrier.
 //!
-//! Isso e o oposto do que foi pedido: trocar de maquina por clique na
-//! bandeja, sem depender de borda. Daria para contornar criando uma
-//! barreira e teleportando o ponteiro para dentro dela pelo
-//! `RemoteDesktop` -- mas seria simular a borda que estamos tentando
-//! abandonar, com mais pecas para quebrar.
+//! That is the opposite of what was asked for: switching machines with a
+//! click on the tray, without depending on an edge. It could be worked
+//! around by creating a barrier and teleporting the pointer into it through
+//! `RemoteDesktop` -- but that would be simulating the edge we are trying
+//! to abandon, with more parts to break.
 //!
-//! O evdev resolve direto:
+//! evdev solves it directly:
 //!
-//! - **Agarrar e soltar e explicito** (`EVIOCGRAB`), que e a semantica
-//!   do clique na bandeja.
-//! - **Os codigos ja sao os nossos.** `Evento::Tecla` carrega keycode de
-//!   evdev porque e o que o `NotifyKeyboardKeycode` do Mutter recebe, e
-//!   `scancode_de_evdev()` ja traduz para o Windows. Nao ha conversao
-//!   nova no caminho.
-//! - **Independe de compositor.** Mesmo codigo em qualquer Linux.
+//! - **Grabbing and releasing is explicit** (`EVIOCGRAB`), which is the
+//!   semantics of the tray click.
+//! - **The codes are already ours.** `Event::Key` carries an evdev keycode
+//!   because that is what Mutter's `NotifyKeyboardKeycode` receives, and
+//!   `scancode_from_evdev()` already translates for Windows. There is no new
+//!   conversion on the path.
+//! - **Compositor-independent.** Same code on any Linux.
 //!
-//! ## O que EVIOCGRAB faz, e o que ele custa
+//! ## What EVIOCGRAB does, and what it costs
 //!
-//! Agarrado, o dispositivo para de entregar ao compositor: o teclado
-//! simplesmente nao existe para o desktop local. E isso que queremos ao
-//! mandar o input para outra maquina -- sem o grab, cada tecla seria
-//! digitada nos DOIS computadores.
+//! Grabbed, the device stops delivering to the compositor: the keyboard
+//! simply does not exist for the local desktop. That is what we want when
+//! sending input to another machine -- without the grab, every key would be
+//! typed on BOTH computers.
 //!
-//! O custo e a responsabilidade: **se este processo morrer agarrando, o
-//! kernel solta** (o fd fecha), entao nao da para travar o teclado para
-//! sempre. Mas enquanto estiver agarrado e preciso existir um caminho de
-//! volta que nao dependa do teclado -- ver `TECLA_PANICO`.
+//! The cost is the responsibility: **if this process dies while grabbing,
+//! the kernel releases** (the fd closes), so the keyboard cannot be locked
+//! forever. But while it is grabbed there has to be a way back that does
+//! not depend on the keyboard -- see `is_rescue`.
 //!
-//! ## Permissao
+//! ## Permission
 //!
-//! Ler `/dev/input/event*` exige ACL. Ver `logid/udev/70-logid-input.rules`:
-//! usamos `TAG+="uaccess"` nos dispositivos Logitech, nao o grupo
-//! `input`, porque o grupo daria a qualquer processo da conta acesso
-//! permanente a todo dispositivo de entrada -- inclusive sem sessao
-//! aberta.
+//! Reading `/dev/input/event*` requires an ACL. See
+//! `logid/udev/70-logid-input.rules`: we use `TAG+="uaccess"` on the
+//! Logitech devices, not the `input` group, because the group would give
+//! any process of the account permanent access to every input device --
+//! even with no session open.
 
 #![cfg(target_os = "linux")]
 
@@ -54,152 +54,154 @@ use std::io::Read;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
-use crate::input::{Evento, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use crate::input::{Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 
 /// `_IOW('E', 0x90, int)`.
 const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
 
-// Tipos de evento do evdev que nos interessam.
+// evdev event types we care about.
 const EV_SYN: u16 = 0x00;
 const EV_KEY: u16 = 0x01;
 const EV_REL: u16 = 0x02;
 
-// Eixos relativos.
+// Relative axes.
 const REL_X: u16 = 0x00;
 const REL_Y: u16 = 0x01;
 const REL_HWHEEL: u16 = 0x06;
 const REL_WHEEL: u16 = 0x08;
 
-// Botoes de mouse, na numeracao do evdev.
+// Mouse buttons, in evdev numbering.
 const EV_BTN_LEFT: u16 = 0x110;
 const EV_BTN_RIGHT: u16 = 0x111;
 const EV_BTN_MIDDLE: u16 = 0x112;
 
-/// Um passo de roda em "pixels" de rolagem, como o resto do protocolo usa.
-const PASSO_RODA: f64 = 120.0;
+/// One wheel step in scroll "pixels", as the rest of the protocol uses.
+const WHEEL_STEP: f64 = 120.0;
 
-/// Um `struct input_event` de 64 bits: 2x i64 de tempo, u16, u16, i32.
-const TAM_EVENTO: usize = 24;
+/// A 64-bit `struct input_event`: 2x i64 of time, u16, u16, i32.
+const EVENT_SIZE: usize = 24;
 
-/// Evento cru do kernel, ja desempacotado.
+/// Raw kernel event, already unpacked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Cru {
-    pub tipo: u16,
-    pub codigo: u16,
-    pub valor: i32,
+pub struct RawEvent {
+    pub kind: u16,
+    pub code: u16,
+    pub value: i32,
 }
 
-/// Traduz um lote de eventos crus (ate o `SYN_REPORT`) para os nossos.
+/// Translates a batch of raw events (up to the `SYN_REPORT`) into ours.
 ///
-/// Funcao pura: e aqui que mora a decisao, e e isto que os testes olham.
+/// Pure function: this is where the decision lives, and it is what the
+/// tests look at.
 ///
-/// O evdev entrega movimento em eixos SEPARADOS -- `REL_X` numa linha,
-/// `REL_Y` noutra -- e so o `SYN_REPORT` diz que o conjunto acabou.
-/// Mandar um evento de rede por eixo dobraria o trafego e faria o cursor
-/// andar em escada no outro lado, porque cada metade chegaria sozinha.
-/// Por isso os eixos somam dentro do lote e saem como UM `MouseRel`.
-/// `repetir`: repassar a auto-repeticao do kernel como novos
-/// key-downs. Ver a nota sobre `valor == 2` dentro da funcao.
-pub fn traduzir(lote: &[Cru], repetir: bool) -> Vec<Evento> {
-    let mut saida = Vec::new();
+/// evdev delivers movement on SEPARATE axes -- `REL_X` on one line,
+/// `REL_Y` on another -- and only `SYN_REPORT` says the set is over.
+/// Sending one network event per axis would double the traffic and make
+/// the cursor move in a staircase on the other side, because each half
+/// would arrive alone. That is why the axes add up within the batch and go
+/// out as ONE `MouseRel`.
+/// `repeat`: forward the kernel's auto-repeat as new key-downs. See the
+/// note about `value == 2` inside the function.
+pub fn translate(batch: &[RawEvent], repeat: bool) -> Vec<Event> {
+    let mut out = Vec::new();
     let (mut dx, mut dy) = (0.0f64, 0.0f64);
     let (mut rx, mut ry) = (0.0f64, 0.0f64);
 
-    for e in lote {
-        match e.tipo {
-            EV_REL => match e.codigo {
-                REL_X => dx += f64::from(e.valor),
-                REL_Y => dy += f64::from(e.valor),
-                // Sinal invertido: no evdev, roda para CIMA e positivo;
-                // no nosso protocolo (e no Wayland) para baixo e
-                // positivo, porque o conteudo desce.
-                REL_WHEEL => ry -= f64::from(e.valor) * PASSO_RODA,
-                REL_HWHEEL => rx += f64::from(e.valor) * PASSO_RODA,
+    for e in batch {
+        match e.kind {
+            EV_REL => match e.code {
+                REL_X => dx += f64::from(e.value),
+                REL_Y => dy += f64::from(e.value),
+                // Inverted sign: in evdev, wheel UP is positive; in our
+                // protocol (and in Wayland) down is positive, because the
+                // content goes down.
+                REL_WHEEL => ry -= f64::from(e.value) * WHEEL_STEP,
+                REL_HWHEEL => rx += f64::from(e.value) * WHEEL_STEP,
                 _ => {}
             },
             EV_KEY => {
-                // valor 2 = auto-repeticao gerada pelo kernel.
+                // value 2 = auto-repeat generated by the kernel.
                 //
-                // A primeira versao descartava, com o comentario "o
-                // outro lado repete sozinho a partir do key-down". Isso
-                // e FALSO no Windows: a repeticao de tecla la nasce no
-                // driver do teclado fisico, e nao se aplica a uma tecla
-                // sintetica do `SendInput`. Resultado: segurar backspace
-                // apagava um caractere so -- foi assim que apareceu.
+                // The first version discarded it, with the comment "the
+                // other side repeats on its own from the key-down". That is
+                // FALSE on Windows: key repeat there is born in the physical
+                // keyboard's driver, and does not apply to a synthetic key
+                // from `SendInput`. Result: holding backspace deleted a
+                // single character -- that is how it showed up.
                 //
-                // Repassar como key-down replica exatamente o que o
-                // teclado fisico faz, que e o trabalho de um KVM.
+                // Forwarding as key-down replicates exactly what the
+                // physical keyboard does, which is a KVM's job.
                 //
-                // Fica atras de `repetir` porque um alvo que TAMBEM
-                // repete sozinho (o Mutter aplica a propria logica a
-                // teclas injetadas) receberia repeticao dobrada. Quem
-                // sabe o SO do destino e quem lanca o processo.
-                if e.valor == 2 && !repetir {
+                // It sits behind `repeat` because a target that ALSO
+                // repeats on its own (Mutter applies its own logic to
+                // injected keys) would get doubled repeat. Whoever launches
+                // the process knows the target's OS.
+                if e.value == 2 && !repeat {
                     continue;
                 }
-                let apertado = e.valor != 0;
-                match e.codigo {
-                    EV_BTN_LEFT => saida.push(Evento::Botao { codigo: BTN_LEFT, apertado }),
-                    EV_BTN_RIGHT => saida.push(Evento::Botao { codigo: BTN_RIGHT, apertado }),
-                    EV_BTN_MIDDLE => saida.push(Evento::Botao { codigo: BTN_MIDDLE, apertado }),
-                    cod => saida.push(Evento::Tecla { keycode: u32::from(cod), apertado }),
+                let pressed = e.value != 0;
+                match e.code {
+                    EV_BTN_LEFT => out.push(Event::Button { code: BTN_LEFT, pressed }),
+                    EV_BTN_RIGHT => out.push(Event::Button { code: BTN_RIGHT, pressed }),
+                    EV_BTN_MIDDLE => out.push(Event::Button { code: BTN_MIDDLE, pressed }),
+                    code => out.push(Event::Key { keycode: u32::from(code), pressed }),
                 }
             }
             _ => {}
         }
     }
 
-    // Movimento antes dos cliques do MESMO lote seria errado pelo
-    // motivo oposto: um clique vem com a posicao onde o lote comecou.
-    // Mas dentro de um lote o kernel nao mistura clique e movimento em
-    // ordem significativa, entao a ordem aqui e estavel: move, depois
-    // rola. Os botoes ja sairam na ordem em que chegaram.
+    // Movement before the clicks of the SAME batch would be wrong for the
+    // opposite reason: a click comes with the position where the batch
+    // started. But within a batch the kernel does not mix click and
+    // movement in a meaningful order, so the order here is stable: move,
+    // then scroll. The buttons already went out in the order they arrived.
     if dx != 0.0 || dy != 0.0 {
-        saida.insert(0, Evento::MouseRel { dx, dy });
+        out.insert(0, Event::MouseRel { dx, dy });
     }
     if rx != 0.0 || ry != 0.0 {
-        saida.push(Evento::Rolagem { dx: rx, dy: ry });
+        out.push(Event::Scroll { dx: rx, dy: ry });
     }
-    saida
+    out
 }
 
-/// Um `/dev/input/eventN` aberto.
-pub struct Dispositivo {
-    arquivo: File,
-    pub nome: String,
-    pub caminho: PathBuf,
-    agarrado: bool,
-    lote: Vec<Cru>,
-    /// Repassar a auto-repeticao do kernel. Ver `traduzir`.
-    repetir: bool,
+/// An open `/dev/input/eventN`.
+pub struct Device {
+    file: File,
+    pub name: String,
+    pub path: PathBuf,
+    grabbed: bool,
+    batch: Vec<RawEvent>,
+    /// Forward the kernel's auto-repeat. See `translate`.
+    repeat: bool,
 }
 
-impl Dispositivo {
-    pub fn abrir(caminho: &Path) -> std::io::Result<Self> {
-        let arquivo = File::open(caminho)?;
-        let nome = nome_de(caminho).unwrap_or_else(|| "?".into());
-        Ok(Dispositivo {
-            arquivo,
-            nome,
-            caminho: caminho.to_path_buf(),
-            agarrado: false,
-            lote: Vec::new(),
-            repetir: true,
+impl Device {
+    pub fn open(path: &Path) -> std::io::Result<Self> {
+        let file = File::open(path)?;
+        let name = name_of(path).unwrap_or_else(|| "?".into());
+        Ok(Device {
+            file,
+            name,
+            path: path.to_path_buf(),
+            grabbed: false,
+            batch: Vec::new(),
+            repeat: true,
         })
     }
 
-    /// Todos os `/dev/input/event*` que conseguimos abrir.
+    /// Every `/dev/input/event*` we manage to open.
     ///
-    /// Os que recusam acesso sao PULADOS em silencio de proposito: a
-    /// maquina tem dezenas de nos de input (botao de energia, webcam,
-    /// alto-falante) e nenhum deles nos interessa. Quem reclama de
-    /// permissao e `exigir()`, com o nome do dispositivo que faltou.
-    pub fn listar() -> Vec<Dispositivo> {
+    /// The ones that deny access are SKIPPED silently on purpose: the
+    /// machine has dozens of input nodes (power button, webcam, speaker)
+    /// and none of them interests us. Complaining about permission is the
+    /// caller's job (`logistream-kvm`), when a requested device is missing.
+    pub fn list() -> Vec<Device> {
         let mut v = Vec::new();
         let Ok(dir) = std::fs::read_dir("/dev/input") else {
             return v;
         };
-        let mut caminhos: Vec<PathBuf> = dir
+        let mut paths: Vec<PathBuf> = dir
             .flatten()
             .map(|e| e.path())
             .filter(|p| {
@@ -208,237 +210,239 @@ impl Dispositivo {
                     .is_some_and(|n| n.starts_with("event"))
             })
             .collect();
-        caminhos.sort();
-        for c in caminhos {
-            if let Ok(d) = Dispositivo::abrir(&c) {
+        paths.sort();
+        for c in paths {
+            if let Ok(d) = Device::open(&c) {
                 v.push(d);
             }
         }
         v
     }
 
-    /// O dispositivo para de existir para o desktop local.
-    pub fn agarrar(&mut self) -> std::io::Result<()> {
-        if self.agarrado {
+    /// The device stops existing for the local desktop.
+    pub fn grab(&mut self) -> std::io::Result<()> {
+        if self.grabbed {
             return Ok(());
         }
-        let r = unsafe { libc::ioctl(self.arquivo.as_raw_fd(), EVIOCGRAB, 1 as libc::c_int) };
+        let r = unsafe { libc::ioctl(self.file.as_raw_fd(), EVIOCGRAB, 1 as libc::c_int) };
         if r != 0 {
             return Err(std::io::Error::last_os_error());
         }
-        self.agarrado = true;
+        self.grabbed = true;
         Ok(())
     }
 
-    pub fn soltar(&mut self) -> std::io::Result<()> {
-        if !self.agarrado {
+    pub fn release(&mut self) -> std::io::Result<()> {
+        if !self.grabbed {
             return Ok(());
         }
-        let r = unsafe { libc::ioctl(self.arquivo.as_raw_fd(), EVIOCGRAB, 0 as libc::c_int) };
+        let r = unsafe { libc::ioctl(self.file.as_raw_fd(), EVIOCGRAB, 0 as libc::c_int) };
         if r != 0 {
             return Err(std::io::Error::last_os_error());
         }
-        self.agarrado = false;
+        self.grabbed = false;
         Ok(())
     }
 
-    /// Liga ou desliga o repasse da auto-repeticao do kernel.
-    pub fn definir_repeticao(&mut self, r: bool) {
-        self.repetir = r;
+    /// Turns forwarding of the kernel's auto-repeat on or off.
+    pub fn set_repeat(&mut self, r: bool) {
+        self.repeat = r;
     }
 
-    pub fn agarrado(&self) -> bool {
-        self.agarrado
+    pub fn is_grabbed(&self) -> bool {
+        self.grabbed
     }
 
-    /// Le o que houver e devolve os eventos dos lotes COMPLETOS.
+    /// Reads whatever is there and returns the events of the COMPLETE batches.
     ///
-    /// Um lote so fecha no `SYN_REPORT`. Eventos de um lote ainda aberto
-    /// ficam guardados para a proxima chamada -- entregar meio lote
-    /// mandaria o eixo X sem o Y.
-    pub fn ler(&mut self) -> std::io::Result<Vec<Evento>> {
-        let mut buf = [0u8; TAM_EVENTO * 64];
-        let n = self.arquivo.read(&mut buf)?;
-        let mut saida = Vec::new();
-        for pedaco in buf[..n].chunks_exact(TAM_EVENTO) {
-            let tipo = u16::from_ne_bytes([pedaco[16], pedaco[17]]);
-            let codigo = u16::from_ne_bytes([pedaco[18], pedaco[19]]);
-            let valor = i32::from_ne_bytes([pedaco[20], pedaco[21], pedaco[22], pedaco[23]]);
-            if tipo == EV_SYN {
-                saida.extend(traduzir(&self.lote, self.repetir));
-                self.lote.clear();
+    /// A batch only closes on `SYN_REPORT`. Events of a batch still open
+    /// are kept for the next call -- delivering half a batch would send the
+    /// X axis without the Y.
+    pub fn read(&mut self) -> std::io::Result<Vec<Event>> {
+        let mut buf = [0u8; EVENT_SIZE * 64];
+        let n = self.file.read(&mut buf)?;
+        let mut out = Vec::new();
+        for chunk in buf[..n].chunks_exact(EVENT_SIZE) {
+            let kind = u16::from_ne_bytes([chunk[16], chunk[17]]);
+            let code = u16::from_ne_bytes([chunk[18], chunk[19]]);
+            let value = i32::from_ne_bytes([chunk[20], chunk[21], chunk[22], chunk[23]]);
+            if kind == EV_SYN {
+                out.extend(translate(&self.batch, self.repeat));
+                self.batch.clear();
             } else {
-                self.lote.push(Cru { tipo, codigo, valor });
+                self.batch.push(RawEvent { kind, code, value });
             }
         }
-        Ok(saida)
+        Ok(out)
     }
 }
 
-impl Drop for Dispositivo {
-    /// Soltar no `Drop` e cinto de seguranca, nao o mecanismo.
+impl Drop for Device {
+    /// Releasing on `Drop` is a seat belt, not the mechanism.
     ///
-    /// O kernel ja solta o grab quando o fd fecha, entao teclado travado
-    /// para sempre nao e um estado alcancavel nem se o processo for
-    /// morto com SIGKILL. Isto so torna a ordem explicita para quem le.
+    /// The kernel already releases the grab when the fd closes, so a
+    /// keyboard locked forever is not a reachable state even if the process
+    /// is killed with SIGKILL. This only makes the order explicit for
+    /// whoever reads it.
     fn drop(&mut self) {
-        let _ = self.soltar();
+        let _ = self.release();
     }
 }
 
-/// Nome do dispositivo, pelo sysfs.
+/// Device name, from sysfs.
 ///
-/// Pelo sysfs e nao pelo ioctl `EVIOCGNAME`: o arquivo do sysfs pode ser
-/// lido sem abrir o no de input, entao da para listar e escolher ANTES
-/// de ter permissao -- que e o que permite dizer "falta ACL no MX Keys"
-/// em vez de "nenhum dispositivo encontrado".
-pub fn nome_de(caminho: &Path) -> Option<String> {
-    let base = caminho.file_name()?.to_str()?;
+/// From sysfs and not from the `EVIOCGNAME` ioctl: the sysfs file can be
+/// read without opening the input node, so we can list and choose BEFORE
+/// having permission -- which is what allows saying "ACL missing on the MX
+/// Keys" instead of "no device found".
+pub fn name_of(path: &Path) -> Option<String> {
+    let base = path.file_name()?.to_str()?;
     let p = format!("/sys/class/input/{base}/device/name");
     Some(std::fs::read_to_string(p).ok()?.trim().to_string())
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
-    fn rel(codigo: u16, valor: i32) -> Cru {
-        Cru { tipo: EV_REL, codigo, valor }
+    fn rel(code: u16, value: i32) -> RawEvent {
+        RawEvent { kind: EV_REL, code, value }
     }
-    fn tecla(codigo: u16, valor: i32) -> Cru {
-        Cru { tipo: EV_KEY, codigo, valor }
-    }
-
-    #[test]
-    fn eixos_do_mesmo_lote_viram_um_movimento_so() {
-        let saida = traduzir(&[rel(REL_X, 5), rel(REL_Y, -3)], true);
-        assert_eq!(saida, vec![Evento::MouseRel { dx: 5.0, dy: -3.0 }]);
+    fn key(code: u16, value: i32) -> RawEvent {
+        RawEvent { kind: EV_KEY, code, value }
     }
 
     #[test]
-    fn lote_sem_movimento_nao_manda_movimento() {
-        let saida = traduzir(&[tecla(30, 1)], true);
-        assert_eq!(saida, vec![Evento::Tecla { keycode: 30, apertado: true }]);
+    fn axes_of_the_same_batch_become_a_single_movement() {
+        let out = translate(&[rel(REL_X, 5), rel(REL_Y, -3)], true);
+        assert_eq!(out, vec![Event::MouseRel { dx: 5.0, dy: -3.0 }]);
     }
 
-    /// Segurar uma tecla tem de apagar varios caracteres.
+    #[test]
+    fn batch_without_movement_sends_no_movement() {
+        let out = translate(&[key(30, 1)], true);
+        assert_eq!(out, vec![Event::Key { keycode: 30, pressed: true }]);
+    }
+
+    /// Holding a key has to delete several characters.
     ///
-    /// O Windows nao repete tecla sintetica -- a repeticao de la nasce
-    /// no driver do teclado fisico. Descartar o `valor == 2` do kernel
-    /// fazia segurar backspace apagar UM caractere so, que foi como o
-    /// usuario encontrou o bug.
+    /// Windows does not repeat a synthetic key -- repeat there is born in
+    /// the physical keyboard's driver. Discarding the kernel's `value == 2`
+    /// made holding backspace delete ONE character only, which is how the
+    /// user found the bug.
     #[test]
-    fn repeticao_do_kernel_e_repassada() {
-        let saida = traduzir(&[tecla(14, 1), tecla(14, 2), tecla(14, 2), tecla(14, 0)], true);
+    fn kernel_repeat_is_forwarded() {
+        let out = translate(&[key(14, 1), key(14, 2), key(14, 2), key(14, 0)], true);
         assert_eq!(
-            saida,
+            out,
             vec![
-                Evento::Tecla { keycode: 14, apertado: true },
-                Evento::Tecla { keycode: 14, apertado: true },
-                Evento::Tecla { keycode: 14, apertado: true },
-                Evento::Tecla { keycode: 14, apertado: false },
+                Event::Key { keycode: 14, pressed: true },
+                Event::Key { keycode: 14, pressed: true },
+                Event::Key { keycode: 14, pressed: true },
+                Event::Key { keycode: 14, pressed: false },
             ]
         );
     }
 
-    /// Alvo que repete sozinho recebe so o comeco e o fim.
+    /// A target that repeats on its own gets only the start and the end.
     #[test]
-    fn com_repeticao_desligada_so_passam_press_e_release() {
-        let saida = traduzir(&[tecla(14, 1), tecla(14, 2), tecla(14, 2), tecla(14, 0)], false);
+    fn with_repeat_off_only_press_and_release_pass() {
+        let out = translate(&[key(14, 1), key(14, 2), key(14, 2), key(14, 0)], false);
         assert_eq!(
-            saida,
+            out,
             vec![
-                Evento::Tecla { keycode: 14, apertado: true },
-                Evento::Tecla { keycode: 14, apertado: false },
-            ]
-        );
-    }
-
-    #[test]
-    fn botoes_viram_botao_e_nao_tecla() {
-        let saida = traduzir(&[tecla(EV_BTN_LEFT, 1), tecla(EV_BTN_RIGHT, 0)], true);
-        assert_eq!(
-            saida,
-            vec![
-                Evento::Botao { codigo: BTN_LEFT, apertado: true },
-                Evento::Botao { codigo: BTN_RIGHT, apertado: false },
+                Event::Key { keycode: 14, pressed: true },
+                Event::Key { keycode: 14, pressed: false },
             ]
         );
     }
 
     #[test]
-    fn roda_para_cima_rola_para_cima() {
-        // No evdev, roda para cima e +1. No nosso protocolo (e no
-        // Wayland) o eixo Y cresce para baixo, entao tem de sair
-        // NEGATIVO -- inverter errado faz a pagina andar ao contrario,
-        // que e o tipo de coisa que so se descobre usando.
-        let saida = traduzir(&[rel(REL_WHEEL, 1)], true);
-        assert_eq!(saida, vec![Evento::Rolagem { dx: 0.0, dy: -PASSO_RODA }]);
+    fn buttons_become_buttons_and_not_keys() {
+        let out = translate(&[key(EV_BTN_LEFT, 1), key(EV_BTN_RIGHT, 0)], true);
+        assert_eq!(
+            out,
+            vec![
+                Event::Button { code: BTN_LEFT, pressed: true },
+                Event::Button { code: BTN_RIGHT, pressed: false },
+            ]
+        );
     }
 
     #[test]
-    fn movimento_sai_antes_dos_cliques_do_lote() {
-        let saida = traduzir(&[tecla(EV_BTN_LEFT, 1), rel(REL_X, 2)], true);
-        assert_eq!(saida[0], Evento::MouseRel { dx: 2.0, dy: 0.0 });
-        assert_eq!(saida[1], Evento::Botao { codigo: BTN_LEFT, apertado: true });
+    fn wheel_up_scrolls_up() {
+        // In evdev, wheel up is +1. In our protocol (and in Wayland) the Y
+        // axis grows downwards, so it has to come out NEGATIVE -- inverting
+        // wrong makes the page move backwards, which is the kind of thing
+        // you only find out by using it.
+        let out = translate(&[rel(REL_WHEEL, 1)], true);
+        assert_eq!(out, vec![Event::Scroll { dx: 0.0, dy: -WHEEL_STEP }]);
     }
 
     #[test]
-    fn lote_vazio_nao_produz_nada() {
-        assert!(traduzir(&[], true).is_empty());
+    fn movement_goes_out_before_the_batch_clicks() {
+        let out = translate(&[key(EV_BTN_LEFT, 1), rel(REL_X, 2)], true);
+        assert_eq!(out[0], Event::MouseRel { dx: 2.0, dy: 0.0 });
+        assert_eq!(out[1], Event::Button { code: BTN_LEFT, pressed: true });
+    }
+
+    #[test]
+    fn empty_batch_produces_nothing() {
+        assert!(translate(&[], true).is_empty());
     }
 }
 
-// --- socorro ---------------------------------------------------------
+// --- rescue ----------------------------------------------------------
 
-/// `KEY_LEFTCTRL` e `KEY_RIGHTCTRL` do evdev.
+/// evdev `KEY_LEFTCTRL` and `KEY_RIGHTCTRL`.
 pub const KEY_LEFTCTRL: u32 = 29;
 pub const KEY_RIGHTCTRL: u32 = 97;
 
-/// Os dois Ctrl juntos: solta tudo e volta para a maquina local.
+/// Both Ctrl keys together: release everything and go back to the local machine.
 ///
-/// Precisa existir um caminho de volta que **nao dependa da rede**.
-/// Agarrado, o teclado nao existe para o desktop local -- se o alvo
-/// cair, sem isto a pessoa fica sem teclado na propria maquina e a
-/// unica saida e o mouse (que tambem esta agarrado) ou outra maquina.
+/// There has to be a way back that **does not depend on the network**.
+/// Grabbed, the keyboard does not exist for the local desktop -- if the
+/// target goes down, without this the person is left without a keyboard on
+/// their own machine and the only way out is the mouse (which is grabbed
+/// too) or another machine.
 ///
-/// Os dois Ctrl porque nenhum programa usa a combinacao e nenhum texto a
-/// produz: nao da para disparar sem querer digitando. E o mesmo gesto
-/// que switch KVM de hardware usa, pelo mesmo motivo.
-pub fn e_socorro(pressionadas: &std::collections::HashSet<u32>) -> bool {
-    pressionadas.contains(&KEY_LEFTCTRL) && pressionadas.contains(&KEY_RIGHTCTRL)
+/// Both Ctrl keys because no program uses the combination and no text
+/// produces it: it cannot be triggered by accident while typing. It is the
+/// same gesture hardware KVM switches use, for the same reason.
+pub fn is_rescue(pressed: &std::collections::HashSet<u32>) -> bool {
+    pressed.contains(&KEY_LEFTCTRL) && pressed.contains(&KEY_RIGHTCTRL)
 }
 
 #[cfg(test)]
-mod testes_socorro {
+mod rescue_tests {
     use super::*;
     use std::collections::HashSet;
 
-    fn conj(v: &[u32]) -> HashSet<u32> {
+    fn set(v: &[u32]) -> HashSet<u32> {
         v.iter().copied().collect()
     }
 
     #[test]
-    fn os_dois_ctrl_pedem_socorro() {
-        assert!(e_socorro(&conj(&[KEY_LEFTCTRL, KEY_RIGHTCTRL])));
+    fn both_ctrls_ask_for_rescue() {
+        assert!(is_rescue(&set(&[KEY_LEFTCTRL, KEY_RIGHTCTRL])));
     }
 
     #[test]
-    fn um_ctrl_so_nao_pede() {
-        assert!(!e_socorro(&conj(&[KEY_LEFTCTRL])));
-        assert!(!e_socorro(&conj(&[KEY_RIGHTCTRL])));
+    fn a_single_ctrl_does_not() {
+        assert!(!is_rescue(&set(&[KEY_LEFTCTRL])));
+        assert!(!is_rescue(&set(&[KEY_RIGHTCTRL])));
     }
 
     #[test]
-    fn ctrl_c_nao_pede() {
-        // 46 = KEY_C. Atalho comum nao pode soltar o KVM.
-        assert!(!e_socorro(&conj(&[KEY_LEFTCTRL, 46])));
+    fn ctrl_c_does_not() {
+        // 46 = KEY_C. A common shortcut must not release the KVM.
+        assert!(!is_rescue(&set(&[KEY_LEFTCTRL, 46])));
     }
 
     #[test]
-    fn os_dois_ctrl_com_mais_teclas_ainda_pedem() {
-        // A pessoa em panico aperta tudo. Exigir exclusividade faria o
-        // socorro falhar exatamente quando ele e preciso.
-        assert!(e_socorro(&conj(&[KEY_LEFTCTRL, KEY_RIGHTCTRL, 42, 56])));
+    fn both_ctrls_with_more_keys_still_ask() {
+        // A panicking person presses everything. Requiring exclusivity would
+        // make the rescue fail exactly when it is needed.
+        assert!(is_rescue(&set(&[KEY_LEFTCTRL, KEY_RIGHTCTRL, 42, 56])));
     }
 }

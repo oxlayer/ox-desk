@@ -1,93 +1,92 @@
 #!/usr/bin/env bash
-# Cria, uma vez, a identidade local de assinatura de codigo no Mac.
+# Creates, once, the local code-signing identity on the Mac.
 #
-# POR QUE ISTO EXISTE
+# WHY THIS EXISTS
 #
-# A permissao de Gravacao de Tela (TCC) e amarrada ao binario. Para um
-# executavel ad-hoc / linker-signed -- o que o `cargo build` produz --
-# a amarracao e pelo cdhash, que muda a cada compilacao. Medido:
-# conceder a permissao, rodar um deploy, e o host voltar a travar
-# exatamente como antes, sem erro nenhum no log.
+# The Screen Recording permission (TCC) is tied to the binary. For an
+# ad-hoc / linker-signed executable -- what `cargo build` produces -- the
+# binding is by cdhash, which changes on every build. Measured: grant the
+# permission, run a deploy, and the host goes back to hanging exactly as
+# before, with no error at all in the log.
 #
-# Com identidade ESTAVEL o TCC amarra no designated requirement, e a
-# concessao sobrevive a rebuilds.
+# With a STABLE identity TCC binds to the designated requirement, and the
+# grant survives rebuilds.
 #
-# POR QUE UM CHAVEIRO PROPRIO, E NAO O DE LOGIN
+# WHY A KEYCHAIN OF ITS OWN, AND NOT THE LOGIN ONE
 #
-# No chaveiro de login o `codesign` pede autorizacao por dialogo
-# grafico a cada assinatura -- e por SSH nem dialogo ha: falha com
-# `errSecInternalComponent`. Digitar a senha no dialogo resolve UMA
-# operacao; nao fixa nada.
+# In the login keychain `codesign` asks for authorization through a GUI
+# dialog on every signature -- and over SSH there is not even a dialog: it
+# fails with `errSecInternalComponent`. Typing the password in the dialog
+# fixes ONE operation; it does not stick.
 #
-# Um chaveiro dedicado, com senha que nos conhecemos, pode ser
-# destrancado e ter a lista de particao ajustada por linha de comando
-# -- e ai o `codesign` roda sem perguntar, inclusive por SSH. E o
-# padrao que qualquer CI de macOS usa.
+# A dedicated keychain, with a password we know, can be unlocked and have
+# its partition list set from the command line -- and then `codesign` runs
+# without asking, even over SSH. It is the pattern every macOS CI uses.
 #
-# A senha nao e segredo de proposito: o chaveiro guarda UMA chave
-# auto-assinada cujo unico poder e assinar os nossos proprios binarios
-# para o TCC os reconhecer. Nao assina nada que outra maquina confie.
+# The password is not a secret on purpose: the keychain holds ONE
+# self-signed key whose only power is signing our own binaries so TCC
+# recognizes them. It signs nothing another machine trusts.
 set -euo pipefail
 
-NOME="logi local signing"
+NAME="logi local signing"
 KC="$HOME/Library/Keychains/logi.keychain-db"
 KCPASS="logi"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# Tirar do chaveiro de LOGIN, se uma tentativa anterior deixou la: duas
-# identidades com o mesmo nome fazem o codesign recusar por ambiguidade.
-while security find-certificate -c "$NOME" "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1; do
-  security delete-certificate -c "$NOME" "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || break
+# Remove it from the LOGIN keychain, if an earlier attempt left it there:
+# two identities with the same name make codesign refuse on ambiguity.
+while security find-certificate -c "$NAME" "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1; do
+  security delete-certificate -c "$NAME" "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || break
 done
 
-# IDEMPOTENTE, e isto importa mais do que parece.
+# IDEMPOTENT, and this matters more than it seems.
 #
-# Recriar a identidade gera um certificado NOVO, com chave publica
-# nova -- e o designated requirement muda junto. O TCC trata isso como
-# outro programa e DESCARTA a concessao de Gravacao de Tela, que so o
-# dono da maquina pode dar de volta, a mao, na interface.
+# Recreating the identity generates a NEW certificate, with a new public
+# key -- and the designated requirement changes with it. TCC treats that as
+# another program and DISCARDS the Screen Recording grant, which only the
+# machine's owner can give back, by hand, in the UI.
 #
-# Ou seja: rodar este script duas vezes custa uma ida as Configuracoes.
-# Por isso ele recusa, em vez de "garantir estado".
-if [ -f "$KC" ] && security find-certificate -c "$NOME" "$KC" >/dev/null 2>&1; then
-  echo "a identidade '$NOME' ja existe em $KC -- nada a fazer."
-  echo "Recria-la invalidaria a permissao de Gravacao de Tela ja concedida."
-  echo "Para recriar mesmo assim: security delete-keychain \"$KC\" e rode de novo."
+# In other words: running this script twice costs a trip to Settings.
+# That is why it refuses, instead of "ensuring state".
+if [ -f "$KC" ] && security find-certificate -c "$NAME" "$KC" >/dev/null 2>&1; then
+  echo "the identity '$NAME' already exists in $KC -- nothing to do."
+  echo "Recreating it would invalidate the Screen Recording permission already granted."
+  echo "To recreate anyway: security delete-keychain \"$KC\" and run again."
   security find-identity -p codesigning "$KC" 2>&1 | tail -2
   exit 0
 fi
 
 security delete-keychain "$KC" 2>/dev/null || true
 security create-keychain -p "$KCPASS" "$KC"
-# Sem auto-lock: um chaveiro que tranca sozinho volta a pedir dialogo
-# no meio de um deploy.
+# No auto-lock: a keychain that locks itself asks for a dialog again in the
+# middle of a deploy.
 security set-keychain-settings -lut 100000 "$KC"
 security unlock-keychain -p "$KCPASS" "$KC"
 
-SENHA="tmp-$$-$RANDOM"
+P12PASS="tmp-$$-$RANDOM"
 openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-  -keyout "$TMP/k.pem" -out "$TMP/c.pem" -subj "/CN=$NOME" \
+  -keyout "$TMP/k.pem" -out "$TMP/c.pem" -subj "/CN=$NAME" \
   -addext "basicConstraints=critical,CA:false" \
   -addext "keyUsage=critical,digitalSignature" \
   -addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null
 
-# Formato LEGADO: o OpenSSL 3+ exporta PKCS12 com MAC SHA-256, que o
-# chaveiro da Apple nao le -- e o erro culpa a senha ("MAC verification
-# failed, wrong password?") quando o problema e o algoritmo.
+# LEGACY format: OpenSSL 3+ exports PKCS12 with a SHA-256 MAC, which the
+# Apple keychain cannot read -- and the error blames the password ("MAC
+# verification failed, wrong password?") when the problem is the algorithm.
 openssl pkcs12 -export -out "$TMP/p.p12" -inkey "$TMP/k.pem" -in "$TMP/c.pem" \
-  -passout pass:"$SENHA" -macalg sha1 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES 2>/dev/null
+  -passout pass:"$P12PASS" -macalg sha1 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES 2>/dev/null
 
-security import "$TMP/p.p12" -k "$KC" -P "$SENHA" -T /usr/bin/codesign -A
+security import "$TMP/p.p12" -k "$KC" -P "$P12PASS" -T /usr/bin/codesign -A
 
-# ISTO e o que elimina o dialogo. Sem a lista de particao o macOS pede
-# autorizacao grafica a cada uso da chave privada.
+# THIS is what removes the dialog. Without the partition list macOS asks
+# for GUI authorization on every use of the private key.
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPASS" "$KC" >/dev/null
 
-# Entrar na lista de busca sem expulsar os que ja estao.
-ATUAIS=$(security list-keychains -d user | sed 's/[" ]//g' | tr '\n' ' ')
+# Join the search list without evicting the ones already there.
+CURRENT=$(security list-keychains -d user | sed 's/[" ]//g' | tr '\n' ' ')
 # shellcheck disable=SC2086
-security list-keychains -d user -s $ATUAIS "$KC"
+security list-keychains -d user -s $CURRENT "$KC"
 
-echo "identidade criada em $KC"
+echo "identity created in $KC"
 security find-identity -p codesigning "$KC" 2>&1 | tail -3

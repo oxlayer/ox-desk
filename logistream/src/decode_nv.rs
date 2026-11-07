@@ -1,34 +1,34 @@
-//! Decodificacao por NVDEC: H.264 -> NV12 -> BGRA, na GPU.
+//! NVDEC decoding: H.264 -> NV12 -> BGRA, on the GPU.
 //!
 //! Spec: ../specs/010-remote-desktop.md
 //!
-//! ## Por que existe, se o `ffmpeg-next` ja decodifica
+//! ## Why it exists, when `ffmpeg-next` already decodes
 //!
-//! Porque o `libavcodec` precisa estar instalado, e isso bloqueou o
-//! ultimo caminho que ainda usava RDP: nao ha `libavcodec` no Windows, e
-//! levar as DLLs para la (ou montar compilacao cruzada com os headers da
-//! FFmpeg) e encanamento que nao melhora nada. As duas maquinas que
-//! assistem uma a outra tem GPU NVIDIA, e o decodificador ja vem com o
-//! driver -- a mesma `moq-nvenc` que usamos para codificar expoe os
-//! pontos de entrada do NVDEC, carregados em runtime.
+//! Because `libavcodec` has to be installed, and that blocked the last
+//! path still using RDP: there is no `libavcodec` on Windows, and shipping
+//! the DLLs there (or setting up cross-compilation against the FFmpeg
+//! headers) is plumbing that improves nothing. The two machines that
+//! watch each other have NVIDIA GPUs, and the decoder already ships with
+//! the driver -- the same `moq-nvenc` we use to encode exposes the NVDEC
+//! entry points, loaded at runtime.
 //!
-//! O Mac continua no `ffmpeg`: nao tem NVIDIA. Entao sao dois caminhos de
-//! decodificacao de proposito, escolhidos por plataforma, e nao um
-//! caminho torto que serve mal aos dois.
+//! The Mac stays on `ffmpeg`: it has no NVIDIA. So there are two decoding
+//! paths on purpose, chosen per platform, rather than one crooked path
+//! that serves both poorly.
 //!
-//! ## Como o CUVID quer ser usado
+//! ## How CUVID wants to be used
 //!
-//! Nao e "me de um pacote, devolva um quadro". E um parser com tres
-//! callbacks em C, chamados de dentro do `cuvidParseVideoData`:
+//! It is not "give me a packet, return a frame". It is a parser with three
+//! C callbacks, called from inside `cuvidParseVideoData`:
 //!
 //! ```text
-//!   sequencia  -> o fluxo se apresentou; crie o decodificador
-//!   decodifica -> ha quadro pronto para decodificar; mande
-//!   exibe      -> ha quadro pronto para mostrar; mapeie e copie
+//!   sequence -> the stream introduced itself; create the decoder
+//!   decode   -> a frame is ready to decode; submit it
+//!   display  -> a frame is ready to show; map and copy it
 //! ```
 //!
-//! Por isso o estado mora num `Box` cujo ponteiro vai como `pUserData`:
-//! os callbacks sao `extern "C"` e nao capturam nada.
+//! That is why the state lives in a `Box` whose pointer goes as
+//! `pUserData`: the callbacks are `extern "C"` and capture nothing.
 
 use std::ffi::c_void;
 use std::sync::Arc;
@@ -44,163 +44,164 @@ use moq_nvenc::sys::nvcuvid::{
     CUvideoparser, CUVIDEOFORMAT, CUVIDPARSERDISPINFO, CUVIDPARSERPARAMS, CUVIDSOURCEDATAPACKET,
 };
 
-/// Um quadro decodificado, ainda em NV12, ja na memoria da CPU.
+/// A decoded frame, still in NV12, already in CPU memory.
 pub struct Nv12 {
-    pub dados: Vec<u8>,
-    /// Passo de linha. O NVDEC alinha, entao quase nunca e igual a largura.
+    pub data: Vec<u8>,
+    /// Row pitch. NVDEC aligns it, so it is almost never equal to the width.
     pub pitch: usize,
     pub w: u32,
     pub h: u32,
 }
 
-/// O que os callbacks em C compartilham com o dono.
+/// What the C callbacks share with the owner.
 ///
-/// Nao e `Send`: o contexto CUDA e por thread, e os callbacks sao
-/// chamados de dentro do `parse` -- na mesma thread, sempre.
-struct Estado {
+/// Not `Send`: the CUDA context is per thread, and the callbacks are
+/// called from inside `parse` -- on the same thread, always.
+struct State {
     decoder: CUvideodecoder,
-    /// Tamanho CODIFICADO (multiplo de 16); o de exibicao sai do
-    /// `display_area` e e o que vale para o usuario.
+    /// CODED size (multiple of 16); the display size comes from
+    /// `display_area` and is what matters to the user.
     w: u32,
     h: u32,
-    /// Quadros prontos. Fila curta: quadro velho numa tela remota nao
-    /// tem valor, entao o dono drena a cada passada e o resto se perde.
-    prontos: Vec<Nv12>,
-    /// Erro de dentro do callback, para o dono ver. Callback em C nao
-    /// pode propagar `Result` nem desenrolar panico.
-    erro: Option<String>,
+    /// Ready frames. Short queue: an old frame on a remote screen has no
+    /// value, so the owner drains it on every pass and the rest is lost.
+    ready: Vec<Nv12>,
+    /// Error from inside the callback, for the owner to see. A C callback
+    /// cannot propagate a `Result` nor unwind a panic.
+    error: Option<String>,
 }
 
-pub struct Decodificador {
+pub struct Decoder {
     parser: CUvideoparser,
-    estado: Box<Estado>,
-    /// Mantem o contexto vivo enquanto o decodificador existir.
+    state: Box<State>,
+    /// Keeps the context alive while the decoder exists.
     _ctx: Arc<CudaContext>,
 }
 
-/// Erro do CUDA/CUVID vira texto com o nome da chamada que falhou --
-/// "cuvidCreateDecoder: 801" diz onde olhar; "erro 801" nao.
-fn checa(nome: &str, r: cudarc::driver::sys::CUresult) -> Result<(), String> {
+/// A CUDA/CUVID error becomes text with the name of the call that failed --
+/// "cuvidCreateDecoder: 801" says where to look; "error 801" does not.
+fn check(name: &str, r: cudarc::driver::sys::CUresult) -> Result<(), String> {
     if r == cudarc::driver::sys::CUresult::CUDA_SUCCESS {
         Ok(())
     } else {
-        Err(format!("{nome}: {r:?}"))
+        Err(format!("{name}: {r:?}"))
     }
 }
 
-impl Decodificador {
-    pub fn novo() -> Result<Self, String> {
+impl Decoder {
+    pub fn new() -> Result<Self, String> {
         let api = cuvid::Api::get()?;
         let ctx = CudaContext::new(0).map_err(|e| format!("CUDA: {e:?}"))?;
 
-        let mut estado = Box::new(Estado {
+        let mut state = Box::new(State {
             decoder: std::ptr::null_mut(),
             w: 0,
             h: 0,
-            prontos: Vec::new(),
-            erro: None,
+            ready: Vec::new(),
+            error: None,
         });
 
         let mut p: CUVIDPARSERPARAMS = unsafe { std::mem::zeroed() };
         p.CodecType = cudaVideoCodec_enum::cudaVideoCodec_H264;
-        // Teto de superficies de decodificacao. O callback de sequencia
-        // devolve o minimo que o fluxo exige; este numero so precisa ser
-        // >= aquele.
+        // Ceiling on decode surfaces. The sequence callback returns the
+        // minimum the stream requires; this number only needs to be
+        // >= that.
         p.ulMaxNumDecodeSurfaces = 8;
-        // Zero: queremos o quadro assim que sai, sem reordenar para
-        // apresentacao. Numa tela remota nao ha B-frames (o host desliga)
-        // e atraso de exibicao e exatamente o que nao queremos.
+        // Zero: we want the frame as soon as it comes out, without
+        // reordering for presentation. A remote screen has no B-frames
+        // (the host turns them off) and display delay is exactly what we
+        // do not want.
         p.ulMaxDisplayDelay = 0;
-        p.pUserData = (&mut *estado) as *mut Estado as *mut c_void;
-        p.pfnSequenceCallback = Some(cb_sequencia);
-        p.pfnDecodePicture = Some(cb_decodifica);
-        p.pfnDisplayPicture = Some(cb_exibe);
+        p.pUserData = (&mut *state) as *mut State as *mut c_void;
+        p.pfnSequenceCallback = Some(cb_sequence);
+        p.pfnDecodePicture = Some(cb_decode);
+        p.pfnDisplayPicture = Some(cb_display);
 
         let mut parser: CUvideoparser = std::ptr::null_mut();
-        checa("cuvidCreateVideoParser", unsafe {
+        check("cuvidCreateVideoParser", unsafe {
             (api.create_video_parser)(&mut parser, &mut p)
         })?;
 
-        Ok(Decodificador { parser, estado, _ctx: ctx })
+        Ok(Decoder { parser, state, _ctx: ctx })
     }
 
-    /// Tamanho do quadro, zero antes do primeiro cabecalho de sequencia.
-    pub fn tamanho(&self) -> (u32, u32) {
-        (self.estado.w, self.estado.h)
+    /// Frame size, zero before the first sequence header.
+    pub fn size(&self) -> (u32, u32) {
+        (self.state.w, self.state.h)
     }
 
-    /// Alimenta bytes do fluxo (Annex-B) e devolve o que ficou pronto.
+    /// Feeds stream bytes (Annex-B) and returns whatever became ready.
     ///
-    /// Os callbacks rodam DENTRO desta chamada, entao os quadros aparecem
-    /// antes de ela retornar -- nao ha nada para esperar depois.
-    pub fn alimentar(&mut self, bytes: &[u8]) -> Result<Vec<Nv12>, String> {
+    /// The callbacks run INSIDE this call, so frames show up before it
+    /// returns -- there is nothing to wait for afterwards.
+    pub fn feed(&mut self, bytes: &[u8]) -> Result<Vec<Nv12>, String> {
         let api = cuvid::Api::get()?;
         let mut pkt: CUVIDSOURCEDATAPACKET = unsafe { std::mem::zeroed() };
         pkt.payload = bytes.as_ptr();
         pkt.payload_size = bytes.len() as _;
-        checa("cuvidParseVideoData", unsafe {
+        check("cuvidParseVideoData", unsafe {
             (api.parse_video_data)(self.parser, &mut pkt)
         })?;
-        if let Some(e) = self.estado.erro.take() {
+        if let Some(e) = self.state.error.take() {
             return Err(e);
         }
-        Ok(std::mem::take(&mut self.estado.prontos))
+        Ok(std::mem::take(&mut self.state.ready))
     }
 }
 
-impl Drop for Decodificador {
+impl Drop for Decoder {
     fn drop(&mut self) {
-        // Ordem importa: o parser chama os callbacks, que usam o
-        // decodificador. Primeiro para de chamar, depois destroi.
+        // Order matters: the parser calls the callbacks, which use the
+        // decoder. First stop the calls, then destroy.
         if let Ok(api) = cuvid::Api::get() {
             unsafe {
                 if !self.parser.is_null() {
                     let _ = (api.destroy_video_parser)(self.parser);
                 }
-                if !self.estado.decoder.is_null() {
-                    let _ = (api.destroy_decoder)(self.estado.decoder);
+                if !self.state.decoder.is_null() {
+                    let _ = (api.destroy_decoder)(self.state.decoder);
                 }
             }
         }
     }
 }
 
-/// Converte o ponteiro de usuario de volta em `&mut Estado`.
+/// Turns the user pointer back into `&mut State`.
 ///
-/// `unsafe` concentrado aqui: e o unico lugar onde confiamos que o
-/// ponteiro que o CUVID devolve e o `Box` que demos a ele.
-unsafe fn estado_de(p: *mut c_void) -> Option<&'static mut Estado> {
-    (!p.is_null()).then(|| &mut *(p as *mut Estado))
+/// `unsafe` concentrated here: it is the only place where we trust that
+/// the pointer CUVID hands back is the `Box` we gave it.
+unsafe fn state_from(p: *mut c_void) -> Option<&'static mut State> {
+    (!p.is_null()).then(|| &mut *(p as *mut State))
 }
 
-/// O fluxo se apresentou: criar o decodificador.
+/// The stream introduced itself: create the decoder.
 ///
-/// Devolve o numero de superficies de decodificacao (>0) para seguir, ou
-/// 0 para abortar. Zero aqui significa "nao da", e o `parse` devolve erro.
-extern "C" fn cb_sequencia(user: *mut c_void, fmt: *mut CUVIDEOFORMAT) -> i32 {
-    let Some(st) = (unsafe { estado_de(user) }) else { return 0 };
+/// Returns the number of decode surfaces (>0) to continue, or 0 to abort.
+/// Zero here means "cannot do it", and `parse` returns an error.
+extern "C" fn cb_sequence(user: *mut c_void, fmt: *mut CUVIDEOFORMAT) -> i32 {
+    let Some(st) = (unsafe { state_from(user) }) else { return 0 };
     let f = unsafe { &*fmt };
 
-    // Area de EXIBICAO, nao a codificada: 1440 vira 1440 coded, mas um
-    // 1080 vira 1088 codificado e mostrar isso poria 8 linhas de lixo
-    // embaixo.
+    // DISPLAY area, not the coded one: 1440 stays 1440 coded, but a
+    // 1080 becomes 1088 coded and showing that would put 8 rows of
+    // garbage at the bottom.
     let w = (f.display_area.right - f.display_area.left).max(0) as u32;
     let h = (f.display_area.bottom - f.display_area.top).max(0) as u32;
     if w == 0 || h == 0 {
-        st.erro = Some("sequencia sem area de exibicao".into());
+        st.error = Some("sequence without a display area".into());
         return 0;
     }
 
     let api = match cuvid::Api::get() {
         Ok(a) => a,
         Err(e) => {
-            st.erro = Some(e.to_string());
+            st.error = Some(e.to_string());
             return 0;
         }
     };
 
-    // Resolucao mudou no meio do fluxo: recria. Acontece de verdade --
-    // o host do Windows refaz o encoder quando o monitor muda.
+    // Resolution changed mid-stream: recreate. This really happens --
+    // the Windows host rebuilds the encoder when the monitor changes.
     if !st.decoder.is_null() {
         unsafe { (api.destroy_decoder)(st.decoder) };
         st.decoder = std::ptr::null_mut();
@@ -215,13 +216,14 @@ extern "C" fn cb_sequencia(user: *mut c_void, fmt: *mut CUVIDEOFORMAT) -> i32 {
     ci.ChromaFormat = f.chroma_format;
     ci.bitDepthMinus8 = f.bit_depth_luma_minus8 as _;
     ci.OutputFormat = cudaVideoSurfaceFormat_enum::cudaVideoSurfaceFormat_NV12;
-    // Weave: o fluxo e progressivo (tela de computador). Bob ou Adaptive
-    // existem para video entrelacado e custariam qualidade aqui.
+    // Weave: the stream is progressive (a computer screen). Bob or
+    // Adaptive exist for interlaced video and would cost quality here.
     ci.DeinterlaceMode = cudaVideoDeinterlaceMode_enum::cudaVideoDeinterlaceMode_Weave;
     ci.ulCreationFlags = cudaVideoCreateFlags_enum::cudaVideoCreate_PreferCUVID as _;
     ci.ulNumDecodeSurfaces = f.min_num_decode_surfaces.max(2) as _;
-    // Uma superficie de saida: mapeamos e copiamos na hora, dentro do
-    // callback. Mais de uma so ajudaria quem segura varios quadros.
+    // One output surface: we map and copy right away, inside the
+    // callback. More than one would only help someone holding several
+    // frames.
     ci.ulNumOutputSurfaces = 1;
     ci.ulTargetWidth = w as _;
     ci.ulTargetHeight = h as _;
@@ -232,61 +234,62 @@ extern "C" fn cb_sequencia(user: *mut c_void, fmt: *mut CUVIDEOFORMAT) -> i32 {
 
     let mut dec: CUvideodecoder = std::ptr::null_mut();
     let r = unsafe { (api.create_decoder)(&mut dec, &mut ci) };
-    if let Err(e) = checa("cuvidCreateDecoder", r) {
-        st.erro = Some(e);
+    if let Err(e) = check("cuvidCreateDecoder", r) {
+        st.error = Some(e);
         return 0;
     }
     st.decoder = dec;
     st.w = w;
     st.h = h;
-    // Chroma 4:2:0 significa UV com metade das linhas; o resto do codigo
-    // assume isso ao copiar `h * 3 / 2` linhas.
+    // 4:2:0 chroma means UV with half the rows; the rest of the code
+    // assumes that when copying `h * 3 / 2` rows.
     if f.chroma_format != cudaVideoChromaFormat_enum::cudaVideoChromaFormat_420 {
-        st.erro = Some(format!("chroma {:?} nao suportado", f.chroma_format));
+        st.error = Some(format!("chroma {:?} not supported", f.chroma_format));
         return 0;
     }
     ci.ulNumDecodeSurfaces as i32
 }
 
-extern "C" fn cb_decodifica(user: *mut c_void, pic: *mut CUVIDPICPARAMS) -> i32 {
-    let Some(st) = (unsafe { estado_de(user) }) else { return 0 };
+extern "C" fn cb_decode(user: *mut c_void, pic: *mut CUVIDPICPARAMS) -> i32 {
+    let Some(st) = (unsafe { state_from(user) }) else { return 0 };
     if st.decoder.is_null() {
         return 0;
     }
     let Ok(api) = cuvid::Api::get() else { return 0 };
     let r = unsafe { (api.decode_picture)(st.decoder, pic) };
-    match checa("cuvidDecodePicture", r) {
+    match check("cuvidDecodePicture", r) {
         Ok(()) => 1,
         Err(e) => {
-            st.erro = Some(e);
+            st.error = Some(e);
             0
         }
     }
 }
 
-extern "C" fn cb_exibe(user: *mut c_void, info: *mut CUVIDPARSERDISPINFO) -> i32 {
-    let Some(st) = (unsafe { estado_de(user) }) else { return 0 };
+extern "C" fn cb_display(user: *mut c_void, info: *mut CUVIDPARSERDISPINFO) -> i32 {
+    let Some(st) = (unsafe { state_from(user) }) else { return 0 };
     if st.decoder.is_null() {
         return 0;
     }
-    // `catch_unwind`: desenrolar panico por uma fronteira `extern "C"` e
-    // comportamento indefinido, e aqui dentro ha alocacao (que pode
-    // falhar). Melhor virar erro nosso que corromper a pilha do driver.
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| copia_quadro(st, info)));
+    // `catch_unwind`: unwinding a panic across an `extern "C"` boundary
+    // is undefined behavior, and there is allocation in here (which can
+    // fail). Better to turn it into our own error than corrupt the
+    // driver's stack.
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| copy_frame(st, info)));
     match r {
         Ok(Ok(())) => 1,
         Ok(Err(e)) => {
-            st.erro = Some(e);
+            st.error = Some(e);
             0
         }
         Err(_) => {
-            st.erro = Some("panico no callback de exibicao".into());
+            st.error = Some("panic in the display callback".into());
             0
         }
     }
 }
 
-fn copia_quadro(st: &mut Estado, info: *mut CUVIDPARSERDISPINFO) -> Result<(), String> {
+fn copy_frame(st: &mut State, info: *mut CUVIDPARSERDISPINFO) -> Result<(), String> {
     let api = cuvid::Api::get()?;
     let d = unsafe { &*info };
 
@@ -296,65 +299,65 @@ fn copia_quadro(st: &mut Estado, info: *mut CUVIDPARSERDISPINFO) -> Result<(), S
 
     let mut dptr: u64 = 0;
     let mut pitch: u32 = 0;
-    checa("cuvidMapVideoFrame", unsafe {
+    check("cuvidMapVideoFrame", unsafe {
         (api.map_video_frame)(st.decoder, d.picture_index, &mut dptr, &mut pitch, &mut pp)
     })?;
 
-    // Y (h linhas) e UV (h/2 linhas) sao contiguos na superficie mapeada,
-    // com o MESMO pitch -- dai uma copia so em vez de duas.
-    let linhas = (st.h as usize) * 3 / 2;
-    let bytes = pitch as usize * linhas;
-    let mut dados = vec![0u8; bytes];
-    let copia = unsafe {
+    // Y (h rows) and UV (h/2 rows) are contiguous in the mapped surface,
+    // with the SAME pitch -- hence one copy instead of two.
+    let rows = (st.h as usize) * 3 / 2;
+    let bytes = pitch as usize * rows;
+    let mut data = vec![0u8; bytes];
+    let copied = unsafe {
         cudarc::driver::sys::cuMemcpyDtoH_v2(
-            dados.as_mut_ptr() as *mut c_void,
+            data.as_mut_ptr() as *mut c_void,
             dptr as cudarc::driver::sys::CUdeviceptr,
             bytes,
         )
     };
-    // Desmapear SEMPRE, inclusive quando a copia falha: superficie
-    // mapeada que nao volta trava o decodificador no proximo quadro.
+    // ALWAYS unmap, even when the copy fails: a mapped surface that is
+    // never returned stalls the decoder on the next frame.
     let _ = unsafe { (api.unmap_video_frame)(st.decoder, dptr) };
-    checa("cuMemcpyDtoH", copia)?;
+    check("cuMemcpyDtoH", copied)?;
 
-    st.prontos.push(Nv12 { dados, pitch: pitch as usize, w: st.w, h: st.h });
+    st.ready.push(Nv12 { data, pitch: pitch as usize, w: st.w, h: st.h });
     Ok(())
 }
 
-/// NV12 -> BGRA, redimensionando no mesmo passo.
+/// NV12 -> BGRA, resizing in the same pass.
 ///
-/// Uma passada sobre os pixels de SAIDA, nao de entrada: ao encolher
-/// (o caso normal, janela menor que a tela remota) isso faz menos
-/// trabalho que converter e depois escalar.
+/// One pass over the OUTPUT pixels, not the input: when shrinking (the
+/// normal case, a window smaller than the remote screen) this does less
+/// work than converting and then scaling.
 ///
-/// **Amostragem bilinear.** A primeira versao usava vizinho mais
-/// proximo, com um comentario dizendo que bilinear era "o proximo passo
-/// se incomodar". Incomodou: o usuario comparou Mac->Windows (que
-/// decodifica por `swscale`, bilinear) com Ubuntu->Windows (este
-/// caminho) e chamou o segundo de pessimo. Encolher texto de 1440p com
-/// vizinho mais proximo serrilha cada letra -- e era so no caminho da
-/// GPU, o que fazia a diferenca salta aos olhos lado a lado.
+/// **Bilinear sampling.** The first version used nearest neighbor, with a
+/// comment saying bilinear was "the next step if it bothers anyone". It
+/// did: the user compared Mac->Windows (which decodes through `swscale`,
+/// bilinear) with Ubuntu->Windows (this path) and called the second one
+/// awful. Shrinking 1440p text with nearest neighbor jags every letter --
+/// and it was only on the GPU path, which made the difference jump out
+/// side by side.
 ///
-/// O mapeamento usa centro de pixel (`(x+0.5)*escala-0.5`), nao
-/// `x*escala`: sem o meio-pixel a imagem desloca meio pixel para cima e
-/// para a esquerda, e em 1:1 a interpolacao deixaria de ser exata.
+/// The mapping uses the pixel center (`(x+0.5)*scale-0.5`), not
+/// `x*scale`: without the half pixel the image shifts half a pixel up and
+/// to the left, and at 1:1 the interpolation would no longer be exact.
 ///
-/// BT.709 de faixa limitada: e o que um desktop de 1440p e, e o
-/// codificador nao escreve a descricao de cor no fluxo. Conferido contra
-/// o ffmpeg no mesmo quadro -- um ponto de diferenca no verde.
-pub fn nv12_para_bgra(q: &Nv12, dst: &mut [u32], dw: u32, dh: u32) {
+/// Limited-range BT.709: that is what a 1440p desktop is, and the encoder
+/// does not write the color description into the stream. Checked against
+/// ffmpeg on the same frame -- one point of difference in the green.
+pub fn nv12_to_bgra(q: &Nv12, dst: &mut [u32], dw: u32, dh: u32) {
     if dw == 0 || dh == 0 || q.w == 0 || q.h == 0 {
         return;
     }
     let (sw, sh) = (q.w as usize, q.h as usize);
-    let plano_uv = q.pitch * sh;
+    let uv_plane = q.pitch * sh;
     let ex = sw as f32 / dw as f32;
     let ey = sh as f32 / dh as f32;
 
-    // A coluna de origem nao depende da linha: as mesmas 1451 contas de
-    // ponto flutuante estavam sendo refeitas 1232 vezes por quadro. Uma
-    // tabela por quadro troca isso por tres leituras de vetor.
-    let colunas: Vec<(usize, usize, i32)> = (0..dw as usize)
+    // The source column does not depend on the row: the same 1451
+    // floating-point computations were being redone 1232 times per frame.
+    // One table per frame trades that for three vector reads.
+    let columns: Vec<(usize, usize, i32)> = (0..dw as usize)
         .map(|x| {
             let fx = ((x as f32 + 0.5) * ex - 0.5).max(0.0);
             let x0 = (fx as usize).min(sw - 1);
@@ -363,54 +366,54 @@ pub fn nv12_para_bgra(q: &Nv12, dst: &mut [u32], dw: u32, dh: u32) {
         })
         .collect();
 
-    // Uma linha de saida nao olha para nenhuma outra, entao dividir o
-    // quadro em faixas e exato, nao aproximado. Sem isso a conversao
-    // sozinha custava 28 ms (teto de 35 fps) e segurava o desenho em 27
-    // quando a rede ja entregava 60.
-    let fatias = std::thread::available_parallelism()
+    // An output row does not look at any other, so splitting the frame
+    // into bands is exact, not approximate. Without this the conversion
+    // alone cost 28 ms (a ceiling of 35 fps) and held drawing at 27 while
+    // the network was already delivering 60.
+    let slices = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
         .clamp(1, 16)
         .min(dh as usize);
-    let por_fatia = (dh as usize).div_ceil(fatias);
-    let dados = &q.dados;
+    let per_slice = (dh as usize).div_ceil(slices);
+    let data = &q.data;
     let pitch = q.pitch;
-    let colunas = &colunas;
+    let columns = &columns;
 
-    std::thread::scope(|escopo| {
-        for (n, faixa) in dst.chunks_mut(por_fatia * dw as usize).enumerate() {
-            let y_ini = n * por_fatia;
-            escopo.spawn(move || {
-                for (dy, linha) in faixa.chunks_mut(dw as usize).enumerate() {
-                    let y = y_ini + dy;
+    std::thread::scope(|scope| {
+        for (n, band) in dst.chunks_mut(per_slice * dw as usize).enumerate() {
+            let y_start = n * per_slice;
+            scope.spawn(move || {
+                for (dy, row) in band.chunks_mut(dw as usize).enumerate() {
+                    let y = y_start + dy;
                     let fy = ((y as f32 + 0.5) * ey - 0.5).max(0.0);
                     let y0 = (fy as usize).min(sh - 1);
                     let y1 = (y0 + 1).min(sh - 1);
                     let wy = ((fy - y0 as f32) * 256.0) as i32;
                     let l0 = y0 * pitch;
                     let l1 = y1 * pitch;
-                    let linha_uv = plano_uv + (y0 / 2) * pitch;
+                    let uv_row = uv_plane + (y0 / 2) * pitch;
 
-                    for (x, px) in linha.iter_mut().enumerate() {
-                        let (x0, x1, wx) = colunas[x];
+                    for (x, px) in row.iter_mut().enumerate() {
+                        let (x0, x1, wx) = columns[x];
 
-                        // Dois lerps horizontais e um vertical, em
-                        // inteiros. Bilinear so na luma: o olho ve
-                        // detalhe em luminancia, e o NV12 ja guarda
-                        // croma pela metade -- interpolar os dois
-                        // dobraria o laco quente para melhorar o que
-                        // ninguem enxerga.
-                        let a = dados[l0 + x0] as i32;
-                        let b = dados[l0 + x1] as i32;
-                        let c = dados[l1 + x0] as i32;
-                        let d = dados[l1 + x1] as i32;
-                        let topo = a * (256 - wx) + b * wx;
-                        let base = c * (256 - wx) + d * wx;
-                        let yy = (topo * (256 - wy) + base * wy) >> 16;
+                        // Two horizontal lerps and one vertical, in
+                        // integers. Bilinear on luma only: the eye sees
+                        // detail in luminance, and NV12 already stores
+                        // chroma at half resolution -- interpolating both
+                        // would double the hot loop to improve what
+                        // nobody sees.
+                        let a = data[l0 + x0] as i32;
+                        let b = data[l0 + x1] as i32;
+                        let c = data[l1 + x0] as i32;
+                        let d = data[l1 + x1] as i32;
+                        let top = a * (256 - wx) + b * wx;
+                        let bottom = c * (256 - wx) + d * wx;
+                        let yy = (top * (256 - wy) + bottom * wy) >> 16;
 
-                        let i_uv = linha_uv + (x0 & !1);
-                        let u = dados[i_uv] as i32;
-                        let v = dados[i_uv + 1] as i32;
+                        let i_uv = uv_row + (x0 & !1);
+                        let u = data[i_uv] as i32;
+                        let v = data[i_uv + 1] as i32;
 
                         let cc = (yy - 16) * 298;
                         let du = u - 128;
@@ -429,131 +432,132 @@ pub fn nv12_para_bgra(q: &Nv12, dst: &mut [u32], dw: u32, dh: u32) {
 }
 
 #[cfg(test)]
-mod testes {
-    /// A conversao tem orcamento de tempo, e ele e testavel.
+mod tests {
+    /// The conversion has a time budget, and it is testable.
     ///
-    /// Ela roda na CPU para cada quadro desenhado, entao e o teto do
-    /// visualizador inteiro: a versao de uma thread so custava 28 ms
-    /// (35 fps) e segurava o desenho em 27 enquanto a rede entregava 60.
-    /// O usuario viu isso como "qualidade pessima" -- metade era o
-    /// serrilhado do vizinho mais proximo, metade era este laco.
+    /// It runs on the CPU for every drawn frame, so it is the ceiling of
+    /// the whole viewer: the single-threaded version cost 28 ms (35 fps)
+    /// and held drawing at 27 while the network delivered 60. The user
+    /// saw that as "awful quality" -- half of it was the jaggies of
+    /// nearest neighbor, half was this loop.
     ///
-    /// 12 ms e folgado de proposito: medimos 2.8 numa maquina de 12
-    /// nucleos, e quem roda os testes pode estar ocupado. O que importa
-    /// e nao voltar para a casa dos 28.
+    /// 12 ms is loose on purpose: we measured 2.8 on a 12-core machine,
+    /// and whoever runs the tests may be busy. What matters is not going
+    /// back to the 28 range.
     ///
-    /// **So em release.** Em `cargo test` sem `--release` o mesmo laco
-    /// mede 24 ms e o teste falha sempre -- um alarme falso que custa
-    /// tempo de quem for investigar (custou o meu). O que ele vigia e o
-    /// codigo otimizado, que e o unico que o usuario roda.
+    /// **Release only.** Under `cargo test` without `--release` the same
+    /// loop measures 24 ms and the test always fails -- a false alarm that
+    /// costs the time of whoever investigates (it cost mine). What it
+    /// guards is the optimized code, which is the only one the user runs.
     #[test]
-    #[cfg_attr(debug_assertions, ignore = "orcamento de tempo so vale em --release")]
-    fn conversao_cabe_no_orcamento() {
+    #[cfg_attr(debug_assertions, ignore = "time budget only holds in --release")]
+    fn conversion_fits_the_budget() {
         use std::time::Instant;
         let (sw, sh) = (2560usize, 1440usize);
-        let mut dados = vec![128u8; sw * sh + sw * sh / 2];
-        for (i, b) in dados.iter_mut().enumerate() {
+        let mut data = vec![128u8; sw * sh + sw * sh / 2];
+        for (i, b) in data.iter_mut().enumerate() {
             *b = (i % 255) as u8;
         }
-        let q = Nv12 { w: sw as u32, h: sh as u32, pitch: sw, dados };
+        let q = Nv12 { w: sw as u32, h: sh as u32, pitch: sw, data };
         let (dw, dh) = (1451u32, 1232u32);
         let mut dst = vec![0u32; (dw * dh) as usize];
-        nv12_para_bgra(&q, &mut dst, dw, dh); // aquece cache e paginas
+        nv12_to_bgra(&q, &mut dst, dw, dh); // warms cache and pages
 
         let t = Instant::now();
         let n = 30;
         for _ in 0..n {
-            nv12_para_bgra(&q, &mut dst, dw, dh);
+            nv12_to_bgra(&q, &mut dst, dw, dh);
         }
         let ms = t.elapsed().as_secs_f64() * 1000.0 / n as f64;
-        println!("conversao {sw}x{sh} -> {dw}x{dh}: {ms:.2} ms ({:.0} fps)", 1000.0 / ms);
-        assert!(ms < 12.0, "conversao a {ms:.1} ms/quadro: teto de {:.0} fps", 1000.0 / ms);
+        println!("conversion {sw}x{sh} -> {dw}x{dh}: {ms:.2} ms ({:.0} fps)", 1000.0 / ms);
+        assert!(ms < 12.0, "conversion at {ms:.1} ms/frame: ceiling of {:.0} fps", 1000.0 / ms);
     }
 
     use super::*;
 
-    /// Monta um NV12 de cor constante.
-    fn solido(w: u32, h: u32, y: u8, u: u8, v: u8) -> Nv12 {
-        let pitch = w as usize + 32; // pitch > largura, como o NVDEC faz
-        let mut dados = vec![0u8; pitch * (h as usize) * 3 / 2];
-        for linha in 0..h as usize {
+    /// Builds a constant-color NV12.
+    fn solid(w: u32, h: u32, y: u8, u: u8, v: u8) -> Nv12 {
+        let pitch = w as usize + 32; // pitch > width, as NVDEC does
+        let mut data = vec![0u8; pitch * (h as usize) * 3 / 2];
+        for row in 0..h as usize {
             for x in 0..w as usize {
-                dados[linha * pitch + x] = y;
+                data[row * pitch + x] = y;
             }
         }
         let base = pitch * h as usize;
-        for linha in 0..(h as usize / 2) {
+        for row in 0..(h as usize / 2) {
             for x in (0..w as usize).step_by(2) {
-                dados[base + linha * pitch + x] = u;
-                dados[base + linha * pitch + x + 1] = v;
+                data[base + row * pitch + x] = u;
+                data[base + row * pitch + x + 1] = v;
             }
         }
-        Nv12 { dados, pitch, w, h }
+        Nv12 { data, pitch, w, h }
     }
 
-    fn canais(px: u32) -> (u8, u8, u8) {
+    fn channels(px: u32) -> (u8, u8, u8) {
         (((px >> 16) & 0xff) as u8, ((px >> 8) & 0xff) as u8, (px & 0xff) as u8)
     }
 
     #[test]
-    fn preto_e_branco_chegam_nos_extremos() {
-        // Faixa limitada: 16 e preto, 235 e branco. Tratar como faixa
-        // cheia daria cinza em vez de preto, que e o erro classico.
+    fn black_and_white_reach_the_extremes() {
+        // Limited range: 16 is black, 235 is white. Treating it as full
+        // range would give gray instead of black, which is the classic
+        // mistake.
         let mut dst = vec![0u32; 4];
-        nv12_para_bgra(&solido(2, 2, 16, 128, 128), &mut dst, 2, 2);
-        assert_eq!(canais(dst[0]), (0, 0, 0), "16 tem de virar preto");
+        nv12_to_bgra(&solid(2, 2, 16, 128, 128), &mut dst, 2, 2);
+        assert_eq!(channels(dst[0]), (0, 0, 0), "16 must become black");
 
-        nv12_para_bgra(&solido(2, 2, 235, 128, 128), &mut dst, 2, 2);
-        let (r, g, b) = canais(dst[0]);
-        assert!(r > 250 && g > 250 && b > 250, "235 virou {r},{g},{b}");
+        nv12_to_bgra(&solid(2, 2, 235, 128, 128), &mut dst, 2, 2);
+        let (r, g, b) = channels(dst[0]);
+        assert!(r > 250 && g > 250 && b > 250, "235 became {r},{g},{b}");
     }
 
     #[test]
-    fn cinza_medio_fica_cinza() {
+    fn mid_gray_stays_gray() {
         let mut dst = vec![0u32; 4];
-        nv12_para_bgra(&solido(2, 2, 126, 128, 128), &mut dst, 2, 2);
-        let (r, g, b) = canais(dst[0]);
-        assert!(r == g && g == b, "cinza saiu colorido: {r},{g},{b}");
-        assert!((100..=140).contains(&r), "cinza medio virou {r}");
+        nv12_to_bgra(&solid(2, 2, 126, 128, 128), &mut dst, 2, 2);
+        let (r, g, b) = channels(dst[0]);
+        assert!(r == g && g == b, "gray came out colored: {r},{g},{b}");
+        assert!((100..=140).contains(&r), "mid gray became {r}");
     }
 
     #[test]
-    fn respeita_o_pitch_e_nao_le_lixo() {
-        // O pitch e maior que a largura: ler linha a linha por `w` em vez
-        // de por `pitch` embaralharia a imagem progressivamente -- um
-        // erro que aparece como inclinacao, nao como falha.
+    fn honors_the_pitch_and_reads_no_garbage() {
+        // The pitch is larger than the width: reading row by row by `w`
+        // instead of by `pitch` would scramble the image progressively --
+        // an error that shows up as a slant, not as a failure.
         let w = 8;
         let h = 4;
-        let mut q = solido(w, h, 16, 128, 128);
-        // Marca o primeiro pixel de cada linha com branco.
-        for linha in 0..h as usize {
-            q.dados[linha * q.pitch] = 235;
+        let mut q = solid(w, h, 16, 128, 128);
+        // Mark the first pixel of each row white.
+        for row in 0..h as usize {
+            q.data[row * q.pitch] = 235;
         }
         let mut dst = vec![0u32; (w * h) as usize];
-        nv12_para_bgra(&q, &mut dst, w, h);
-        for linha in 0..h as usize {
-            let (r, _, _) = canais(dst[linha * w as usize]);
-            assert!(r > 250, "linha {linha} perdeu a marca -- pitch ignorado");
-            let (r2, _, _) = canais(dst[linha * w as usize + 1]);
-            assert!(r2 < 5, "linha {linha} vazou a marca para o vizinho");
+        nv12_to_bgra(&q, &mut dst, w, h);
+        for row in 0..h as usize {
+            let (r, _, _) = channels(dst[row * w as usize]);
+            assert!(r > 250, "row {row} lost the mark -- pitch ignored");
+            let (r2, _, _) = channels(dst[row * w as usize + 1]);
+            assert!(r2 < 5, "row {row} leaked the mark into the neighbor");
         }
     }
 
     #[test]
-    fn encolher_nao_estoura_o_destino() {
-        // Destino menor que a origem: o laco anda pelo DESTINO, entao
-        // nenhuma escrita pode passar do fim.
-        let q = solido(64, 64, 100, 128, 128);
+    fn shrinking_does_not_overflow_the_destination() {
+        // Destination smaller than the source: the loop walks the
+        // DESTINATION, so no write can go past the end.
+        let q = solid(64, 64, 100, 128, 128);
         let mut dst = vec![0u32; 7 * 5];
-        nv12_para_bgra(&q, &mut dst, 7, 5);
-        assert!(dst.iter().all(|p| *p != 0), "sobrou pixel nao escrito");
+        nv12_to_bgra(&q, &mut dst, 7, 5);
+        assert!(dst.iter().all(|p| *p != 0), "a pixel was left unwritten");
     }
 
     #[test]
-    fn tamanho_zero_nao_faz_nada() {
-        let q = solido(4, 4, 100, 128, 128);
+    fn zero_size_does_nothing() {
+        let q = solid(4, 4, 100, 128, 128);
         let mut dst = vec![0u32; 1];
-        nv12_para_bgra(&q, &mut dst, 0, 0);
+        nv12_to_bgra(&q, &mut dst, 0, 0);
         assert_eq!(dst[0], 0);
     }
 }

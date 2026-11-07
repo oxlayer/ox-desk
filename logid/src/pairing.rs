@@ -1,6 +1,6 @@
 //! Pairing, phase B: pin each host's identity, learned over SSH.
 //!
-//! Spec: ../../specs/017-produto.md (section 1)
+//! Spec: ../../specs/017-product.md (section 1)
 //!
 //! SSH is already authenticated (`known_hosts`), so reading the host's
 //! fingerprint through it is not trust on first use: whoever answers is the
@@ -90,7 +90,7 @@ pub fn judge(pinned: Option<&str>, reported: &str) -> Verdict {
 fn host_cmd(h: &HostCfg, args: &str) -> String {
     if crate::remote::is_powershell(h) {
         // `| Out-String` makes PowerShell wait for the GUI-subsystem exe
-        // (rules/powershell-remoto.md, trap #4).
+        // (rules/remote-powershell.md, trap #4).
         format!(r#"& "$env:LOCALAPPDATA\logid\logistream-host.exe" {args} | Out-String | Write-Output"#)
     } else {
         format!("~/.local/bin/logistream-host {args}")

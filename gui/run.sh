@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Sobe o app de desktop. A limpeza de ELECTRON_RUN_AS_NODE e obrigatoria
-# quando o terminal vem de dentro do VS Code (o host de extensoes a exporta,
-# e com ela o binario do Electron roda como Node puro e nada abre).
+# Starts the desktop app. Clearing ELECTRON_RUN_AS_NODE is mandatory when
+# the terminal comes from inside VS Code (the extension host exports it,
+# and with it the Electron binary runs as plain Node and nothing opens).
 cd "$(dirname "$0")"
 exec env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron . "$@"

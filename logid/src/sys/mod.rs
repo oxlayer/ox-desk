@@ -1,33 +1,33 @@
-//! O que difere entre Linux e Windows, e so isso.
+//! What differs between Linux and Windows, and only that.
 //!
-//! O `logid` nasceu so no Linux e a GUI com ele. O Windows ficou com um
-//! CLI de um disparo (`logid-agent`), sem API, sem bandeja, sem janela --
-//! e a GUI do Ubuntu alcancava a outra maquina por SSH, chamando o CLI na
-//! mao. Resultado: a troca era simetrica (o `watch-edge` deu a borda ao
-//! Windows) mas o control plane nao, e quem estava no Windows nao tinha
-//! painel nenhum.
+//! `logid` was born on Linux only, and the GUI with it. Windows got a
+//! one-shot CLI (`logid-agent`), with no API, no tray, no window -- and
+//! the Ubuntu GUI reached the other machine over SSH, calling the CLI by
+//! hand. Result: switching was symmetric (`watch-edge` gave Windows the
+//! border) but the control plane was not, and whoever was on Windows had
+//! no panel at all.
 //!
-//! Medido antes de decidir: dos nove modulos do daemon, seis sao
-//! portaveis tal como estao. O que amarrava ao Linux eram cinco pontos --
-//! `getent` no fallback de DNS, `systemctl` no estado dos units, `date
-//! +%z` no fuso, `journalctl` na origem dos logs e o D-Bus do mutter na
-//! borda. Dai este modulo: um lugar para os cinco, em vez de um segundo
-//! daemon no `agent/` duplicando os outros seis.
+//! Measured before deciding: of the daemon's nine modules, six are
+//! portable as they are. What tied it to Linux were five points --
+//! `getent` in the DNS fallback, `systemctl` in the units' state, `date
+//! +%z` for the timezone, `journalctl` as the log source and mutter's
+//! D-Bus for the border. Hence this module: one place for the five,
+//! instead of a second daemon in `agent/` duplicating the other six.
 //!
-//! Contrato que cada plataforma cumpre:
+//! The contract each platform fulfills:
 //!
-//! | funcao | Linux | macOS | Windows |
+//! | function | Linux | macOS | Windows |
 //! |---|---|---|---|
-//! | `resolve_fallback` | `getent hosts` | nada (mDNS nativo) | nada (mDNS nativo) |
-//! | `unit_state` | `systemctl --user` | `launchctl`, senao processo | servico, senao processo |
-//! | `hhmmss` | `date +%z` (comum) | idem | `GetLocalTime` |
-//! | `log_lines` | `journalctl --user -u` | arquivo em `~/Library/Logs` | arquivo em `%LOCALAPPDATA%` |
-//! | `log_sink` | nada (o journal timbra) | anexa com hora | anexa com hora |
-//! | `device_access` | ACL em `/dev/hidraw` | abrir receptor | abrir receptor |
-//! | `spawn_border` | barreira do mutter | **nao ha** (ver macos.rs) | `GetCursorPos` |
+//! | `resolve_fallback` | `getent hosts` | nothing (native mDNS) | nothing (native mDNS) |
+//! | `unit_state` | `systemctl --user` | `launchctl`, else process | service, else process |
+//! | `hhmmss` | `date +%z` (shared) | same | `GetLocalTime` |
+//! | `log_lines` | `journalctl --user -u` | file in `~/Library/Logs` | file in `%LOCALAPPDATA%` |
+//! | `log_sink` | nothing (the journal timestamps) | appends with time | appends with time |
+//! | `device_access` | ACL on `/dev/hidraw` | open the receiver | open the receiver |
+//! | `spawn_border` | mutter barrier | **none** (see macos.rs) | `GetCursorPos` |
 //!
-//! O que Linux e macOS fazem igual vive em `unix.rs`, para nao existir
-//! uma terceira copia de hora local e diretorio de config.
+//! What Linux and macOS do the same lives in `unix.rs`, so there is no
+//! third copy of local time and config directory.
 
 #[cfg(unix)]
 mod unix;
@@ -47,42 +47,42 @@ mod windows;
 #[cfg(windows)]
 pub use windows::*;
 
-/// O que um cliente de tela sabe fazer, e como pedir.
+/// What a screen client can do, and how to ask for it.
 ///
-/// Existe porque a UI oferece as opcoes no estilo Parsec -- teclado e
-/// mouse, som, microfone -- e oferecer um check que nao faz nada e pior
-/// que nao oferecer. Cada cliente declara o que honra; o que ele nao
-/// honra aparece desabilitado com o motivo.
+/// It exists because the UI offers Parsec-style options -- keyboard and
+/// mouse, sound, microphone -- and offering a checkbox that does nothing
+/// is worse than not offering it. Each client declares what it honors;
+/// what it does not honor shows up disabled with the reason.
 ///
-/// O que de fato muda por cliente, medido na documentacao de cada um:
+/// What actually changes per client, measured from each one's docs:
 ///
-/// | cliente | controle | som | microfone |
+/// | client | control | sound | microphone |
 /// |---|---|---|---|
-/// | `xfreerdp3` | sempre | `/sound` | `/microphone` |
-/// | `gnome-connections` | sempre | nao expoe | nao expoe |
-/// | `mstsc` | sempre | so por arquivo .rdp | idem |
-/// | `vncviewer` | `-ViewOnly` desliga | protocolo nao tem | nao tem |
-/// | `open vnc://` (macOS) | sempre | protocolo nao tem | nao tem |
+/// | `xfreerdp3` | always | `/sound` | `/microphone` |
+/// | `gnome-connections` | always | not exposed | not exposed |
+/// | `mstsc` | always | only via .rdp file | same |
+/// | `vncviewer` | `-ViewOnly` turns it off | protocol lacks it | lacks it |
+/// | `open vnc://` (macOS) | always | protocol lacks it | lacks it |
 pub struct ClientSpec {
     pub prog: &'static str,
     pub args: &'static [&'static str],
-    /// Argumentos extras quando o som e pedido. `None` = nao sabe fazer.
+    /// Extra arguments when sound is requested. `None` = cannot do it.
     pub audio: Option<&'static [&'static str]>,
     pub mic: Option<&'static [&'static str]>,
-    /// Argumentos para entrar SEM teclado e mouse. `None` = o cliente
-    /// sempre controla.
+    /// Arguments to come in WITHOUT keyboard and mouse. `None` = the
+    /// client always controls.
     pub view_only: Option<&'static [&'static str]>,
-    /// Conteudo de um arquivo `.rdp` que o cliente consome, quando ele
-    /// nao aceita opcoes por linha de comando.
+    /// Contents of an `.rdp` file the client consumes, when it does not
+    /// take options on the command line.
     ///
-    /// O `Windows App` do macOS **recusa** o esquema `rdp://`
-    /// (verificado: "Unable to interpret ... as a path or URL") mas abre
-    /// um `.rdp` sem reclamar. O `mstsc` do Windows aceita os dois, e
-    /// pelo arquivo ele ganha som e microfone, que a linha de comando
-    /// dele nao oferece.
+    /// macOS's `Windows App` **refuses** the `rdp://` scheme (verified:
+    /// "Unable to interpret ... as a path or URL") but opens an `.rdp`
+    /// without complaint. Windows `mstsc` accepts both, and through the
+    /// file it gets sound and microphone, which its command line does not
+    /// offer.
     ///
-    /// Marcadores: `{host}` `{port}` `{user_line}` `{audiomode}`
-    /// `{audiocapture}`. O caminho do arquivo entra nos `args` como
-    /// `{file}`.
+    /// Markers: `{host}` `{port}` `{user_line}` `{audiomode}`
+    /// `{audiocapture}`. The file's path goes into `args` as `{file}`.
+
     pub file: Option<&'static str>,
 }

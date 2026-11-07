@@ -1,175 +1,178 @@
-//! Clipboard compartilhado entre as máquinas.
+//! Clipboard shared between the machines.
 //!
 //! Spec: ../../specs/004-clipboard.md
 //!
-//! Substitui o KDE Connect, que era a única peça de terceiros no
-//! caminho e trazia um daemon inteiro (descoberta, pareamento,
-//! notificações, transferência de arquivos) para usarmos uma função.
+//! Replaces KDE Connect, which was the only third-party piece on the path
+//! and brought a whole daemon (discovery, pairing, notifications, file
+//! transfer) for us to use one function.
 //!
-//! ## Transporte: SSH, não porta nova
+//! ## Transport: SSH, not a new port
 //!
-//! A API do `logid` escuta só em `127.0.0.1` por desenho (specs/008).
-//! Abrir uma porta na LAN para o clipboard seria superfície nova para
-//! um dado que às vezes é senha. SSH já é o canal confiável entre as
-//! máquinas -- é por ele que o painel sonda, acorda host de tela e
-//! roda o agente -- então o empurrão é `ssh <par> logid clip-set` com
-//! o texto no stdin.
+//! `logid`'s API listens only on `127.0.0.1` by design (specs/008).
+//! Opening a LAN port for the clipboard would be new surface for data that
+//! is sometimes a password. SSH is already the trusted channel between the
+//! machines -- it is how the panel probes, wakes the screen host and runs
+//! the agent -- so the push is `ssh <peer> logid clip-set` with the text
+//! on stdin.
 //!
-//! O preço é ~300 ms por cópia. Para clipboard isso é invisível: você
-//! copia, troca de máquina, e só então cola.
+//! The price is ~300 ms per copy. For a clipboard that is invisible: you
+//! copy, switch machines, and only then paste.
 //!
-//! ## Laço de eco
+//! ## Echo loop
 //!
-//! Sem cuidado, A manda para B, B vê o clipboard mudar e manda de
-//! volta para A, para sempre. Guardamos o hash do último texto que
-//! **vimos ou escrevemos**; mudança que bate com ele não é reenviada.
+//! Without care, A sends to B, B sees the clipboard change and sends it
+//! back to A, forever. We keep the hash of the last text we **saw or
+//! wrote**; a change that matches it is not resent.
 
 use std::sync::Mutex;
 
-/// O que pedimos à thread do clipboard para publicar.
+/// What we ask the clipboard thread to publish.
 ///
-/// Texto e arquivo não são a mesma coisa com tamanhos diferentes: o
-/// texto **é** o conteúdo e vai no corpo do POST; o arquivo é uma
-/// referência, e o clipboard do destino tem de apontar para arquivos
-/// que existem no disco dele. Ver [`crate::clip_arq`].
+/// Text and file are not the same thing in different sizes: text **is**
+/// the content and goes in the POST body; a file is a reference, and the
+/// destination's clipboard has to point to files that exist on its disk.
+/// See [`crate::clip_files`].
 #[derive(Debug, Clone)]
-pub enum Pedido {
-    Texto(String),
-    Arquivos(Vec<String>),
+pub enum Request {
+    Text(String),
+    Files(Vec<String>),
 }
 
-/// Último texto que passou por aqui, em qualquer direção.
+/// Last text that went through here, in either direction.
 ///
-/// Guardado inteiro e não só o hash porque o Linux precisa dele para
-/// responder `SelectionTransfer` -- quem é dono da seleção tem de
-/// conseguir entregá-la quando pedirem.
-static ULTIMO: Mutex<Option<String>> = Mutex::new(None);
+/// Kept whole and not just the hash because Linux needs it to answer
+/// `SelectionTransfer` -- whoever owns the selection has to be able to
+/// deliver it when asked.
+static LAST: Mutex<Option<String>> = Mutex::new(None);
 
-/// Limite do que viaja. Clipboard de desenvolvedor às vezes carrega um
-/// arquivo inteiro colado sem querer, e mandar megabytes por SSH a cada
-/// cópia transformaria uma conveniência num engasgo.
-pub const LIMITE: usize = 256 * 1024;
+/// Cap on what travels. A developer's clipboard sometimes carries a whole
+/// file pasted by accident, and sending megabytes over SSH on every copy
+/// would turn a convenience into a stall.
+pub const LIMIT: usize = 256 * 1024;
 
-/// A vigilância está de pé? `None` = ainda não se sabe.
+/// Is the watcher up? `None` = not known yet.
 ///
-/// Existe porque "a thread subiu" e "a vigilância funciona" são coisas
-/// diferentes, e a diferença é invisível: no Linux a `spawn` devolve o
-/// canal na hora e a thread pode morrer depois, no `EnableClipboard`;
-/// no macOS e no Windows o laço de amostragem sobrevive a um erro de
-/// leitura com um `continue` calado. Nos dois casos o clipboard para de
-/// atravessar e nada no painel muda de cor.
+/// It exists because "the thread started" and "the watcher works" are
+/// different things, and the difference is invisible: on Linux `spawn`
+/// returns the channel right away and the thread can die later, in
+/// `EnableClipboard`; on macOS and Windows the sampling loop survives a
+/// read error with a silent `continue`. In both cases the clipboard stops
+/// crossing over and nothing on the panel changes color.
 ///
-/// Quem pergunta é o wizard de setup, que precisa de uma resposta
-/// medida -- não da existência de um canal
-/// ([[../../.claude/rules/verificar-o-que-chegou]]).
-static VIGIA: Mutex<Option<(bool, String)>> = Mutex::new(None);
+/// The one asking is the setup wizard, which needs a measured answer --
+/// not the existence of a channel
+/// ([[../../.claude/rules/verify-what-arrived]]). The detail reaches the
+/// wizard page, so it stays pt-BR.
+static WATCH: Mutex<Option<(bool, String)>> = Mutex::new(None);
 
-pub fn anotar_vigia(ok: bool, detalhe: impl Into<String>) {
-    if let Ok(mut g) = VIGIA.lock() {
-        *g = Some((ok, detalhe.into()));
+pub fn note_watch(ok: bool, detail: impl Into<String>) {
+    if let Ok(mut g) = WATCH.lock() {
+        *g = Some((ok, detail.into()));
     }
 }
 
-pub fn vigia() -> Option<(bool, String)> {
-    VIGIA.lock().ok().and_then(|g| g.clone())
+pub fn watch_status() -> Option<(bool, String)> {
+    WATCH.lock().ok().and_then(|g| g.clone())
 }
 
-pub fn ultimo() -> Option<String> {
-    ULTIMO.lock().ok().and_then(|g| g.clone())
+pub fn last() -> Option<String> {
+    LAST.lock().ok().and_then(|g| g.clone())
 }
 
-/// Registra o texto e diz se ele é NOVO.
+/// Records the text and says whether it is NEW.
 ///
-/// Uma função só para as duas direções: tanto "li do clipboard local"
-/// quanto "recebi de um par" passam por aqui, e é o `false` que corta
-/// o laço de eco.
-pub fn registrar(texto: &str) -> bool {
-    let Ok(mut g) = ULTIMO.lock() else { return false };
-    if g.as_deref() == Some(texto) {
+/// One function for both directions: both "read from the local clipboard"
+/// and "received from a peer" go through here, and it is the `false` that
+/// cuts the echo loop.
+pub fn record(text: &str) -> bool {
+    let Ok(mut g) = LAST.lock() else { return false };
+    if g.as_deref() == Some(text) {
         return false;
     }
-    *g = Some(texto.to_string());
+    *g = Some(text.to_string());
     true
 }
 
-/// Onde mora o `logid` em cada par, e como invoca-lo.
+/// Where `logid` lives on each peer, and how to invoke it.
 ///
-/// Nao da para mandar so `logid clip-set`: o shell nao-interativo do
-/// SSH nao carrega o PATH do login, e o Mac respondeu
-/// `zsh:1: command not found: logid`. O campo `agent` da config
-/// tambem nao serve -- ele aponta para `logid-agent.exe` e so existe
-/// no Windows (o Mac o omite de proposito).
+/// Sending just `logid clip-set` does not work: the non-interactive SSH
+/// shell does not load the login PATH, and the Mac answered
+/// `zsh:1: command not found: logid`. The config's `agent` field does not
+/// work either -- it points to `logid-agent.exe` and only exists on
+/// Windows (the Mac omits it on purpose).
 ///
-/// Entao: o caminho que o proprio deploy instala, por sistema.
-fn comando_remoto(h: &crate::config::HostCfg) -> String {
-    crate::remote::comando_logid(h, "clip-set")
+/// So: the path the deploy itself installs, per system.
+fn remote_command(h: &crate::config::HostCfg) -> String {
+    crate::remote::logid_command(h, "clip-set")
 }
 
-/// Empurra o texto para os outros hosts, por SSH.
+/// Pushes the text to the other hosts, over SSH.
 ///
-/// Em paralelo, uma thread por par: três máquinas em série seriam três
-/// handshakes de SSH somados, e o clipboard ficaria desalinhado por
-/// quase um segundo na última.
-pub fn empurrar(cfg: &crate::config::Config, texto: &str) {
-    let alvos: Vec<(String, String, String)> = cfg
+/// In parallel, one thread per peer: three machines in series would add up
+/// three SSH handshakes, and the clipboard would be out of sync for almost
+/// a second on the last one.
+pub fn push(cfg: &crate::config::Config, text: &str) {
+    let targets: Vec<(String, String, String)> = cfg
         .hosts
         .iter()
         .filter(|h| {
             !h.local.unwrap_or(false)
                 && !matches!(h.addr.as_str(), "127.0.0.1" | "localhost" | "::1")
         })
-        .filter_map(|h| h.ssh.clone().map(|s| (h.name.clone(), s, comando_remoto(h))))
+        .filter_map(|h| h.ssh.clone().map(|s| (h.name.clone(), s, remote_command(h))))
         .collect();
 
-    for (nome, destino, comando) in alvos {
-        let t = texto.to_string();
+    for (name, dest, command) in targets {
+        let t = text.to_string();
         std::thread::spawn(move || {
             use std::io::Write;
             use std::process::Stdio;
-            let filho = crate::sys::child("ssh")
-                .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=6", &destino])
-                .arg(&comando)
+            let child = crate::sys::child("ssh")
+                .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=6", &dest])
+                .arg(&command)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())
                 .spawn();
-            let Ok(mut filho) = filho else {
-                crate::say!("clip: nao consegui falar com {nome}");
+            let Ok(mut child) = child else {
+                crate::say!("clip: could not talk to {name}");
                 return;
             };
-            if let Some(mut e) = filho.stdin.take() {
+            if let Some(mut e) = child.stdin.take() {
                 let _ = e.write_all(t.as_bytes());
             }
-            match filho.wait_with_output() {
+            match child.wait_with_output() {
                 Ok(o) if o.status.success() => {}
                 Ok(o) => crate::say!(
-                    "clip: {nome} recusou ({}): {}",
+                    "clip: {name} refused ({}): {}",
                     o.status,
                     String::from_utf8_lossy(&o.stderr).trim()
                 ),
-                Err(e) => crate::say!("clip: {nome} falhou: {e}"),
+                Err(e) => crate::say!("clip: {name} failed: {e}"),
             }
         });
     }
 }
 
-// --- Linux: sessao de RemoteDesktop do Mutter ------------------------
+// --- Linux: Mutter RemoteDesktop session -----------------------------
 //
-// Sem wl-clipboard e sem portal: o Wayland nao deixa ler a selecao sem
-// foco, e o portal `org.freedesktop.portal.Clipboard` exige uma sessao
-// com dialogo de permissao. A API privada do Mutter -- a mesma que ja
-// usamos para injetar input -- entrega `EnableClipboard`,
-// `SelectionRead`, `SetSelection` e os sinais, sem perguntar nada.
+// No wl-clipboard and no portal: Wayland does not let you read the
+// selection without focus, and the `org.freedesktop.portal.Clipboard`
+// portal requires a session with a permission dialog. Mutter's private
+// API -- the same one we already use to inject input -- provides
+// `EnableClipboard`, `SelectionRead`, `SetSelection` and the signals,
+// without asking anything.
 //
-// Duas pegadinhas, as duas descobertas sondando:
+// Two gotchas, both found by probing:
 //
-// 1. `EnableClipboard` COM `mime-types` nos declara DONOS da selecao,
-//    e a leitura passa a falhar com "Tried to read own selection". Para
-//    observar, chame sem tipos; declare tipos so quando for escrever.
-// 2. O fd de `SelectionRead` vem **nao-bloqueante**. `read_to_end` nele
-//    devolve `WouldBlock` na hora -- e quem engolir esse erro le zero
-//    bytes e conclui que o clipboard esta vazio. Foi o que aconteceu na
-//    primeira sonda.
+// 1. `EnableClipboard` WITH `mime-types` declares us OWNERS of the
+//    selection, and reading starts failing with "Tried to read own
+//    selection". To observe, call it without types; declare types only
+//    when writing.
+// 2. The `SelectionRead` fd comes **non-blocking**. `read_to_end` on it
+//    returns `WouldBlock` right away -- and whoever swallows that error
+//    reads zero bytes and concludes the clipboard is empty. That is what
+//    happened on the first probe.
 #[cfg(target_os = "linux")]
 pub mod linux {
     use dbus::arg::{RefArg, Variant};
@@ -185,63 +188,63 @@ pub mod linux {
     const RD_OBJ: &str = "/org/gnome/Mutter/RemoteDesktop";
     const RDS: &str = "org.gnome.Mutter.RemoteDesktop.Session";
     const MIME: &str = "text/plain;charset=utf-8";
-    /// Arquivos: a lista de URIs, o que o Wayland e o GTK falam.
+    /// Files: the URI list, which is what Wayland and GTK speak.
     const URI: &str = "text/uri-list";
-    /// O que o Nautilus lê ao colar. Primeira linha `copy` ou `cut`.
+    /// What Nautilus reads when pasting. First line `copy` or `cut`.
     const GNOME: &str = "x-special/gnome-copied-files";
     const T: Duration = Duration::from_secs(5);
 
-    /// Le um fd que o Mutter entregou, tirando o O_NONBLOCK antes.
-    fn ler_fd(fd: RawFd) -> std::io::Result<Vec<u8>> {
-        let copia = unsafe { libc::dup(fd) };
-        if copia < 0 {
+    /// Reads an fd Mutter handed over, clearing O_NONBLOCK first.
+    fn read_fd(fd: RawFd) -> std::io::Result<Vec<u8>> {
+        let dup = unsafe { libc::dup(fd) };
+        if dup < 0 {
             return Err(std::io::Error::last_os_error());
         }
         unsafe {
-            let fl = libc::fcntl(copia, libc::F_GETFL);
-            libc::fcntl(copia, libc::F_SETFL, fl & !libc::O_NONBLOCK);
+            let fl = libc::fcntl(dup, libc::F_GETFL);
+            libc::fcntl(dup, libc::F_SETFL, fl & !libc::O_NONBLOCK);
         }
-        let mut f = unsafe { std::fs::File::from_raw_fd(copia) };
+        let mut f = unsafe { std::fs::File::from_raw_fd(dup) };
         let mut v = Vec::new();
         f.read_to_end(&mut v)?;
         Ok(v)
     }
 
-    fn tipos(quais: &[&str]) -> HashMap<&'static str, Variant<Box<dyn RefArg>>> {
+    fn mime_types(which: &[&str]) -> HashMap<&'static str, Variant<Box<dyn RefArg>>> {
         let mut m: HashMap<&str, Variant<Box<dyn RefArg>>> = HashMap::new();
-        let v: Vec<String> = quais.iter().map(|s| s.to_string()).collect();
+        let v: Vec<String> = which.iter().map(|s| s.to_string()).collect();
         m.insert("mime-types", Variant(Box::new(v)));
         m
     }
 
-    /// O que estamos publicando agora, para responder a transferência.
+    /// What we are publishing now, to answer the transfer.
     ///
-    /// Quem é dono da seleção tem de conseguir entregá-la quando
-    /// pedirem, e o pedido vem por MIME: o Nautilus pede
-    /// `x-special/gnome-copied-files`, um terminal pede `text/uri-list`,
-    /// um editor pede `text/plain`. Sem guardar o que publicamos, a
-    /// colagem chega e não há o que responder.
-    static PUBLICADO: std::sync::Mutex<Option<super::Pedido>> = std::sync::Mutex::new(None);
+    /// Whoever owns the selection has to be able to deliver it when asked,
+    /// and the request comes by MIME: Nautilus asks for
+    /// `x-special/gnome-copied-files`, a terminal asks for `text/uri-list`,
+    /// an editor asks for `text/plain`. Without keeping what we published,
+    /// the paste arrives and there is nothing to answer with.
+    static PUBLISHED: std::sync::Mutex<Option<super::Request>> = std::sync::Mutex::new(None);
 
-    /// Os bytes que respondem o MIME pedido, se soubermos respondê-lo.
-    fn servir(mime: &str) -> Option<Vec<u8>> {
-        let g = PUBLICADO.lock().ok()?;
+    /// The bytes that answer the requested MIME, if we know how to answer it.
+    fn serve(mime: &str) -> Option<Vec<u8>> {
+        let g = PUBLISHED.lock().ok()?;
         match g.as_ref()? {
-            super::Pedido::Texto(t) => {
+            super::Request::Text(t) => {
                 if mime.starts_with("text/plain") || mime == "UTF8_STRING" {
                     Some(t.as_bytes().to_vec())
                 } else {
                     None
                 }
             }
-            super::Pedido::Arquivos(v) => {
+            super::Request::Files(v) => {
                 if mime == GNOME {
-                    Some(crate::clip_arq::gnome_copied_files(v).into_bytes())
+                    Some(crate::clip_files::gnome_copied_files(v).into_bytes())
                 } else if mime == URI {
-                    Some(crate::clip_arq::uris_de_caminhos(v).into_bytes())
+                    Some(crate::clip_files::uris_from_paths(v).into_bytes())
                 } else if mime.starts_with("text/plain") {
-                    // Colar arquivo num editor dá os caminhos. É o que
-                    // o GTK faz, e é o que a pessoa espera.
+                    // Pasting a file into an editor gives the paths. It is
+                    // what GTK does, and what the person expects.
                     Some(v.join("\n").into_bytes())
                 } else {
                     None
@@ -250,128 +253,128 @@ pub mod linux {
         }
     }
 
-    /// Lê a seleção atual num MIME, ou `None`.
+    /// Reads the current selection in a MIME, or `None`.
     ///
-    /// O fd vem **não-bloqueante** do Mutter, e `read_to_end` nele
-    /// devolve `WouldBlock` na hora -- quem engolir esse erro lê zero
-    /// bytes e conclui que o clipboard está vazio. Foi o que aconteceu
-    /// na primeira sonda; `ler_fd` tira o O_NONBLOCK.
-    fn ler_selecao(c: &Connection, sess: &Path<'static>, mime: &str) -> Option<Vec<u8>> {
+    /// The fd comes **non-blocking** from Mutter, and `read_to_end` on it
+    /// returns `WouldBlock` right away -- whoever swallows that error reads
+    /// zero bytes and concludes the clipboard is empty. That is what
+    /// happened on the first probe; `read_fd` clears O_NONBLOCK.
+    fn read_selection(c: &Connection, sess: &Path<'static>, mime: &str) -> Option<Vec<u8>> {
         let r: Result<(dbus::arg::OwnedFd,), _> = c
             .with_proxy(RD, sess.clone(), T)
             .method_call(RDS, "SelectionRead", (mime,));
         let (fd,) = r.ok()?;
-        ler_fd(fd.as_raw_fd()).ok()
+        read_fd(fd.as_raw_fd()).ok()
     }
 
-    /// Desce num `RefArg` recolhendo toda string.
+    /// Walks down a `RefArg` collecting every string.
     ///
-    /// `as_iter` desce **um** nível e a lista vem como `(as)` dentro de
-    /// variante, dois níveis abaixo. A primeira versão disto imprimiu
-    /// lista vazia e me fez duvidar do Mutter em vez do meu código.
-    fn colher(a: &dyn RefArg, fora: &mut Vec<String>) {
+    /// `as_iter` goes down **one** level and the list comes as `(as)`
+    /// inside a variant, two levels below. The first version of this
+    /// printed an empty list and made me doubt Mutter instead of my code.
+    fn collect_strings(a: &dyn RefArg, out: &mut Vec<String>) {
         if let Some(s) = a.as_str() {
-            fora.push(s.to_string());
+            out.push(s.to_string());
             return;
         }
         if let Some(it) = a.as_iter() {
             for x in it {
-                colher(&x, fora);
+                collect_strings(&x, out);
             }
         }
     }
 
-    /// Thread do clipboard: observa, publica e responde transferencias.
+    /// Clipboard thread: observes, publishes and answers transfers.
     ///
-    /// Tudo numa thread so porque a conexao D-Bus **nao e Send** e a
-    /// sessao pertence a conexao que a criou -- a mesma restricao que
-    /// moldou o host de tela. Quem quer escrever manda pelo canal.
-    pub fn spawn(cfg: Arc<std::sync::RwLock<crate::config::Config>>) -> std::sync::mpsc::Sender<super::Pedido> {
-        let (tx, rx) = std::sync::mpsc::channel::<super::Pedido>();
+    /// All in one thread because the D-Bus connection **is not Send** and
+    /// the session belongs to the connection that created it -- the same
+    /// restriction that shaped the screen host. Whoever wants to write
+    /// sends through the channel.
+    pub fn spawn(cfg: Arc<std::sync::RwLock<crate::config::Config>>) -> std::sync::mpsc::Sender<super::Request> {
+        let (tx, rx) = std::sync::mpsc::channel::<super::Request>();
         std::thread::spawn(move || {
-            match rodar(&cfg, &rx) {
+            match run(&cfg, &rx) {
                 Err(e) => {
-                    crate::say!("clip: desliguei ({e})");
-                    super::anotar_vigia(false, e.to_string());
+                    crate::say!("clip: shut down ({e})");
+                    super::note_watch(false, e.to_string());
                 }
-                // Sair sem erro também é sair: o canal fechou e daqui
-                // para frente nada atravessa.
-                Ok(()) => super::anotar_vigia(false, "a thread do clipboard encerrou"),
+                // Exiting without error is still exiting: the channel
+                // closed and from here on nothing crosses over.
+                Ok(()) => super::note_watch(false, "a thread do clipboard encerrou"),
             }
         });
         tx
     }
 
-    fn rodar(
+    fn run(
         cfg: &Arc<std::sync::RwLock<crate::config::Config>>,
-        rx: &std::sync::mpsc::Receiver<super::Pedido>,
+        rx: &std::sync::mpsc::Receiver<super::Request>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let c = Connection::new_session()?;
         let (sess,): (Path,) =
             c.with_proxy(RD, RD_OBJ, T).method_call(RD, "CreateSession", ())?;
         c.with_proxy(RD, sess.clone(), T).method_call::<(), _, _, _>(RDS, "Start", ())?;
-        // Sem tipos: queremos OBSERVAR. Declarar tipos aqui nos faria
-        // donos da selecao e cegos para a dos outros.
-        let vazio: HashMap<&str, Variant<Box<dyn RefArg>>> = HashMap::new();
+        // No types: we want to OBSERVE. Declaring types here would make us
+        // owners of the selection and blind to everyone else's.
+        let empty: HashMap<&str, Variant<Box<dyn RefArg>>> = HashMap::new();
         c.with_proxy(RD, sess.clone(), T)
-            .method_call::<(), _, _, _>(RDS, "EnableClipboard", (vazio,))?;
-        crate::say!("clip: observando o clipboard (sessao {sess})");
-        super::anotar_vigia(true, format!("sessão {sess} do Mutter aceita"));
+            .method_call::<(), _, _, _>(RDS, "EnableClipboard", (empty,))?;
+        crate::say!("clip: watching the clipboard (session {sess})");
+        super::note_watch(true, format!("sessão {sess} do Mutter aceita"));
 
-        // Alguem copiou algo nesta maquina.
-        let dono = {
+        // Someone copied something on this machine.
+        let owner = {
             let s = sess.clone();
             dbus::message::MatchRule::new_signal(RDS, "SelectionOwnerChanged")
                 .with_path(s)
         };
-        c.add_match(dono, |_: (), _, _| true)?;
-        // Pediram o que NOS publicamos.
-        let transf = dbus::message::MatchRule::new_signal(RDS, "SelectionTransfer")
+        c.add_match(owner, |_: (), _, _| true)?;
+        // Someone asked for what WE published.
+        let transfer = dbus::message::MatchRule::new_signal(RDS, "SelectionTransfer")
             .with_path(sess.clone());
-        c.add_match(transf, |_: (), _, _| true)?;
+        c.add_match(transfer, |_: (), _, _| true)?;
 
         loop {
-            // Escrita pedida por um par, se houver.
-            while let Ok(pedido) = rx.try_recv() {
-                let quais: &[&str] = match &pedido {
-                    super::Pedido::Texto(t) => {
-                        if !super::registrar(t) {
+            // A write requested by a peer, if any.
+            while let Ok(request) = rx.try_recv() {
+                let which: &[&str] = match &request {
+                    super::Request::Text(t) => {
+                        if !super::record(t) {
                             continue;
                         }
                         &[MIME]
                     }
-                    // Os dois tipos juntos: o Nautilus só cola pelo
-                    // `gnome-copied-files`, e quem não é GTK só entende
-                    // `uri-list`. Publicar um dos dois deixa metade dos
-                    // programas sem colar.
-                    super::Pedido::Arquivos(_) => &[GNOME, URI, MIME],
+                    // Both types together: Nautilus only pastes through
+                    // `gnome-copied-files`, and non-GTK programs only
+                    // understand `uri-list`. Publishing just one leaves half
+                    // the programs unable to paste.
+                    super::Request::Files(_) => &[GNOME, URI, MIME],
                 };
-                if let Ok(mut g) = PUBLICADO.lock() {
-                    *g = Some(pedido);
+                if let Ok(mut g) = PUBLISHED.lock() {
+                    *g = Some(request);
                 }
                 let _ = c
                     .with_proxy(RD, sess.clone(), T)
-                    .method_call::<(), _, _, _>(RDS, "SetSelection", (tipos(quais),));
+                    .method_call::<(), _, _, _>(RDS, "SetSelection", (mime_types(which),));
             }
 
-            // Uma volta do D-Bus. 300 ms e compromisso: menos que isso
-            // gira a CPU a toa, mais que isso atrasa responder uma
-            // transferencia -- e quem pediu a selecao fica esperando.
+            // One D-Bus turn. 300 ms is a compromise: less than that spins
+            // the CPU for nothing, more than that delays answering a
+            // transfer -- and whoever asked for the selection is waiting.
             let msg = c.channel().blocking_pop_message(Duration::from_millis(300))?;
             let Some(m) = msg else { continue };
-            let membro = m.member().map(|s| s.to_string()).unwrap_or_default();
+            let member = m.member().map(|s| s.to_string()).unwrap_or_default();
 
-            if membro == "SelectionOwnerChanged" {
-                // O sinal diz QUAIS tipos o dono publicou, e se o dono
-                // somos nós. Medido com `logid clip-sonda`:
+            if member == "SelectionOwnerChanged" {
+                // The signal says WHICH types the owner published, and
+                // whether the owner is us. Measured with `logid clip-sonda`:
                 //
-                //   texto:   ["text/plain;charset=utf-8", "UTF8_STRING", "TARGETS"]
-                //   arquivo: ["text/uri-list", "TARGETS"]
+                //   text: ["text/plain;charset=utf-8", "UTF8_STRING", "TARGETS"]
+                //   file: ["text/uri-list", "TARGETS"]
                 //
-                // Usar essa lista é o único jeito honesto de saber o que
-                // foi copiado: `SelectionRead("text/uri-list")` devolve
-                // **OK mesmo numa cópia de texto**, então "a leitura
-                // funcionou" não distingue nada.
+                // Using that list is the only honest way to know what was
+                // copied: `SelectionRead("text/uri-list")` returns **OK even
+                // on a text copy**, so "the read worked" tells nothing apart.
                 let opts: HashMap<String, Variant<Box<dyn RefArg>>> =
                     m.read1().unwrap_or_default();
                 if opts
@@ -379,62 +382,62 @@ pub mod linux {
                     .and_then(|v| v.0.as_u64())
                     .is_some_and(|x| x == 1)
                 {
-                    continue; // é nossa; publicamos nós mesmos
+                    continue; // it is ours; we published it ourselves
                 }
-                let mut oferecidos: Vec<String> = Vec::new();
+                let mut offered: Vec<String> = Vec::new();
                 if let Some(v) = opts.get("mime-types") {
-                    colher(&*v.0, &mut oferecidos);
+                    collect_strings(&*v.0, &mut offered);
                 }
-                let tem = |t: &str| oferecidos.iter().any(|x| x == t);
+                let has = |t: &str| offered.iter().any(|x| x == t);
 
-                // Ler na hora: a selecao e do dono ATUAL, e se ele sair
-                // antes de lermos o conteudo some.
-                if tem(URI) {
-                    let Some(bytes) = ler_selecao(&c, &sess, URI) else { continue };
-                    let Ok(lista) = String::from_utf8(bytes) else { continue };
-                    let caminhos = crate::clip_arq::caminhos_de_uris(&lista);
-                    if caminhos.is_empty() {
+                // Read right away: the selection belongs to the CURRENT
+                // owner, and if it leaves before we read, the content is gone.
+                if has(URI) {
+                    let Some(bytes) = read_selection(&c, &sess, URI) else { continue };
+                    let Ok(list) = String::from_utf8(bytes) else { continue };
+                    let paths = crate::clip_files::paths_from_uris(&list);
+                    if paths.is_empty() {
                         continue;
                     }
                     if let Ok(g) = cfg.read() {
-                        crate::clip_arq::ao_copiar(&g, &caminhos);
+                        crate::clip_files::on_copy(&g, &paths);
                     }
                     continue;
                 }
-                if !oferecidos.is_empty() && !oferecidos.iter().any(|t| t.starts_with("text/plain"))
+                if !offered.is_empty() && !offered.iter().any(|t| t.starts_with("text/plain"))
                 {
-                    continue; // imagem, HTML, coisa que não tratamos
+                    continue; // image, HTML, something we do not handle
                 }
-                let Some(bytes) = ler_selecao(&c, &sess, MIME) else { continue };
-                if bytes.is_empty() || bytes.len() > super::LIMITE {
+                let Some(bytes) = read_selection(&c, &sess, MIME) else { continue };
+                if bytes.is_empty() || bytes.len() > super::LIMIT {
                     continue;
                 }
-                let Ok(texto) = String::from_utf8(bytes) else { continue };
-                if super::registrar(&texto) {
+                let Ok(text) = String::from_utf8(bytes) else { continue };
+                if super::record(&text) {
                     if let Ok(g) = cfg.read() {
-                        super::empurrar(&g, &texto);
+                        super::push(&g, &text);
                     }
                 }
-            } else if membro == "SelectionTransfer" {
-                // (mime, serial) -- quem quer colar o que publicamos.
+            } else if member == "SelectionTransfer" {
+                // (mime, serial) -- someone wants to paste what we published.
                 let (mime, serial): (String, u32) = match m.read2() {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                // Responder pelo MIME PEDIDO, e não sempre o mesmo: o
-                // Nautilus pede `gnome-copied-files` e um editor pede
-                // `text/plain`, da mesma seleção.
-                let conteudo = servir(&mime)
-                    .unwrap_or_else(|| super::ultimo().unwrap_or_default().into_bytes());
+                // Answer by the REQUESTED MIME, not always the same one:
+                // Nautilus asks for `gnome-copied-files` and an editor asks
+                // for `text/plain`, from the same selection.
+                let content = serve(&mime)
+                    .unwrap_or_else(|| super::last().unwrap_or_default().into_bytes());
                 let r: Result<(dbus::arg::OwnedFd,), _> = c
                     .with_proxy(RD, sess.clone(), T)
                     .method_call(RDS, "SelectionWrite", (serial,));
                 let ok = match r {
                     Ok((fd,)) => {
                         use std::io::Write;
-                        let copia = unsafe { libc::dup(fd.as_raw_fd()) };
-                        let mut f = unsafe { std::fs::File::from_raw_fd(copia) };
-                        f.write_all(&conteudo).is_ok()
+                        let dup = unsafe { libc::dup(fd.as_raw_fd()) };
+                        let mut f = unsafe { std::fs::File::from_raw_fd(dup) };
+                        f.write_all(&content).is_ok()
                     }
                     Err(_) => false,
                 };
@@ -446,35 +449,35 @@ pub mod linux {
     }
 }
 
-// --- escrita local, por sistema --------------------------------------
+// --- local write, per system -----------------------------------------
 
-/// Escreve no clipboard DESTA maquina.
+/// Writes to THIS machine's clipboard.
 ///
-/// No Linux quem escreve e a thread do D-Bus (a sessao pertence a
-/// conexao que a criou), entao aqui so empurramos pelo canal. Nos
-/// outros dois usamos as ferramentas que o proprio sistema traz:
-/// `clip.exe` e `pbcopy` existem em toda instalacao, e escrever
-/// clipboard por API nativa seria codigo nosso para fazer o que o
-/// sistema ja faz igual.
+/// On Linux the D-Bus thread is the one that writes (the session belongs
+/// to the connection that created it), so here we only push through the
+/// channel. On the other two we use the tools the system itself ships:
+/// `clip.exe` and `pbcopy` exist on every install, and writing the
+/// clipboard through a native API would be our code doing what the system
+/// already does the same way.
 #[cfg(target_os = "linux")]
-pub fn definir_local(canal: &std::sync::mpsc::Sender<Pedido>, texto: &str) -> Result<(), String> {
-    canal
-        .send(Pedido::Texto(texto.to_string()))
-        .map_err(|_| "a thread do clipboard saiu".to_string())
+pub fn set_local(channel: &std::sync::mpsc::Sender<Request>, text: &str) -> Result<(), String> {
+    channel
+        .send(Request::Text(text.to_string()))
+        .map_err(|_| "the clipboard thread exited".to_string())
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn definir_local(_canal: &(), texto: &str) -> Result<(), String> {
+pub fn set_local(_channel: &(), text: &str) -> Result<(), String> {
     #[cfg(not(windows))]
     use std::io::Write;
     #[cfg(not(windows))]
     use std::process::Stdio;
-    if !registrar(texto) {
-        return Ok(()); // ja e esse; escrever de novo so geraria eco
+    if !record(text) {
+        return Ok(()); // it already is that; writing again would only echo
     }
     #[cfg(windows)]
     {
-        return winput::clipboard_escrever(texto);
+        return winput::clipboard_write(text);
     }
     #[cfg(not(windows))]
     {
@@ -483,140 +486,139 @@ pub fn definir_local(_canal: &(), texto: &str) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("pbcopy: {e}"))?;
         if let Some(mut e) = f.stdin.take() {
-            e.write_all(texto.as_bytes()).map_err(|e| format!("pbcopy: {e}"))?;
+            e.write_all(text.as_bytes()).map_err(|e| format!("pbcopy: {e}"))?;
         }
         f.wait().map_err(|e| format!("pbcopy: {e}"))?;
         Ok(())
     }
 }
 
-/// Vigia o clipboard por amostragem. Windows e macOS.
+/// Watches the clipboard by sampling. Windows and macOS.
 ///
-/// Por amostragem e nao por evento porque os dois tem API de
-/// notificacao (`AddClipboardFormatListener`, `NSPasteboard`
-/// `changeCount`) que exigiria laco de mensagens ou objc dentro de um
-/// daemon que nao tem nem um nem outro. Dois segundos e o compromisso:
-/// nao da para sentir ao trocar de maquina, e sao 30 leituras por
-/// minuto de um comando barato.
+/// By sampling and not by event because both have notification APIs
+/// (`AddClipboardFormatListener`, `NSPasteboard` `changeCount`) that would
+/// require a message loop or objc inside a daemon that has neither. Two
+/// seconds is the compromise: you cannot feel it when switching machines,
+/// and it is 30 reads a minute of a cheap command.
 ///
-/// O Linux nao passa por aqui -- la o sinal `SelectionOwnerChanged`
-/// avisa na hora.
+/// Linux does not go through here -- there the `SelectionOwnerChanged`
+/// signal tells right away.
 #[cfg(not(target_os = "linux"))]
-pub fn vigiar(cfg: std::sync::Arc<std::sync::RwLock<crate::config::Config>>) {
+pub fn watch(cfg: std::sync::Arc<std::sync::RwLock<crate::config::Config>>) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));
-        // `crate::sys::child`, NUNCA `Command::new` direto.
+        // `crate::sys::child`, NEVER `Command::new` directly.
         //
-        // No Windows aquele helper poe `CREATE_NO_WINDOW`; sem ele cada
-        // amostragem abre uma janela de console visivel. Com 2 s de
-        // intervalo isso virou "o windows ta abrindo um powershell a
-        // cada 5s" na tela do usuario -- um processo invisivel que
-        // pisca 30 vezes por minuto.
-        // Arquivo ANTES de texto, e nao depois.
+        // On Windows that helper sets `CREATE_NO_WINDOW`; without it each
+        // sample opens a visible console window. With a 2 s interval that
+        // became "o windows ta abrindo um powershell a cada 5s" ("Windows
+        // is opening a PowerShell every 5s") on the user's screen -- an
+        // invisible process blinking 30 times a minute.
+        // File BEFORE text, not after.
         //
-        // Os dois convivem no clipboard: o Explorer publica `CF_HDROP`
-        // junto com o nome do arquivo como texto, e o Finder faz o
-        // equivalente. Olhando texto primeiro, copiar um arquivo
-        // mandaria o CAMINHO como string para os pares -- um caminho
-        // que nao existe la -- e o arquivo nunca iria.
+        // Both live on the clipboard together: Explorer publishes `CF_HDROP`
+        // along with the file name as text, and Finder does the equivalent.
+        // Looking at text first, copying a file would send the PATH as a
+        // string to the peers -- a path that does not exist there -- and
+        // the file would never go.
         //
-        // No Windows sao duas chamadas Win32, sem processo nenhum. No
-        // macOS e UMA chamada que devolve as duas coisas, porque la o
-        // custo e o processo: `osascript` custa 55 ms contra 11 ms de
-        // `pbpaste` (medido), e rodar os dois a cada 2 s seria 3,3% de
-        // um nucleo para sempre num laptop.
-        let texto = {
+        // On Windows these are two Win32 calls, no process at all. On macOS
+        // it is ONE call that returns both, because there the cost is the
+        // process: `osascript` costs 55 ms against 11 ms for `pbpaste`
+        // (measured), and running both every 2 s would be 3.3% of a core
+        // forever on a laptop.
+        let text = {
             #[cfg(windows)]
             {
-                let arquivos = crate::clip_arq::ler_local();
-                if !arquivos.is_empty() {
+                let files = crate::clip_files::read_local();
+                if !files.is_empty() {
                     if let Ok(g) = cfg.read() {
-                        crate::clip_arq::ao_copiar(&g, &arquivos);
+                        crate::clip_files::on_copy(&g, &files);
                     }
                     continue;
                 }
-                match winput::clipboard_ler() {
+                match winput::clipboard_read() {
                     Ok(Some(t)) => {
-                        anotar_vigia(true, "a area de transferencia responde");
+                        note_watch(true, "a area de transferencia responde");
                         t
                     }
-                    // Vazio e saudavel: abrir deu certo, nao havia nada.
+                    // Empty is healthy: opening worked, there was nothing.
                     Ok(None) => {
-                        anotar_vigia(true, "a area de transferencia responde (vazia)");
+                        note_watch(true, "a area de transferencia responde (vazia)");
                         continue;
                     }
-                    // Aqui estava um `continue` calado. Erro de leitura
-                    // no Windows e quase sempre fronteira de sessao -- o
-                    // daemon na sessao 0 enxerga uma area sempre vazia
-                    // -- e isso tem de aparecer no painel, nao sumir.
+                    // A silent `continue` used to be here. A read error on
+                    // Windows is almost always a session boundary -- the
+                    // daemon in session 0 sees an always-empty clipboard --
+                    // and that has to show on the panel, not vanish.
                     Err(e) => {
-                        anotar_vigia(false, e.to_string());
+                        note_watch(false, e.to_string());
                         continue;
                     }
                 }
             }
             #[cfg(not(windows))]
             {
-                match crate::clip_arq::ler_area() {
-                    crate::clip_arq::Area::Arquivos(v) => {
+                match crate::clip_files::read_clipboard() {
+                    crate::clip_files::Clipboard::Files(v) => {
                         if let Ok(g) = cfg.read() {
-                            crate::clip_arq::ao_copiar(&g, &v);
+                            crate::clip_files::on_copy(&g, &v);
                         }
                         continue;
                     }
-                    crate::clip_arq::Area::Texto(t) => t,
-                    crate::clip_arq::Area::Nada => continue,
+                    crate::clip_files::Clipboard::Text(t) => t,
+                    crate::clip_files::Clipboard::Empty => continue,
                 }
             }
         };
-        let texto = texto.trim_end_matches(['\r', '\n']).to_string();
-        if texto.is_empty() || texto.len() > LIMITE {
+        let text = text.trim_end_matches(['\r', '\n']).to_string();
+        if text.is_empty() || text.len() > LIMIT {
             continue;
         }
-        if registrar(&texto) {
+        if record(&text) {
             if let Ok(g) = cfg.read() {
-                empurrar(&g, &texto);
+                push(&g, &text);
             }
         }
     });
 }
 
-/// `logid clip-set`: le o texto do stdin e entrega ao daemon local.
+/// `logid clip-set`: reads the text from stdin and hands it to the local daemon.
 ///
-/// Passa pela API em 127.0.0.1 em vez de escrever o clipboard direto, e
-/// isso e necessario no Linux: quem escreve tem de CONTINUAR VIVO para
-/// responder `SelectionTransfer` quando alguem colar. Um processo de
-/// CLI que escreve e sai deixaria uma selecao sem dono -- o texto
-/// sumiria no primeiro Ctrl+V. Entao o CLI so entrega ao daemon, que
-/// fica.
+/// Goes through the API on 127.0.0.1 instead of writing the clipboard
+/// directly, and that is necessary on Linux: whoever writes has to STAY
+/// ALIVE to answer `SelectionTransfer` when someone pastes. A CLI process
+/// that writes and exits would leave a selection with no owner -- the text
+/// would vanish on the first Ctrl+V. So the CLI only hands it to the
+/// daemon, which stays.
 ///
-/// HTTP cru num TcpStream em vez de um cliente HTTP: sao doze linhas
-/// contra uma dependencia inteira, para um POST em localhost.
-pub fn cli_set(porta: u16) -> std::process::ExitCode {
+/// Raw HTTP over a TcpStream instead of an HTTP client: twelve lines
+/// against a whole dependency, for one POST to localhost.
+pub fn cli_set(port: u16) -> std::process::ExitCode {
     use std::io::{Read, Write};
-    let mut texto = String::new();
-    if std::io::stdin().read_to_string(&mut texto).is_err() {
-        eprintln!("clip-set: nao consegui ler o stdin");
+    let mut text = String::new();
+    if std::io::stdin().read_to_string(&mut text).is_err() {
+        eprintln!("clip-set: could not read stdin");
         return std::process::ExitCode::FAILURE;
     }
-    if texto.len() > LIMITE {
-        eprintln!("clip-set: {} bytes acima do limite de {LIMITE}", texto.len());
+    if text.len() > LIMIT {
+        eprintln!("clip-set: {} bytes over the {LIMIT} limit", text.len());
         return std::process::ExitCode::FAILURE;
     }
-    let corpo = texto.into_bytes();
-    let pedido = format!(
+    let body = text.into_bytes();
+    let request = format!(
         "POST /api/clipboard HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        corpo.len()
+        body.len()
     );
-    let mut s = match std::net::TcpStream::connect(("127.0.0.1", porta)) {
+    let mut s = match std::net::TcpStream::connect(("127.0.0.1", port)) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("clip-set: o logid local nao respondeu na porta {porta}: {e}");
+            eprintln!("clip-set: the local logid did not answer on port {port}: {e}");
             return std::process::ExitCode::FAILURE;
         }
     };
-    if s.write_all(pedido.as_bytes()).is_err() || s.write_all(&corpo).is_err() {
-        eprintln!("clip-set: falhei ao escrever o pedido");
+    if s.write_all(request.as_bytes()).is_err() || s.write_all(&body).is_err() {
+        eprintln!("clip-set: failed to write the request");
         return std::process::ExitCode::FAILURE;
     }
     let mut resp = String::new();
@@ -624,51 +626,51 @@ pub fn cli_set(porta: u16) -> std::process::ExitCode {
     if resp.starts_with("HTTP/1.1 200") {
         std::process::ExitCode::SUCCESS
     } else {
-        eprintln!("clip-set: {}", resp.lines().next().unwrap_or("sem resposta"));
+        eprintln!("clip-set: {}", resp.lines().next().unwrap_or("no response"));
         std::process::ExitCode::FAILURE
     }
 }
 
-// --- ponte entre o handler HTTP e a thread ---------------------------
+// --- bridge between the HTTP handler and the thread ------------------
 //
-// O handler roda numa das quatro threads do servidor e precisa alcancar
-// a thread do clipboard. Guardar o canal num estatico e mais simples
-// que carregar mais um `Arc` por toda a assinatura de `handle`, que
-// hoje leva apenas config e cache.
+// The handler runs on one of the server's four threads and needs to reach
+// the clipboard thread. Keeping the channel in a static is simpler than
+// carrying one more `Arc` through the whole `handle` signature, which
+// today takes only config and cache.
 
 #[cfg(target_os = "linux")]
-static CANAL: Mutex<Option<std::sync::mpsc::Sender<Pedido>>> = Mutex::new(None);
+static CHANNEL: Mutex<Option<std::sync::mpsc::Sender<Request>>> = Mutex::new(None);
 
 #[cfg(target_os = "linux")]
-pub fn guardar_canal(c: std::sync::mpsc::Sender<Pedido>) {
-    if let Ok(mut g) = CANAL.lock() {
+pub fn store_channel(c: std::sync::mpsc::Sender<Request>) {
+    if let Ok(mut g) = CHANNEL.lock() {
         *g = Some(c);
     }
 }
 
-/// Escreve no clipboard local o que veio de um par.
-pub fn aplicar_local(texto: &str) -> Result<(), String> {
+/// Writes to the local clipboard what came from a peer.
+pub fn apply_local(text: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        let g = CANAL.lock().map_err(|_| "canal travado".to_string())?;
-        let c = g.as_ref().ok_or("a thread do clipboard nao subiu")?;
-        definir_local(c, texto)
+        let g = CHANNEL.lock().map_err(|_| "channel poisoned".to_string())?;
+        let c = g.as_ref().ok_or("the clipboard thread did not start")?;
+        set_local(c, text)
     }
     #[cfg(not(target_os = "linux"))]
     {
-        definir_local(&(), texto)
+        set_local(&(), text)
     }
 }
 
-/// Publica arquivos no clipboard local (Linux).
+/// Publishes files on the local clipboard (Linux).
 ///
-/// Passa pela thread do D-Bus porque a sessão pertence à conexão que a
-/// criou, e porque quem publica tem de continuar vivo para responder
-/// `SelectionTransfer` na hora da colagem.
+/// Goes through the D-Bus thread because the session belongs to the
+/// connection that created it, and because whoever publishes has to stay
+/// alive to answer `SelectionTransfer` at paste time.
 #[cfg(target_os = "linux")]
-pub fn pedir_arquivos(caminhos: &[String]) -> Result<(), String> {
-    let g = CANAL.lock().map_err(|_| "canal travado".to_string())?;
-    let c = g.as_ref().ok_or("a thread do clipboard nao subiu")?;
-    c.send(Pedido::Arquivos(caminhos.to_vec()))
-        .map_err(|_| "a thread do clipboard saiu".to_string())
+pub fn publish_files(paths: &[String]) -> Result<(), String> {
+    let g = CHANNEL.lock().map_err(|_| "channel poisoned".to_string())?;
+    let c = g.as_ref().ok_or("the clipboard thread did not start")?;
+    c.send(Request::Files(paths.to_vec()))
+        .map_err(|_| "the clipboard thread exited".to_string())
 }

@@ -2,12 +2,12 @@
 name = "logid"
 version = "0.1.0"
 edition = "2021"
-description = "Control plane da infra pessoal de duas maquinas na LAN"
+description = "Control plane for a personal two-machine LAN setup"
 license = "MIT"
 
 [dependencies]
-# Servidor HTTP bloqueante e minimo -- nao precisamos de async para um
-# daemon local com dois clientes.
+# Minimal blocking HTTP server -- we do not need async for a local daemon
+# with two clients.
 tiny_http = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -15,18 +15,19 @@ getrandom = "0.2"
 toml = "0.8"
 hidpp = { version = "0.1.0", path = "../hidpp" }
 
-# D-Bus so existe do lado Linux: a deteccao de borda fala com o
-# org.gnome.Mutter.InputCapture. No Windows `GetCursorPos` responde
-# direto, entao nem a dependencia precisa existir la.
+# D-Bus only exists on the Linux side: border detection talks to
+# org.gnome.Mutter.InputCapture. On Windows `GetCursorPos` answers
+# directly, so the dependency does not even need to exist there.
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9.12"
-# Bandeja nativa por StatusNotifierItem. D-Bus puro, sem GTK -- e o que
-# permite a bandeja viver dentro de um daemon que ja serve HTTP.
+# Native tray through StatusNotifierItem. Pure D-Bus, no GTK -- that is
+# what lets the tray live inside a daemon that already serves HTTP.
 ksni = { version = "0.3", features = ["blocking"] }
 libc = "0.2"
 
-# Win32 compartilhado com o logid-agent: sessao, instancia unica, cursor
-# e idade do input.
+# Win32 shared with logid-agent: session, single instance, cursor and
+# input age.
+
 [target.'cfg(windows)'.dependencies]
 winput = { version = "0.1.0", path = "../winput" }
 

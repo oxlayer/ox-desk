@@ -1,225 +1,225 @@
 # 001 — Control plane (`logid`)
 
-Implementado em Rust em [`logid/`](../logid/). O protótipo Python
-(`monitor.py`) foi substituído na fase 1 — ver
-[`000`](000-overview.md#linguagem-rust).
+Implemented in Rust in [`logid/`](../logid/). The Python prototype
+(`monitor.py`) was replaced in phase 1 — see
+[`000`](000-overview.md#language-rust).
 
-## Simétrico: todo nó é par, nenhum é central
+## Symmetric: every node is a peer, none is central
 
-**Decisão de 03/11, do usuário:** com o daemon rodando, *qualquer*
-máquina pode virar host; quem manda é onde a pessoa está sentada.
+**Decision of 2026-11-03, by the user:** with the daemon running, *any*
+machine can become the host; what decides is where the person is sitting.
 
-A primeira versão desta spec dizia "no Ubuntu roda como control plane,
-no Windows como agente". Isso estava errado por dois motivos:
+The first version of this spec said "on Ubuntu it runs as the control plane,
+on Windows as an agent". That was wrong for two reasons:
 
-1. **O hardware já impõe simetria.** Só quem detém o dispositivo pode
-   emitir `ChangeHost` ([`005`](005-input-switch.md#restrição-descoberta-só-quem-detém-o-device-pode-empurrá-lo)).
-   Um nó central que não tem o device não consegue mover nada — ele só
-   pode *pedir*.
-2. **São três máquinas**, não duas: Ubuntu, Windows e um MacBook no
-   canal 3. Eleger uma como central é arbitrário.
+1. **The hardware already imposes symmetry.** Only whoever holds the device can
+   issue `ChangeHost` ([`005`](005-input-switch.md#discovered-constraint-only-the-holder-of-the-device-can-push-it)).
+   A central node that does not have the device cannot move anything — it can
+   only *ask*.
+2. **There are three machines**, not two: Ubuntu, Windows and a MacBook on
+   channel 3. Electing one as central is arbitrary.
 
-### O modelo
+### The model
 
-Todo nó roda o **mesmo** `logid`. Nenhum papel fixo. O estado que
-importa é derivado, não configurado:
+Every node runs the **same** `logid`. No fixed role. The state that
+matters is derived, not configured:
 
-| Pergunta | Quem responde |
+| Question | Who answers |
 |---|---|
-| quem detém os dispositivos? | cada nó lê o próprio receptor; exatamente um vê `online=true` |
-| quem é o host atual? | o detentor |
-| quem pode trocar? | **só o detentor** |
+| who holds the devices? | each node reads its own receiver; exactly one sees `online=true` |
+| who is the current host? | the holder |
+| who can switch? | **only the holder** |
 
-Pedir foco é portanto um **encaminhamento**, não um comando:
+Asking for focus is therefore a **forward**, not a command:
 
 ```
-eu (qualquer nó)  --pede-->  detentor atual  --ChangeHost-->  alvo
+me (any node)  --asks-->  current holder  --ChangeHost-->  target
 ```
 
-Se eu já sou o detentor, o encaminhamento é local. Se eu sou o alvo,
-estou pedindo que me entreguem. Se não sou nenhum dos dois, sou só o
-intermediário — e isso é legítimo: a GUI de qualquer máquina deve poder
-mover o foco entre as outras duas.
+If I am already the holder, the forward is local. If I am the target,
+I am asking to be handed the device. If I am neither, I am just the
+intermediary — and that is legitimate: the GUI on any machine must be able
+to move focus between the other two.
 
-### Transporte entre pares: SSH
+### Transport between peers: SSH
 
-Continua SSH, por simetria e porque já funciona
-([`002`](002-ssh.md)): nenhuma porta nova, nenhuma auth nova, e o
-macOS já traz sshd. **Pendência:** o Ubuntu ainda não tem sshd — hoje
-só ele disca para fora. Para a simetria valer, `openssh-server` aqui
-entra no bootstrap.
+It stays SSH, for symmetry and because it already works
+([`002`](002-ssh.md)): no new port, no new auth, and macOS already ships
+sshd. **Open item:** Ubuntu does not have sshd yet — today it only dials
+out. For the symmetry to hold, `openssh-server` here goes into the
+bootstrap.
 
-> Alternativa descartada: protocolo próprio na LAN com mTLS. Seria
-> reimplementar o que o SSH já entrega, e multiplicar superfície — ver
-> o critério em [`000`](000-overview.md#o-que-construímos-e-o-que-integramos).
+> Discarded alternative: our own LAN protocol with mTLS. It would mean
+> reimplementing what SSH already delivers, and multiplying surface — see
+> the criterion in [`000`](000-overview.md#what-we-build-and-what-we-integrate).
 
-### O que deixa de existir
+### What ceases to exist
 
-- O conceito de "agente" como binário separado. O
-  [`agent/`](../agent/) atual é um passo intermediário, não o destino:
-  o alvo é **um binário por plataforma, mesmo papel**.
-- `[[hosts]]` com um nó marcado como local por ter `addr = 127.0.0.1`.
-  Cada nó sabe quem é por hostname; os outros são pares.
+- The concept of "agent" as a separate binary. The current
+  [`agent/`](../agent/) is an intermediate step, not the destination:
+  the target is **one binary per platform, same role**.
+- `[[hosts]]` with a node marked as local for having `addr = 127.0.0.1`.
+  Each node knows who it is by hostname; the others are peers.
 
-## O mesmo binário nos dois SOs
+## The same binary on both OSes
 
-Esta spec afirmava "todo nó roda o **mesmo** `logid`" desde 03/11. Era
-aspiração: o daemon compilava só no Linux. O Windows tinha o
-`logid-agent`, um CLI de um disparo, sem API, sem bandeja, sem janela — e
-a GUI do Ubuntu alcançava a outra máquina por SSH, chamando o CLI na mão.
+This spec had claimed "every node runs the **same** `logid`" since 2026-11-03. It was
+an aspiration: the daemon only compiled on Linux. Windows had
+`logid-agent`, a one-shot CLI, with no API, no tray, no window — and
+the Ubuntu GUI reached the other machine over SSH, calling the CLI by hand.
 
-O usuário notou pelo buraco que isso deixa: *"por que não tem a GUI e
-atalho na taskbar no Windows, só aqui no Ubuntu?"*. A resposta é que a
-**troca** ficou simétrica (o `watch-edge` deu a borda ao Windows) mas o
-**control plane** não. Quem estivesse sentado no Windows não tinha painel.
+The user noticed through the gap this leaves: *"why is there no GUI and
+taskbar shortcut on Windows, only here on Ubuntu?"*. The answer is that the
+**switch** became symmetric (`watch-edge` gave Windows the edge) but the
+**control plane** did not. Whoever was sitting at Windows had no panel.
 
-### O que de fato amarrava ao Linux
+### What actually tied it to Linux
 
-Medido antes de decidir, módulo por módulo. Dos nove, **seis são
-portáveis como estão** (`agent`, `config`, `focus`, `follow`, `hidpp`,
-`peers`). Cinco pontos amarravam:
+Measured before deciding, module by module. Of the nine, **six are
+portable as they are** (`agent`, `config`, `focus`, `follow`, `hidpp`,
+`peers`). Five points tied it down:
 
-| ponto | Linux | Windows |
+| point | Linux | Windows |
 |---|---|---|
-| fallback de DNS | `getent hosts` | nada — o resolver já fala mDNS |
-| estado de `units` | `systemctl --user is-active` | serviço, senão processo |
-| hora local | `date +%z` + aritmética | `GetLocalTime` |
-| origem dos logs | `journalctl --user -u` | arquivo em `%LOCALAPPDATA%` |
-| acesso ao HID | ACL de `uaccess` em `/dev/hidraw` | abrir o receptor |
-| detecção de borda | barreira do `Mutter.InputCapture` | `GetCursorPos` |
-| diretório de config | `~/.config/logi` | `%APPDATA%\logi` |
+| DNS fallback | `getent hosts` | nothing — the resolver already speaks mDNS |
+| `units` state | `systemctl --user is-active` | service, otherwise process |
+| local time | `date +%z` + arithmetic | `GetLocalTime` |
+| log source | `journalctl --user -u` | file in `%LOCALAPPDATA%` |
+| HID access | `uaccess` ACL on `/dev/hidraw` | open the receiver |
+| edge detection | `Mutter.InputCapture` barrier | `GetCursorPos` |
+| config directory | `~/.config/logi` | `%APPDATA%\logi` |
 
-Daí [`logid/src/sys/`](../logid/src/sys/): um lugar para o que divergir,
-em vez de um segundo daemon no `agent/` duplicando os outros seis
-módulos. A alternativa — crescer o agente até virar daemon — custaria
-duas cópias de `focus`, `follow` e `peers` que precisariam concordar.
+Hence [`logid/src/sys/`](../logid/src/sys/): one place for whatever diverges,
+instead of a second daemon in `agent/` duplicating the other six
+modules. The alternative — growing the agent until it became a daemon — would cost
+two copies of `focus`, `follow` and `peers` that would have to agree.
 
-### A permanência na borda se expressa diferente nas duas pontas
+### Dwell at the edge is expressed differently on the two ends
 
-Não é inconsistência, é o sinal disponível. O mutter entrega eventos
-discretos, então no Linux a permanência é **densidade**: `hold_hits`
-ativações dentro de `hold_window_ms`. No Windows medimos contato
-**contínuo**, que é o que o polling a 30 ms de fato vê. A tradução:
-`hold_hits <= 1` troca no primeiro toque, acima disso exige ficar na
-borda por `hold_window_ms`.
+It is not an inconsistency, it is the available signal. Mutter delivers discrete
+events, so on Linux dwell is **density**: `hold_hits`
+activations within `hold_window_ms`. On Windows we measure **continuous**
+contact, which is what polling at 30 ms actually sees. The translation:
+`hold_hits <= 1` switches on the first touch; above that it requires staying at the
+edge for `hold_window_ms`.
 
-### O `watch-edge` virou thread, e reivindica o mesmo mutex
+### `watch-edge` became a thread, and claims the same mutex
 
-Com o daemon no Windows, o processo separado do `watch-edge` deixa de
-fazer sentido — e passa a ser *perigoso*: dois donos do mesmo receptor
-HID++ é exatamente o que a trava de instância única existe para impedir
-(já aconteceu, três `watch-edge` simultâneos triplicando o tráfego de
-rádio).
+With the daemon on Windows, the separate `watch-edge` process stops
+making sense — and becomes *dangerous*: two owners of the same HID++
+receiver is exactly what the single-instance lock exists to prevent
+(it has happened: three simultaneous `watch-edge` tripling the radio
+traffic).
 
-Por isso [`border_win.rs`](../logid/src/border_win.rs) reivindica o
-**mesmo nome de mutex** do `watch-edge`, `logid-agent-watch-edge`. Não é
-coincidência: é o que garante que o atalho antigo e o daemon novo nunca
-pollem juntos, mesmo que alguém esqueça de remover o atalho do
+That is why [`border_win.rs`](../logid/src/border_win.rs) claims the
+**same mutex name** as `watch-edge`, `logid-agent-watch-edge`. It is not
+a coincidence: it is what guarantees that the old shortcut and the new daemon never
+poll together, even if someone forgets to remove the shortcut from
 `shell:startup`.
 
-A thread da borda também é a única que desiste fora da sessão do console
-— `GetCursorPos` e `GetLastInputInfo` são por sessão, e na sessão 0 (o
-caso de lançar por SSH) ela leria um desktop falso de 1024x768 e um idle
-igual ao uptime. O resto do daemon funciona lá; só a borda não.
+The edge thread is also the only one that gives up outside the console session
+— `GetCursorPos` and `GetLastInputInfo` are per session, and in session 0 (the
+case of launching over SSH) it would read a fake 1024x768 desktop and an idle
+time equal to uptime. The rest of the daemon works there; only the edge does not.
 
-### Quem sou eu passou a precisar de resposta
+### "Who am I" started needing an answer
 
-Era implícito — `addr = "127.0.0.1"` e um texto livre em `role` dizendo
-"este PC". O dead-man's switch do Windows precisa saber para onde
-devolver o dispositivo, e "o host que não sou eu" exige saber quem eu
-sou. Daí `local` em `[[hosts]]`, opcional, com a heurística de loopback
-como fallback para as configs que já existem.
+It was implicit — `addr = "127.0.0.1"` and free text in `role` saying
+"this PC". The Windows dead-man's switch needs to know where to
+return the device to, and "the host that is not me" requires knowing who I
+am. Hence `local` in `[[hosts]]`, optional, with the loopback heuristic
+as a fallback for configs that already exist.
 
-Ao escrever isso apareceu uma segunda leitura do mesmo critério: o
-`follow.rs` tinha a **própria** cópia de `is_local`, que ignorava a flag
-nova. Num Windows com `local = true` e endereço não-loopback, o `follow`
-e a borda discordariam sobre qual máquina é "eu". A cópia foi removida e
-`quem_sou_eu_por_loopback_ou_por_flag` é o teste que impede ela de
-voltar.
+While writing this, a second reading of the same criterion showed up:
+`follow.rs` had its **own** copy of `is_local`, which ignored the new
+flag. On a Windows box with `local = true` and a non-loopback address, `follow`
+and the edge would disagree about which machine is "me". The copy was removed and
+`who_am_i_by_loopback_or_by_flag` is the test that prevents it from
+coming back.
 
-### Como ele sobe no Windows
+### How it starts on Windows
 
-Não é serviço. Um serviço roda na sessão 0, onde `GetCursorPos` e
-`GetLastInputInfo` não veem nada — e a borda vai precisar da sessão do
-console. É **tarefa agendada** com `/IT` (*interativo apenas*), que roda
-na sessão do usuário no login e não pede senha guardada:
+It is not a service. A service runs in session 0, where `GetCursorPos` and
+`GetLastInputInfo` see nothing — and the edge will need the console
+session. It is a **scheduled task** with `/IT` (*interactive only*), which runs
+in the user's session at login and does not ask for a stored password:
 
 ```powershell
 schtasks /create /tn logid /tr "%LOCALAPPDATA%\logid\logid.exe" /sc onlogon /it /f
 ```
 
-Verificado: `pid 2356 sessão 1`, escutando na 8787.
+Verified: `pid 2356 sessão 1`, listening on 8787.
 
-Antes disso tentei `Start-Process` por SSH. Subiu, respondeu `healthz` —
-e morreu junto com a sessão SSH, porque o OpenSSH do Windows mata a
-árvore de processos ao desconectar. É o mesmo princípio da regra
-`long-running-jobs` do outro repo: trabalho residente não vive pendurado
-numa sessão que vai embora.
+Before that I tried `Start-Process` over SSH. It started, answered `healthz` —
+and died together with the SSH session, because Windows OpenSSH kills the
+process tree on disconnect. It is the same principle as the
+`long-running-jobs` rule in the other repo: resident work does not live hanging
+off a session that goes away.
 
-O binário é `windows_subsystem = "windows"`: sem isso uma janela de
-console aparece a cada login e a cada vez que a GUI sobe o daemon. Não
-afeta o JSON por SSH — o subsistema decide se um console é *alocado*, não
-para onde o stdout vai; com um pipe do pai, a saída continua chegando
-(verificado com `Start-Process -RedirectStandardOutput`).
+The binary is `windows_subsystem = "windows"`: without it a console window
+appears at every login and every time the GUI starts the daemon. It does not
+affect the JSON over SSH — the subsystem decides whether a console is *allocated*, not
+where stdout goes; with a pipe from the parent, the output keeps arriving
+(verified with `Start-Process -RedirectStandardOutput`).
 
-A GUI é o mesmo Electron do Ubuntu, em `%LOCALAPPDATA%\logid\gui`, com
-dois atalhos — Menu Iniciar (fixável na taskbar) e `Startup` — apontando
-para `electron.exe .` com `icon.ico` multi-resolução. Os caminhos que
-mudam por SO estão em `paths()` em [`gui/main.js`](../gui/main.js), e têm
-de bater com `sys::config_dir`: divergir ali significa a GUI ler outra
-config e não achar o daemon.
+The GUI is the same Electron as on Ubuntu, in `%LOCALAPPDATA%\logid\gui`, with
+two shortcuts — Start Menu (pinnable to the taskbar) and `Startup` — pointing
+to `electron.exe .` with a multi-resolution `icon.ico`. The paths that
+change per OS are in `paths()` in [`gui/main.js`](../gui/main.js), and must
+match `sys::config_dir`: diverging there means the GUI reads another
+config and does not find the daemon.
 
-> O `npm install` **não** baixou o binário do Electron (13 pacotes em 5 s,
-> sem `dist/`), apesar de `ignore-scripts = false`. `node
-> node_modules/electron/install.js` na mão resolveu. Se a GUI de lá
-> parar de abrir depois de um `npm ci`, é o primeiro lugar a olhar.
+> `npm install` did **not** download the Electron binary (13 packages in 5 s,
+> no `dist/`), despite `ignore-scripts = false`. Running `node
+> node_modules/electron/install.js` by hand fixed it. If the GUI there
+> stops opening after an `npm ci`, that is the first place to look.
 
-### A isolação de sessão também engana quem verifica
+### Session isolation also fools whoever is verifying
 
-Gastei várias rodadas convencido de que a janela da GUI não abria:
-`MainWindowHandle` vinha `0` para os quatro processos do Electron, e meu
-`EnumWindows` não achava janela nenhuma. A conclusão estava errada.
+I spent several rounds convinced that the GUI window did not open:
+`MainWindowHandle` came back `0` for the four Electron processes, and my
+`EnumWindows` found no window at all. The conclusion was wrong.
 
-`EnumWindows` só enumera janelas da **window station da sessão de quem
-chama**, e meu SSH está na sessão 0. `MainWindowHandle`, do .NET, usa o
-mesmo mecanismo. Não era a janela que não existia — era eu olhando do
-lugar errado, exatamente a armadilha que esta spec já documentava para o
-`GetCursorPos`, aplicada agora à *verificação*.
+`EnumWindows` only enumerates windows of the **window station of the caller's
+session**, and my SSH is in session 0. `MainWindowHandle`, from .NET, uses the
+same mechanism. It was not the window that did not exist — it was me looking from
+the wrong place, exactly the trap this spec already documented for
+`GetCursorPos`, now applied to *verification*.
 
-O que de fato provou que a GUI funciona foi o stderr do renderer: um
-aviso de CSP vindo da **nossa** página, o que só acontece depois de ela
-carregar. E o aviso era achado real — o painel não declarava
-Content-Security-Policy, o que equivale a permitir `unsafe-eval`. A
-página não usa `eval` nenhum (conferido), então a política foi declarada
-e o aviso sumiu.
+What actually proved the GUI works was the renderer's stderr: a
+CSP warning coming from **our** page, which only happens after it
+loads. And the warning was a real finding — the panel did not declare a
+Content-Security-Policy, which is equivalent to allowing `unsafe-eval`. The
+page uses no `eval` at all (checked), so the policy was declared
+and the warning went away.
 
-Lição operacional: ao verificar algo da sessão interativa a partir de uma
-sessão não interativa, prefira sinais que atravessam a fronteira —
-arquivo de log, porta TCP, processo — a APIs de janela, que não
-atravessam.
+Operational lesson: when verifying something in the interactive session from a
+non-interactive session, prefer signals that cross the boundary —
+log file, TCP port, process — over window APIs, which do not
+cross it.
 
-### A simetria fechou (03/11)
+### The symmetry closed (2026-11-03)
 
-`focus::plan` **bloqueia** a troca quando o alvo não tem `ssh` + `agent`,
-porque sem alguém do outro lado capaz de devolver o dispositivo a origem
-não pode desfazer ([`005`](005-input-switch.md)). O `watch-edge`
-escapava disso por não passar pelo `focus` — funcionava, mas sem os gates.
+`focus::plan` **blocks** the switch when the target lacks `ssh` + `agent`,
+because without someone on the other side able to return the device, the origin
+cannot undo it ([`005`](005-input-switch.md)). `watch-edge`
+escaped this by not going through `focus` — it worked, but without the gates.
 
-Faltavam duas peças, e nenhuma era afrouxar o check:
+Two pieces were missing, and neither was loosening the check:
 
-1. **O `logid` virou também o "agente" do próprio host.** `logid devices`,
-   `host-info`, `set-host` respondem uma linha de JSON, igual ao
-   `logid-agent`. O formato vive em
-   [`hidpp/src/protocol.rs`](../hidpp/src/protocol.rs), compartilhado
-   pelos dois binários: é o contrato *entre as máquinas*, o pior lugar
-   possível para duas cópias. (Era `survey()` dentro do agente; a segunda
-   cópia ia divergir e aparecer como "agente nao respondeu JSON" num log,
-   longe da causa.)
-2. **`sshd` no Ubuntu**, por [`scripts/enable-sshd.sh`](../scripts/enable-sshd.sh),
-   só por chave e só para um usuário.
+1. **`logid` also became the "agent" of its own host.** `logid devices`,
+   `host-info`, `set-host` answer a line of JSON, same as
+   `logid-agent`. The format lives in
+   [`hidpp/src/protocol.rs`](../hidpp/src/protocol.rs), shared
+   by both binaries: it is the contract *between the machines*, the worst
+   possible place for two copies. (It was `survey()` inside the agent; the second
+   copy would diverge and show up as "agente nao respondeu JSON" in a log,
+   far from the cause.)
+2. **`sshd` on Ubuntu**, via [`scripts/enable-sshd.sh`](../scripts/enable-sshd.sh),
+   key-only and for a single user.
 
-Verificado no ensaio (`POST /api/focus` com `confirm: false`) **do lado
-Windows**:
+Verified in the dry run (`POST /api/focus` with `confirm: false`) **from the
+Windows side**:
 
 ```
 [ok  ] dead-man's switch no alvo
@@ -228,96 +228,96 @@ Windows**:
        'MX Anywhere 3' esta offline aqui -- ja esta em outro canal
 ```
 
-Os bloqueios restantes são os **certos**: só quem detém o dispositivo pode
-empurrá-lo, e naquele momento ele estava no Ubuntu.
+The remaining blocks are the **right** ones: only whoever holds the device can
+push it, and at that moment it was on Ubuntu.
 
-Com isso o `watch-edge` foi aposentado — atalho removido do
-`shell:startup`, processos encerrados — e `[input.border]` ligada no
-Windows. O reconciliador (`[input.follow]`) ficou **desligado** lá de
-propósito: é um reconciliador, não dois. O do Ubuntu já cobre as duas
-máquinas, agindo direto quando o dispositivo está lá e pedindo por SSH
-quando está aqui; ligar ambos faria os dois chegarem à mesma conclusão e
-agirem em dobro.
+With that, `watch-edge` was retired — shortcut removed from
+`shell:startup`, processes terminated — and `[input.border]` turned on on
+Windows. The reconciler (`[input.follow]`) was left **off** there on
+purpose: it is one reconciler, not two. Ubuntu's already covers both
+machines, acting directly when the device is there and asking over SSH
+when it is here; turning both on would make both reach the same conclusion and
+act twice.
 
-### O host precisa declarar o SO
+### The host needs to declare its OS
 
-Dois lugares montam comando para rodar **no par**, e os dois eram
-específicos de Windows: `agent::devices` monta PowerShell (`& "exe"
-devices`) e `probe::ssh_detail` roda um one-liner com CIM. Contra Ubuntu
-ou macOS os dois falhariam — e falhariam **em silêncio**, porque o
-detalhe é enfeite e o probe do agente já degrada para "não respondeu".
+Two places build a command to run **on the peer**, and both were
+Windows-specific: `agent::devices` builds PowerShell (`& "exe"
+devices`) and `probe::ssh_detail` runs a one-liner with CIM. Against Ubuntu
+or macOS both would fail — and fail **silently**, because the
+detail is decoration and the agent probe already degrades to "did not respond".
 
-Daí `os = "windows" | "linux" | "macos"` em `[[hosts]]`, com inferência
-para as configs que já existiam. No Unix o comando vai com aspas simples
-e sem o `&` — que ali significaria *background* e devolveria sucesso
-vazio, lido como "agente nao respondeu JSON".
+Hence `os = "windows" | "linux" | "macos"` in `[[hosts]]`, with inference
+for configs that already existed. On Unix the command goes with single quotes
+and without the `&` — which there would mean *background* and return an empty
+success, read as "agente nao respondeu JSON".
 
 ## API
 
-Prefixo `/api`. JSON em tudo. Sempre em `127.0.0.1` (ver
-[`008`](008-security.md#por-que-só-localhost)).
+Prefix `/api`. JSON everywhere. Always on `127.0.0.1` (see
+[`008`](008-security.md#why-localhost-only)).
 
-| Método | Rota | Função |
+| Method | Route | Purpose |
 |---|---|---|
-| `GET` | `/healthz` | vivo? **Não** toca em rede — existe porque o health check de 800 ms batia no `/api/status`, que leva 2 s. Erro real já cometido. |
-| `GET` | `/api/hosts` | máquinas, estado, serviços |
-| `GET` | `/api/hosts/{id}` | detalhe (uptime, RAM, dispositivos HID) |
-| `POST` | `/api/hosts/{id}/focus` | **trocar o foco para esta máquina** — ver [`005`](005-input-switch.md) |
-| `GET` | `/api/config` | config efetiva + de onde veio cada valor |
-| `PATCH` | `/api/config` | alterar; valida antes de gravar |
-| `POST` | `/api/bootstrap/{id}` | provisionar a outra máquina via SSH ([`002`](002-ssh.md)) |
-| `GET` | `/api/files/{id}?path=` | listar diretório ([`003`](003-files.md)) |
-| `GET` | `/api/clipboard` / `POST` | ler/empurrar clipboard ([`004`](004-clipboard.md)) |
-| `GET` | `/api/events` | SSE: mudanças de estado, para a GUI não ficar em polling |
+| `GET` | `/healthz` | alive? Does **not** touch the network — it exists because the 800 ms health check was hitting `/api/status`, which takes 2 s. A real mistake already made. |
+| `GET` | `/api/hosts` | machines, state, services |
+| `GET` | `/api/hosts/{id}` | detail (uptime, RAM, HID devices) |
+| `POST` | `/api/hosts/{id}/focus` | **switch focus to this machine** — see [`005`](005-input-switch.md) |
+| `GET` | `/api/config` | effective config + where each value came from |
+| `PATCH` | `/api/config` | change; validates before writing |
+| `POST` | `/api/bootstrap/{id}` | provision the other machine over SSH ([`002`](002-ssh.md)) |
+| `GET` | `/api/files/{id}?path=` | list directory ([`003`](003-files.md)) |
+| `GET` | `/api/clipboard` / `POST` | read/push clipboard ([`004`](004-clipboard.md)) |
+| `GET` | `/api/events` | SSE: state changes, so the GUI does not have to poll |
 
-## Estado
+## State
 
-Dois níveis, separados de propósito:
+Two levels, separated on purpose:
 
-- **Config** — o que você escolheu. Arquivo versionável, legível, 
-  editável à mão: `~/.config/logi/config.toml`. Nunca escrevemos
-  segredo aqui.
-- **Runtime** — o que foi descoberto. Cache descartável em
-  `~/.local/state/logi/`. Apagar não perde nada além de uma releitura.
+- **Config** — what you chose. A versionable, readable file,
+  editable by hand: `~/.config/logi/config.toml`. We never write
+  secrets here.
+- **Runtime** — what was discovered. Disposable cache in
+  `~/.local/state/logi/`. Deleting it loses nothing beyond a re-read.
 
-Segredo (chave SSH, cert TLS) **não** entra em nenhum dos dois: fica
-onde a ferramenta dona já guarda (`~/.ssh`, `~/.config/Deskflow/tls`) e
-referenciamos por caminho.
+Secrets (SSH key, TLS cert) go into **neither**: they stay
+where the owning tool already keeps them (`~/.ssh`, `~/.config/Deskflow/tls`) and
+we reference them by path.
 
 ## Adapters
 
-Cada integração é um módulo com a mesma forma: `probe()`, `read()`,
-`apply()`. Nada de ferramenta externa chamada direto de um handler —
-mesma razão da regra de [funções puras](../CLAUDE.md) no outro repo: o
-handler resolve IDs, o adapter faz I/O, a decisão é função pura
-testável.
+Each integration is a module with the same shape: `probe()`, `read()`,
+`apply()`. No external tool called directly from a handler —
+same reason as the [pure functions](../CLAUDE.md) rule in the other repo: the
+handler resolves IDs, the adapter does I/O, the decision is a testable pure
+function.
 
-| Adapter | Envolve | Notas |
+| Adapter | Wraps | Notes |
 |---|---|---|
-| `ssh` | OpenSSH client | chave dedicada, `BatchMode`, agente para a passphrase |
-| `sftp` | OpenSSH | file browser; sem dependência nova |
-| `deskflow` | `deskflow-core`, `Deskflow.conf` | **servidor segfalha no Linux** — só modo cliente |
-| `hidpp` | Solaar / HID++ 0x1814 | troca de canal Easy-Switch |
-| `kdeconnect` | GSConnect DBus / `dconf` | clipboard, share, notificações |
-| `rustdesk` | binário RustDesk | tela; só ciclo de vida, não protocolo |
+| `ssh` | OpenSSH client | dedicated key, `BatchMode`, agent for the passphrase |
+| `sftp` | OpenSSH | file browser; no new dependency |
+| `deskflow` | `deskflow-core`, `Deskflow.conf` | **server segfaults on Linux** — client mode only |
+| `hidpp` | Solaar / HID++ 0x1814 | Easy-Switch channel switching |
+| `kdeconnect` | GSConnect DBus / `dconf` | clipboard, share, notifications |
+| `rustdesk` | RustDesk binary | screen; lifecycle only, not protocol |
 
 ## GUI
 
-A casca Electron em [`gui/`](../gui/) já faz
-janela, bandeja, instância única e reaproveita o backend do systemd.
-Ela **não duplica lógica**: toda regra vive no `logid`.
+The Electron shell in [`gui/`](../gui/) already handles
+window, tray, single instance and reuses the systemd backend.
+It **does not duplicate logic**: every rule lives in `logid`.
 
-Armadilha registrada: o host de extensões do VS Code exporta
-`ELECTRON_RUN_AS_NODE=1`, e com ela o binário do Electron roda como Node
-puro e nada abre. `run.sh` e `npm start` limpam a variável.
+Recorded trap: the VS Code extension host exports
+`ELECTRON_RUN_AS_NODE=1`, and with it the Electron binary runs as plain
+Node and nothing opens. `run.sh` and `npm start` clear the variable.
 
-## Princípios
+## Principles
 
-1. **Idempotente.** Toda rota de `apply` pode ser chamada duas vezes.
-2. **Diga de onde veio o valor.** `/api/config` devolve origem junto
-   com o valor — default, arquivo, ou descoberto.
-3. **Nunca escrever IP.** Ver [`007`](007-device-routing.md) e a seção
-   *"O IP muda"* do README.
-4. **Falhar barulhento.** O `langfuse` do outro repo ensinou: `catch`
-   que engole erro custa horas. Se um adapter não achou a ferramenta,
-   isso aparece na API e na GUI.
+1. **Idempotent.** Every `apply` route can be called twice.
+2. **Say where the value came from.** `/api/config` returns the origin along
+   with the value — default, file, or discovered.
+3. **Never write an IP.** See [`007`](007-device-routing.md) and the
+   *"O IP muda"* ("The IP changes") section of the README.
+4. **Fail loudly.** The other repo's `langfuse` taught us: a `catch`
+   that swallows an error costs hours. If an adapter did not find the tool,
+   that shows up in the API and in the GUI.

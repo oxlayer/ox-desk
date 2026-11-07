@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Sends the OTA token from this machine to the other two, and proves it works.
-# The value never goes through argv or the screen.
+# The value never goes through argv or the screen. The grep below matches
+# logi-ota's own output (pt-BR result words): keep it in sync with ota/.
 #
 #   bash scripts/distribuir-token-ota.sh mac ubuntu windows-host
 #
@@ -8,9 +9,9 @@
 set -uo pipefail
 
 TOKEN="$HOME/.config/logi/ota-token"
-[ -s "$TOKEN" ] || { echo "falta $TOKEN"; exit 1; }
+[ -s "$TOKEN" ] || { echo "missing $TOKEN"; exit 1; }
 [ "$(stat -f '%Lp' "$TOKEN" 2>/dev/null || stat -c '%a' "$TOKEN")" = 600 ] ||
-  { echo "$TOKEN precisa de chmod 600"; exit 1; }
+  { echo "$TOKEN needs chmod 600"; exit 1; }
 
 falhou=0
 for h in "$@"; do

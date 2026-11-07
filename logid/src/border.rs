@@ -1,15 +1,15 @@
-//! Deteccao de borda via org.gnome.Mutter.InputCapture.
+//! Edge detection via org.gnome.Mutter.InputCapture.
 //!
-//! Spec: ../specs/005-input-switch.md#detecção-de-borda-mutter-direto-não-o-portal
+//! Spec: ../specs/005-input-switch.md#edge-detection-mutter-directly-not-the-portal
 //!
-//! NAO usamos o portal: o `org.freedesktop.portal.InputCapture` aceita
-//! CreateSession e nunca responde, porque nao consegue exibir o dialogo de
-//! consentimento para um processo sem janela. O mutter expoe a mesma
-//! funcionalidade de forma sincrona, sem dialogo.
+//! We do NOT use the portal: `org.freedesktop.portal.InputCapture` accepts
+//! CreateSession and never answers, because it cannot show the consent
+//! dialog for a process without a window. Mutter exposes the same
+//! functionality synchronously, with no dialog.
 //!
-//! Usamos SO a deteccao: ao receber Activated devolvemos o ponteiro na hora
-//! com Release. Nao capturamos nem encaminhamos input -- quem move o foco e
-//! a troca de canal HID++.
+//! We use ONLY the detection: on Activated we hand the pointer back right
+//! away with Release. We neither capture nor forward input -- what moves
+//! focus is the HID++ channel switch.
 
 use crate::config::Config;
 use crate::focus::{self, FocusRequest};
@@ -26,55 +26,56 @@ const OBJ: &str = "/org/gnome/Mutter/InputCapture";
 const IFACE: &str = "org.gnome.Mutter.InputCapture";
 const IFACE_SESSION: &str = "org.gnome.Mutter.InputCapture.Session";
 const CAP_POINTER: u32 = 2;
-/// Carencia depois que os dispositivos chegam aqui.
+/// Grace period after the devices arrive here.
 ///
-/// Com borda nas duas maquinas apontando uma para a outra, sem isto um
-/// movimento natural logo apos a chegada devolve tudo na hora. Medido no
-/// log do usuario: chegada e volta em menos de um minuto, varias vezes.
+/// With edges on both machines pointing at each other, without this a
+/// natural movement right after arrival sends everything back at once.
+/// Measured in the user's log: arrival and return in under a minute,
+/// several times.
 const GRACE: u64 = 7_000;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Quantos pixels para dentro devolver o ponteiro.
+/// How many pixels inward to hand the pointer back.
 ///
-/// Medido: devolver na propria borda re-dispara a barreira imediatamente --
-/// chegamos a `activation=40` com o cursor parado em x=2560. O Release
-/// aceita `cursor_position`, entao recuamos.
-/// MEDIDO E DESCARTADO: o mutter aceita `cursor_position` no `Release` e
-/// **ignora**. Em 300+ ativacoes o cursor permaneceu exatamente em
-/// x=2560.0, e geramos 690 linhas de "em cooldown". Recuar o ponteiro nao
-/// e uma opcao disponivel.
+/// Measured: handing it back on the edge itself re-fires the barrier
+/// immediately -- we reached `activation=40` with the cursor still at
+/// x=2560. Release accepts `cursor_position`, so we pull back.
+/// MEASURED AND DISCARDED: mutter accepts `cursor_position` in `Release`
+/// and **ignores** it. In 300+ activations the cursor stayed exactly at
+/// x=2560.0, and we produced 690 lines of "in cooldown". Pulling the
+/// pointer back is not an available option.
 ///
-/// A estrategia que funciona e DESARMAR a barreira (`Disable`) durante o
-/// cooldown e rearmar depois -- sem barreira nao ha evento, independente de
-/// onde o ponteiro esteja.
-const _PULLBACK_NAO_FUNCIONA: () = ();
+/// The strategy that works is to DISARM the barrier (`Disable`) during the
+/// cooldown and re-arm it afterwards -- with no barrier there is no event,
+/// wherever the pointer is.
+const _PULLBACK_DOES_NOT_WORK: () = ();
 
-/// Permanencia exigida na borda antes de trocar.
+/// Dwell required at the edge before switching.
 ///
-/// O mutter **nao tem** conceito de dwell: a barreira dispara no contato.
-/// Aproximamos pela DENSIDADE de ativacoes: encostar e insistir re-dispara
-/// varias vezes em sequencia (medimos `activation=54` com o cursor parado),
-/// enquanto um raspao de passagem gera uma so.
+/// Mutter **has no** concept of dwell: the barrier fires on contact. We
+/// approximate it by the DENSITY of activations: touching and insisting
+/// re-fires several times in a row (we measured `activation=54` with the
+/// cursor still), while a passing graze produces just one.
 ///
-/// Enquanto coletamos, o `Release` vai SEM recuo -- de proposito: e o
-/// re-disparo que serve de sinal. So recuamos ao decidir.
-/// Defaults; a config manda (`[input.border] hold_hits/hold_window_ms`).
-/// Baixado de 3/400ms para 2/300ms: o usuario sentia delay, e um raspao
-/// de passagem gera uma ativacao so -- duas ja indicam intencao.
+/// While collecting, `Release` goes WITHOUT pullback -- on purpose: the
+/// re-firing is the signal. We only pull back once we decide.
+/// Defaults; the config rules (`[input.border] hold_hits/hold_window_ms`).
+/// Lowered from 3/400ms to 2/300ms: the user felt the delay, and a passing
+/// graze produces a single activation -- two already show intent.
 const HOLD_WINDOW_DEFAULT: Duration = Duration::from_millis(300);
 const HOLD_HITS_DEFAULT: usize = 2;
 
-/// Janela em que uma segunda travessia e ignorada. A acao disparada e
-/// IRREVERSIVEL; sem isto, um encostao duplo na borda viraria duas trocas.
-/// 10 s porque a troca + verificacao por efeito leva ~5 s: com 3 s o segundo
-/// evento entrava antes de o primeiro terminar.
+/// Window in which a second crossing is ignored. The action fired is
+/// IRREVERSIBLE; without this, a double bump on the edge would become two
+/// switches. 10 s because the switch + effect-based verification takes
+/// ~5 s: with 3 s the second event came in before the first finished.
 const COOLDOWN: Duration = Duration::from_secs(10);
 
-/// (x1, y1, x2, y2) da linha de barreira para a borda pedida.
+/// (x1, y1, x2, y2) of the barrier line for the requested edge.
 ///
-/// A linha fica na FRONTEIRA da zona. Usar a ultima coluna/linha de dentro
-/// (x+w-1) faz o mutter recusar com
+/// The line sits on the zone's BOUNDARY. Using the last inner column/row
+/// (x+w-1) makes mutter refuse with
 /// "AccessDenied: Line overlaps with monitor region".
 fn barrier_line(edge: &str, zone: (u32, u32, i32, i32)) -> Option<(i32, i32, i32, i32)> {
     let (w, h, x, y) = zone;
@@ -88,40 +89,41 @@ fn barrier_line(edge: &str, zone: (u32, u32, i32, i32)) -> Option<(i32, i32, i32
     }
 }
 
-/// Devolve o ponteiro ao usuario.
+/// Hands the pointer back to the user.
 ///
-/// Sem `cursor_position`: o mutter ignora essa opcao (medido). O ponteiro
-/// volta onde estava, e e por isso que o controle de churn tem de ser o
-/// `Disable` da barreira, nao o recuo do cursor.
+/// Without `cursor_position`: mutter ignores that option (measured). The
+/// pointer comes back where it was, which is why the churn control has to
+/// be the barrier's `Disable`, not pulling the cursor back.
 fn release(sp: &dbus::blocking::Proxy<'_, &Connection>) {
     let empty: std::collections::HashMap<&str, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>> =
         std::collections::HashMap::new();
     if let Err(e) = sp.method_call::<(), _, _, _>(IFACE_SESSION, "Release", (empty,)) {
-        gripe!("border: Release falhou: {e}");
+        gripe!("border: Release failed: {e}");
     }
 }
 
 struct Session {
     conn: Connection,
     path: Path<'static>,
-    /// id da barreira -> host alvo daquela borda.
-    alvos: std::collections::HashMap<u32, String>,
-    /// Mantido vivo de proposito: fechar o fd pode derrubar a sessao.
-    /// Ainda NAO foi medido se o Enable funciona sem ele -- entrou no
-    /// prototipo para eliminar hipotese e ficou como ordem conhecida-boa.
+    /// barrier id -> target host for that edge.
+    targets: std::collections::HashMap<u32, String>,
+    /// Kept alive on purpose: closing the fd may tear down the session.
+    /// It has NOT been measured yet whether Enable works without it -- it
+    /// went into the prototype to rule out a hypothesis and stayed as the
+    /// known-good order.
     _eis: Option<OwnedFd>,
 }
 
-/// Abre a sessao de captura com UMA barreira por borda vigiada.
+/// Opens the capture session with ONE barrier per watched edge.
 ///
-/// Varias barreiras na mesma sessao: o mutter devolve um id por
-/// `AddBarrier` e entrega esse id no sinal `Activated`, entao o mapa
-/// `id -> alvo` e o que diz para onde mandar quando aquela borda
-/// especifica for tocada. Antes era uma so, porque a config tinha um
-/// `edge` unico; com a grade, uma maquina no meio tem vizinho dos dois
-/// lados.
+/// Several barriers in the same session: mutter returns an id per
+/// `AddBarrier` and delivers that id in the `Activated` signal, so the
+/// `id -> target` map is what says where to send when that specific edge
+/// is touched. It used to be just one, because the config had a single
+/// `edge`; with the grid, a machine in the middle has a neighbor on both
+/// sides.
 fn open(edges: &[(String, String)]) -> Result<Session, String> {
-    let conn = Connection::new_session().map_err(|e| format!("barramento de sessao: {e}"))?;
+    let conn = Connection::new_session().map_err(|e| format!("session bus: {e}"))?;
 
     let root = conn.with_proxy(DEST, OBJ, TIMEOUT);
     let (path,): (Path,) = root
@@ -134,24 +136,24 @@ fn open(edges: &[(String, String)]) -> Result<Session, String> {
     let (serial, zones): (u32, Vec<(u32, u32, i32, i32)>) = sp
         .method_call(IFACE_SESSION, "GetZones", ())
         .map_err(|e| format!("GetZones: {e}"))?;
-    let zone = *zones.first().ok_or("o compositor nao reportou nenhuma zona")?;
+    let zone = *zones.first().ok_or("the compositor reported no zone")?;
 
-    let mut alvos = std::collections::HashMap::new();
+    let mut targets = std::collections::HashMap::new();
     for (edge, target) in edges {
         let Some(line) = barrier_line(edge, zone) else {
-            gripe!("border: borda invalida '{edge}' (use left/right/top/bottom) -- ignorada");
+            gripe!("border: invalid edge '{edge}' (use left/right/top/bottom) -- ignored");
             continue;
         };
         match sp.method_call::<(u32,), _, _, _>(IFACE_SESSION, "AddBarrier", (serial, line)) {
             Ok((bid,)) => {
-                say!("border: barreira {bid} na borda {edge} {line:?} -> {target}");
-                alvos.insert(bid, target.clone());
+                say!("border: barrier {bid} on edge {edge} {line:?} -> {target}");
+                targets.insert(bid, target.clone());
             }
-            Err(e) => gripe!("border: AddBarrier em {line:?} falhou: {e}"),
+            Err(e) => gripe!("border: AddBarrier at {line:?} failed: {e}"),
         }
     }
-    if alvos.is_empty() {
-        return Err("nenhuma barreira pode ser criada".into());
+    if targets.is_empty() {
+        return Err("no barrier could be created".into());
     }
 
     let eis: Option<OwnedFd> = match sp.method_call::<(OwnedFd,), _, _, _>(
@@ -161,7 +163,7 @@ fn open(edges: &[(String, String)]) -> Result<Session, String> {
     ) {
         Ok((fd,)) => Some(fd),
         Err(e) => {
-            gripe!("border: ConnectToEIS falhou, seguindo sem ele: {e}");
+            gripe!("border: ConnectToEIS failed, going on without it: {e}");
             None
         }
     };
@@ -169,13 +171,13 @@ fn open(edges: &[(String, String)]) -> Result<Session, String> {
     sp.method_call::<(), _, _, _>(IFACE_SESSION, "Enable", ())
         .map_err(|e| format!("Enable: {e}"))?;
 
-    say!("border: {} barreira(s) na zona {zone:?}, eis={}", alvos.len(),
-         if eis.is_some() { "sim" } else { "nao" });
-    Ok(Session { conn, path, alvos, _eis: eis })
+    say!("border: {} barrier(s) in zone {zone:?}, eis={}", targets.len(),
+         if eis.is_some() { "yes" } else { "no" });
+    Ok(Session { conn, path, targets, _eis: eis })
 }
 
-/// Sobe a vigilancia de borda numa thread. Erro aqui nao derruba o daemon:
-/// o resto do logid continua util sem a deteccao.
+/// Starts edge watching on a thread. An error here does not bring the
+/// daemon down: the rest of logid stays useful without detection.
 pub fn spawn(cfg: Arc<RwLock<Config>>) {
     std::thread::spawn(move || {
         let (edges, hold_hits, hold_window) = {
@@ -187,8 +189,8 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             } else {
                 Duration::from_millis(b.hold_window_ms)
             };
-            // Vem da grade quando ela existe; senao do `edge`/`target`
-            // escrito a mao. Ver `Config::border_edges`.
+            // Comes from the grid when there is one; otherwise from the
+            // hand-written `edge`/`target`. See `Config::border_edges`.
             let edges = g.border_edges();
             if edges.is_empty() {
                 return;
@@ -199,21 +201,22 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
         let sess = match open(&edges) {
             Ok(s) => s,
             Err(e) => {
-                gripe!("border: desligado -- {e}");
+                gripe!("border: off -- {e}");
                 return;
             }
         };
 
         let last = Arc::new(RwLock::new(None::<Instant>));
         let hits = Arc::new(RwLock::new(Vec::<Instant>::new()));
-        // Quando rearmar a barreira. O loop principal e quem chama Enable:
-        // a sessao pertence a ESTA conexao D-Bus, outra nao a controla.
+        // When to re-arm the barrier. The main loop is the one that calls
+        // Enable: the session belongs to THIS D-Bus connection, no other
+        // controls it.
         let reenable = Arc::new(RwLock::new(None::<Instant>));
-        // Compartilhada: quem DESABILITA ao disparar e o handler, e o laco
-        // e quem reabilita. Sem isto o laco achava que a barreira ainda
-        // estava armada e tentava desabilitar de novo a cada tick --
-        // `Disable falhou: Session not enabled`, duas vezes por segundo.
-        let armada = Arc::new(RwLock::new(true));
+        // Shared: the handler is what DISABLES on firing, and the loop is
+        // what re-enables. Without this the loop thought the barrier was
+        // still armed and tried to disable it again on every tick --
+        // `Disable failed: Session not enabled`, twice a second.
+        let armed = Arc::new(RwLock::new(true));
         let rule = {
             let mut r = MatchRule::new_signal(IFACE_SESSION, "Activated");
             r.path = Some(sess.path.clone());
@@ -222,37 +225,37 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
 
         let cfg2 = Arc::clone(&cfg);
         let path2 = sess.path.clone();
-        let alvos = sess.alvos.clone();
+        let targets = sess.targets.clone();
         let last2 = Arc::clone(&last);
         let hits2 = Arc::clone(&hits);
         let reenable2 = Arc::clone(&reenable);
-        let armada2 = Arc::clone(&armada);
+        let armed2 = Arc::clone(&armed);
 
         let res = sess.conn.add_match(
             rule,
             move |(barrier_id, activation_id, cursor): (u32, u32, (f64, f64)), conn, _msg| {
                 say!(
-                    "border: ACTIVATED barreira={barrier_id} activation={activation_id} cursor={cursor:?}"
+                    "border: ACTIVATED barrier={barrier_id} activation={activation_id} cursor={cursor:?}"
                 );
 
                 let sp = conn.with_proxy(DEST, path2.clone(), TIMEOUT);
                 release(&sp);
 
-                // Guarda: com a barreira desarmada nao deveria chegar evento.
+                // Guard: with the barrier disarmed no event should arrive.
                 if last2.read().ok().and_then(|g| *g).is_some_and(|t| t.elapsed() < COOLDOWN) {
                     return true;
                 }
 
-                // Carencia pos-chegada. O mutter so emite em travessia,
-                // entao aqui nao ha cursor parado disparando -- mas
-                // chegar e imediatamente cruzar de volta e justamente o
-                // ciclo que o usuario viu.
+                // Post-arrival grace. Mutter only emits on crossing, so
+                // there is no still cursor firing here -- but arriving and
+                // crossing straight back is exactly the cycle the user
+                // saw.
                 if crate::hidpp::arrived_ms_ago().is_some_and(|ms| ms < GRACE) {
-                    say!("border: dispositivos acabaram de chegar -- ignorando a travessia");
+                    say!("border: devices just arrived -- ignoring the crossing");
                     return true;
                 }
 
-                // Permanencia por densidade de ativacoes.
+                // Dwell by activation density.
                 let hits = {
                     let Ok(mut v) = hits2.write() else { return true };
                     let now = Instant::now();
@@ -261,19 +264,19 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                     v.len()
                 };
                 if hits < hold_hits {
-                    say!("border: permanencia {hits}/{hold_hits}, aguardando");
+                    say!("border: dwell {hits}/{hold_hits}, waiting");
                     return true;
                 }
 
-                // Decidido. DESARMA a barreira: e o unico jeito de parar o
-                // churn, ja que o mutter ignora o recuo do cursor.
+                // Decided. DISARM the barrier: it is the only way to stop
+                // the churn, since mutter ignores the cursor pullback.
                 match sp.method_call::<(), _, _, _>(IFACE_SESSION, "Disable", ()) {
                     Ok(()) => {
-                        if let Ok(mut g) = armada2.write() {
+                        if let Ok(mut g) = armed2.write() {
                             *g = false;
                         }
                     }
-                    Err(e) => gripe!("border: Disable falhou: {e}"),
+                    Err(e) => gripe!("border: Disable failed: {e}"),
                 }
                 if let Ok(mut v) = hits2.write() {
                     v.clear();
@@ -285,40 +288,39 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                 if let Ok(mut g) = reenable2.write() {
                     *g = Some(now + COOLDOWN);
                 }
-                say!("border: barreira desarmada; trocando e rearmando em {}s", COOLDOWN.as_secs());
+                say!("border: barrier disarmed; switching and re-arming in {}s", COOLDOWN.as_secs());
 
-                // A troca leva segundos (solaar + verificacao por efeito).
-                // Rodar aqui bloqueava o loop do D-Bus: medido, 35 s sem
-                // processar sinal nenhum. Vai para uma thread.
+                // The switch takes seconds (solaar + effect-based check).
+                // Running it here blocked the D-Bus loop: measured, 35 s
+                // without processing any signal. It goes to a thread.
                 let Ok(snap) = cfg2.read().map(|g| g.clone()) else { return true };
-                // Interruptor lido AQUI, nao no boot.
+                // Switch read HERE, not at boot.
                 //
-                // As barreiras sao criadas uma vez, com as bordas que a
-                // config tinha no boot. Sem esta linha, desligar a borda
-                // pela UI nao desligava nada: a thread seguia viva e
-                // seguia trocando de maquina a cada encostada, enquanto a
-                // tela mostrava o interruptor em "off". O usuario ficou
-                // sem conseguir trabalhar por isso -- um interruptor que
-                // mente e pior que nenhum.
+                // The barriers are created once, with the edges the config
+                // had at boot. Without this line, turning the edge off in
+                // the UI turned nothing off: the thread stayed alive and
+                // kept switching machines on every touch, while the screen
+                // showed the switch as "off". The user could not work
+                // because of it -- a switch that lies is worse than none.
                 if !snap.input.border.enabled {
                     return true;
                 }
-                // QUAL borda foi tocada decide para onde vai. Com a
-                // grade, uma maquina no meio tem vizinho dos dois lados.
-                let Some(target3) = alvos.get(&barrier_id).cloned() else {
-                    gripe!("border: barreira {barrier_id} sem alvo conhecido");
+                // WHICH edge was touched decides where it goes. With the
+                // grid, a machine in the middle has a neighbor on both sides.
+                let Some(target3) = targets.get(&barrier_id).cloned() else {
+                    gripe!("border: barrier {barrier_id} has no known target");
                     return true;
                 };
                 std::thread::spawn(move || {
-                    // O pre-flight completo roda aqui dentro: config ruim nao
-                    // pode te deixar sem teclado so porque o mouse encostou
-                    // na borda.
+                    // The full pre-flight runs in here: a bad config must
+                    // not leave you without a keyboard just because the
+                    // mouse touched the edge.
                     let req = FocusRequest {
                         host: target3,
                         route: None,
                         confirm: true,
-                        // Travessia de borda nao espera SSH: le o cache de
-                        // pares. Era ~2,2 s dos 3,9 s de uma troca.
+                        // An edge crossing does not wait on SSH: it reads
+                        // the peer cache. That was ~2.2 s of a 3.9 s switch.
                         fast: true,
                     };
                     let outcome = focus::execute(&snap, &req);
@@ -327,7 +329,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                             say!("border: {r}");
                         }
                     } else {
-                        let bloqueios: Vec<&str> = outcome
+                        let blockers: Vec<&str> = outcome
                             .plan
                             .checks
                             .iter()
@@ -335,9 +337,9 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                             .map(|c| c.name.as_str())
                             .collect();
                         say!(
-                            "border: NAO trocou -- {} (bloqueios: {})",
-                            outcome.error.unwrap_or_else(|| "plano nao pronto".into()),
-                            bloqueios.join(", ")
+                            "border: did NOT switch -- {} (blockers: {})",
+                            outcome.error.unwrap_or_else(|| "plan not ready".into()),
+                            blockers.join(", ")
                         );
                     }
                 });
@@ -345,19 +347,19 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             },
         );
         if let Err(e) = res {
-            gripe!("border: add_match falhou: {e}");
+            gripe!("border: add_match failed: {e}");
             return;
         }
 
-        // Diagnostico: um match no barramento para TODOS os sinais da
-        // interface da sessao, mais um receptor local que loga o que chegar.
-        // Serve para distinguir "o mutter nao emitiu" de "nosso matcher nao
-        // casou" -- ambiguidade que custou um teste inconclusivo.
+        // Diagnostics: a bus match for ALL signals of the session
+        // interface, plus a local receiver that logs whatever arrives.
+        // It tells "mutter did not emit" from "our matcher did not match"
+        // -- an ambiguity that cost an inconclusive test.
         if let Err(e) = sess
             .conn
             .add_match_no_cb(&format!("type='signal',interface='{IFACE_SESSION}'"))
         {
-            gripe!("border: match de diagnostico falhou: {e}");
+            gripe!("border: diagnostic match failed: {e}");
         }
         sess.conn.start_receive(
             MatchRule::new(),
@@ -367,7 +369,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                     .is_some_and(|i| i.contains("InputCapture"))
                 {
                     say!(
-                        "border[sinal] {}.{}",
+                        "border[signal] {}.{}",
                         msg.interface().map(|i| i.to_string()).unwrap_or_default(),
                         msg.member().map(|m| m.to_string()).unwrap_or_default()
                     );
@@ -376,86 +378,87 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             }),
         );
 
-        let resumo: Vec<String> =
+        let summary: Vec<String> =
             edges.iter().map(|(e, t)| format!("{e} -> {t}")).collect();
         say!(
-            "border: vigiando {} (permanencia {hold_hits} em {}ms)",
-            resumo.join(", "),
+            "border: watching {} (dwell {hold_hits} in {}ms)",
+            summary.join(", "),
             hold_window.as_millis()
         );
         let mut ticks: u64 = 0;
         loop {
             if let Err(e) = sess.conn.process(Duration::from_millis(500)) {
-                gripe!("border: loop do barramento morreu: {e}");
+                gripe!("border: bus loop died: {e}");
                 return;
             }
             ticks += 1;
 
-            // Armada ou nao -- decidido aqui, porque a sessao pertence a
-            // esta conexao D-Bus.
+            // Armed or not -- decided here, because the session belongs to
+            // this D-Bus connection.
             //
-            // A regra e: uma borda so faz sentido na maquina que ESTA com
-            // os dispositivos. Antes isto rearmava cegamente 10 s depois
-            // de cada disparo, e o estrago foi grande: o mutter nao recua
-            // o cursor, entao ele fica parado em x=2560 depois da troca,
-            // e cada rearme disparava sozinho sobre o cursor encostado.
-            // Isso empurrava de novo (as vezes so um dos dois, rachando o
-            // estado e acordando o reconciliador) e queimava o cooldown --
-            // e com a barreira desabilitada nesses 10 s, bater na borda de
-            // proposito nao fazia nada. O usuario descreveu os dois
-            // sintomas: "volta sozinho" e "trava e nao vai nem com reza".
-            let cooldown_venceu = reenable
+            // The rule is: an edge only makes sense on the machine that HAS
+            // the devices. This used to re-arm blindly 10 s after each
+            // firing, and the damage was large: mutter does not pull the
+            // cursor back, so it stays at x=2560 after the switch, and each
+            // re-arm fired on its own over the resting cursor. That pushed
+            // again (sometimes only one of the two, splitting the state and
+            // waking the reconciler) and burned the cooldown -- and with the
+            // barrier disabled during those 10 s, hitting the edge on
+            // purpose did nothing. The user described both symptoms: "it
+            // comes back on its own" and "it gets stuck and won't go no
+            // matter what".
+            let cooldown_over = reenable
                 .read()
                 .ok()
                 .and_then(|g| *g)
                 .is_none_or(|t| Instant::now() >= t);
-            let recem_chegou =
+            let just_arrived =
                 crate::hidpp::arrived_ms_ago().is_some_and(|ms| ms < GRACE);
-            let quer_armada =
-                cooldown_venceu && !recem_chegou && crate::hidpp::devices_here();
+            let want_armed =
+                cooldown_over && !just_arrived && crate::hidpp::devices_here();
 
-            let esta_armada = armada.read().map(|g| *g).unwrap_or(false);
-            if quer_armada != esta_armada {
+            let is_armed = armed.read().map(|g| *g).unwrap_or(false);
+            if want_armed != is_armed {
                 let sp = sess.conn.with_proxy(DEST, sess.path.clone(), TIMEOUT);
-                let metodo = if quer_armada { "Enable" } else { "Disable" };
-                match sp.method_call::<(), _, _, _>(IFACE_SESSION, metodo, ()) {
+                let method = if want_armed { "Enable" } else { "Disable" };
+                match sp.method_call::<(), _, _, _>(IFACE_SESSION, method, ()) {
                     Ok(()) => {
-                        if let Ok(mut g) = armada.write() {
-                            *g = quer_armada;
+                        if let Ok(mut g) = armed.write() {
+                            *g = want_armed;
                         }
-                        if quer_armada {
-                            say!("border: armada -- os dispositivos estao aqui");
+                        if want_armed {
+                            say!("border: armed -- the devices are here");
                             if let Ok(mut g) = reenable.write() {
                                 *g = None;
                             }
                         } else {
-                            say!("border: desarmada -- os dispositivos nao estao aqui");
+                            say!("border: disarmed -- the devices are not here");
                         }
                     }
                     Err(e) => {
-                        // O compositor e a verdade: se ele diz que ja
-                        // esta no estado pedido, anotamos e paramos de
-                        // insistir -- era isso que enchia o journal.
-                        let texto = e.to_string();
-                        if texto.contains("not enabled") || texto.contains("already") {
-                            if let Ok(mut g) = armada.write() {
-                                *g = quer_armada;
+                        // The compositor is the truth: if it says it is
+                        // already in the requested state, we note it and stop
+                        // insisting -- that was what filled the journal.
+                        let text = e.to_string();
+                        if text.contains("not enabled") || text.contains("already") {
+                            if let Ok(mut g) = armed.write() {
+                                *g = want_armed;
                             }
                         } else {
-                            gripe!("border: {metodo} falhou: {e}");
+                            gripe!("border: {method} failed: {e}");
                         }
                     }
                 }
             }
 
-            // Prova de vida a cada ~60 s: sem isto, silencio no journal e
-            // ambiguo entre "nada aconteceu" e "a thread morreu".
+            // Proof of life every ~60 s: without it, silence in the journal
+            // is ambiguous between "nothing happened" and "the thread died".
             if ticks % 120 == 0 {
                 say!(
-                    "border: vivo, {} min vigiando {} borda(s), {}",
+                    "border: alive, {} min watching {} edge(s), {}",
                     ticks / 120,
                     edges.len(),
-                    if esta_armada { "armada" } else { "desarmada (dispositivos fora)" }
+                    if is_armed { "armed" } else { "disarmed (devices away)" }
                 );
             }
         }
@@ -466,12 +469,12 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
 mod tests {
     use super::*;
 
-    /// Zona de 2560x1440 na origem, como a desta maquina.
+    /// 2560x1440 zone at the origin, like this machine's.
     const Z: (u32, u32, i32, i32) = (2560, 1440, 0, 0);
 
     #[test]
-    fn barreira_fica_na_fronteira_nao_dentro() {
-        // x+w, nao x+w-1: com 2559 o mutter recusa com
+    fn barrier_sits_on_the_boundary_not_inside() {
+        // x+w, not x+w-1: with 2559 mutter refuses with
         // "AccessDenied: Line overlaps with monitor region".
         assert_eq!(barrier_line("right", Z), Some((2560, 0, 2560, 1440)));
         assert_eq!(barrier_line("left", Z), Some((0, 0, 0, 1440)));
@@ -480,15 +483,15 @@ mod tests {
     }
 
     #[test]
-    fn barreira_respeita_offset_da_zona() {
-        // Monitor secundario comecando em x=2560.
+    fn barrier_honors_zone_offset() {
+        // Secondary monitor starting at x=2560.
         let z = (1920, 1080, 2560, 0);
         assert_eq!(barrier_line("right", z), Some((4480, 0, 4480, 1080)));
         assert_eq!(barrier_line("left", z), Some((2560, 0, 2560, 1080)));
     }
 
     #[test]
-    fn borda_invalida_e_recusada() {
+    fn invalid_edge_is_refused() {
         assert_eq!(barrier_line("diagonal", Z), None);
         assert_eq!(barrier_line("", Z), None);
     }

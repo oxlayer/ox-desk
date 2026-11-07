@@ -1,16 +1,16 @@
-# Deploy nas três máquinas
+# Deploy to the three machines
 
 ```bash
 cd ~/dev/logi && ./scripts/deploy.sh
 ```
 
-Compila para Ubuntu, faz cross-compile e assina para Windows, manda
-fonte e compila no Mac, reinicia tudo, e termina conferindo que as três
-reportam o mesmo build.
+Builds for Ubuntu, cross-compiles and signs for Windows, sends the
+source and builds on the Mac, restarts everything, and finishes by
+checking that the three report the same build.
 
-## Ler a saída
+## Reading the output
 
-O rodapé é o que importa:
+The footer is what matters:
 
 ```
 == conferencia ==
@@ -21,57 +21,56 @@ O rodapé é o que importa:
 tres maquinas no mesmo build: d72074b
 ```
 
-Qualquer `FORA DE SINCRONIA` significa que aquela máquina ficou para
-trás — normalmente porque um passo falhou mais acima e o `ok` dele era
-mentira. Todo passo do Windows captura stderr e confere o tamanho do
-arquivo que aterrissou, justamente porque isso já aconteceu
-([[../rules/verificar-o-que-chegou]]).
+Any `FORA DE SINCRONIA` (out of sync) means that machine fell behind —
+usually because a step failed further up and its `ok` was a lie. Every
+Windows step captures stderr and checks the size of the file that
+landed, precisely because this has happened
+([[../rules/verify-what-arrived]]).
 
-## Não edite a árvore enquanto o deploy roda
+## Don't edit the tree while the deploy runs
 
-O carimbo (`LOGI_BUILD`) é tirado **uma vez, no início**; o `rsync` para
-o Mac acontece **no meio**. Editar um `.rs` entre as duas coisas produz
-dois binários com o **mesmo carimbo e código diferente** — Ubuntu e
-Windows com o arquivo antigo, o Mac com o novo, e a conferência do
-rodapé dizendo "três máquinas no mesmo build".
+The stamp (`LOGI_BUILD`) is taken **once, at the start**; the `rsync` to
+the Mac happens **in the middle**. Editing a `.rs` between the two
+produces two binaries with the **same stamp and different code** —
+Ubuntu and Windows with the old file, the Mac with the new one, and the
+footer check saying "three machines on the same build".
 
-É o carimbo mentindo, que é pior que divergência visível: a divergência
-o painel acha, essa não.
+It's the stamp lying, which is worse than visible divergence: the panel
+finds divergence, this it doesn't.
 
-Aconteceu. Se você editou no meio, a saída é commitar e rodar de novo —
-com a árvore limpa o carimbo volta a valer.
+It happened. If you edited in the middle, the way out is to commit and
+run again — with a clean tree the stamp is valid again.
 
-## O que o deploy NÃO leva
+## What the deploy does NOT ship
 
-- **Config.** Ver [[mudar-config-nas-tres]].
-- **Regras de udev.** Ver [[dar-acesso-a-input]].
+- **Config.** See [[change-config-on-all-three]].
+- **udev rules.** See [[grant-input-access]].
 
-## O deploy não é mais o único caminho
+## The deploy is no longer the only path
 
-Desde a [`015`](../../specs/015-ota.md) as máquinas também se atualizam
-sozinhas pelas Releases, e o `deploy.sh` leva o `logi-ota` e o token
-junto. O deploy continua sendo o caminho **de dentro de casa** — e o
-único que troca binário no Windows, porque a chave do Authenticode não
-sai do Ubuntu. Ver [[ligar-o-ota]].
+Since [`015`](../../specs/015-ota.md) the machines also update
+themselves from the Releases, and `deploy.sh` ships `logi-ota` and the
+token along. The deploy is still the **in-house** path — and the only
+one that swaps the binary on Windows, because the Authenticode key
+doesn't leave the Ubuntu machine. See [[enable-ota]].
 
-## Binários da CI não substituem o deploy
+## CI binaries don't replace the deploy
 
-A CI compila os três sistemas a cada push de código, mas **não assina
-nem instala**. Pacote `unsigned` não vai direto para o Windows nem para
-o Mac. Ver [`specs/013`](../../specs/013-ci-cd.md).
+CI builds the three systems on every code push, but **doesn't sign or
+install**. An `unsigned` package doesn't go straight to Windows or the
+Mac. See [`specs/013`](../../specs/013-ci-cd.md).
 
-## Commits de docs não precisam de deploy
+## Docs commits don't need a deploy
 
-O build id é o HEAD do git, então um commit só de documentação faz as
-máquinas reportarem "atrasadas" sem nada de funcional ter mudado. Não é
-problema; o próximo deploy sincroniza.
+The build id is the git HEAD, so a documentation-only commit makes the
+machines report "behind" without anything functional having changed.
+It's not a problem; the next deploy syncs.
 
-## Reiniciar a casca Electron (bandeja)
+## Restarting the Electron shell (tray)
 
-O menu da bandeja vive no **processo principal** do Electron. O
-`vigiaBuild()` recarrega a *página* quando o build muda, mas não o
-processo principal — então mudança em `gui/main.js` só entra
-reiniciando o app.
+The tray menu lives in Electron's **main process**. `vigiaBuild()`
+reloads the *page* when the build changes, but not the main process — so
+a change in `gui/main.js` only takes effect by restarting the app.
 
 ```bash
 pkill -f 'logi/gui/node_modules/electron/dist/electron'
@@ -79,60 +78,62 @@ cd ~/dev/logi/gui && (setsid nohup env -u ELECTRON_RUN_AS_NODE \
   node ./node_modules/.bin/electron . > ~/.local/state/logi-gui.log 2>&1 &)
 ```
 
-**O padrão era `electron \.$` e isso falhava calado.** Com qualquer
-argumento (`electron . --setup`) a linha de comando não termina em `.`
-— e o próprio binário reordena os argumentos para `electron --setup .`.
-O `pkill` não casava, a instância velha continuava viva, a nova batia
-no `requestSingleInstanceLock()` e saía, e o log vinha vazio porque o
-`>` acabara de truncá-lo. Sintoma: "não subiu", com o app rodando o
-tempo todo. O caminho do binário casa sempre.
+**The pattern used to be `electron \.$` and it failed silently.** With
+any argument (`electron . --setup`) the command line doesn't end in `.`
+— and the binary itself reorders the arguments to `electron --setup .`.
+`pkill` didn't match, the old instance stayed alive, the new one hit
+`requestSingleInstanceLock()` and exited, and the log came back empty
+because `>` had just truncated it. Symptom: "it didn't start", with the
+app running the whole time. The binary path always matches.
 
-**`env -u ELECTRON_RUN_AS_NODE` não é opcional.** Com essa variável
-no ambiente, o electron roda como node puro, `app` vem `undefined` e
-morre em `app.requestSingleInstanceLock()` — mensagem que não diz nada
-sobre a variável. Já derrubei a GUI do usuário assim.
+**`env -u ELECTRON_RUN_AS_NODE` is not optional.** With that variable in
+the environment, electron runs as plain node, `app` comes back
+`undefined` and it dies in `app.requestSingleInstanceLock()` — a message
+that says nothing about the variable. I've already taken down the user's
+GUI this way.
 
-Conferir que voltou, sempre — matar e não relançar deixa a pessoa sem
-bandeja:
+Always check that it came back — killing and not relaunching leaves the
+person without a tray:
 
 ```bash
-# `pgrep -af electron` casa com o PRÓPRIO comando que você digitou
-# (a string "electron" está nele) e sempre "acha" algo. Filtrar por
-# `comm` olha o executável, não a linha de comando.
+# `pgrep -af electron` matches the very command you typed
+# (the string "electron" is in it) and always "finds" something. Filtering
+# by `comm` looks at the executable, not the command line.
 ps -eo pid,comm --no-headers | awk '$2 ~ /electron/' | head -3
 tail -3 ~/.local/state/logi-gui.log
 ```
 
-O aviso de Vulkan/ozone no log é cosmético.
+The Vulkan/ozone warning in the log is cosmetic.
 
-### No Mac e no Windows
+### On the Mac and on Windows
 
-O deploy **leva** o `main.js` para as duas (`Resources/app/main.js` no
-Mac, `%LOCALAPPDATA%\logid\gui\main.js` no Windows), mas não mata a
-janela de ninguém: entra no próximo lançamento do app.
+The deploy **ships** `main.js` to both (`Resources/app/main.js` on the
+Mac, `%LOCALAPPDATA%\logid\gui\main.js` on Windows), but doesn't kill
+anyone's window: it takes effect on the app's next launch.
 
-Para forçar no Mac:
+To force it on the Mac:
 
 ```bash
 ssh mac 'pkill -f "Logi.app/Contents/MacOS/Logi"; sleep 1; open -a ~/Applications/Logi.app'
-# conferir QUAL casca carregou -- o `--app-path` do processo renderer
-# nao mente, e é a unica forma de saber se foi o `app/` ou um `app.asar`
-# esquecido:
+# check WHICH shell loaded -- the renderer process's `--app-path` doesn't
+# lie, and it's the only way to know whether it was `app/` or a forgotten
+# `app.asar`:
 ssh mac 'ps -eo command | grep -o "app-path=[^ ]*Logi[^ ]*" | sort -u'
 ```
 
-Até hoje a casca do Mac morava num `app.asar` que **nenhum passo
-tocava** — ela era de semanas atrás e ninguém sabia. Virou
-`Resources/app/` solto (layout clássico do Electron, ainda suportado),
-com o `app.asar` renomeado para `.off`, o `ElectronAsarIntegrity` fora
-do `Info.plist` e o bundle re-assinado ad-hoc. O passo do deploy é
-idempotente e refaz a conversão se alguém reinstalar o app.
+Until now the Mac shell lived in an `app.asar` that **no step touched**
+— it was weeks old and nobody knew. It became a loose `Resources/app/`
+(the classic Electron layout, still supported), with `app.asar` renamed
+to `.off`, `ElectronAsarIntegrity` removed from `Info.plist` and the
+bundle re-signed ad-hoc. The deploy step is idempotent and redoes the
+conversion if someone reinstalls the app.
 
-## Abrir direto na configuração
+## Open straight into configuration
 
 ```bash
 node ./node_modules/.bin/electron . --setup
 ```
 
-Abre em tela cheia na página de setup. É o mesmo que a bandeja faz em
-"Configurar esta máquina" — ver [[configurar-maquina]].
+Opens fullscreen on the setup page. It's the same as what the tray does
+with "Configurar esta máquina" (Configure this machine) — see
+[[configure-a-machine]].

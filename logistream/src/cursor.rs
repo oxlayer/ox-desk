@@ -1,83 +1,82 @@
-//! Composicao do cursor no quadro capturado.
+//! Compositing the cursor onto the captured frame.
 //!
 //! Spec: ../specs/010-remote-desktop.md
 //!
-//! Fica num modulo proprio, sem `cfg(windows)`, por um motivo
-//! pratico: a logica e aritmetica de pixel e nao depende de plataforma
-//! nenhuma, e enquanto ela morava em `capture_win.rs` os testes dela
-//! **nunca rodavam** -- aquele arquivo inteiro e compilado so no
-//! Windows, e a suite roda no Linux. Teste que nao executa e
-//! documentacao com aparencia de garantia.
+//! It lives in its own module, without `cfg(windows)`, for a practical
+//! reason: the logic is pixel arithmetic and depends on no platform at all,
+//! and while it lived in `capture_win.rs` its tests **never ran** -- that
+//! whole file is compiled only on Windows, and the suite runs on Linux. A test
+//! that does not run is documentation dressed up as a guarantee.
 //!
-//! Mesma decisao que levou `scancode_de_evdev` para `input.rs`.
+//! Same decision that moved `scancode_from_evdev` into `input.rs`.
 
-//// O DXGI entrega a tela **sem** o ponteiro: a posicao vem no
-// `DXGI_OUTDUPL_FRAME_INFO` e o desenho em `GetFramePointerShape`,
-// porque e assim que o hardware compoe.
+// DXGI delivers the screen **without** the pointer: the position comes in
+// `DXGI_OUTDUPL_FRAME_INFO` and the image in `GetFramePointerShape`,
+// because that is how the hardware composes it.
 //
-// Isso nao incomodava com o visualizador: ele manda posicao ABSOLUTA,
-// entao o cursor da propria maquina de quem assiste fica exatamente
-// sobre o ponto remoto -- com zero latencia, inclusive. Com o KVM o
-// truque desaba: o ponteiro local esta agarrado e parado, e o remoto
-// nunca foi desenhado. Nao sobra cursor nenhum, e a pessoa ve os
-// efeitos de hover sem saber onde esta.
+// This did not matter with the viewer: it sends ABSOLUTE positions, so the
+// viewer machine's own cursor sits exactly over the remote point -- with
+// zero latency, even. With the KVM the trick falls apart: the local pointer
+// is grabbed and still, and the remote one was never drawn. No cursor is
+// left at all, and the person sees hover effects without knowing where
+// they are.
 
-/// Formato do desenho do ponteiro, como o DXGI classifica.
+/// Format of the pointer image, as DXGI classifies it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TipoForma {
-    /// 1 bpp, mascara AND seguida de mascara XOR; altura e o dobro.
+pub enum ShapeKind {
+    /// 1 bpp, AND mask followed by XOR mask; height is doubled.
     Mono,
-    /// 32 bpp BGRA com alfa de verdade.
-    Cor,
-    /// 32 bpp onde o alfa e mascara: 0 = pinta, 0xFF = inverte o fundo.
-    CorMascarada,
+    /// 32 bpp BGRA with real alpha.
+    Color,
+    /// 32 bpp where alpha is a mask: 0 = paint, 0xFF = invert the background.
+    MaskedColor,
 }
 
-/// Um desenho de ponteiro, como veio do DXGI.
+/// A pointer image, as it came from DXGI.
 #[derive(Debug, Clone)]
-pub struct Forma {
-    pub tipo: TipoForma,
+pub struct Shape {
+    pub kind: ShapeKind,
     pub w: u32,
     pub h: u32,
     pub pitch: usize,
     pub bytes: Vec<u8>,
-    /// Ponto do desenho que fica sob a coordenada do ponteiro.
+    /// Point of the image that sits under the pointer coordinate.
     pub hot: (i32, i32),
 }
 
-/// Retangulo coberto por uma forma desenhada em (x, y), recortado na tela.
+/// Rectangle covered by a shape drawn at (x, y), clipped to the screen.
 ///
-/// Devolve `None` quando nao sobra nada visivel -- cursor na borda sai
-/// parcialmente, e cursor fora da tela nao desenha. Separado do desenho
-/// porque e exatamente o mesmo calculo que o "salvar o que estava
-/// embaixo" precisa, e as duas contas divergirem deixaria rastro de
-/// cursor na tela.
-pub fn recorte(
-    tela_w: u32,
-    tela_h: u32,
-    f_w: u32,
-    f_h: u32,
+/// Returns `None` when nothing visible is left -- a cursor on the edge is
+/// partially cut, and a cursor off screen draws nothing. Kept apart from the
+/// drawing because "save what was underneath" needs exactly the same
+/// computation, and the two diverging would leave cursor trails on screen.
+pub fn clip(
+    screen_w: u32,
+    screen_h: u32,
+    s_w: u32,
+    s_h: u32,
     x: i32,
     y: i32,
 ) -> Option<(u32, u32, u32, u32)> {
     let x0 = x.max(0);
     let y0 = y.max(0);
-    let x1 = (x + f_w as i32).min(tela_w as i32);
-    let y1 = (y + f_h as i32).min(tela_h as i32);
+    let x1 = (x + s_w as i32).min(screen_w as i32);
+    let y1 = (y + s_h as i32).min(screen_h as i32);
     if x1 <= x0 || y1 <= y0 {
         return None;
     }
     Some((x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32))
 }
 
-/// Desenha a forma em (x, y) sobre pixels BGRA.
+/// Draws the shape at (x, y) over BGRA pixels.
 ///
-/// `x`/`y` ja descontam o hotspot. Funcao pura sobre o buffer: e aqui
-/// que mora a decisao de cada formato, e e isto que os testes olham.
-pub fn desenhar(px: &mut [u8], stride: usize, tela_w: u32, tela_h: u32, f: &Forma, x: i32, y: i32) {
-    // Mono guarda AND e XOR empilhadas, entao a altura util e metade.
-    let alt = if f.tipo == TipoForma::Mono { f.h / 2 } else { f.h };
-    let Some((rx, ry, rw, rh)) = recorte(tela_w, tela_h, f.w, alt, x, y) else {
+/// `x`/`y` already account for the hotspot. A pure function over the
+/// buffer: this is where the per-format decision lives, and this is what
+/// the tests look at.
+pub fn draw(px: &mut [u8], stride: usize, screen_w: u32, screen_h: u32, f: &Shape, x: i32, y: i32) {
+    // Mono stores AND and XOR stacked, so the useful height is half.
+    let height = if f.kind == ShapeKind::Mono { f.h / 2 } else { f.h };
+    let Some((rx, ry, rw, rh)) = clip(screen_w, screen_h, f.w, height, x, y) else {
         return;
     };
 
@@ -85,35 +84,35 @@ pub fn desenhar(px: &mut [u8], stride: usize, tela_w: u32, tela_h: u32, f: &Form
         let fy = (ry + ly) as i32 - y;
         for lx in 0..rw {
             let fx = (rx + lx) as i32 - x;
-            let destino = (ry + ly) as usize * stride + (rx + lx) as usize * 4;
-            if destino + 3 >= px.len() {
+            let dest = (ry + ly) as usize * stride + (rx + lx) as usize * 4;
+            if dest + 3 >= px.len() {
                 continue;
             }
 
-            match f.tipo {
-                TipoForma::Mono => {
-                    // Um bit por pixel, MSB primeiro. `and` 0 pinta a
-                    // cor; `and` 1 com `xor` 1 inverte o que estava
-                    // embaixo -- e assim que o cursor de texto fica
-                    // visivel sobre fundo claro e escuro.
+            match f.kind {
+                ShapeKind::Mono => {
+                    // One bit per pixel, MSB first. `and` 0 paints the
+                    // color; `and` 1 with `xor` 1 inverts what was
+                    // underneath -- that is how the text cursor stays
+                    // visible over both light and dark backgrounds.
                     let byte = fy as usize * f.pitch + (fx as usize) / 8;
                     let bit = 7 - (fx % 8);
-                    let meio = (alt as usize) * f.pitch;
+                    let half = (height as usize) * f.pitch;
                     let Some(&a) = f.bytes.get(byte) else { continue };
-                    let Some(&o) = f.bytes.get(meio + byte) else { continue };
+                    let Some(&o) = f.bytes.get(half + byte) else { continue };
                     let a = (a >> bit) & 1;
                     let o = (o >> bit) & 1;
                     for c in 0..3 {
-                        let fundo = px[destino + c];
-                        px[destino + c] = match (a, o) {
+                        let bg = px[dest + c];
+                        px[dest + c] = match (a, o) {
                             (0, 0) => 0x00,
                             (0, 1) => 0xFF,
-                            (1, 0) => fundo,
-                            _ => !fundo,
+                            (1, 0) => bg,
+                            _ => !bg,
                         };
                     }
                 }
-                TipoForma::Cor => {
+                ShapeKind::Color => {
                     let o = fy as usize * f.pitch + fx as usize * 4;
                     if o + 3 >= f.bytes.len() {
                         continue;
@@ -122,28 +121,28 @@ pub fn desenhar(px: &mut [u8], stride: usize, tela_w: u32, tela_h: u32, f: &Form
                     if a == 0 {
                         continue;
                     }
-                    // Alfa normal. Sem gama de proposito: o cursor tem
-                    // alfa quase binario nas bordas e a diferenca nao
-                    // paga o custo por pixel.
+                    // Plain alpha. No gamma on purpose: the cursor has
+                    // near-binary alpha at its edges and the difference
+                    // does not pay for the per-pixel cost.
                     for c in 0..3 {
-                        let frente = f.bytes[o + c] as u32;
-                        let fundo = px[destino + c] as u32;
-                        px[destino + c] = ((frente * a + fundo * (255 - a)) / 255) as u8;
+                        let fg = f.bytes[o + c] as u32;
+                        let bg = px[dest + c] as u32;
+                        px[dest + c] = ((fg * a + bg * (255 - a)) / 255) as u8;
                     }
                 }
-                TipoForma::CorMascarada => {
+                ShapeKind::MaskedColor => {
                     let o = fy as usize * f.pitch + fx as usize * 4;
                     if o + 3 >= f.bytes.len() {
                         continue;
                     }
-                    // Aqui o canal "alfa" nao e transparencia: 0 manda
-                    // copiar, 0xFF manda inverter o fundo.
-                    let mascara = f.bytes[o + 3];
+                    // Here the "alpha" channel is not transparency: 0 means
+                    // copy, 0xFF means invert the background.
+                    let mask = f.bytes[o + 3];
                     for c in 0..3 {
-                        px[destino + c] = if mascara == 0 {
+                        px[dest + c] = if mask == 0 {
                             f.bytes[o + c]
                         } else {
-                            px[destino + c] ^ f.bytes[o + c]
+                            px[dest + c] ^ f.bytes[o + c]
                         };
                     }
                 }
@@ -153,130 +152,130 @@ pub fn desenhar(px: &mut [u8], stride: usize, tela_w: u32, tela_h: u32, f: &Form
 }
 
 #[cfg(test)]
-mod testes_cursor {
+mod cursor_tests {
     use super::*;
 
-    fn tela(w: usize, h: usize) -> Vec<u8> {
+    fn screen(w: usize, h: usize) -> Vec<u8> {
         vec![0u8; w * h * 4]
     }
 
     #[test]
-    fn fora_da_tela_nao_desenha() {
-        assert_eq!(recorte(100, 100, 32, 32, -40, 10), None);
-        assert_eq!(recorte(100, 100, 32, 32, 10, 200), None);
+    fn off_screen_draws_nothing() {
+        assert_eq!(clip(100, 100, 32, 32, -40, 10), None);
+        assert_eq!(clip(100, 100, 32, 32, 10, 200), None);
     }
 
     #[test]
-    fn na_borda_desenha_so_o_pedaco_visivel() {
-        // Cursor com metade para fora da direita: sobram 10 colunas.
-        assert_eq!(recorte(100, 100, 32, 32, 90, 50), Some((90, 50, 10, 32)));
-        // E para a esquerda, a origem anda junto.
-        assert_eq!(recorte(100, 100, 32, 32, -10, 50), Some((0, 50, 22, 32)));
+    fn on_the_edge_draws_only_the_visible_part() {
+        // Cursor half past the right edge: 10 columns remain.
+        assert_eq!(clip(100, 100, 32, 32, 90, 50), Some((90, 50, 10, 32)));
+        // And to the left, the origin moves with it.
+        assert_eq!(clip(100, 100, 32, 32, -10, 50), Some((0, 50, 22, 32)));
     }
 
     #[test]
-    fn cor_com_alfa_cheio_substitui_o_fundo() {
-        let mut px = tela(4, 4);
-        let f = Forma {
-            tipo: TipoForma::Cor,
+    fn color_with_full_alpha_replaces_the_background() {
+        let mut px = screen(4, 4);
+        let f = Shape {
+            kind: ShapeKind::Color,
             w: 1,
             h: 1,
             pitch: 4,
             bytes: vec![10, 20, 30, 255],
             hot: (0, 0),
         };
-        desenhar(&mut px, 16, 4, 4, &f, 1, 1);
+        draw(&mut px, 16, 4, 4, &f, 1, 1);
         let o = 1 * 16 + 1 * 4;
         assert_eq!(&px[o..o + 3], &[10, 20, 30]);
     }
 
     #[test]
-    fn cor_com_alfa_zero_nao_toca_no_fundo() {
-        let mut px = tela(4, 4);
+    fn color_with_zero_alpha_leaves_the_background_alone() {
+        let mut px = screen(4, 4);
         px[0] = 99;
-        let f = Forma {
-            tipo: TipoForma::Cor,
+        let f = Shape {
+            kind: ShapeKind::Color,
             w: 1,
             h: 1,
             pitch: 4,
             bytes: vec![10, 20, 30, 0],
             hot: (0, 0),
         };
-        desenhar(&mut px, 16, 4, 4, &f, 0, 0);
-        assert_eq!(px[0], 99, "alfa zero tem de deixar o fundo intacto");
+        draw(&mut px, 16, 4, 4, &f, 0, 0);
+        assert_eq!(px[0], 99, "zero alpha must leave the background intact");
     }
 
     #[test]
-    fn mono_pinta_preto_branco_e_inverte() {
-        // Uma linha de 8 pixels. AND=0b0011_1111 XOR=0b0101_1111:
-        //   pixel 0: and=0 xor=0 -> preto
-        //   pixel 1: and=0 xor=1 -> branco
-        //   pixel 2: and=1 xor=0 -> mantem o fundo
-        //   pixel 3: and=1 xor=1 -> inverte o fundo
-        let mut px = tela(8, 2);
+    fn mono_paints_black_white_and_inverts() {
+        // One row of 8 pixels. AND=0b0011_1111 XOR=0b0101_1111:
+        //   pixel 0: and=0 xor=0 -> black
+        //   pixel 1: and=0 xor=1 -> white
+        //   pixel 2: and=1 xor=0 -> keeps the background
+        //   pixel 3: and=1 xor=1 -> inverts the background
+        let mut px = screen(8, 2);
         for i in 0..8 {
             px[i * 4] = 100;
             px[i * 4 + 1] = 100;
             px[i * 4 + 2] = 100;
         }
-        let f = Forma {
-            tipo: TipoForma::Mono,
+        let f = Shape {
+            kind: ShapeKind::Mono,
             w: 8,
-            h: 2, // AND + XOR empilhadas: altura util = 1
+            h: 2, // AND + XOR stacked: useful height = 1
             pitch: 1,
             bytes: vec![0b0011_1111, 0b0101_1111],
             hot: (0, 0),
         };
-        desenhar(&mut px, 32, 8, 2, &f, 0, 0);
-        assert_eq!(px[0], 0x00, "and=0 xor=0 -> preto");
-        assert_eq!(px[4], 0xFF, "and=0 xor=1 -> branco");
-        assert_eq!(px[8], 100, "and=1 xor=0 -> fundo intacto");
-        assert_eq!(px[12], 155, "and=1 xor=1 -> fundo invertido");
+        draw(&mut px, 32, 8, 2, &f, 0, 0);
+        assert_eq!(px[0], 0x00, "and=0 xor=0 -> black");
+        assert_eq!(px[4], 0xFF, "and=0 xor=1 -> white");
+        assert_eq!(px[8], 100, "and=1 xor=0 -> background intact");
+        assert_eq!(px[12], 155, "and=1 xor=1 -> background inverted");
     }
 
     #[test]
-    fn mascarada_copia_ou_inverte() {
-        let mut px = tela(2, 1);
+    fn masked_copies_or_inverts() {
+        let mut px = screen(2, 1);
         px[0] = 100;
         px[4] = 100;
-        let f = Forma {
-            tipo: TipoForma::CorMascarada,
+        let f = Shape {
+            kind: ShapeKind::MaskedColor,
             w: 2,
             h: 1,
             pitch: 8,
             bytes: vec![7, 7, 7, 0x00, 0xFF, 0, 0, 0xFF],
             hot: (0, 0),
         };
-        desenhar(&mut px, 8, 2, 1, &f, 0, 0);
-        assert_eq!(px[0], 7, "mascara 0 copia a cor");
-        assert_eq!(px[4], 100 ^ 0xFF, "mascara 0xFF inverte o fundo");
+        draw(&mut px, 8, 2, 1, &f, 0, 0);
+        assert_eq!(px[0], 7, "mask 0 copies the color");
+        assert_eq!(px[4], 100 ^ 0xFF, "mask 0xFF inverts the background");
     }
 }
 
-// --- cursor proprio --------------------------------------------------
+// --- our own cursor ---------------------------------------------------
 //
-// O Windows **esconde o cursor quando a maquina nao tem mouse**, e no
-// KVM ela nunca tem: o dongle fica do outro lado. Medido com
-// `GetCursorInfo`: `flags=0` (escondido) e `hCursor=0` (nao existe
-// cursor), com a posicao correta -- por isso o hover respondia e nada
-// aparecia.
+// Windows **hides the cursor when the machine has no mouse**, and under the
+// KVM it never has one: the dongle is on the other side. Measured with
+// `GetCursorInfo`: `flags=0` (hidden) and `hCursor=0` (no cursor exists),
+// with the correct position -- which is why hover responded and nothing
+// showed up.
 //
-// Nessa situacao nao adianta pedir o desenho ao DXGI: ele reporta
-// `Visible=false` e nunca manda forma nenhuma, porque de fato nao ha
-// nada sendo desenhado. Quem precisa desenhar somos nos.
+// In that situation asking DXGI for the image does not help: it reports
+// `Visible=false` and never sends any shape, because indeed nothing is
+// being drawn. We are the ones who have to draw it.
 
-/// Seta padrao, 12x19, no formato de mascaras do cursor monocromatico.
+/// Default arrow, 12x19, in the mask format of the monochrome cursor.
 ///
-/// Desenhada a mao em vez de pedida ao sistema (`LoadCursorW` +
-/// `GetIconInfo` + `GetDIBits`) porque aqui ela e um FALLBACK: so entra
-/// quando o sistema nao tem cursor para dar. Pedir a quem nao tem seria
-/// circular, e o caminho de Win32 para extrair o bitmap tem mais
-/// chances de falhar do que estas dezenove linhas.
+/// Drawn by hand instead of asked of the system (`LoadCursorW` +
+/// `GetIconInfo` + `GetDIBits`) because here it is a FALLBACK: it only kicks
+/// in when the system has no cursor to give. Asking someone who has none
+/// would be circular, and the Win32 path to extract the bitmap has more
+/// chances of failing than these nineteen lines.
 ///
-/// `K` preto, `W` branco, `.` transparente. O contorno branco existe
-/// para a seta nao sumir sobre fundo escuro -- e o mesmo motivo pelo
-/// qual o cursor do sistema tem um.
-const SETA: [&str; 19] = [
+/// `K` black, `W` white, `.` transparent. The white outline exists so the
+/// arrow does not vanish over a dark background -- the same reason the
+/// system cursor has one.
+const ARROW: [&str; 19] = [
     "W...........",
     "WW..........",
     "WKW.........",
@@ -298,71 +297,71 @@ const SETA: [&str; 19] = [
     ".......WWW..",
 ];
 
-/// Monta a seta embutida como uma `Forma` monocromatica.
+/// Builds the built-in arrow as a monochrome `Shape`.
 ///
-/// Reaproveita o caminho `Mono` do `desenhar`, que ja trata AND/XOR --
-/// um segundo caminho de desenho so para este caso seria mais codigo
-/// para a mesma figura.
-pub fn seta_embutida() -> Forma {
-    let w = SETA[0].len() as u32;
-    let h = SETA.len() as u32;
+/// Reuses the `Mono` path of `draw`, which already handles AND/XOR -- a
+/// second drawing path just for this case would be more code for the same
+/// picture.
+pub fn builtin_arrow() -> Shape {
+    let w = ARROW[0].len() as u32;
+    let h = ARROW.len() as u32;
     let pitch = w.div_ceil(8) as usize;
-    // AND e XOR empilhadas, nesta ordem, como o DXGI entrega.
+    // AND and XOR stacked, in this order, as DXGI delivers them.
     let mut bytes = vec![0u8; pitch * h as usize * 2];
-    let meio = pitch * h as usize;
+    let half = pitch * h as usize;
 
-    for (y, linha) in SETA.iter().enumerate() {
-        for (x, c) in linha.bytes().enumerate() {
+    for (y, row) in ARROW.iter().enumerate() {
+        for (x, c) in row.bytes().enumerate() {
             let byte = y * pitch + x / 8;
             let bit = 7 - (x % 8);
             match c {
-                // transparente: and=1, xor=0 -> mantem o fundo
+                // transparent: and=1, xor=0 -> keeps the background
                 b'.' => bytes[byte] |= 1 << bit,
-                // preto: and=0, xor=0
+                // black: and=0, xor=0
                 b'K' => {}
-                // branco: and=0, xor=1
-                _ => bytes[meio + byte] |= 1 << bit,
+                // white: and=0, xor=1
+                _ => bytes[half + byte] |= 1 << bit,
             }
         }
     }
 
-    Forma { tipo: TipoForma::Mono, w, h: h * 2, pitch, bytes, hot: (0, 0) }
+    Shape { kind: ShapeKind::Mono, w, h: h * 2, pitch, bytes, hot: (0, 0) }
 }
 
 #[cfg(test)]
-mod testes_seta {
+mod arrow_tests {
     use super::*;
 
     #[test]
-    fn a_ponta_da_seta_e_branca_e_o_miolo_preto() {
-        let f = seta_embutida();
-        // Fundo cinza para distinguir "pintou" de "deixou passar".
+    fn the_arrow_tip_is_white_and_the_body_black() {
+        let f = builtin_arrow();
+        // Gray background to tell "painted" from "let through".
         let mut px = vec![100u8; 32 * 32 * 4];
-        desenhar(&mut px, 32 * 4, 32, 32, &f, 0, 0);
+        draw(&mut px, 32 * 4, 32, 32, &f, 0, 0);
 
-        let em = |x: usize, y: usize| px[y * 32 * 4 + x * 4];
-        assert_eq!(em(0, 0), 0xFF, "a ponta e o contorno branco");
-        assert_eq!(em(1, 2), 0x00, "o miolo e preto");
-        assert_eq!(em(11, 0), 100, "fora da seta o fundo fica intacto");
+        let at = |x: usize, y: usize| px[y * 32 * 4 + x * 4];
+        assert_eq!(at(0, 0), 0xFF, "the tip is the white outline");
+        assert_eq!(at(1, 2), 0x00, "the body is black");
+        assert_eq!(at(11, 0), 100, "outside the arrow the background stays intact");
     }
 
     #[test]
-    fn a_seta_cabe_no_proprio_buffer() {
-        let f = seta_embutida();
-        let alt = f.h / 2;
-        assert_eq!(f.bytes.len(), f.pitch * alt as usize * 2);
-        assert_eq!(alt, 19);
+    fn the_arrow_fits_its_own_buffer() {
+        let f = builtin_arrow();
+        let height = f.h / 2;
+        assert_eq!(f.bytes.len(), f.pitch * height as usize * 2);
+        assert_eq!(height, 19);
         assert_eq!(f.w, 12);
     }
 
-    /// Desenhar na borda nao pode estourar o buffer.
+    /// Drawing on the edge must not overflow the buffer.
     #[test]
-    fn na_borda_nao_escreve_fora() {
-        let f = seta_embutida();
+    fn on_the_edge_does_not_write_outside() {
+        let f = builtin_arrow();
         let mut px = vec![0u8; 16 * 16 * 4];
-        // Quatro cantos, todos com a seta parcialmente para fora.
+        // Four corners, all with the arrow partially outside.
         for (x, y) in [(-5, -5), (14, 14), (-5, 14), (14, -5)] {
-            desenhar(&mut px, 16 * 4, 16, 16, &f, x, y);
+            draw(&mut px, 16 * 4, 16, 16, &f, x, y);
         }
     }
 }

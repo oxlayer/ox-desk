@@ -1,126 +1,125 @@
-# 010 — Tela remota própria (`logistream`)
+# 010 — Our own remote screen (`logistream`)
 
-Pedido do usuário, depois de ver a dependência do Windows App:
-*"quero implementação própria baseada talvez no rustdesk, feita em rust
-igual parsec"* — com **H.264 por GPU e UDP+FEC desde o começo**, e áudio,
-pareamento e NAT depois.
+User request, after seeing the dependency on the Windows App:
+*"I want our own implementation, maybe based on rustdesk, written in rust
+like parsec"* — with **GPU H.264 and UDP+FEC from the start**, and audio,
+pairing and NAT later.
 
-## O tamanho disto, dito antes de começar
+## The size of this, stated before starting
 
-É a base de código de um RustDesk. Captura por SO, codificação por
-hardware, transporte com perda controlada, injeção de input por SO,
-decodificação e render no cliente, áudio, cripto e pareamento. **Semanas,
-não uma noite.** Qualquer promessa diferente seria mentira, e o projeto
-já pagou caro por silêncio otimista.
+It is the codebase of a RustDesk. Per-OS capture, hardware encoding,
+transport with controlled loss, per-OS input injection, decoding and
+rendering on the client, audio, crypto and pairing. **Weeks, not one
+night.** Any other promise would be a lie, and the project has already
+paid dearly for optimistic silence.
 
-Enquanto não presta, o Windows App continua no Mac. Ele sai quando o
-nosso o substituir de fato, não quando o nosso existir.
+Until ours is any good, the Windows App stays on the Mac. It goes away
+when ours actually replaces it, not when ours exists.
 
-## O terreno, medido (04/11)
+## The terrain, measured (2026-11-04)
 
-Isto não é escolha de gosto — foi levantado nas três máquinas:
+This is not a matter of taste — it was surveyed on all three machines:
 
 | | Ubuntu | Windows | macOS |
 |---|---|---|---|
 | GPU | RTX 3060 | RTX 3050 | Apple Silicon |
-| encoder | NVENC (`libnvidia-encode.so.1`, driver 580) | NVENC | — (é cliente) |
+| encoder | NVENC (`libnvidia-encode.so.1`, driver 580) | NVENC | — (it is the client) |
 | decoder | NVDEC | NVDEC | VideoToolbox |
-| captura | portal `ScreenCast` + PipeWire | DXGI Desktop Duplication | — |
-| injeção | libei/EIS (o `border.rs` já conecta nele) | `SendInput` | — |
-| libav dev | via linuxbrew, 62.28 (sem sudo) | — | via brew |
+| capture | `ScreenCast` portal + PipeWire | DXGI Desktop Duplication | — |
+| injection | libei/EIS (`border.rs` already connects to it) | `SendInput` | — |
+| libav dev | via linuxbrew, 62.28 (no sudo) | — | via brew |
 
-Os **dois hosts são NVIDIA**, o que simplifica: um caminho de
-codificação, não três. O Mac é cliente, e decodifica com VideoToolbox.
+**Both hosts are NVIDIA**, which simplifies things: one encoding path,
+not three. The Mac is the client, and decodes with VideoToolbox.
 
-> O ffmpeg do linuxbrew veio **sem nvenc** (`ffmpeg -encoders` lista só
-> `libx264` e `h264_v4l2m2m`). Por isso a codificação fala com o NVENC
-> **direto**, via `libnvidia-encode`, em vez de passar pelo libavcodec —
-> que de todo jeito seria uma camada a mais no caminho quente.
+> The linuxbrew ffmpeg came **without nvenc** (`ffmpeg -encoders` lists only
+> `libx264` and `h264_v4l2m2m`). That is why encoding talks to NVENC
+> **directly**, via `libnvidia-encode`, instead of going through libavcodec —
+> which would be one more layer in the hot path anyway.
 
-## Arquitetura
+## Architecture
 
-### Transporte: QUIC, não UDP cru
+### Transport: QUIC, not raw UDP
 
-UDP+FEC foi o pedido, e é o que o vídeo precisa — mas escrever UDP cru
-significa escrever também handshake, cripto, controle de congestionamento
-e remontagem. QUIC entrega os quatro e **é UDP**:
+UDP+FEC was the request, and it is what video needs — but writing raw UDP
+also means writing handshake, crypto, congestion control and reassembly.
+QUIC delivers all four and **is UDP**:
 
-| necessidade | como |
+| need | how |
 |---|---|
-| vídeo com perda tolerada | **datagramas** QUIC (não retransmitidos) |
-| FEC | Reed-Solomon por cima dos datagramas |
-| input e controle | **streams** QUIC (confiáveis, ordenados) |
-| cripto e identidade | TLS 1.3, embutido |
-| congestionamento | embutido (BBR/Cubic) |
-| trocar de rede sem cair | migração de conexão, embutido |
+| video with tolerated loss | QUIC **datagrams** (not retransmitted) |
+| FEC | Reed-Solomon on top of the datagrams |
+| input and control | QUIC **streams** (reliable, ordered) |
+| crypto and identity | TLS 1.3, built in |
+| congestion | built in (BBR/Cubic) |
+| switching networks without dropping | connection migration, built in |
 
-Escrever isso à mão seria reimplementar QUIC pior. `quinn` é a crate.
+Writing that by hand would be reimplementing QUIC, worse. `quinn` is the crate.
 
-A identidade do par vira o **certificado TLS**: pareamento é confiar numa
-chave pública, que é o modelo que o usuário já tinha descrito — *"aparece
-no outro computador para aceitar e salva na keychain"*.
+The peer's identity becomes the **TLS certificate**: pairing is trusting a
+public key, which is the model the user had already described — *"it shows
+up on the other computer to accept and is saved in the keychain"*.
 
-### Camadas
+### Layers
 
 ```
-captura ──> encoder ──> empacotador ──> quinn ──> rede
+capture ──> encoder ──> packetizer ──> quinn ──> network
 (portal/   (NVENC)     (FEC + RTP-ish)
  DXGI)
 
-rede ──> quinn ──> desempacotador ──> decoder ──> render
-                   (reconstrói FEC)   (VideoToolbox)  (wgpu/Metal)
+network ──> quinn ──> depacketizer ──> decoder ──> render
+                   (rebuilds FEC)   (VideoToolbox)  (wgpu/Metal)
                                    ^
                               input <── streams
 ```
 
-Cada camada atrás de um trait, por um motivo concreto: o primeiro encoder
-que funcionar não será o último, e trocar NVENC por VideoToolbox ou x264
-não pode significar reescrever o pipeline.
+Each layer sits behind a trait, for a concrete reason: the first encoder
+that works will not be the last, and swapping NVENC for VideoToolbox or x264
+cannot mean rewriting the pipeline.
 
-### O que NÃO vamos escrever
+### What we will NOT write
 
-- **Codec.** H.264 vem do hardware.
-- **Crypto.** TLS do QUIC.
-- **Travessia de NAT na v1.** LAN primeiro; depois `quinn` + ICE.
+- **Codec.** H.264 comes from the hardware.
+- **Crypto.** QUIC's TLS.
+- **NAT traversal in v1.** LAN first; then `quinn` + ICE.
 
-## Etapas, com o que cada uma prova
+## Stages, with what each one proves
 
-| v | entrega | a incógnita que ela mata |
+| v | delivers | the unknown it kills |
 |---|---|---|
-| **v1** | ✅ **FEITA** — tela capturada, NVENC, arquivo | captura no Wayland e NVENC funcionam mesmo |
-| **v2** | ✅ **FEITA** — chega, decodifica e desenha no Mac | transporte e decodificação |
-| **v3** | ✅ **FEITA** — input do Mac chega e é aplicado | o laço fecha: dá para usar |
-| **v4** | FEC, controle de taxa, Windows como host (DXGI) | qualidade e a segunda plataforma |
-| **v5** | áudio, pareamento com PIN, NAT | o resto |
+| **v1** | ✅ **DONE** — screen captured, NVENC, file | Wayland capture and NVENC really work |
+| **v2** | ✅ **DONE** — arrives, decodes and draws on the Mac | transport and decoding |
+| **v3** | ✅ **DONE** — input from the Mac arrives and is applied | the loop closes: it is usable |
+| **v4** | FEC, rate control, Windows as host (DXGI) | quality and the second platform |
+| **v5** | audio, PIN pairing, NAT | the rest |
 
-Cada etapa é usável ou descartável sozinha. Nenhuma depende de a
-seguinte existir.
+Each stage is usable or disposable on its own. None depends on the next
+one existing.
 
-## Onde mora
+## Where it lives
 
-Crate nova `logistream/`, separada do `logid`. O daemon continua sendo
-control plane — status, arquivos, processos, troca de teclado — e não
-vira servidor de vídeo. O `logid` aprende a **lançar** e **parear** o
-`logistream`, como já lança o cliente de tela hoje.
+New crate `logistream/`, separate from `logid`. The daemon remains the
+control plane — status, files, processes, keyboard switching — and does
+not become a video server. `logid` learns to **launch** and **pair**
+`logistream`, as it already launches the screen client today.
 
-## O Parsec Virtual Display Adapter não é lixo a varrer
+## The Parsec Virtual Display Adapter is not junk to sweep away
 
-O usuário quer apagar o Parsec quando o nosso funcionar. Justo — mas
-aquele adaptador de vídeo virtual que ele instala tem função: dá à
-máquina uma **tela para capturar quando não há monitor ligado**, e
-permite resolução do cliente em vez da do host.
+The user wants to remove Parsec once ours works. Fair — but that virtual
+display adapter it installs has a function: it gives the machine a
+**screen to capture when no monitor is connected**, and allows the
+client's resolution instead of the host's.
 
-Se o Windows dali às vezes fica sem monitor, apagar o adaptador nos tira
-uma capacidade que teríamos de reconstruir (driver de display virtual é
-coisa séria, assinada, em kernel). A decisão fica para quando a v4
-estiver de pé e dê para medir se faz falta — não para a hora da
-arrumação.
+If the Windows machine there sometimes runs without a monitor, deleting the
+adapter takes away a capability we would have to rebuild (a virtual display
+driver is serious business, signed, in kernel). The decision waits until v4
+is up and we can measure whether it is missed — not until cleanup time.
 
-## v1, metade feita: o NVENC está provado (04/11)
+## v1, half done: NVENC is proven (2026-11-04)
 
-`cargo run --bin nvenc-probe` codifica quadros **sintéticos** — captura é
-outro problema, e misturar os dois faria o fracasso de um parecer o do
-outro.
+`cargo run --bin nvenc-probe` encodes **synthetic** frames — capture is
+another problem, and mixing the two would make the failure of one look
+like the failure of the other.
 
 ```
 NVENC carregado (dlopen de libnvidia-encode)
@@ -129,47 +128,48 @@ por quadro: p50 3.56ms  p95 3.83ms
 39.3 Mbps a 60fps
 ```
 
-E o `ffprobe` lê o arquivo: `h264`, perfil `High`, `1920x1080`,
-`yuv420p`, **120 quadros** — os mesmos que entraram.
+And `ffprobe` reads the file: `h264`, profile `High`, `1920x1080`,
+`yuv420p`, **120 frames** — the same ones that went in.
 
-Três coisas que isso resolve:
+Three things this settles:
 
-1. **Sem SDK e sem sudo.** A crate `moq-nvenc` faz `dlopen` da
-   `libnvidia-encode`, que já veio com o driver. Nada a instalar, e numa
-   máquina sem GPU NVIDIA a falha é ao *abrir*, não ao compilar — que é o
-   comportamento certo para um binário que roda em três máquinas.
-2. **3,56 ms por quadro** deixa espaço de sobra num orçamento de 16 ms
-   (60 fps). O gargalo não vai ser a codificação.
-3. **39 Mbps é o pior caso**: o gradiente sintético muda cada pixel a
-   cada quadro, de propósito. Tela de verdade — texto parado, janelas
-   paradas — comprime uma ordem de grandeza melhor.
+1. **No SDK and no sudo.** The `moq-nvenc` crate `dlopen`s
+   `libnvidia-encode`, which already came with the driver. Nothing to
+   install, and on a machine without an NVIDIA GPU the failure happens at
+   *open*, not at compile — which is the right behavior for a binary that
+   runs on three machines.
+2. **3.56 ms per frame** leaves plenty of room in a 16 ms budget
+   (60 fps). Encoding will not be the bottleneck.
+3. **39 Mbps is the worst case**: the synthetic gradient changes every
+   pixel every frame, on purpose. A real screen — still text, still
+   windows — compresses an order of magnitude better.
 
-### Um erro que o teste pegou e que teria mordido em produção
+### A bug the test caught that would have bitten in production
 
-A primeira versão escreveu um arquivo que o `ffprobe` recusou:
-`non-existing PPS 0 referenced`. O NVENC não repete SPS/PPS por padrão.
+The first version wrote a file that `ffprobe` rejected:
+`non-existing PPS 0 referenced`. NVENC does not repeat SPS/PPS by default.
 
-Num arquivo isso é chato; **numa transmissão é fatal**, porque o caso
-normal da tela remota é o cliente entrar no meio — e sem os cabeçalhos
-ele não tem como começar a desenhar nada. A config agora liga
-`repeatSPSPPS`, que os reenvia em cada IDR.
+In a file that is annoying; **in a stream it is fatal**, because the normal
+case for a remote screen is the client joining midway — and without the
+headers it has no way to start drawing anything. The config now enables
+`repeatSPSPPS`, which resends them on every IDR.
 
-Já que havia config explícita, entrou junto o `NV_ENC_TUNING_INFO_LOW_LATENCY`:
-tela remota vive de latência, não de bitrate bonito.
+Since there was explicit config anyway, `NV_ENC_TUNING_INFO_LOW_LATENCY`
+went in too: a remote screen lives on latency, not on pretty bitrate.
 
-### O que falta na v1: captura
+### What v1 still lacks: capture
 
-A captura no Wayland precisa de `libpipewire-0.3-dev`, que **não está
-instalada** e não existe no linuxbrew — é o primeiro `sudo apt` que este
-projeto vai pedir.
+Wayland capture needs `libpipewire-0.3-dev`, which **is not installed** and
+does not exist in linuxbrew — it is the first `sudo apt` this project will
+ask for.
 
-Alternativa sem sudo: começar pelo **Windows como host** (DXGI Desktop
-Duplication não precisa de biblioteca extra). Fica a escolher.
+Sudo-free alternative: start with **Windows as the host** (DXGI Desktop
+Duplication needs no extra library). To be decided.
 
-## v1 fechada: tela real, 1440p, em 38% do orçamento (04/11)
+## v1 closed: real screen, 1440p, at 38% of the budget (2026-11-04)
 
-`cargo run --release --bin v1-record` captura o monitor, codifica em
-NVENC e grava `.h264`:
+`cargo run --release --bin v1-record` captures the monitor, encodes with
+NVENC and writes `.h264`:
 
 ```
 formato: 2560x1440 VideoFormat::BGRx
@@ -180,43 +180,44 @@ total:  p50 6.38ms  p95 7.03ms  (orçamento 16.6ms a 60fps)
 2.0 MB = 5.5 Mbps a 60fps
 ```
 
-O `ffprobe` lê 180 quadros, `h264` High, `2560x1440`, e um quadro
-extraído mostra a área de trabalho de verdade — VS Code, terminal, dock.
+`ffprobe` reads 180 frames, `h264` High, `2560x1440`, and an extracted
+frame shows the real desktop — VS Code, terminal, dock.
 
-### O que os números dizem
+### What the numbers say
 
-**6,38 ms de 16,6 ms.** Sobram 10 ms para empacotar, cifrar e mandar. O
-caminho quente não vai ser o gargalo; a rede vai.
+**6.38 ms out of 16.6 ms.** That leaves 10 ms to packetize, encrypt and
+send. The hot path will not be the bottleneck; the network will.
 
-**5,5 Mbps contra os 39 Mbps do gradiente sintético.** Era a previsão:
-tela real tem texto parado e janela parada, e o encoder vive disso. O
-sintético muda cada pixel de cada quadro de propósito, para medir o pior
-caso — e o pior caso ficou sete vezes acima do real.
+**5.5 Mbps versus the 39 Mbps of the synthetic gradient.** That was the
+prediction: a real screen has still text and still windows, and the encoder
+lives on that. The synthetic one changes every pixel of every frame on
+purpose, to measure the worst case — and the worst case came out seven
+times above the real one.
 
-**BGRx em toda a cadeia.** O Mutter entrega BGRx, o NVENC consome ARGB,
-e na memória são a mesma ordem de bytes — a cópia é crua, 1,05 ms, sem
-nenhuma conversão de cor na CPU. Se tivesse havido conversão, ela
-sozinha comeria o orçamento.
+**BGRx along the whole chain.** Mutter delivers BGRx, NVENC consumes ARGB,
+and in memory they are the same byte order — the copy is raw, 1.05 ms,
+with no color conversion on the CPU. Had there been a conversion, it alone
+would have eaten the budget.
 
-### A captura não passa pelo portal
+### Capture does not go through the portal
 
-`org.gnome.Mutter.ScreenCast`, a API privada que o próprio portal usa por
-baixo. O portal `ScreenCast` exige **aprovação interativa** — abriria um
-diálogo na tela da máquina capturada, que é exatamente a máquina onde
-pode não haver ninguém sentado.
+`org.gnome.Mutter.ScreenCast`, the private API the portal itself uses
+underneath. The `ScreenCast` portal requires **interactive approval** — it
+would open a dialog on the screen of the captured machine, which is exactly
+the machine where nobody may be sitting.
 
-Mesmo precedente da borda, que fala com `Mutter.InputCapture` direto
-porque o portal equivalente aceita `CreateSession` e nunca responde.
+Same precedent as the border, which talks to `Mutter.InputCapture` directly
+because the equivalent portal accepts `CreateSession` and never answers.
 
-### Falta para a v2
+### What v2 still needs
 
-Transporte já tem esqueleto e teste (`net.rs`: fatiamento, remontagem,
-fora de ordem, quadro incompleto contado). Falta ligar as pontas e
-escrever o cliente do Mac — decodificar com VideoToolbox e desenhar.
+Transport already has a skeleton and a test (`net.rs`: slicing, reassembly,
+out of order, incomplete frame counted). What is missing is wiring the ends
+together and writing the Mac client — decode with VideoToolbox and draw.
 
-## v2, metade feita: a tela chega ao Mac (04/11)
+## v2, half done: the screen reaches the Mac (2026-11-04)
 
-`host` no Ubuntu, `sink` no Mac, pela LAN:
+`host` on Ubuntu, `sink` on the Mac, over the LAN:
 
 ```
 770 quadros inteiros em 10.0s = 77.0 fps
@@ -224,89 +225,89 @@ escrever o cliente do Mac — decodificar com VideoToolbox e desenhar.
 quadros perdidos (chegaram incompletos): 0
 ```
 
-O arquivo que chegou lá tem 770 quadros `h264` High `2560x1440`, e um
-quadro extraído mostra a área de trabalho do Ubuntu. Em loopback, onde o
-relógio é o mesmo, a latência **captura → quadro remontado** é
-**p50 6,6 ms**.
+The file that arrived there has 770 `h264` High `2560x1440` frames, and an
+extracted frame shows the Ubuntu desktop. On loopback, where the clock is
+the same, the **capture → reassembled frame** latency is **p50 6.6 ms**.
 
-### Dois bugs, e o segundo era invisível
+### Two bugs, and the second was invisible
 
-**Família de endereço.** `ubuntu-host.local` resolve em IPv4 e IPv6, o
-Mac devolve o IPv6 primeiro, e o socket do cliente estava preso em
-`0.0.0.0` — o quinn recusa com *"invalid remote address"*. O socket local
-agora nasce da família do destino. É a terceira vez que nome com duas
-famílias morde este projeto (ver [`002`](002-ssh.md)).
+**Address family.** `ubuntu-host.local` resolves to IPv4 and IPv6, the
+Mac returns IPv6 first, and the client socket was bound to `0.0.0.0` —
+quinn rejects it with *"invalid remote address"*. The local socket is now
+created from the destination's family. It is the third time a name with
+two families has bitten this project (see [`002`](002-ssh.md)).
 
-**O driver da conexão não rodava.** Este foi feio: o host anunciava
-*"80 fps, 0 recusados"* e o receptor via **zero**. `send_datagram` apenas
-**enfileira**; quem põe no fio é o driver da conexão, que é uma task do
-tokio. O laço de envio bloqueava a thread em `recv_timeout` de um canal
-da `std`, e numa runtime `current_thread` isso impede o driver de rodar.
+**The connection driver was not running.** This one was ugly: the host
+announced *"80 fps, 0 rejected"* and the receiver saw **zero**.
+`send_datagram` only **enqueues**; what puts it on the wire is the
+connection driver, which is a tokio task. The send loop blocked the thread
+in `recv_timeout` on a `std` channel, and on a `current_thread` runtime that
+prevents the driver from running.
 
-Dois aprendizados ficam: o canal entre captura e rede é do **tokio**, e a
-falha de `send_datagram` deixou de ser engolida — foi o `break` mudo que
-fez o host reportar sucesso enquanto nada saía. Mesmo padrão do
-`langfuse` e da `backfill_gate` no outro repo: o no-op silencioso é pior
-que o erro barulhento.
+Two lessons stay: the channel between capture and network is a **tokio**
+one, and a `send_datagram` failure is no longer swallowed — it was the
+silent `break` that made the host report success while nothing went out.
+Same pattern as `langfuse` and `backfill_gate` in the other repo: the
+silent no-op is worse than the loud error.
 
-### A medição de latência entre máquinas está errada, e isso é dito
+### The cross-machine latency measurement is wrong, and that is stated
 
-Entre Ubuntu e Mac o número sai `0,0 ms` porque os relógios diferem e a
-subtração satura. O rótulo avisa. Medir de verdade exige ida-e-volta
-(o receptor devolve o carimbo e o host calcula), e isso entra junto com
-o canal de input da v3 — que precisa do caminho de volta de qualquer
-forma.
+Between Ubuntu and Mac the number comes out `0.0 ms` because the clocks
+differ and the subtraction saturates. The label warns about it. Measuring
+for real requires a round trip (the receiver returns the timestamp and the
+host computes), and that comes together with the v3 input channel — which
+needs the return path anyway.
 
-### Falta para fechar a v2
+### What is left to close v2
 
-Decodificar com VideoToolbox e desenhar numa janela no Mac. O transporte
-já entrega o quadro inteiro, em ordem, sem perda.
+Decode with VideoToolbox and draw in a window on the Mac. The transport
+already delivers the whole frame, in order, without loss.
 
-## v2 fechada: decodifica no M1 (04/11)
+## v2 closed: it decodes on the M1 (2026-11-04)
 
-`view` no Mac contra o `host` no Ubuntu:
+`view` on the Mac against `host` on Ubuntu:
 
 ```
 1080 quadros decodificados em 15s  (~72 fps)
 host: 79 fps, 1.5 Mbps, 0 recusados
 ```
 
-Decodificação por `libavcodec` do brew, conversão de cor por `swscale`,
-janela por `winit` + `softbuffer`.
+Decoding by brew's `libavcodec`, color conversion by `swscale`, window by
+`winit` + `softbuffer`.
 
-### Decisões que valem explicar
+### Decisions worth explaining
 
-**Rede e decodificação numa thread, desenho na outra.** O laço de janela
-do macOS é dono da thread principal e não pode bloquear; decodificar ali
-travaria a interface a cada quadro.
+**Network and decoding on one thread, drawing on the other.** The macOS
+window loop owns the main thread and cannot block; decoding there would
+freeze the interface on every frame.
 
-**Entre as duas há um slot, não uma fila.** Quadro novo sobrescreve o que
-ainda não foi desenhado. Fila só acumularia atraso — e numa tela remota
-quadro velho não vale nada, já passou. Mesma razão do canal raso do lado
-do host.
+**Between the two there is a slot, not a queue.** A new frame overwrites
+the one not yet drawn. A queue would only accumulate delay — and on a remote
+screen an old frame is worth nothing, it has already passed. Same reason as
+the shallow channel on the host side.
 
-**A janela acorda por geração, não por timer.** `ControlFlow::Wait` mais
-um contador que sobe a cada quadro: sem isso a interface gastaria CPU
-perguntando se chegou algo.
+**The window wakes up by generation, not by timer.** `ControlFlow::Wait`
+plus a counter that goes up with every frame: without it the interface
+would spend CPU asking whether anything arrived.
 
-**`ffmpeg-next` está amarrado ao macOS na config.** As duas máquinas têm
-versões diferentes de libavcodec pelo brew (61 no Mac, 62 aqui), e
-amarrar por plataforma resolve sem fingir que são a mesma — o host Linux
-não decodifica nada.
+**`ffmpeg-next` is pinned to macOS in the config.** The two machines have
+different libavcodec versions from brew (61 on the Mac, 62 here), and
+pinning per platform solves it without pretending they are the same — the
+Linux host does not decode anything.
 
-### O que ainda é trabalho de CPU
+### What is still CPU work
 
-A conversão YUV→BGRA no `swscale` e a cópia para o buffer da janela. Em
-1440p isso é alguns milissegundos por quadro que o **VideoToolbox** (e um
-shader de YUV no `wgpu`) eliminam. Está na v4, junto com FEC e controle
-de taxa — primeiro fazer funcionar, depois fazer render direto.
+The YUV→BGRA conversion in `swscale` and the copy into the window buffer.
+At 1440p that is a few milliseconds per frame that **VideoToolbox** (and a
+YUV shader in `wgpu`) eliminate. It is in v4, together with FEC and rate
+control — first make it work, then make the render direct.
 
-### Falta para substituir o RDP
+### What is missing to replace RDP
 
-A v3: mandar teclado e mouse do Mac de volta para o host. Sem isso dá
-para **ver** a máquina, não para usá-la.
+v3: sending keyboard and mouse from the Mac back to the host. Without that
+you can **see** the machine, not use it.
 
-## v3 fechada: o input chega e o Mutter aceita (04/11)
+## v3 closed: input arrives and Mutter accepts it (2026-11-04)
 
 ```
 input ligado (stream /org/gnome/Mutter/ScreenCast/Stream/u11)
@@ -315,132 +316,132 @@ input #1: Mouse { x: 1200.0, y: 700.0 }
 input #7: Rolagem { dx: 0.0, dy: 15.0 }
 ```
 
-Sete eventos, nenhuma recusa — o cursor desenhou um quadrado na tela do
-Ubuntu.
+Seven events, no rejection — the cursor drew a square on the Ubuntu screen.
 
-### `org.gnome.Mutter.RemoteDesktop`, e a coreografia que ele impõe
+### `org.gnome.Mutter.RemoteDesktop`, and the choreography it imposes
 
-A sessão de **input** tem de nascer antes da de **tela**: é o
-`SessionId` dela que as vincula, e sem o vínculo o
-`NotifyPointerMotionAbsolute` não tem espaço de coordenadas para mapear.
+The **input** session must be created before the **screen** one: its
+`SessionId` is what links them, and without the link
+`NotifyPointerMotionAbsolute` has no coordinate space to map into.
 
-Só que no D-Bus a sessão pertence à **conexão que a criou** — uma
-segunda conexão chamando `Notify*` nela é recusada. E quem injeta é a
-thread de rede, não a que fala com o PipeWire. Daí a dança:
+But on D-Bus the session belongs to the **connection that created it** — a
+second connection calling `Notify*` on it is rejected. And the one injecting
+is the network thread, not the one talking to PipeWire. Hence the dance:
 
 ```
-rede:  cria input  -> manda SessionId ----------> main
-main:  cria tela vinculada, RecordMonitor
-       -> manda o caminho do stream -----------> rede
-rede:  Start()  (inicia as duas)
-main:  recebe PipeWireStreamAdded e segue
+network: create input  -> send SessionId ----------> main
+main:    create linked screen, RecordMonitor
+         -> send the stream path ----------------> network
+network: Start()  (starts both)
+main:    receive PipeWireStreamAdded and continue
 ```
 
-Dentro da thread de rede, tudo compartilha a **mesma** conexão por `Rc`,
-e as tarefas rodam num `LocalSet` — `tokio::spawn` exigiria `Send`, que
-a conexão D-Bus não é.
+Inside the network thread, everything shares the **same** connection via
+`Rc`, and the tasks run in a `LocalSet` — `tokio::spawn` would require
+`Send`, which the D-Bus connection is not.
 
-### Input vai por stream, vídeo por datagrama
+### Input goes by stream, video by datagram
 
-Vídeo tolera perda; input não. Soltar um *"tecla solta"* deixa a tecla
-presa no host, e um *"botão solto"* deixa o mouse arrastando sozinho.
-Por isso o input usa stream QUIC — confiável e ordenado.
+Video tolerates loss; input does not. Dropping a *"key released"* leaves the
+key stuck on the host, and a *"button released"* leaves the mouse dragging
+by itself. That is why input uses a QUIC stream — reliable and ordered.
 
-O leitor acumula bytes antes de interpretar: stream não respeita
-fronteira de mensagem, e meio evento interpretado viraria comando errado
-na máquina de alguém. Travado por um teste que alimenta **um byte por
-vez**.
+The reader accumulates bytes before interpreting: a stream does not respect
+message boundaries, and a half-interpreted event would become a wrong
+command on someone's machine. Locked down by a test that feeds **one byte
+at a time**.
 
-### Tecla física, não caractere
+### Physical key, not character
 
-O cliente manda a **posição** da tecla (keycode do evdev), não o
-caractere. Mandar o caractere faria o layout do cliente mandar no host:
-apertar uma tecla num teclado ABNT2 viraria outra coisa numa máquina com
-layout americano. Com a posição, cada máquina aplica o próprio layout —
-que é como um teclado de verdade se comporta.
+The client sends the key's **position** (evdev keycode), not the character.
+Sending the character would let the client's layout rule the host: pressing
+a key on an ABNT2 keyboard would turn into something else on a machine with
+a US layout. With the position, each machine applies its own layout — which
+is how a real keyboard behaves.
 
-### O que falta para aposentar o RDP
+### What is missing to retire RDP
 
-Nada de protocolo: falta **costura**. O botão "Ver a tela" do painel
-ainda chama cliente de RDP; precisa chamar o nosso. E o host precisa
-subir sozinho, como serviço, em vez de ser lançado à mão.
+Nothing in the protocol: what is missing is **stitching**. The "Ver a tela"
+("View the screen") button in the panel still calls an RDP client; it needs
+to call ours. And the host needs to start by itself, as a service, instead
+of being launched by hand.
 
-## v4, metade feita: o Windows virou host (04/11)
+## v4, half done: Windows became a host (2026-11-04)
 
-O Windows serve a própria tela pelo nosso protocolo. Medido do Ubuntu,
-com o `logistream-sink` contra `windows-host.local:9777`:
+Windows serves its own screen over our protocol. Measured from Ubuntu, with
+`logistream-sink` against `windows-host.local:9777`:
 
 | | |
 |---|---|
-| resolução | 2560×1440, `yuv420p`, H.264 válido (`ffprobe`) |
-| quadros | 174 inteiros em 10 s, **zero** perdido |
-| banda | 1,8 Mbps com a tela quase parada |
-| keyframes | 3 em 159 quadros — um no connect, os do GOP depois |
+| resolution | 2560×1440, `yuv420p`, valid H.264 (`ffprobe`) |
+| frames | 174 whole in 10 s, **zero** lost |
+| bandwidth | 1.8 Mbps with the screen nearly still |
+| keyframes | 3 in 159 frames — one on connect, the GOP ones after |
 
-### A ordem de inicialização não é detalhe
+### Initialization order is not a detail
 
-Segurar a duplicação do DXGI enquanto o CUDA inicializa **trava o
-processo**. O log parava em `DXGI: monitor 0, 2560x1440` com 0,2 s de CPU
-e ficava ali para sempre; a mesma sonda de NVENC, sozinha, rodava a
-111 fps na mesma sessão interativa. Duas sondas separadas (sessão 0 e
-sessão 1) descartaram "é a sessão" como explicação.
+Holding the DXGI duplication while CUDA initializes **hangs the process**.
+The log stopped at `DXGI: monitor 0, 2560x1440` with 0.2 s of CPU and stayed
+there forever; the same NVENC probe, alone, ran at 111 fps in the same
+interactive session. Two separate probes (session 0 and session 1) ruled
+out "it's the session" as the explanation.
 
-Daí a divisão em `Monitor` (abre o display, lê tamanho e origem) e
-`Tela` (começa a duplicar): encoder primeiro, duplicação depois. De
-quebra é melhor desenho — se o NVENC não estiver disponível, falhamos
-antes de tomar a tela de alguém.
+Hence the split into `Monitor` (opens the display, reads size and origin)
+and `Tela` (starts duplicating): encoder first, duplication after. As a
+bonus it is a better design — if NVENC is not available, we fail before
+taking over someone's screen.
 
-### Sessão interativa: não é opcional
+### Interactive session: not optional
 
-`SSH` cai na sessão 0, e lá o Desktop Duplication não existe e o
-`SendInput` não alcança desktop nenhum. O processo **subiria sem
-falhar** e entregaria uma tela que ninguém está vendo. Por isso o host
-do Windows sobe por tarefa agendada com `/it`, acordada por
-`schtasks /run` — o mesmo mecanismo que levanta o `logid`.
+`SSH` lands in session 0, and there Desktop Duplication does not exist and
+`SendInput` reaches no desktop at all. The process **would start without
+failing** and deliver a screen nobody is looking at. That is why the Windows
+host starts via a scheduled task with `/it`, woken by `schtasks /run` — the
+same mechanism that brings up `logid`.
 
-### O cursor não vem na imagem
+### The cursor does not come in the image
 
-O DXGI entrega a tela sem cursor (ele vem em separado, como forma +
-posição). Não desenhamos por enquanto, e isso incomoda menos do que
-parece: como o cliente manda posição **absoluta**, o cursor da máquina
-de quem assiste fica exatamente sobre o ponto remoto, com zero latência.
-Falta a *forma* (barra de texto, setas de redimensionar). O Parsec faz
-igual, por este motivo.
+DXGI delivers the screen without the cursor (it comes separately, as shape +
+position). We do not draw it for now, and that bothers less than it seems:
+since the client sends **absolute** position, the cursor of the viewer's
+machine sits exactly over the remote point, with zero latency. What is
+missing is the *shape* (text bar, resize arrows). Parsec does the same, for
+this reason.
 
-No Linux é diferente: pedimos ao Mutter `cursor-mode: 1` e ele embute o
-cursor no quadro. A inconsistência é conhecida e aceita.
+On Linux it is different: we ask Mutter for `cursor-mode: 1` and it embeds
+the cursor in the frame. The inconsistency is known and accepted.
 
-### A volta pela CPU é consciente
+### The round trip through the CPU is deliberate
 
-O certo seria registrar a textura D3D11 direto no NVENC
-(`NV_ENC_DEVICE_TYPE_DIRECTX`) e nunca sair da GPU. Fazemos staging +
-`Map` + upload para CUDA porque é **exatamente** o caminho que o host do
-Linux já faz (o PipeWire entrega em memória de CPU) — então o
-codificador é um só. Trocar isto é otimização localizada, não mudança de
-arquitetura.
+The right thing would be to register the D3D11 texture directly in NVENC
+(`NV_ENC_DEVICE_TYPE_DIRECTX`) and never leave the GPU. We do staging +
+`Map` + upload to CUDA because it is **exactly** the path the Linux host
+already takes (PipeWire delivers in CPU memory) — so there is a single
+encoder. Changing this is a localized optimization, not an architecture
+change.
 
-### O que falta para aposentar o RDP
+### What is missing to retire RDP
 
-Só o **visualizador** fora do macOS. O `logistream-view` decodifica com
-`ffmpeg-next`, e nem o Ubuntu nem o Windows têm `libavcodec` instalado.
-Enquanto isso:
+Only the **viewer** outside macOS. `logistream-view` decodes with
+`ffmpeg-next`, and neither Ubuntu nor Windows has `libavcodec` installed.
+Meanwhile:
 
-| de → para | protocolo hoje |
+| from → to | protocol today |
 |---|---|
-| Mac → Ubuntu | **nosso** |
-| Mac → Windows | **nosso** |
-| Ubuntu → Windows | RDP (falta visualizador aqui) |
-| Windows → Ubuntu | RDP (falta visualizador lá) |
+| Mac → Ubuntu | **ours** |
+| Mac → Windows | **ours** |
+| Ubuntu → Windows | RDP (viewer missing here) |
+| Windows → Ubuntu | RDP (viewer missing there) |
 
-Dois caminhos para fechar: `libavcodec-dev` pelo apt, ou **NVDEC** —
-as duas máquinas têm GPU NVIDIA e a `moq-nvenc` já expõe os pontos de
-entrada do decodificador. NVDEC é mais trabalho e dispensa a
-dependência de sistema; é o caminho que combina com o resto.
+Two ways to close it: `libavcodec-dev` via apt, or **NVDEC** — both
+machines have an NVIDIA GPU and `moq-nvenc` already exposes the decoder's
+entry points. NVDEC is more work and drops the system dependency; it is the
+path that fits the rest.
 
-## O host do Mac: o desenho decidido por medicao (04/11)
+## The Mac host: the design decided by measurement (2026-11-04)
 
-O Mac e o ultimo furo -- ele assiste as outras duas e nao serve a propria
-tela. Antes de escrever o pipeline, medi o que a maquina oferece:
+The Mac is the last gap -- it watches the other two and does not serve its
+own screen. Before writing the pipeline, I measured what the machine offers:
 
 ```
 libavdevice: linkado e registrado
@@ -449,114 +450,113 @@ encoder libx264: existe
 entrada avfoundation: existe
 ```
 
-Isso decide o desenho: **captura por `avfoundation` e codificacao por
-`h264_videotoolbox`, sem FFI novo.** A alternativa era ScreenCaptureKit e
-VideoToolbox crus -- centenas de linhas de ponte com Objective-C para
-chegar no mesmo lugar, e o ffmpeg do brew ja esta instalado porque e ele
-que decodifica no visualizador de la.
+That decides the design: **capture via `avfoundation` and encoding via
+`h264_videotoolbox`, with no new FFI.** The alternative was raw
+ScreenCaptureKit and VideoToolbox -- hundreds of lines of Objective-C
+bridging to reach the same place, and brew's ffmpeg is already installed
+because it is what decodes in the viewer over there.
 
-O `avdevice` entrou nas features do `ffmpeg-next` so no macOS. Linux e
-Windows nao precisam: eles capturam por PipeWire e DXGI.
+`avdevice` went into the `ffmpeg-next` features only on macOS. Linux and
+Windows do not need it: they capture via PipeWire and DXGI.
 
-### O que ainda falta, e a friccao que vem com ele
+### What is still missing, and the friction that comes with it
 
-- Pipeline: `avfoundation` -> `h264_videotoolbox` -> `serve::atender`. O
-  laco de rede e o teto de taxa sao os mesmos dos outros dois hosts.
-- Input: `CGEvent` do Core Graphics, que **exige permissao de
-  Acessibilidade** concedida a mao nas Preferencias. Nao da para
-  contornar por codigo, e e o tipo de coisa que, sem aviso, aparece como
-  "o teclado nao funciona" sem erro nenhum.
-- O cursor: o `avfoundation` tem opcao de desenhar o cursor
-  (`capture_cursor`), ao contrario do DXGI. Entao o Mac pode ficar como o
-  Linux (cursor embutido) em vez de como o Windows.
+- Pipeline: `avfoundation` -> `h264_videotoolbox` -> `serve::serve_video`. The
+  network loop and the rate cap are the same as for the other two hosts.
+- Input: Core Graphics `CGEvent`, which **requires the Accessibility
+  permission** granted by hand in System Preferences. It cannot be worked
+  around in code, and it is the kind of thing that, without warning, shows
+  up as "the keyboard doesn't work" with no error at all.
+- The cursor: `avfoundation` has an option to draw the cursor
+  (`capture_cursor`), unlike DXGI. So the Mac can behave like Linux
+  (embedded cursor) instead of like Windows.
 
-### Uma armadilha de API encontrada no caminho
+### An API trap found along the way
 
-`format::list()` existia para enumerar demuxers e **foi removido no
-ffmpeg 5**; a crate so o expoe com `cfg(not(feature = "ffmpeg_5_0"))`. O
-caminho atual e procurar pelo nome com `av_find_input_format`, que e o
-que o proprio `ffmpeg -f avfoundation` faz. Ponteiro nao nulo prova duas
-coisas de uma vez: o dispositivo esta compilado na biblioteca e o
-`avdevice` foi registrado -- sem o registro, o nome nao resolve.
+`format::list()` existed to enumerate demuxers and **was removed in
+ffmpeg 5**; the crate only exposes it under `cfg(not(feature = "ffmpeg_5_0"))`.
+The current path is to look it up by name with `av_find_input_format`, which
+is what `ffmpeg -f avfoundation` itself does. A non-null pointer proves two
+things at once: the device is compiled into the library and `avdevice` was
+registered -- without the registration, the name does not resolve.
 
-## "Qualidade pessima" no Ubuntu -> Windows eram tres bugs nossos (04/11)
+## "Terrible quality" on Ubuntu -> Windows was three bugs of ours (2026-11-04)
 
-O usuario comparou os dois caminhos e so um estava ruim: Mac -> Windows
-(decodificado por `swscale`) estava otimo; Ubuntu -> Windows (nosso
-caminho de GPU) estava, nas palavras dele, pessimo. Caminho diferente,
-mesma rede, mesma tela: o problema era nosso codigo, e nao a banda.
+The user compared the two paths and only one was bad: Mac -> Windows
+(decoded by `swscale`) was great; Ubuntu -> Windows (our GPU path) was, in
+his words, terrible. Different path, same network, same screen: the problem
+was our code, not the bandwidth.
 
-Tres causas independentes, todas encontradas por medicao depois que a
-comparacao apontou o caminho culpado.
+Three independent causes, all found by measurement after the comparison
+pointed at the guilty path.
 
-### 1. O bitrate nunca saiu do piso (nvenc.rs)
+### 1. The bitrate never left the floor (nvenc.rs)
 
-`pixels * 60 / 1000` da 221 kbps em 1440p, entao o `.clamp(8_000_000,
-..)` devolvia **8 Mbps em qualquer resolucao** -- enquanto o comentario
-logo acima prometia ~15 em 1440p e ~34 em 4K. Os tres hosts codificaram
-a 8 Mbps por semanas.
+`pixels * 60 / 1000` gives 221 kbps at 1440p, so `.clamp(8_000_000, ..)`
+returned **8 Mbps at any resolution** -- while the comment right above it
+promised ~15 at 1440p and ~34 at 4K. All three hosts encoded at 8 Mbps for
+weeks.
 
-So apareceu porque a tela Retina do Mac (3360x2100) tambem anunciou
-"8 Mbps alvo" e o numero ficou absurdo o bastante para eu refazer a
-conta. **O host Windows nunca imprimiu o alvo** -- por isso o bug
-sobreviveu la. Hoje os tres imprimem: numero que ninguem ve e numero que
-ninguem confere.
+It only showed up because the Mac's Retina screen (3360x2100) also
+announced "8 Mbps alvo" ("8 Mbps target") and the number was absurd enough
+for me to redo the math. **The Windows host never printed the target** --
+that is why the bug survived there. Today all three print it: a number
+nobody sees is a number nobody checks.
 
-### 2. O VBV media a taxa media e anulava o proprio teto (nvenc.rs)
+### 2. The VBV measured the average rate and cancelled its own ceiling (nvenc.rs)
 
-    maxBitRate    = alvo * 2     // "pode gastar o dobro quando muda tudo"
-    vbvBufferSize = alvo / 60    // mas o quadro nao passa de alvo/60 bits
+    maxBitRate    = alvo * 2     // "may spend double when everything changes"
+    vbvBufferSize = alvo / 60    // but the frame can't exceed alvo/60 bits
 
-Duas linhas que se contradiziam. A folga do `maxBitRate` nunca pode ser
-gasta porque o VBV, dimensionado pela media, limitava qualquer quadro a
-16 KB. Rolar uma pagina e justamente quando o encoder precisa gastar --
-e era justamente quando ele nao podia, entao subia o QP ate o `maxQP`.
-Isso saia como borrao **no movimento**, que e onde a pessoa olha.
+Two lines that contradicted each other. The `maxBitRate` headroom could
+never be spent because the VBV, sized by the average, limited any frame to
+16 KB. Scrolling a page is exactly when the encoder needs to spend -- and
+that was exactly when it could not, so it raised the QP up to `maxQP`. That
+came out as blur **in motion**, which is where the person is looking.
 
-A prova estava no log desde sempre: quadro-chave de 120 KB contra um VBV
-de 16 KB. Agora o VBV mede um quadro do teto; em 1440p o orcamento por
-quadro vai de 16 KB para 60 KB.
+The proof had been in the log all along: a 120 KB keyframe against a 16 KB
+VBV. Now the VBV measures one frame of the ceiling; at 1440p the per-frame
+budget goes from 16 KB to 60 KB.
 
-| tela | alvo | teto | orcamento/quadro |
+| screen | target | ceiling | budget/frame |
 |---|---:|---:|---:|
 | 1080p | 8.3 Mbps | 16.6 | 33.8 KB |
 | 1440p | 14.7 Mbps | 29.5 | 60.0 KB |
 | Retina | 28.2 Mbps | 56.4 | 114.8 KB |
 | 4K | 33.2 Mbps | 66.4 | 135.0 KB |
 
-### 3. A conversao serrilhava e ainda era o gargalo (decode_nv.rs)
+### 3. The conversion aliased and was also the bottleneck (decode_nv.rs)
 
-`nv12_para_bgra` amostrava por vizinho mais proximo, com um comentario
-meu dizendo que bilinear era "o proximo passo se incomodar". Incomodou:
-encolher 1440p numa janela serrilha cada letra, e era so no caminho da
-GPU -- o `swscale` do outro caminho ja era bilinear. Lado a lado a
-diferenca salta.
+`nv12_to_bgra` sampled by nearest neighbor, with a comment of mine saying
+bilinear was "the next step if it bothers anyone". It did: shrinking 1440p
+into a window aliases every letter, and only on the GPU path -- the
+`swscale` of the other path was already bilinear. Side by side the
+difference jumps out.
 
-**Consertar isso sozinho teria piorado.** Bilinear quadruplica as
-leituras de luma, entao medi antes de confiar: **28.25 ms por quadro,
-teto de 35 fps** -- e o visualizador do usuario marcava exatamente
-**27 fps desenhados**. A rede entregava 60 e o desenho segurava. Ninguem
-tinha medido a conversao porque ela nao parece um gargalo; ela e so um
-laco.
+**Fixing that alone would have made it worse.** Bilinear quadruples the
+luma reads, so I measured before trusting it: **28.25 ms per frame, ceiling
+of 35 fps** -- and the user's viewer showed exactly **27 fps drawn**. The
+network delivered 60 and drawing held it back. Nobody had measured the
+conversion because it does not look like a bottleneck; it is just a loop.
 
-Duas correcoes no mesmo laco:
+Two fixes in the same loop:
 
-- a tabela de colunas nao depende da linha, e estava sendo refeita 1232
-  vezes por quadro;
-- linhas de saida sao independentes entre si, entao o quadro se divide
-  em faixas por nucleo.
+- the column table does not depend on the row, and was being rebuilt 1232
+  times per frame;
+- output rows are independent of each other, so the frame is split into
+  bands per core.
 
-28.25 ms -> **2.76 ms**, teto de 362 fps. Virou teste de orcamento
-(`conversao_cabe_no_orcamento`, teto de 12 ms) para nao voltar.
+28.25 ms -> **2.76 ms**, ceiling of 362 fps. It became a budget test
+(`conversion_fits_the_budget`, 12 ms ceiling) so it does not come back.
 
-### A licao
+### The lesson
 
-Os tres bugs eram invisiveis individualmente e visiveis juntos, e os
-tres foram achados pelo mesmo movimento: **comparar dois caminhos que
-deveriam dar o mesmo resultado**. O Mac servia de controle. Sem ele eu
-teria culpado a rede.
+The three bugs were invisible individually and visible together, and all
+three were found by the same move: **comparing two paths that should give
+the same result**. The Mac served as the control. Without it I would have
+blamed the network.
 
-O segundo padrao: dois dos tres sobreviveram porque o numero que os
-denunciava nao era impresso em lugar nenhum (o alvo no Windows) ou nunca
-tinha sido medido (o custo da conversao). Instrumentar custou minutos e
-apontou direto.
+The second pattern: two of the three survived because the number that
+would have exposed them was not printed anywhere (the target on Windows) or
+had never been measured (the cost of the conversion). Instrumenting cost
+minutes and pointed straight at them.

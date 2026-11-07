@@ -2,13 +2,13 @@
 name = "logistream"
 version = "0.1.0"
 edition = "2021"
-description = "Tela remota propria: captura, NVENC, QUIC. Ver specs/010."
+description = "Our own remote screen: capture, NVENC, QUIC. See specs/010."
 license = "MIT"
 
 [dependencies]
-# QUIC: datagramas para video (perda tolerada), streams para input,
-# TLS 1.3 para identidade e pareamento, congestionamento embutido.
-# Escrever UDP cru significaria reimplementar os quatro, pior.
+# QUIC: datagrams for video (loss tolerated), streams for input,
+# TLS 1.3 for identity and pairing, built-in congestion control.
+# Writing raw UDP would mean reimplementing all four, worse.
 quinn = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rcgen = "0.13"
@@ -16,57 +16,56 @@ rcgen = "0.13"
 ring = "0.17"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 bytes = "1"
-# FEC sobre os datagramas: perda de pacote nao pode virar quadro perdido.
+# FEC over the datagrams: a lost packet must not become a lost frame.
 reed-solomon-erasure = "6"
 anyhow = "1"
 
-# NVENC por CARREGAMENTO EM RUNTIME: nao precisa dos headers do SDK da
-# NVIDIA no build, so da `libnvidia-encode.so.1`, que ja vem com o
-# driver. A crate compila em qualquer SO (no macOS vira stub), por isso
-# fica aqui e nao num bloco por plataforma -- o cliente do Mac usa o
-# resto desta lib.
+# NVENC through RUNTIME LOADING: the build needs no NVIDIA SDK headers,
+# only `libnvidia-encode.so.1`, which ships with the driver. The crate
+# compiles on any OS (on macOS it becomes a stub), so it lives here and
+# not in a per-platform block -- the Mac client uses the rest of this lib.
 moq-nvenc = "0.1.2"
-# Contexto CUDA para alimentar o NVENC. Tambem carregado em runtime.
+# CUDA context to feed NVENC. Also loaded at runtime.
 cudarc = { version = "0.19", default-features = false, features = ["driver", "dynamic-loading", "cuda-version-from-build-system"] }
 
-# Janela e superficie de pixels em CPU. Comum as tres plataformas: o
-# visualizador deixou de ser so do Mac quando o NVDEC passou a
-# decodificar aqui e no Windows.
+# Window and CPU pixel surface. Common to the three platforms: the
+# viewer stopped being Mac-only when NVDEC started decoding here and on
+# Windows.
 softbuffer = "0.4"
 if-addrs = "0.13"
 tokio-tungstenite = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 
-# Captura no Linux: o Mutter entrega o stream por PipeWire e a negociacao
-# acontece por D-Bus. Mesma crate de D-Bus que o logid usa.
+# Capture on Linux: Mutter delivers the stream over PipeWire and the
+# negotiation happens over D-Bus. Same D-Bus crate logid uses.
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9.12"
 pipewire = "0.8"
-# So pelo ioctl EVIOCGRAB da captura de input. Nao vale uma crate de
-# evdev inteira: lemos quatro tipos de evento e chamamos um ioctl.
+# Only for the input capture's EVIOCGRAB ioctl. Not worth a whole evdev
+# crate: we read four event types and call one ioctl.
 libc = "0.2"
 
 
 [target."cfg(windows)".dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Power", "Win32_System_Threading", "Win32_Security", "Win32_System_RemoteDesktop", "Win32_System_StationsAndDesktops", "Win32_System_SystemInformation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
-# Decodificacao do MAC, e so dele: ele nao tem NVIDIA. Linux e Windows
-# decodificam por NVDEC (ver `decode.rs`), que vem com o driver -- e era
-# justamente a falta de `libavcodec` no Windows que mantinha aquele lado
-# no RDP.
+# Decoding for the MAC, and only for it: it has no NVIDIA. Linux and
+# Windows decode through NVDEC (see `decode.rs`), which ships with the
+# driver -- and it was precisely the lack of `libavcodec` on Windows that
+# kept that side on RDP.
 #
-# `default-features = false`: o default puxa avdevice e avfilter, que nao
-# estao instalados. Pedir so o que usamos faz dependencia que falta virar
-# erro claro em vez de erro de link obscuro.
+# `default-features = false`: the default pulls avdevice and avfilter,
+# which are not installed. Asking only for what we use turns a missing
+# dependency into a clear error instead of an obscure link error.
 #
-# `format` entra sem ser usada por nos: o modulo `codec` da propria crate
-# importa `crate::format`, entao `codec` sozinha nao compila.
+# `format` is included without us using it: the crate's own `codec`
+# module imports `crate::format`, so `codec` alone does not compile.
 #
-# `device` entra para o Mac virar HOST: a captura de tela dele e o
-# dispositivo de entrada `avfoundation` do libavdevice, e a codificacao e
-# o `h264_videotoolbox` -- os dois ja presentes no ffmpeg do brew. A
-# alternativa era ScreenCaptureKit e VideoToolbox crus, centenas de
-# linhas de ponte com Objective-C para chegar no mesmo lugar.
+# `device` is included so the Mac can be a HOST: its screen capture is
+# libavdevice's `avfoundation` input device, and encoding is
+# `h264_videotoolbox` -- both already in brew's ffmpeg. The alternative
+# was raw ScreenCaptureKit and VideoToolbox, hundreds of lines of
+# Objective-C bridging to get to the same place.
 [target.'cfg(target_os = "macos")'.dependencies]
 ffmpeg-next = { version = "9.0", default-features = false, features = [
   "codec",
@@ -80,22 +79,22 @@ version = "0.30"
 optional = true
 
 [features]
-# Ligada por padrao: o visualizador roda nas tres plataformas, e a tabela
-# de teclas depende do `winit`. Feature em vez de `cfg(target_os)` para o
-# teste dela rodar em qualquer maquina onde o winit compile.
+# On by default: the viewer runs on all three platforms, and the key
+# table depends on `winit`. A feature instead of `cfg(target_os)` so its
+# test runs on any machine where winit compiles.
 default = ["winit-keys"]
-# A tabela de teclas depende do `winit`, que so e dependencia no macOS.
-# Feature em vez de `cfg(target_os)` para o teste dela poder rodar em
-# qualquer maquina onde o winit compile.
+# The key table depends on `winit`, which is only a dependency on macOS.
+# A feature instead of `cfg(target_os)` so its test can run on any
+# machine where winit compiles.
 winit-keys = ["dep:winit"]
 
 [lib]
 name = "logistream"
 path = "src/lib.rs"
 
-# Nomes com prefixo: estes binarios vao para `~/.local/bin`, onde `host`
-# e `view` sozinhos seriam nomes genericos demais para conviver com o
-# resto do sistema.
+# Prefixed names: these binaries go to `~/.local/bin`, where `host` and
+# `view` alone would be too generic to live alongside the rest of the
+# system.
 [[bin]]
 name = "logistream-host"
 path = "src/bin/host.rs"
@@ -106,7 +105,7 @@ path = "src/bin/kvm.rs"
 
 [[bin]]
 name = "logistream-ponte"
-path = "src/bin/ponte.rs"
+path = "src/bin/bridge.rs"
 
 [[bin]]
 name = "logistream-view"
@@ -130,7 +129,7 @@ path = "src/bin/capture-probe.rs"
 
 [[bin]]
 name = "logistream-probe-sistema"
-path = "src/bin/sistema-probe.rs"
+path = "src/bin/system-probe.rs"
 
 [[bin]]
 name = "logistream-probe-input"
@@ -149,5 +148,5 @@ name = "logistream-input-send"
 path = "src/bin/input-send.rs"
 
 [dev-dependencies]
-# `#[tokio::test]` precisa do runtime completo no teste.
+# `#[tokio::test]` needs the full runtime in tests.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }

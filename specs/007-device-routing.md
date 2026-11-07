@@ -1,13 +1,14 @@
-# 007 — Descoberta, nomes e roteamento
+# 007 — Discovery, names and routing
 
-## Regra inviolável: nunca escrever IP
+## Inviolable rule: never write an IP
 
-Em 03/11 o Windows saiu de `192.168.1.43` para `192.168.1.42` (mesmo
-MAC `00:00:5e:00:53:01`). Quebrou de uma vez: Deskflow (`No route to
-host` em loop), SSH, e o painel. **O GSConnect sobreviveu** — descobre
-por broadcast.
+On 2026-11-03 Windows moved from `192.168.1.43` to `192.168.1.42` (same
+MAC `00:00:5e:00:53:01`). It broke all at once: Deskflow (`No route to
+host` in a loop), SSH, and the panel. **GSConnect survived** — it
+discovers by broadcast.
 
-A lição: o que descobre por nome se cura; o que é fixado em IP quebra.
+The lesson: what discovers by name heals itself; what is pinned to an IP
+breaks.
 
 ## mDNS
 
@@ -17,75 +18,76 @@ avahi-daemon:        active
 libnss-mdns:         0.15.1-5
 ```
 
-`getent hosts windows-host.local` → `192.168.1.42`, estável. Todas as
-configs usam o nome: `Deskflow.conf`, `~/.ssh/config` e
+`getent hosts windows-host.local` → `192.168.1.42`, stable. All configs
+use the name: `Deskflow.conf`, `~/.ssh/config` and
 `~/.config/logi/config.toml`.
 
-Quirks pagos:
+Quirks paid for:
 
-- **Deskflow não aceita lista com vírgula** no `remoteHost`, apesar do
-  tooltip da GUI prometer. `FATAL: No server addresses configured`.
-  Um host só.
-- **`ssh-keyscan <nome>.local` falha** com `Temporary failure in name
-  resolution` mesmo com `getent` funcionando — `mdns4_minimal` +
-  `[NOTFOUND=return]` em consulta AF_UNSPEC. O `ssh` em si resolve.
-- **`known_hosts` é por nome.** Trocar IP→nome dá `Host key
-  verification failed`. A correção certa é copiar a *mesma* chave
-  confiável para o novo nome e conferir fingerprint — nunca
-  `accept-new` às cegas.
+- **Deskflow does not accept a comma-separated list** in `remoteHost`,
+  despite the GUI tooltip promising it. `FATAL: No server addresses
+  configured`. A single host only.
+- **`ssh-keyscan <name>.local` fails** with `Temporary failure in name
+  resolution` even with `getent` working — `mdns4_minimal` +
+  `[NOTFOUND=return]` on an AF_UNSPEC query. `ssh` itself resolves.
+- **`known_hosts` is per name.** Switching IP→name gives `Host key
+  verification failed`. The right fix is copying the *same* trusted key
+  to the new name and checking the fingerprint — never a blind
+  `accept-new`.
 
-## O que o `logid` deve fazer
+## What `logid` must do
 
-1. **Resolver sempre na hora.** Nunca cachear IP em config; cachear no
-   máximo em runtime, com TTL curto.
-2. **Avisar quando o IP mudar.** Mesmo funcionando por nome, registrar
-   o evento: IP dançando é sintoma de falta de reserva de DHCP.
-3. **Checar pré-requisitos no startup** e expor na API: `avahi-daemon`
-   ativo, `mdns4_minimal` no nsswitch, ACL do `hidraw`.
+1. **Always resolve on the spot.** Never cache an IP in config; at most
+   cache it at runtime, with a short TTL.
+2. **Warn when the IP changes.** Even when working by name, record the
+   event: a wandering IP is a symptom of a missing DHCP reservation.
+3. **Check prerequisites at startup** and expose them in the API:
+   `avahi-daemon` active, `mdns4_minimal` in nsswitch, `hidraw` ACL.
 
-## Terceiro par: MacBook no canal 3
+## Third peer: MacBook on channel 3
 
-Lido do hardware (o nome vem do teclado, que tem `HOSTS INFO {1815}`):
+Read from the hardware (the name comes from the keyboard, which has
+`HOSTS INFO {1815}`):
 
 ```
 solaar config 2 change-host
   -> [ 1:ubuntu-host, 2:windows-host, 3:ASSET-TAG-0001 ]
 ```
 
-O canal 3 e um **MacBook**. O nome `ASSET-TAG-0001` e etiqueta de
-patrimonio corporativo, nao o hostname que o mDNS vai anunciar — na
-hora de integrar, conferir o `.local` real dele.
+Channel 3 is a **MacBook**. The name `ASSET-TAG-0001` is a corporate
+asset tag, not the hostname mDNS will announce — when integrating, check
+its real `.local`.
 
-Ainda **nao** esta em `[[hosts]]`: um par sem bloco de host nao entra no
-roteamento, e e melhor assim ate ter o daemon rodando la. O que ele
-precisa, quando chegar a vez:
+It is **not** in `[[hosts]]` yet: a peer without a host block does not
+enter routing, and that is better until the daemon is running there.
+What it needs, when its turn comes:
 
-| Peca | Situacao no macOS |
+| Piece | Situation on macOS |
 |---|---|
-| sshd | ja vem no sistema, so habilitar em Ajustes |
-| mDNS | nativo (Bonjour) — `.local` funciona de fabrica |
-| HID++ | precisa de build do `logid` para arm64/x86_64 Darwin |
-| canal Easy-Switch | 3, ja pareado e confirmado |
+| sshd | ships with the system, just enable it in Settings |
+| mDNS | native (Bonjour) — `.local` works out of the box |
+| HID++ | needs a `logid` build for arm64/x86_64 Darwin |
+| Easy-Switch channel | 3, already paired and confirmed |
 
-O modelo simetrico ([`001`](001-control-plane.md#simétrico-todo-nó-é-par-nenhum-é-central))
-foi desenhado justamente para isso: o terceiro par nao e caso especial,
-e so mais um no com o mesmo binario.
+The symmetric model ([`001`](001-control-plane.md#symmetric-every-node-is-a-peer-none-is-central))
+was designed precisely for this: the third peer is not a special case,
+it is just one more node with the same binary.
 
-## Pendência fora do nosso alcance
+## Pending item outside our reach
 
-Reserva de DHCP no roteador para o MAC `00:00:5e:00:53:01`. mDNS
-depende de avahi e multicast; a reserva é a redundância. Não dá para
-automatizar — é ação no roteador.
+DHCP reservation on the router for MAC `00:00:5e:00:53:01`. mDNS depends
+on avahi and multicast; the reservation is the redundancy. It cannot be
+automated — it is an action on the router.
 
-## Identidade de dispositivo (Logitech)
+## Device identity (Logitech)
 
-Ver [`005`](005-input-switch.md). Mapeamento nesta máquina:
+See [`005`](005-input-switch.md). Mapping on this machine:
 
-| hidraw | dispositivo | slot no receptor |
+| hidraw | device | receiver slot |
 |---|---|---|
-| `hidraw0` | `046D:C52B` receptor Unifying | — |
+| `hidraw0` | `046D:C52B` Unifying receiver | — |
 | `hidraw2` | `046D:4090` MX Keys | 2 |
 | `hidraw3` | `046D:408A` MX Anywhere 3 | 1 |
 
-Os dois estão pareados aqui **e** no receptor do Windows, em canais
-Easy-Switch diferentes. É isso que torna a rota física possível.
+Both are paired here **and** on the Windows receiver, on different
+Easy-Switch channels. That is what makes the physical route possible.

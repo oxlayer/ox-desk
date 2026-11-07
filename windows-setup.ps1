@@ -1,5 +1,5 @@
-# Lado Windows (192.168.1.43) do setup Flow-equivalente.
-# Rode no PowerShell COMO ADMINISTRADOR:
+# Windows side (192.168.1.43) of the Flow-equivalent setup.
+# Run in PowerShell AS ADMINISTRATOR:
 #   powershell -ExecutionPolicy Bypass -File windows-setup.ps1
 
 $ErrorActionPreference = 'Stop'
@@ -10,30 +10,30 @@ $url = "https://github.com/deskflow/deskflow/releases/download/v$ver/deskflow-$v
 if (-not ([Security.Principal.WindowsPrincipal] `
     [Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  throw 'Rode este script como Administrador.'
+  throw 'Run this script as Administrator.'
 }
 
-Write-Host "==> baixando deskflow $ver"
+Write-Host "==> downloading deskflow $ver"
 Invoke-WebRequest -Uri $url -OutFile $msi
 
-Write-Host '==> instalando (silencioso)'
+Write-Host '==> installing (silent)'
 Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait
 
-Write-Host '==> regra de firewall para a porta 24800 (servidor deskflow)'
+Write-Host '==> firewall rule for port 24800 (deskflow server)'
 Get-NetFirewallRule -DisplayName 'Deskflow' -ErrorAction SilentlyContinue |
   Remove-NetFirewallRule
 New-NetFirewallRule -DisplayName 'Deskflow' -Direction Inbound -Action Allow `
   -Protocol TCP -LocalPort 24800 -Profile Private,Domain | Out-Null
 
-Write-Host '==> perfil da rede (a regra acima so vale em rede Privada)'
+Write-Host '==> network profile (the rule above only applies on a Private network)'
 Get-NetConnectionProfile | Select-Object InterfaceAlias, NetworkCategory |
   Format-Table -AutoSize
-Write-Host 'Se aparecer "Public" acima, troque para Private:'
-Write-Host '  Set-NetConnectionProfile -InterfaceAlias "<nome>" -NetworkCategory Private'
+Write-Host 'If "Public" shows above, switch it to Private:'
+Write-Host '  Set-NetConnectionProfile -InterfaceAlias "<name>" -NetworkCategory Private'
 
-Write-Host '==> autostart no logon (atalho na pasta Startup)'
-# O servidor precisa de uma sessao de usuario para capturar input, entao
-# roda no LOGON -- nao como servico "whether user is logged on or not".
+Write-Host '==> autostart at logon (shortcut in the Startup folder)'
+# The server needs a user session to capture input, so it runs at LOGON
+# -- not as a "whether user is logged on or not" service.
 $exe = Join-Path ${env:ProgramFiles} 'Deskflow\deskflow.exe'
 if (-not (Test-Path $exe)) {
   $exe = (Get-ChildItem -Path "${env:ProgramFiles}","${env:ProgramFiles(x86)}" `
@@ -49,26 +49,28 @@ if ($exe) {
   $sc.WorkingDirectory = Split-Path $exe
   $sc.Description = 'Deskflow server (KVM over LAN)'
   $sc.Save()
-  Write-Host "  atalho criado: $lnk"
-  Write-Host '  confirme na GUI que o modo salvo e Server e que ela inicia o core.'
+  Write-Host "  shortcut created: $lnk"
+  Write-Host '  confirm in the GUI that the saved mode is Server and that it starts the core.'
 } else {
-  Write-Host '  deskflow.exe nao encontrado -- crie o atalho manualmente:'
-  Write-Host '  Win+R -> shell:startup -> arraste um atalho do Deskflow para la'
+  Write-Host '  deskflow.exe not found -- create the shortcut by hand:'
+  Write-Host '  Win+R -> shell:startup -> drag a Deskflow shortcut there'
 }
 
 Write-Host ''
-Write-Host 'Pronto. Agora:'
-Write-Host '  1. abra o Deskflow, escolha Server'
-Write-Host '  2. Configure Server -> arraste uma tela nova ao lado do Windows'
-Write-Host '     (nome EXATO do hostname que o cliente Ubuntu mostrar)'
-Write-Host '  3. instale o KDE Connect pela Microsoft Store (clipboard + arquivos)'
+Write-Host 'Done. Now:'
+Write-Host '  1. open Deskflow, choose Server'
+Write-Host '  2. Configure Server -> drag a new screen next to Windows'
+Write-Host '     (the EXACT hostname the Ubuntu client shows)'
+Write-Host '  3. install KDE Connect from the Microsoft Store (clipboard + files)'
 
-# --- logistream: tela e input -------------------------------------------
+# --- logistream: screen and input ---------------------------------------
 #
-# Duas portas, duas regras. A de input (9778) ficou faltando quando o
-# KVM por LAN entrou, e o sintoma nao disse "firewall": o KVM agarrava o
-# teclado aqui, nao conectava la, e o teclado voltava sozinho. Regra
-# separada de proposito -- quem nao quer o KVM desabilita so ela.
+# Two ports, two rules. The input one (9778) was missing when LAN KVM
+# arrived, and the symptom did not say "firewall": the KVM grabbed the
+# keyboard here, did not connect there, and the keyboard came back on its
+# own. A separate rule on purpose -- whoever does not want the KVM
+# disables only that one. The rule display names are left as they are:
+# they are how this script finds an existing rule.
 foreach ($r in @(
   @{ nome = 'logistream (tela remota) UDP 9777'; porta = 9777 },
   @{ nome = 'logistream (input KVM) UDP 9778';   porta = 9778 }
@@ -76,8 +78,8 @@ foreach ($r in @(
   if (-not (Get-NetFirewallRule -DisplayName $r.nome -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -DisplayName $r.nome -Direction Inbound -Protocol UDP `
       -LocalPort $r.porta -Action Allow -Profile Any | Out-Null
-    Write-Host ("regra criada: " + $r.nome)
+    Write-Host ("rule created: " + $r.nome)
   } else {
-    Write-Host ("regra ja existe: " + $r.nome)
+    Write-Host ("rule already exists: " + $r.nome)
   }
 }

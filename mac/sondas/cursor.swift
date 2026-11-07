@@ -1,11 +1,11 @@
-// Onde esta o ponteiro, em pixels. Uma linha por leitura.
+// Where the pointer is, in pixels. One line per reading.
 //
-// Existe porque "parece que nao mexeu" nao e medida. Com a posicao
-// lida antes e depois de uma rajada de MouseRel, ou andou os pixels
-// esperados ou nao andou -- e a diferenca aponta para o lado certo
-// (chegou e foi recusado vs. nem chegou).
+// It exists because "it looks like it did not move" is not a measurement.
+// With the position read before and after a burst of MouseRel, it either
+// moved the expected pixels or it did not -- and the difference points to
+// the right side (arrived and was refused vs. never arrived).
 //
-// Nao precisa de permissao: ler a posicao do cursor nao e TCC.
+// Needs no permission: reading the cursor position is not TCC.
 import CoreGraphics
 let p = CGEvent(source: nil)!.location
 print("\(Int(p.x)) \(Int(p.y))")

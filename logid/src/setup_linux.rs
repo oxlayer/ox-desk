@@ -1,20 +1,20 @@
-//! Medição e reparo do setup, no Ubuntu.
+//! Setup measurement and repair, on Ubuntu.
 //!
 //! Spec: ../../specs/011-onboarding.md
 //!
-//! O catálogo e a decisão ficam em `setup.rs`; aqui só se mede o mundo e
-//! se mexe nele. Duas coisas que a divisão impõe, e que valem:
+//! The catalog and the decision live in `setup.rs`; here we only measure
+//! the world and touch it. Two things the split imposes, and that hold:
 //!
-//! 1. Toda medição é **barata e com teto de tempo**. O wizard chama
-//!    `medir()` a cada poucos segundos; um passo que leva 10 s derruba o
-//!    painel inteiro. Onde a medida honesta é caro (NVENC, SSH), ela sai
-//!    de cache ou de um probe com timeout.
-//! 2. Todo reparo volta a mensagem do que **mediu depois**, não do que
-//!    mandou. "Rodei o comando" não é resultado
-//!    ([[../../.claude/rules/verificar-o-que-chegou]]).
+//! 1. Every measurement is **cheap and time-limited**. The wizard calls
+//!    `measure()` every few seconds; a step that takes 10 s brings the
+//!    whole panel down. Where the honest measurement is expensive (NVENC,
+//!    SSH), it comes from a cache or from a probe with a timeout.
+//! 2. Every repair returns the message of what it **measured
+//!    afterwards**, not of what it ordered. "I ran the command" is not a
+//!    result ([[../../.claude/rules/verify-what-arrived]]).
 
 use crate::config::Config;
-use crate::setup::{Estado, Medida};
+use crate::setup::{State, Check};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -26,108 +26,108 @@ fn bin_dir() -> PathBuf {
     crate::sys::home_dir().join(".local/bin")
 }
 
-pub fn medir(cfg: &Config) -> Vec<Medida> {
+pub fn measure(cfg: &Config) -> Vec<Check> {
     vec![
-        binarios(),
-        crate::setup_comum::config_desta_maquina(cfg),
+        binaries(),
+        crate::setup_common::this_machine_config(cfg),
         daemon(),
-        receptor(),
+        receiver(),
         input_kvm(),
         wayland(),
-        crate::setup_comum::clipboard(),
-        crate::setup_comum::pares(cfg),
+        crate::setup_common::clipboard(),
+        crate::setup_common::peers(cfg),
         nvenc(),
-        bandeja(),
+        tray(),
         ota(),
     ]
 }
 
-fn token_ota() -> PathBuf {
+fn ota_token() -> PathBuf {
     crate::sys::home_dir().join(".config/logi/ota-token")
 }
 
-fn ota() -> Medida {
-    crate::setup_comum::ota(&bin_dir().join("logi-ota"), &token_ota(), relogio())
+fn ota() -> Check {
+    crate::setup_common::ota(&bin_dir().join("logi-ota"), &ota_token(), clock())
 }
 
-/// O timer do systemd que acorda o `logi-ota`.
+/// The systemd timer that wakes `logi-ota` up.
 ///
-/// `is-active` **e** `is-enabled`: um timer ativo e não habilitado morre
-/// no próximo boot sem avisar -- o mesmo par que o passo do daemon
-/// confere, pelo mesmo motivo.
-fn relogio() -> Result<String, String> {
-    let ativo = Command::new("systemctl")
+/// `is-active` **and** `is-enabled`: a timer that is active but not
+/// enabled dies on the next boot without warning -- the same pair the
+/// daemon step checks, for the same reason.
+fn clock() -> Result<String, String> {
+    let active = Command::new("systemctl")
         .args(["--user", "is-active", "--quiet", "logi-ota.timer"])
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    if !ativo {
+    if !active {
         return Err("logi-ota.timer não está ativo".into());
     }
-    let habilitado = Command::new("systemctl")
+    let enabled = Command::new("systemctl")
         .args(["--user", "is-enabled", "--quiet", "logi-ota.timer"])
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    if !habilitado {
+    if !enabled {
         return Err("logi-ota.timer roda agora mas não está habilitado: no próximo boot não sobe".into());
     }
     Ok("timer do systemd a cada 1 h".into())
 }
 
-fn binarios() -> Medida {
+fn binaries() -> Check {
     let dir = bin_dir();
-    let faltam: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
-    if !faltam.is_empty() {
-        return Medida::falta("binarios", format!("faltam: {}", faltam.join(", ")));
+    let absent: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
+    if !absent.is_empty() {
+        return Check::missing("binarios", format!("faltam: {}", absent.join(", ")));
     }
-    // Existir no disco não é estar no ar. Ver
-    // `setup_comum::veredito_do_carimbo`: um deploy pode instalar o
-    // arquivo novo e ninguém executá-lo.
-    if let Some(p) = crate::setup_comum::daemon_do_disco(&dir.join("logid")) {
-        return Medida::falta("binarios", p);
+    // Existing on disk is not being live. See
+    // `setup_common::stamp_verdict`: a deploy can install the new file
+    // and nobody runs it.
+    if let Some(p) = crate::setup_common::daemon_on_disk(&dir.join("logid")) {
+        return Check::missing("binarios", p);
     }
-    Medida::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
+    Check::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
 }
 
-fn daemon() -> Medida {
-    let estado = crate::sys::unit_state("logid.service");
-    let habilitado = Command::new("systemctl")
+fn daemon() -> Check {
+    let state = crate::sys::unit_state("logid.service");
+    let enabled = Command::new("systemctl")
         .args(["--user", "is-enabled", "--quiet", "logid.service"])
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    match (estado.as_str(), habilitado) {
-        ("active", true) => Medida::ok("daemon", "ativo e habilitado no logon"),
-        // Ativo mas não habilitado é o caso traiçoeiro: funciona hoje e
-        // desaparece no próximo boot. Tem de pesar como falta.
-        ("active", false) => Medida::falta("daemon", "ativo, mas NÃO habilitado: não volta no próximo logon"),
-        (outro, _) => Medida::falta("daemon", format!("unit {outro}")),
+    match (state.as_str(), enabled) {
+        ("active", true) => Check::ok("daemon", "ativo e habilitado no logon"),
+        // Active but not enabled is the treacherous case: it works today
+        // and disappears on the next boot. It must weigh as missing.
+        ("active", false) => Check::missing("daemon", "ativo, mas NÃO habilitado: não volta no próximo logon"),
+        (other, _) => Check::missing("daemon", format!("unit {other}")),
     }
 }
 
-/// Alguma regra de udev cobre `hidraw` dos dispositivos Logitech?
+/// Does any udev rule cover `hidraw` for Logitech devices?
 ///
-/// Varredura em NÍVEL DE ARQUIVO, não de linha, e os três diretórios.
-/// A primeira versão disto olhava só `/etc/udev/rules.d` e exigia
-/// `hidraw` e `046d` na MESMA linha -- e dizia "nenhuma regra" numa
-/// máquina onde o acesso funcionava. A regra real (a do pacote do
-/// Solaar, em `/usr/lib`) usa `GOTO`, então o subsistema e o vendor
-/// aparecem em linhas diferentes. Medição errada, máquina certa.
-fn regra_de_hidraw() -> Option<String> {
+/// Scans at FILE level, not line level, and all three directories. The
+/// first version of this looked only at `/etc/udev/rules.d` and required
+/// `hidraw` and `046d` on the SAME line -- and said "no rule" on a
+/// machine where access worked. The real rule (the one from the Solaar
+/// package, in `/usr/lib`) uses `GOTO`, so the subsystem and the vendor
+/// appear on different lines. Wrong measurement, right machine.
+fn hidraw_rule() -> Option<String> {
     for dir in ["/etc/udev/rules.d", "/usr/lib/udev/rules.d", "/lib/udev/rules.d"] {
-        let Ok(entradas) = std::fs::read_dir(dir) else { continue };
-        for e in entradas.flatten() {
-            let Ok(texto) = std::fs::read_to_string(e.path()) else { continue };
-            let util: String = texto
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for e in entries.flatten() {
+            let Ok(text) = std::fs::read_to_string(e.path()) else { continue };
+            let useful: String = text
                 .lines()
                 .map(str::trim)
                 .filter(|l| !l.starts_with('#') && !l.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n");
-            if util.contains("hidraw")
-                && util.contains("046d")
-                && (util.contains("uaccess") || util.contains("MODE"))
+            if useful.contains("hidraw")
+                && useful.contains("046d")
+                && (useful.contains("uaccess") || useful.contains("MODE"))
             {
                 return Some(e.file_name().to_string_lossy().into_owned());
             }
@@ -136,21 +136,21 @@ fn regra_de_hidraw() -> Option<String> {
     None
 }
 
-/// (nós `hidraw` da Logitech, quantos abrem).
+/// (Logitech `hidraw` nodes, how many open).
 ///
-/// Filtra pelo vendor em vez de usar `sys::hidraw_contagem`, que conta
-/// TODOS os nós: nesta máquina são quatro, e um deles é um dispositivo
-/// de outro fabricante que não abre -- então a contagem geral dizia "3
-/// de 4" e deixava no ar a ideia de que falta permissão em algum lugar.
-/// O vendor sai do `HID_ID` no uevent (`0003:0000046D:...`), que existe
-/// tanto para USB quanto para Bluetooth.
+/// Filters by vendor instead of using `sys::hidraw_count`, which counts
+/// ALL nodes: on this machine there are four, and one of them is a device
+/// from another vendor that does not open -- so the overall count said
+/// "3 of 4" and left the impression that a permission was missing
+/// somewhere. The vendor comes from `HID_ID` in the uevent
+/// (`0003:0000046D:...`), which exists for both USB and Bluetooth.
 fn hidraw_logitech() -> (usize, usize) {
-    let Ok(entradas) = std::fs::read_dir("/dev") else { return (0, 0) };
+    let Ok(entries) = std::fs::read_dir("/dev") else { return (0, 0) };
     let mut total = 0;
-    let mut abriveis = 0;
-    for e in entradas.flatten() {
-        let nome = e.file_name();
-        let Some(n) = nome.to_str() else { continue };
+    let mut openable = 0;
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(n) = name.to_str() else { continue };
         if !n.starts_with("hidraw") {
             continue;
         }
@@ -166,56 +166,57 @@ fn hidraw_logitech() -> (usize, usize) {
         }
         total += 1;
         if std::fs::File::open(e.path()).is_ok() {
-            abriveis += 1;
+            openable += 1;
         }
     }
-    (total, abriveis)
+    (total, openable)
 }
 
-/// O receptor HID++ está acessível AGORA, e continuará depois de replugar?
+/// Is the HID++ receiver accessible NOW, and will it stay so after a
+/// replug?
 ///
-/// Duas perguntas numa linha de propósito. Só a ACL responderia "funciona
-/// hoje" e esconderia que ela morre no próximo replug; só a regra
-/// responderia "deveria funcionar" sem olhar se funciona.
-fn receptor() -> Medida {
-    let (total, abriveis) = hidraw_logitech();
+/// Two questions in one line on purpose. The ACL alone would answer
+/// "works today" and hide that it dies on the next replug; the rule alone
+/// would answer "should work" without looking at whether it does.
+fn receiver() -> Check {
+    let (total, openable) = hidraw_logitech();
     if total == 0 {
-        // Zero nós é ausência de hardware, não de permissão. O painel
-        // já mandou a pessoa "rodar udevadm" quando o receptor estava
-        // na outra máquina -- consertar uma permissão que não está
-        // quebrada.
-        return Medida::fora("receptor", "nenhum hidraw Logitech agora: receptor desplugado?");
+        // Zero nodes is absent hardware, not a missing permission. The
+        // panel once told the person to "run udevadm" when the receiver
+        // was on the other machine -- fixing a permission that was not
+        // broken.
+        return Check::not_applicable("receptor", "nenhum hidraw Logitech agora: receptor desplugado?");
     }
-    let regra = regra_de_hidraw();
-    match (abriveis > 0, regra) {
-        (true, Some(r)) => Medida::ok("receptor", format!("{abriveis} de {total} nós abrem; regra {r}")),
-        (true, None) => Medida::falta(
+    let rule = hidraw_rule();
+    match (openable > 0, rule) {
+        (true, Some(r)) => Check::ok("receptor", format!("{openable} de {total} nós abrem; regra {r}")),
+        (true, None) => Check::missing(
             "receptor",
-            format!("{abriveis} de {total} nós abrem AGORA, mas nenhuma regra cobre hidraw+046d: \
+            format!("{openable} de {total} nós abrem AGORA, mas nenhuma regra cobre hidraw+046d: \
                      a ACL some no próximo replug"),
         ),
-        (false, Some(r)) => Medida::falta(
+        (false, Some(r)) => Check::missing(
             "receptor",
             format!("{r} existe e nenhum dos {total} nós abre: falta um udevadm trigger"),
         ),
-        (false, None) => Medida::falta("receptor", format!("nenhum dos {total} nós de /dev/hidraw abre")),
+        (false, None) => Check::missing("receptor", format!("nenhum dos {total} nós de /dev/hidraw abre")),
     }
 }
 
-/// Os `event*` dos dispositivos Logitech são legíveis?
+/// Are the Logitech devices' `event*` nodes readable?
 ///
-/// Pelo vendor em `/sys`, não pelo nome: "MX Master" vira outro nome
-/// quando o dispositivo troca de canal, e um filtro por nome mediria
-/// certo hoje e errado amanhã.
-fn input_kvm() -> Medida {
-    let Ok(entradas) = std::fs::read_dir("/dev/input") else {
-        return Medida::erro("input-kvm", "não consegui ler /dev/input");
+/// By vendor in `/sys`, not by name: "MX Master" becomes another name
+/// when the device switches channel, and a name filter would measure
+/// right today and wrong tomorrow.
+fn input_kvm() -> Check {
+    let Ok(entries) = std::fs::read_dir("/dev/input") else {
+        return Check::error("input-kvm", "não consegui ler /dev/input");
     };
     let mut total = 0;
-    let mut legiveis = 0;
-    for e in entradas.flatten() {
-        let nome = e.file_name();
-        let Some(n) = nome.to_str() else { continue };
+    let mut readable = 0;
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(n) = name.to_str() else { continue };
         if !n.starts_with("event") {
             continue;
         }
@@ -228,76 +229,76 @@ fn input_kvm() -> Medida {
         }
         total += 1;
         if std::fs::File::open(e.path()).is_ok() {
-            legiveis += 1;
+            readable += 1;
         }
     }
     if total == 0 {
-        return Medida::fora("input-kvm", "nenhum dispositivo Logitech em /dev/input agora");
+        return Check::not_applicable("input-kvm", "nenhum dispositivo Logitech em /dev/input agora");
     }
-    Medida::se(
+    Check::when(
         "input-kvm",
-        legiveis == total,
-        format!("{legiveis} de {total} dispositivos Logitech legíveis"),
-        format!("só {legiveis} de {total} dispositivos Logitech são legíveis"),
+        readable == total,
+        format!("{readable} de {total} dispositivos Logitech legíveis"),
+        format!("só {readable} de {total} dispositivos Logitech são legíveis"),
     )
 }
 
-fn wayland() -> Medida {
+fn wayland() -> Check {
     match std::env::var("XDG_SESSION_TYPE").unwrap_or_default().as_str() {
-        "wayland" => Medida::ok("wayland", "Wayland"),
-        "" => Medida::erro("wayland", "XDG_SESSION_TYPE vazio: o daemon não herdou o ambiente da sessão"),
-        outro => Medida::falta("wayland", format!("sessão {outro}: borda e clipboard não foram validados aqui")),
+        "wayland" => Check::ok("wayland", "Wayland"),
+        "" => Check::error("wayland", "XDG_SESSION_TYPE vazio: o daemon não herdou o ambiente da sessão"),
+        other => Check::missing("wayland", format!("sessão {other}: borda e clipboard não foram validados aqui")),
     }
 }
 
-fn nvenc() -> Medida {
-    // O probe de verdade (`logistream-probe-nvenc`) inicializa CUDA e
-    // leva segundos. Para o painel basta a pergunta anterior: existe
-    // driver NVIDIA carregado? Sem ele o probe falha de qualquer jeito,
-    // e com ele o caminho de tela já foi exercitado de fato pelo uso.
+fn nvenc() -> Check {
+    // The real probe (`logistream-probe-nvenc`) initializes CUDA and
+    // takes seconds. For the panel the earlier question is enough: is an
+    // NVIDIA driver loaded? Without it the probe fails anyway, and with
+    // it the screen path has already been exercised for real by use.
     if !std::path::Path::new("/dev/nvidiactl").exists() {
-        return Medida::fora("nvenc", "sem GPU NVIDIA: esta máquina pode assistir, não ser assistida");
+        return Check::not_applicable("nvenc", "sem GPU NVIDIA: esta máquina pode assistir, não ser assistida");
     }
-    match crate::setup_comum::rodar("nvidia-smi", &["--query-gpu=name", "--format=csv,noheader"], 5) {
+    match crate::setup_common::run_timed("nvidia-smi", &["--query-gpu=name", "--format=csv,noheader"], 5) {
         Ok(s) => {
-            let nome = s.lines().next().unwrap_or("").trim().to_string();
-            Medida::ok("nvenc", if nome.is_empty() { "driver carregado".into() } else { nome })
+            let name = s.lines().next().unwrap_or("").trim().to_string();
+            Check::ok("nvenc", if name.is_empty() { "driver carregado".into() } else { name })
         }
-        Err(e) => Medida::erro("nvenc", format!("nvidia-smi: {e}")),
+        Err(e) => Check::error("nvenc", format!("nvidia-smi: {e}")),
     }
 }
 
-fn bandeja() -> Medida {
-    // `pgrep -f` no padrão que a skill de deploy usa para matar o
-    // processo. Casar pelo nome "electron" sozinho pegaria qualquer app
-    // Electron da máquina.
-    let viva = Command::new("pgrep")
+fn tray() -> Check {
+    // `pgrep -f` with the pattern the deploy skill uses to kill the
+    // process. Matching on the name "electron" alone would catch any
+    // Electron app on the machine.
+    let alive = Command::new("pgrep")
         .args(["-f", "electron \\.$"])
         .output()
         .map(|o| !o.stdout.is_empty())
         .unwrap_or(false);
-    Medida::se("bandeja", viva, "rodando", "não está rodando")
+    Check::when("bandeja", alive, "rodando", "não está rodando")
 }
 
-// ------------------------------------------------------------------ reparos
+// ------------------------------------------------------------------ repairs
 
-pub fn arrumar(id: &str, cfg: &Config) -> Result<String, String> {
+pub fn repair(id: &str, cfg: &Config) -> Result<String, String> {
     match id {
-        "config" => crate::setup_comum::escrever_config(),
+        "config" => crate::setup_common::write_config(),
         "daemon" => {
-            // `enable --now` numa unit que já roda é idempotente, e é o
-            // que arruma o caso "ativo mas não habilitado" sem derrubar
-            // o daemon que está respondendo esta requisição.
-            crate::setup_comum::rodar(
+            // `enable --now` on a unit that already runs is idempotent,
+            // and it is what fixes the "active but not enabled" case
+            // without killing the daemon answering this request.
+            crate::setup_common::run_timed(
                 "systemctl",
                 &["--user", "enable", "--now", "logid.service"],
                 15,
             )?;
             Ok("unit habilitada".into())
         }
-        "clipboard" => crate::setup_comum::testar_clipboard(),
-        "bandeja" => lancar_bandeja(),
-        "ota" => instalar_relogio(),
+        "clipboard" => crate::setup_common::test_clipboard(),
+        "bandeja" => launch_tray(),
+        "ota" => install_clock(),
         _ => Err(format!("'{id}' não se arruma sozinho nesta máquina")),
     }
     .map(|s| {
@@ -306,18 +307,18 @@ pub fn arrumar(id: &str, cfg: &Config) -> Result<String, String> {
     })
 }
 
-/// Escreve o service e o timer do `logi-ota` e os habilita.
+/// Writes the `logi-ota` service and timer and enables them.
 ///
-/// A unit é **gerada aqui**, não copiada do repo: o wizard tem de
-/// funcionar numa máquina que não tem o checkout (é o caso do Mac). E
-/// `%h` resolve a casa de quem roda, então o mesmo texto serve qualquer
-/// conta.
+/// The unit is **generated here**, not copied from the repo: the wizard
+/// has to work on a machine without the checkout (the Mac's case). And
+/// `%h` resolves to the home of whoever runs it, so the same text serves
+/// any account.
 ///
-/// A primeira execução é `--conferir`, de propósito: `logi-ota` sem
-/// argumento pode aplicar um build novo e **reiniciar o logid** -- que é
-/// quem está respondendo esta requisição. O relógio aplica no próximo
-/// tique, com ninguém esperando resposta.
-fn instalar_relogio() -> Result<String, String> {
+/// The first run is `--conferir`, on purpose: `logi-ota` without
+/// arguments may apply a new build and **restart logid** -- which is
+/// what is answering this request. The clock applies on the next tick,
+/// with nobody waiting for an answer.
+fn install_clock() -> Result<String, String> {
     let bin = bin_dir().join("logi-ota");
     if !bin.is_file() {
         return Err(format!("não achei {}: rode o deploy", bin.display()));
@@ -325,30 +326,31 @@ fn instalar_relogio() -> Result<String, String> {
     let dir = crate::sys::home_dir().join(".config/systemd/user");
     std::fs::create_dir_all(&dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
 
-    // `concat!` e nao continuacao de linha com `\`: a versao anterior
-    // escrevia o arquivo com a indentacao do codigo-fonte dentro. O
-    // systemd engoliu e funcionou, mas unit com espaco a esquerda e
-    // bomba de efeito retardado.
+    // `concat!` and not line continuation with `\`: the previous version
+    // wrote the file with the source code's indentation inside. systemd
+    // swallowed it and it worked, but a unit with leading whitespace is a
+    // time bomb.
     let service = concat!(
         "[Unit]\n",
-        "Description=logi-ota - confere a Release publicada e aplica se for mais nova\n",
+        "Description=logi-ota - checks the published Release and applies it if newer\n",
         "Documentation=file:///home/user/dev/logi/specs/015-ota.md\n",
         "\n",
         "[Service]\n",
         "Type=oneshot\n",
         "ExecStart=%h/.local/bin/logi-ota\n",
     );
-    // `OnActiveSec` e nao `OnBootSec`: numa maquina ligada ha horas,
-    // `OnBootSec=3min` ja passou, e `enable --now` dispara o servico NA
-    // HORA -- ou seja, o botao do wizard aplicaria um build novo e
-    // reiniciaria o `logid` no meio da requisicao que o instalou. Foi o
-    // que aconteceu aqui na primeira versao (o `list-timers` mostrou
-    // "LAST 495ms ago" logo depois do POST). Relativo a ativacao do
-    // timer, a primeira checagem cai 10 min depois -- de instalar ou de
-    // ligar a maquina -- e ninguem esta mais esperando resposta.
+    // `OnActiveSec` and not `OnBootSec`: on a machine that has been on
+    // for hours, `OnBootSec=3min` has already passed, and `enable --now`
+    // fires the service RIGHT AWAY -- that is, the wizard button would
+    // apply a new build and restart `logid` in the middle of the request
+    // that installed it. That is what happened here in the first version
+    // (`list-timers` showed "LAST 495ms ago" right after the POST).
+    // Relative to the timer's activation, the first check lands 10 min
+    // later -- after installing or booting the machine -- and nobody is
+    // waiting for an answer anymore.
     let timer = concat!(
         "[Unit]\n",
-        "Description=relogio do logi-ota\n",
+        "Description=logi-ota timer\n",
         "\n",
         "[Timer]\n",
         "OnActiveSec=10min\n",
@@ -364,47 +366,49 @@ fn instalar_relogio() -> Result<String, String> {
     std::fs::write(dir.join("logi-ota.timer"), timer)
         .map_err(|e| format!("gravar logi-ota.timer: {e}"))?;
 
-    crate::setup_comum::rodar("systemctl", &["--user", "daemon-reload"], 15)?;
-    crate::setup_comum::rodar("systemctl", &["--user", "enable", "--now", "logi-ota.timer"], 15)?;
+    crate::setup_common::run_timed("systemctl", &["--user", "daemon-reload"], 15)?;
+    crate::setup_common::run_timed("systemctl", &["--user", "enable", "--now", "logi-ota.timer"], 15)?;
 
-    // Conferir o que ficou, não o que mandei.
-    relogio()?;
-    let primeira = crate::setup_comum::rodar(&bin.to_string_lossy(), &["--conferir"], 60);
-    Ok(match primeira {
+    // Check what stuck, not what I ordered.
+    clock()?;
+    let first = crate::setup_common::run_timed(&bin.to_string_lossy(), &["--conferir"], 60);
+    Ok(match first {
         Ok(s) => format!("timer habilitado; primeira checagem: {}", s.trim()),
         Err(e) => format!("timer habilitado, mas a primeira checagem falhou: {e}"),
     })
 }
 
-/// Lança a casca Electron.
+/// Launches the Electron shell.
 ///
-/// `env -u ELECTRON_RUN_AS_NODE` não é opcional e não é supérstição:
-/// com essa variável no ambiente o electron roda como node puro, `app`
-/// vem `undefined` e o processo morre em `requestSingleInstanceLock()`
-/// -- com uma mensagem que não diz nada sobre a variável. Já derrubei a
-/// GUI do usuário assim, e o daemon herda o ambiente de quem o lançou,
-/// então aqui a variável pode muito bem estar presente.
-fn lancar_bandeja() -> Result<String, String> {
+/// `env -u ELECTRON_RUN_AS_NODE` is not optional and not superstition:
+/// with that variable in the environment electron runs as plain node,
+/// `app` comes back `undefined` and the process dies in
+/// `requestSingleInstanceLock()` -- with a message that says nothing
+/// about the variable. I already brought the user's GUI down that way,
+/// and the daemon inherits the environment of whoever launched it, so
+/// the variable may well be present here.
+fn launch_tray() -> Result<String, String> {
     let dir = crate::sys::home_dir().join("dev/logi/gui");
     if !dir.join("main.js").exists() {
         return Err(format!("não achei a casca em {}", dir.display()));
     }
     let log = crate::sys::state_dir().join("logi-gui.log");
-    let saida = std::fs::File::create(&log).map_err(|e| format!("abrir {}: {e}", log.display()))?;
-    let erro = saida.try_clone().map_err(|e| format!("duplicar o log: {e}"))?;
+    let output = std::fs::File::create(&log).map_err(|e| format!("abrir {}: {e}", log.display()))?;
+    let error = output.try_clone().map_err(|e| format!("duplicar o log: {e}"))?;
     Command::new("setsid")
         .args(["env", "-u", "ELECTRON_RUN_AS_NODE", "node", "./node_modules/.bin/electron", "."])
         .current_dir(&dir)
-        .stdout(saida)
-        .stderr(erro)
+        .stdout(output)
+        .stderr(error)
         .spawn()
         .map_err(|e| format!("lançar: {e}"))?;
 
-    // Medir depois de lançar, não anunciar o lançamento: o electron
-    // morre em ~200 ms quando morre, e um "pronto" imediato esconderia
-    // justamente a falha mais comum.
+    // Measure after launching, do not announce the launch: electron dies
+    // within ~200 ms when it dies, and an immediate "ready" would hide
+    // precisely the most common failure.
+
     std::thread::sleep(Duration::from_millis(1500));
-    if bandeja().estado == Estado::Ok {
+    if tray().state == State::Ok {
         Ok("bandeja no ar".into())
     } else {
         Err(format!("lancei e não ficou de pé; veja {}", log.display()))

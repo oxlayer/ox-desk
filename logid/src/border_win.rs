@@ -1,33 +1,33 @@
-//! Vigilancia de borda no Windows: polling de `GetCursorPos`.
+//! Edge watching on Windows: polling `GetCursorPos`.
 //!
-//! Era o modo `watch-edge` do `logid-agent`, processo separado lancado por
-//! atalho no `shell:startup`. Virou thread do daemon quando o `logid`
-//! passou a rodar no Windows -- com os dois vivos, seriam dois donos do
-//! mesmo receptor HID++, exatamente o que a trava de instancia unica
-//! existe para impedir (ja aconteceu: tres `watch-edge` simultaneos
-//! triplicando o trafego de radio).
+//! It used to be the `watch-edge` mode of `logid-agent`, a separate
+//! process launched by a shortcut in `shell:startup`. It became a daemon
+//! thread when `logid` started running on Windows -- with both alive,
+//! there would be two owners of the same HID++ receiver, exactly what the
+//! single-instance lock exists to prevent (it already happened: three
+//! simultaneous `watch-edge` tripling the radio traffic).
 //!
-//! Por isso esta thread reivindica o **mesmo nome de mutex** do
-//! `watch-edge`. Nao e coincidencia: e o que garante que o atalho antigo
-//! e o daemon novo nunca pollem juntos, mesmo que alguem esqueca de
-//! remover o atalho.
+//! That is why this thread claims the **same mutex name** as
+//! `watch-edge`. Not a coincidence: it is what guarantees the old shortcut
+//! and the new daemon never poll together, even if someone forgets to
+//! remove the shortcut.
 //!
-//! ## Por que aqui e mais simples que no Linux
+//! ## Why it is simpler here than on Linux
 //!
-//! O GNOME nao deixa ler a posicao do cursor: e preciso pedir uma
-//! barreira ao compositor via `org.gnome.Mutter.InputCapture`, receber
-//! sinal, e desarmar a barreira na mao porque o mutter ignora o recuo do
-//! cursor. No Windows `GetCursorPos` responde direto -- 30 ms de loop e o
-//! cursor e lido como ele esta.
+//! GNOME does not let you read the cursor position: you have to ask the
+//! compositor for a barrier via `org.gnome.Mutter.InputCapture`, receive a
+//! signal, and disarm the barrier by hand because mutter ignores the
+//! cursor pullback. On Windows `GetCursorPos` answers directly -- a 30 ms
+//! loop and the cursor is read as it is.
 //!
-//! ## A permanencia se expressa diferente nas duas pontas
+//! ## Dwell is expressed differently on the two ends
 //!
-//! O mutter entrega eventos discretos, entao do lado Linux a permanencia
-//! e **densidade**: `hold_hits` ativacoes dentro de `hold_window_ms`.
-//! Aqui medimos contato **continuo**, que e o que o polling de fato ve.
-//! A traducao e: `hold_hits <= 1` significa trocar no primeiro toque (o
-//! que o usuario pediu), e acima disso exigimos ficar na borda por
-//! `hold_window_ms`. Mesma intencao, sinais diferentes.
+//! Mutter delivers discrete events, so on the Linux side dwell is
+//! **density**: `hold_hits` activations within `hold_window_ms`. Here we
+//! measure **continuous** contact, which is what polling actually sees.
+//! The translation is: `hold_hits <= 1` means switch on first touch (what
+//! the user asked for), and above that we require staying on the edge for
+//! `hold_window_ms`. Same intent, different signals.
 
 use crate::config::Config;
 use crate::focus::{self, FocusRequest};
@@ -36,15 +36,16 @@ use std::time::{Duration, Instant};
 
 const TICK: Duration = Duration::from_millis(30);
 const COOLDOWN: Duration = Duration::from_secs(10);
-/// A presenca e HID++: a 33 Hz seria martelar o radio sem motivo. A
-/// janela do dead-man's switch e de dezenas de segundos, 1 Hz basta.
+/// Presence is HID++: at 33 Hz it would hammer the radio for nothing. The
+/// dead-man's switch window is tens of seconds, 1 Hz is enough.
 const PRESENCE_EVERY: Duration = Duration::from_secs(1);
 const GUARD_DEFAULT: u64 = 25;
-/// Carencia depois que os dispositivos chegam aqui.
+/// Grace period after the devices arrive here.
 ///
-/// Com borda nas duas maquinas apontando uma para a outra, sem isto um
-/// movimento natural logo apos a chegada devolve tudo na hora. Medido no
-/// log do usuario: chegada e volta em menos de um minuto, varias vezes.
+/// With edges on both machines pointing at each other, without this a
+/// natural movement right after arrival sends everything back at once.
+/// Measured in the user's log: arrival and return in under a minute,
+/// several times.
 const GRACE: u64 = 7_000;
 
 
@@ -61,16 +62,16 @@ fn run(cfg: Arc<RwLock<Config>>) {
         } else {
             Duration::from_millis(if b.hold_window_ms == 0 { 300 } else { b.hold_window_ms })
         };
-        // Vem da grade quando ela existe (ver `Config::border_edges`).
-        // Uma maquina no meio tem vizinho dos dois lados, entao sao
-        // varias bordas, nao uma.
+        // Comes from the grid when there is one (see `Config::border_edges`).
+        // A machine in the middle has a neighbor on both sides, so these
+        // are several edges, not one.
         let edges: Vec<(String, String)> = g
             .border_edges()
             .into_iter()
             .filter(|(e, _)| {
                 let ok = matches!(e.as_str(), "left" | "right" | "top" | "bottom");
                 if !ok {
-                    gripe!("border: borda '{e}' invalida -- ignorada");
+                    gripe!("border: invalid edge '{e}' -- ignored");
                 }
                 ok
             })
@@ -81,32 +82,33 @@ fn run(cfg: Arc<RwLock<Config>>) {
         (edges, hold)
     };
 
-    // `GetCursorPos` e `GetLastInputInfo` sao POR SESSAO. Na sessao 0 --
-    // o caso de lancar o daemon por SSH -- esta thread nao veria input
-    // nenhum, leria um desktop falso de 1024x768 e ainda competiria pelo
-    // receptor com a instancia de verdade. O resto do daemon (API, HID++)
-    // funciona la, so a borda nao: por isso so esta thread desiste.
+    // `GetCursorPos` and `GetLastInputInfo` are PER SESSION. In session 0
+    // -- the case of launching the daemon over SSH -- this thread would see
+    // no input at all, would read a fake 1024x768 desktop and would still
+    // compete for the receiver with the real instance. The rest of the
+    // daemon (API, HID++) works there, only the edge does not: that is why
+    // only this thread gives up.
     if !winput::in_console_session() {
         gripe!(
-            "border: fora da sessao do console -- cursor e input nao sao \
-             visiveis daqui. O daemon segue servindo a API; a borda nao."
+            "border: outside the console session -- cursor and input are not \
+             visible from here. The daemon keeps serving the API; the edge does not."
         );
         return;
     }
     if !winput::claim_single_instance("logid-agent-watch-edge") {
         gripe!(
-            "border: ja existe outro vigia (daemon ou o atalho antigo de \
-             watch-edge). Dois donos do mesmo receptor e problema real -- \
-             esta thread desiste."
+            "border: another watcher already exists (the daemon or the old \
+             watch-edge shortcut). Two owners of the same receiver is a real \
+             problem -- this thread gives up."
         );
         return;
     }
 
     let (vx, vy, vw, vh) = winput::virtual_screen();
-    let resumo: Vec<String> = edges.iter().map(|(e, t)| format!("{e} -> {t}")).collect();
+    let summary: Vec<String> = edges.iter().map(|(e, t)| format!("{e} -> {t}")).collect();
     say!(
-        "border: vigiando {} (area {vx},{vy} {vw}x{vh}, permanencia {}ms)",
-        resumo.join(", "),
+        "border: watching {} (area {vx},{vy} {vw}x{vh}, dwell {}ms)",
+        summary.join(", "),
         hold.as_millis()
     );
 
@@ -114,64 +116,64 @@ fn run(cfg: Arc<RwLock<Config>>) {
     let mut cooldown: Option<Instant> = None;
     let mut guard = Guard::new(&cfg);
     let mut last_presence = Instant::now() - PRESENCE_EVERY;
-    // Ja comeca encostado? Entao nao conta como chegada. Sem isto, um
-    // cursor estacionado na borda dispara no primeiro tick depois do
-    // boot. Por borda, porque sao varias.
-    let mut armada = true;
+    // Already touching at start? Then it does not count as an arrival.
+    // Without this, a cursor parked on the edge fires on the first tick
+    // after boot. Per edge, because there are several.
+    let mut armed = true;
     let mut was_at: Vec<bool> = edges
         .iter()
         .map(|(e, _)| winput::cursor().map(|p| winput::at_edge(e, p)).unwrap_or(false))
         .collect();
     if was_at.iter().any(|v| *v) {
-        say!("border: cursor ja esta numa borda vigiada -- aguardando ele sair e voltar");
+        say!("border: cursor is already on a watched edge -- waiting for it to leave and come back");
     }
 
-    // Lido a cada volta, e nao no boot.
+    // Read on every turn, not at boot.
     //
-    // Este laco nasce com as bordas que a config tinha no inicio e segue
-    // para sempre; sem esta leitura, desligar a borda pela GUI nao
-    // desligava NADA aqui. O log provou o estrago, dois segundos depois
-    // de eu desligar pela API:
+    // This loop is born with the edges the config had at the start and
+    // runs forever; without this read, turning the edge off in the GUI
+    // turned NOTHING off here. The log proved the damage, two seconds
+    // after I turned it off through the API:
     //
-    //   08:33:04 border: KVM por borda DESLIGADO pela GUI
-    //   08:33:04 border: armada -- os dispositivos estao aqui
-    //   08:33:06 border: borda 'left' alcancada -- trocando para ubuntu-host
+    //   08:33:04 border: edge KVM turned OFF from the GUI
+    //   08:33:04 border: armed -- the devices are here
+    //   08:33:06 border: edge 'left' reached -- switching to ubuntu-host
     //
-    // O usuario mandava os dispositivos para esta maquina, movia o mouse
-    // para a esquerda -- o movimento natural, porque o Ubuntu esta desse
-    // lado -- e tudo voltava. O painel do Ubuntu dizia, com razao, que a
-    // borda DELE estava desligada; esta era outra.
+    // The user sent the devices to this machine, moved the mouse to the
+    // left -- the natural movement, because Ubuntu is on that side -- and
+    // everything went back. Ubuntu's panel said, rightly, that ITS edge
+    // was off; this was another one.
     //
-    // Vale para o dead-man's switch tambem (`guard.tick`): ele existe
-    // para desfazer uma travessia de borda quando ninguem apareceu do
-    // outro lado. Sem borda, ele nao tem o que desfazer -- so puxa.
-    let mut desligada_avisada = false;
+    // It applies to the dead-man's switch too (`guard.tick`): it exists to
+    // undo an edge crossing when nobody showed up on the other side.
+    // Without an edge, it has nothing to undo -- it only pulls.
+    let mut off_announced = false;
 
     loop {
         std::thread::sleep(TICK);
 
-        let ligada = cfg.read().map(|g| g.input.border.enabled).unwrap_or(false);
-        if !ligada {
-            if armada || !desligada_avisada {
-                armada = false;
-                desligada_avisada = true;
-                say!("border: desligada na config -- nao vigio nem devolvo nada");
+        let enabled = cfg.read().map(|g| g.input.border.enabled).unwrap_or(false);
+        if !enabled {
+            if armed || !off_announced {
+                armed = false;
+                off_announced = true;
+                say!("border: off in the config -- not watching or returning anything");
             }
-            // Zera a chegada nas bordas: se religarem, o cursor tera de
-            // SAIR de uma borda e voltar antes de valer.
+            // Reset arrival on the edges: if it is turned back on, the
+            // cursor will have to LEAVE an edge and come back before it counts.
             was_at.iter_mut().for_each(|v| *v = true);
             touching = None;
             cooldown = None;
             continue;
         }
-        desligada_avisada = false;
+        off_announced = false;
 
         if let Some(t) = cooldown {
             if Instant::now() < t {
                 continue;
             }
             cooldown = None;
-            say!("border: cooldown vencido, vigiando de novo");
+            say!("border: cooldown over, watching again");
         }
 
         if last_presence.elapsed() >= PRESENCE_EVERY {
@@ -179,35 +181,35 @@ fn run(cfg: Arc<RwLock<Config>>) {
             guard.tick(&cfg);
         }
 
-        // Uma borda so faz sentido na maquina que ESTA com os
-        // dispositivos, e so depois de a pessoa ter tido tempo de sair da
-        // beirada por onde entrou. Fora disso ela nao e neutra: dispara,
-        // tenta trocar o que nao detem e enche o log -- e no Linux ainda
-        // queimava o cooldown, deixando a borda morta justo quando o
-        // usuario batia nela de proposito.
-        let recem_chegou = crate::hidpp::arrived_ms_ago().is_some_and(|ms| ms < GRACE);
-        if recem_chegou || !crate::hidpp::devices_here() {
-            if armada {
-                armada = false;
+        // An edge only makes sense on the machine that HAS the devices,
+        // and only after the person has had time to leave the border they
+        // came in through. Outside that it is not neutral: it fires, tries
+        // to switch what it does not hold and fills the log -- and on
+        // Linux it also burned the cooldown, leaving the edge dead just
+        // when the user hit it on purpose.
+        let just_arrived = crate::hidpp::arrived_ms_ago().is_some_and(|ms| ms < GRACE);
+        if just_arrived || !crate::hidpp::devices_here() {
+            if armed {
+                armed = false;
                 say!(
-                    "border: desarmada -- {}",
-                    if recem_chegou { "acabaram de chegar" } else { "nao estao aqui" }
+                    "border: disarmed -- {}",
+                    if just_arrived { "they just arrived" } else { "they are not here" }
                 );
             }
-            // Zera a chegada nas bordas: quando rearmar, o cursor tera de
-            // SAIR e voltar, mesmo que ja esteja encostado.
+            // Reset arrival on the edges: when re-armed, the cursor will
+            // have to LEAVE and come back, even if it is already touching.
             was_at.iter_mut().for_each(|v| *v = true);
             touching = None;
             continue;
         }
-        if !armada {
-            armada = true;
-            say!("border: armada -- os dispositivos estao aqui");
+        if !armed {
+            armed = true;
+            say!("border: armed -- the devices are here");
         }
 
         let Some(p) = winput::cursor() else { continue };
-        // Qual borda o cursor esta tocando? Nenhuma, uma -- nunca duas,
-        // porque sao lados opostos da mesma area.
+        // Which edge is the cursor touching? None or one -- never two,
+        // because they are opposite sides of the same area.
         let Some(i) = edges.iter().position(|(e, _)| winput::at_edge(e, p)) else {
             touching = None;
             was_at.iter_mut().for_each(|v| *v = false);
@@ -216,17 +218,17 @@ fn run(cfg: Arc<RwLock<Config>>) {
         let (edge, target) = (&edges[i].0, &edges[i].1);
         let was_at_edge = was_at[i];
 
-        // Exige CHEGADA, nao presenca.
+        // Requires ARRIVAL, not presence.
         //
-        // O mutter entrega travessia como evento, entao do lado Linux isso
-        // vem de graca. Aqui o polling le posicao: um cursor parado na
-        // borda pareceria "tocando" a cada 30 ms, para sempre. O custo
-        // disso nao e log repetido -- e que, no instante em que os
-        // dispositivos CHEGASSEM nesta maquina, a borda os mandaria de
-        // volta sem ninguem ter encostado em nada.
+        // Mutter delivers crossing as an event, so on the Linux side this
+        // comes for free. Here polling reads position: a cursor resting on
+        // the edge would look "touching" every 30 ms, forever. The cost of
+        // that is not a repeated log -- it is that, the instant the devices
+        // ARRIVED on this machine, the edge would send them back without
+        // anyone having touched anything.
         //
-        // Depois de disparar, `was_at_edge` fica `true`: so volta a valer
-        // quando o cursor sair da borda e voltar.
+        // After firing, `was_at_edge` stays `true`: it only counts again
+        // when the cursor leaves the edge and comes back.
         if was_at_edge && touching.is_none() {
             continue;
         }
@@ -240,20 +242,20 @@ fn run(cfg: Arc<RwLock<Config>>) {
         }
         touching = None;
         cooldown = Some(Instant::now() + COOLDOWN);
-        say!("border: borda '{edge}' alcancada em ({},{}) -- trocando para {target}", p.x, p.y);
-        let alvo = target.clone();
-        switch_away(&cfg, &alvo);
+        say!("border: edge '{edge}' reached at ({},{}) -- switching to {target}", p.x, p.y);
+        let dest = target.clone();
+        switch_away(&cfg, &dest);
     }
 }
 
-/// A troca leva segundos (pre-flight + verificacao por efeito). Rodar no
-/// loop travaria a leitura do cursor; vai para uma thread.
+/// The switch takes seconds (pre-flight + effect-based check). Running it
+/// in the loop would stall the cursor reading; it goes to a thread.
 fn switch_away(cfg: &Arc<RwLock<Config>>, target: &str) {
     let Ok(snap) = cfg.read().map(|g| g.clone()) else { return };
     let host = target.to_string();
     std::thread::spawn(move || {
-        // O pre-flight completo roda aqui dentro: config ruim nao pode te
-        // deixar sem teclado so porque o mouse encostou na borda.
+        // The full pre-flight runs in here: a bad config must not leave
+        // you without a keyboard just because the mouse touched the edge.
         let req = FocusRequest { host, route: None, confirm: true, fast: true };
         let outcome = focus::execute(&snap, &req);
         if outcome.executed {
@@ -261,7 +263,7 @@ fn switch_away(cfg: &Arc<RwLock<Config>>, target: &str) {
                 say!("border: {r}");
             }
         } else {
-            let bloqueios: Vec<&str> = outcome
+            let blockers: Vec<&str> = outcome
                 .plan
                 .checks
                 .iter()
@@ -269,23 +271,24 @@ fn switch_away(cfg: &Arc<RwLock<Config>>, target: &str) {
                 .map(|c| c.name.as_str())
                 .collect();
             say!(
-                "border: NAO trocou -- {} (bloqueios: {})",
-                outcome.error.unwrap_or_else(|| "plano nao pronto".into()),
-                bloqueios.join(", ")
+                "border: did NOT switch -- {} (blockers: {})",
+                outcome.error.unwrap_or_else(|| "plan not ready".into()),
+                blockers.join(", ")
             );
         }
     });
 }
 
-/// Dead-man's switch: quem detem o dispositivo e o unico que pode devolver.
+/// Dead-man's switch: whoever holds the device is the only one who can
+/// give it back.
 ///
-/// A spec 005 exige isto e por muito tempo nao existiu de fato: eu tentei
-/// lancar o guard por SSH e `GetLastInputInfo` nao ve a sessao do usuario
-/// de fora dela. Aqui dentro funciona -- esta thread ja e residente na
-/// sessao e ja faz polling.
+/// Spec 005 requires this and for a long time it did not really exist: I
+/// tried launching the guard over SSH and `GetLastInputInfo` does not see
+/// the user's session from outside it. In here it works -- this thread
+/// already lives in the session and already polls.
 ///
-/// Logica: quando os dispositivos CHEGAM nesta maquina, abrimos uma
-/// janela. Se nenhum input aparecer nela, devolvemos.
+/// Logic: when the devices ARRIVE on this machine, we open a window. If no
+/// input shows up in it, we give them back.
 struct Guard {
     secs: u64,
     peer: Option<String>,
@@ -302,8 +305,8 @@ impl Guard {
         let peer = cfg.read().ok().and_then(|g| g.peer_host().map(|h| h.name.clone()));
         if peer.is_none() {
             gripe!(
-                "border: sem host remoto na config -- o dead-man's switch \
-                 nao sabe para onde devolver"
+                "border: no remote host in the config -- the dead-man's switch \
+                 does not know where to give the devices back"
             );
         }
         Guard { secs, peer, present_before: false, arrived: None }
@@ -319,8 +322,9 @@ impl Guard {
             return;
         }
 
-        // Reusa a varredura do daemon em vez de reabrir o receptor: o
-        // refresher a mantem fresca e o cache evita trafego HID++ duplo.
+        // Reuses the daemon's survey instead of reopening the receiver:
+        // the refresher keeps it fresh and the cache avoids double HID++
+        // traffic.
         let survey = crate::hidpp::survey_cached_or_fresh(Duration::from_millis(2500));
         let present = survey.receivers.iter().any(|r| {
             r.devices.iter().any(|d| d.online && wanted.iter().any(|w| w == &d.name))
@@ -329,27 +333,27 @@ impl Guard {
         if present && !self.present_before {
             self.arrived = Some(Instant::now());
             say!(
-                "border: dispositivos CHEGARAM -- vigiando input por {}s",
+                "border: devices ARRIVED -- watching input for {}s",
                 self.secs
             );
         } else if !present && self.present_before {
             self.arrived = None;
-            say!("border: dispositivos SAIRAM -- vigilancia encerrada");
+            say!("border: devices LEFT -- watch ended");
         }
         self.present_before = present;
 
         let Some(t0) = self.arrived else { return };
         let Ok(idle) = winput::idle_ms() else { return };
-        // Input novo: o idle caiu abaixo do tempo desde a chegada, logo
-        // houve atividade depois dela.
+        // New input: idle dropped below the time since arrival, so there
+        // was activity after it.
         if idle < t0.elapsed().as_millis() as u64 {
-            say!("border: input detectado -- dead-man's switch desarmado");
+            say!("border: input detected -- dead-man's switch stood down");
             self.arrived = None;
             return;
         }
         if t0.elapsed().as_secs() >= self.secs {
             say!(
-                "border: SEM INPUT em {}s (idle {idle}ms) -- devolvendo para {peer}",
+                "border: NO INPUT in {}s (idle {idle}ms) -- giving back to {peer}",
                 self.secs
             );
             self.arrived = None;

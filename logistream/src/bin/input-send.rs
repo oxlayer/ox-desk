@@ -1,49 +1,49 @@
-//! Manda alguns eventos de input para o host e sai.
+//! Sends a few input events to the host and exits.
 //!
-//! Existe para provar o caminho de volta sem depender de alguem mexer o
-//! mouse numa janela. O host registra cada evento aceito e grita no
-//! recusado, entao o log dele e a prova.
+//! It exists to prove the return path without depending on someone moving
+//! the mouse in a window. The host logs every accepted event and shouts on
+//! a refused one, so its log is the proof.
 //!
-//! **Mexe o cursor da maquina alvo de verdade.** O movimento e pequeno e
-//! a tecla e um Shift solto, que nao digita nada.
+//! **It really moves the target machine's cursor.** The movement is small
+//! and the key is a lone Shift, which types nothing.
 //!
-//! Com `--rajada N` manda N movimentos de mouse SEM pausa entre eles.
-//! Serve para medir o que o usuario sentiu: "o video para se eu paro de
-//! digitar" e "o input e lento" tinham a mesma causa -- a injecao
-//! esperava resposta do Mutter na mesma thread que bombeia o video. Uma
-//! rajada enquanto o `sink` mede fps mostra o estrago, e mostra a
-//! melhora.
+//! With `--rajada N` it sends N mouse movements with NO pause between them.
+//! It serves to measure what the user felt: "the video stops if I stop
+//! typing" and "input is slow" had the same cause -- injection waited for
+//! Mutter's reply on the same thread that pumps the video. A burst while
+//! `sink` measures fps shows the damage, and shows the improvement.
 //!
-//!   cargo run --release --bin input-send -- <host:porta> [--rajada N]
+//!   cargo run --release --bin input-send -- <host:port> [--rajada N]
 
 use bytes::BytesMut;
-use logistream::input::{Evento, BTN_LEFT};
+use logistream::input::{Event, BTN_LEFT};
 use logistream::net;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    let alvo = std::env::args().nth(1).unwrap_or_else(|| "127.0.0.1:9777".into());
-    let mut enderecos: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&alvo).await?.collect();
-    enderecos.sort_by_key(|a| !a.is_ipv4());
-    let destino = *enderecos.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
+    let target = std::env::args().nth(1).unwrap_or_else(|| "127.0.0.1:9777".into());
+    let mut addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&target).await?.collect();
+    addrs.sort_by_key(|a| !a.is_ipv4());
+    let dest = *addrs.first().ok_or_else(|| anyhow::anyhow!("could not resolve {target}"))?;
     let bind: std::net::SocketAddr =
-        if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
-    let ep = net::cliente(bind)?;
-    let conexao = ep.connect(destino, "logistream")?.await?;
-    let mut envio = conexao.open_uni().await?;
-    println!("  conectado; mandando eventos");
+        if dest.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
+    let ep = net::client(bind)?;
+    let conn = ep.connect(dest, "logistream")?.await?;
+    let mut send = conn.open_uni().await?;
+    println!("  connected; sending events");
 
-    let rajada: usize = std::env::args()
+    let burst: usize = std::env::args()
         .position(|a| a == "--rajada")
         .and_then(|i| std::env::args().nth(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
-    // `--rel N`: N deslocamentos relativos de +10 em X.
+    // `--rel N`: N relative movements of +10 in X.
     //
-    // Existe para medir o caminho do KVM sem agarrar o teclado de
-    // ninguem. "Parece que nao mexeu" nao e medida: com a posicao do
-    // cursor lida antes e depois, ou andou 10*N pixels ou nao andou.
+    // It exists to measure the KVM path without grabbing anyone's keyboard.
+    // "Looks like it did not move" is not a measurement: with the cursor
+    // position read before and after, it either moved 10*N pixels or it
+    // did not.
     let rel: usize = std::env::args()
         .position(|a| a == "--rel")
         .and_then(|i| std::env::args().nth(i + 1))
@@ -53,131 +53,134 @@ async fn main() -> anyhow::Result<()> {
         let mut buf = BytesMut::new();
         for _ in 0..rel {
             buf.clear();
-            Evento::MouseRel { dx: 10.0, dy: 0.0 }.escrever(&mut buf);
-            envio.write_all(&buf).await?;
+            Event::MouseRel { dx: 10.0, dy: 0.0 }.write(&mut buf);
+            send.write_all(&buf).await?;
             tokio::time::sleep(std::time::Duration::from_millis(8)).await;
         }
-        envio.finish()?;
-        println!("  {rel} MouseRel de +10 em X = {} px esperados", rel * 10);
+        send.finish()?;
+        println!("  {rel} MouseRel of +10 in X = {} px expected", rel * 10);
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
         return Ok(());
     }
 
-    // `--abs X Y`: posicao ABSOLUTA, em pixel do quadro.
+    // `--abs X Y`: ABSOLUTE position, in frame pixels.
     //
-    // E o caminho que o visualizador usa quando voce move o mouse
-    // dentro da janela, e era o unico quebrado no Mac: o quadro vem em
-    // pixel e o CGEvent injeta em ponto, fator 2 num Retina. O `--rel`
-    // nao pega isso -- ele acumula deltas e nunca passa pela conversao.
-    // Medi "+200 px exatos" com o bug em pe.
+    // It is the path the viewer uses when you move the mouse inside the
+    // window, and it was the only one broken on the Mac: the frame comes in
+    // pixels and CGEvent injects in points, a factor of 2 on a Retina.
+    // `--rel` does not catch it -- it accumulates deltas and never goes
+    // through the conversion. I measured "exactly +200 px" with the bug
+    // still in place.
     //
-    // Para conferir, mande o MEIO do quadro: o cursor tem de parar no
-    // meio da tela. Com o bug ele vai para o canto inferior direito,
-    // porque o dobro de tudo e maior que a tela e o sistema prende na
-    // borda.
+    // To check, send the MIDDLE of the frame: the cursor has to stop in the
+    // middle of the screen. With the bug it goes to the bottom-right
+    // corner, because double of everything is bigger than the screen and
+    // the system clamps to the edge.
     if let Some(i) = std::env::args().position(|a| a == "--abs") {
         let x: f64 = std::env::args().nth(i + 1).and_then(|v| v.parse().ok()).unwrap_or(0.0);
         let y: f64 = std::env::args().nth(i + 2).and_then(|v| v.parse().ok()).unwrap_or(0.0);
         let mut buf = BytesMut::new();
-        Evento::Mouse { x, y }.escrever(&mut buf);
-        envio.write_all(&buf).await?;
-        envio.finish()?;
-        println!("  Mouse absoluto para ({x}, {y}) em pixel de quadro");
+        Event::Mouse { x, y }.write(&mut buf);
+        send.write_all(&buf).await?;
+        send.finish()?;
+        println!("  absolute Mouse to ({x}, {y}) in frame pixels");
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
         return Ok(());
     }
 
-    // `--capslock`: liga e desliga o Caps Lock da maquina alvo.
+    // `--capslock`: turns the target machine's Caps Lock on and off.
     //
-    // Teclado precisava de um teste MEDIVEL. "Digitei e nao apareceu"
-    // depende de onde estava o foco; o estado do Caps Lock nao depende
-    // de nada e se le com uma chamada. Inofensivo: volta como estava.
+    // The keyboard needed a MEASURABLE test. "I typed and nothing showed
+    // up" depends on where the focus was; the Caps Lock state depends on
+    // nothing and is read with one call. Harmless: it goes back to how it
+    // was.
     if std::env::args().any(|a| a == "--capslock") {
         let mut buf = BytesMut::new();
-        // 58 = KEY_CAPSLOCK no evdev, que e o que o protocolo carrega.
-        for apertado in [true, false] {
+        // 58 = evdev KEY_CAPSLOCK, which is what the protocol carries.
+        for pressed in [true, false] {
             buf.clear();
-            Evento::Tecla { keycode: 58, apertado }.escrever(&mut buf);
-            envio.write_all(&buf).await?;
+            Event::Key { keycode: 58, pressed }.write(&mut buf);
+            send.write_all(&buf).await?;
             tokio::time::sleep(std::time::Duration::from_millis(40)).await;
         }
-        envio.finish()?;
-        println!("  caps lock alternado uma vez");
+        send.finish()?;
+        println!("  caps lock toggled once");
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
         return Ok(());
     }
 
-    // `--segurar <evdev>`: aperta a tecla, espera, e solta.
+    // `--segurar <evdev>`: presses the key, waits, and releases it.
     //
-    // Existe porque o Caps Lock NAO serve de teste no macOS: o sistema
-    // o trata na camada HID e um evento sintetico nao o alterna, mesmo
-    // chegando e sendo traduzido. Com uma tecla comum da para olhar o
-    // estado dela enquanto esta apertada, que e medida de verdade.
+    // It exists because Caps Lock does NOT work as a test on macOS: the
+    // system handles it in the HID layer and a synthetic event does not
+    // toggle it, even when it arrives and gets translated. With a common
+    // key you can look at its state while it is held, which is a real
+    // measurement.
     if let Some(i) = std::env::args().position(|a| a == "--segurar") {
-        let codigo: u32 = std::env::args()
+        let code: u32 = std::env::args()
             .nth(i + 1)
             .and_then(|v| v.parse().ok())
             .unwrap_or(30); // 30 = A
         let mut buf = BytesMut::new();
         buf.clear();
-        Evento::Tecla { keycode: codigo, apertado: true }.escrever(&mut buf);
-        envio.write_all(&buf).await?;
-        println!("  tecla {codigo} APERTADA; segurando 4s");
+        Event::Key { keycode: code, pressed: true }.write(&mut buf);
+        send.write_all(&buf).await?;
+        println!("  key {code} PRESSED; holding 4s");
         tokio::time::sleep(std::time::Duration::from_secs(4)).await;
         buf.clear();
-        Evento::Tecla { keycode: codigo, apertado: false }.escrever(&mut buf);
-        envio.write_all(&buf).await?;
-        envio.finish()?;
-        println!("  tecla {codigo} solta");
+        Event::Key { keycode: code, pressed: false }.write(&mut buf);
+        send.write_all(&buf).await?;
+        send.finish()?;
+        println!("  key {code} released");
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         return Ok(());
     }
 
-    if rajada > 0 {
-        // Movimento so, sem tecla nem botao: muda o cursor da maquina
-        // alvo e nada mais. Um circulo pequeno para o cursor nao parar
-        // num canto que dispare coisa do sistema.
+    if burst > 0 {
+        // Movement only, no key or button: it changes the target machine's
+        // cursor and nothing else. A small circle so the cursor does not
+        // stop in a corner that triggers something in the system.
         let mut buf = BytesMut::new();
         let t0 = std::time::Instant::now();
-        for i in 0..rajada {
+        for i in 0..burst {
             let a = (i as f64) * 0.1;
-            let e = Evento::Mouse { x: 1300.0 + 60.0 * a.cos(), y: 750.0 + 60.0 * a.sin() };
+            let e = Event::Mouse { x: 1300.0 + 60.0 * a.cos(), y: 750.0 + 60.0 * a.sin() };
             buf.clear();
-            e.escrever(&mut buf);
-            envio.write_all(&buf).await?;
+            e.write(&mut buf);
+            send.write_all(&buf).await?;
         }
-        envio.finish()?;
+        send.finish()?;
         let s = t0.elapsed().as_secs_f64();
-        println!("  {rajada} eventos em {s:.2}s = {:.0}/s", rajada as f64 / s);
+        println!("  {burst} events in {s:.2}s = {:.0}/s", burst as f64 / s);
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
         return Ok(());
     }
 
-    let mut eventos = Vec::new();
-    // Um quadrado pequeno perto do centro: visivel, sem atravessar a
-    // tela nem cair em canto que dispara coisa do sistema.
+    let mut events = Vec::new();
+    // A small square near the center: visible, without crossing the screen
+    // or landing in a corner that triggers something in the system.
     for (x, y) in [(1200.0, 700.0), (1400.0, 700.0), (1400.0, 800.0), (1200.0, 800.0)] {
-        eventos.push(Evento::Mouse { x, y });
+        events.push(Event::Mouse { x, y });
     }
-    // Shift: aperta e solta sem digitar nada.
-    eventos.push(Evento::Tecla { keycode: 42, apertado: true });
-    eventos.push(Evento::Tecla { keycode: 42, apertado: false });
-    // Rolagem de um passo, que nao destroi nada.
-    eventos.push(Evento::Rolagem { dx: 0.0, dy: 15.0 });
-    // Botao NAO e enviado: clicar as cegas na maquina de alguem pode
-    // apertar qualquer coisa que estiver sob o cursor.
+    // Shift: press and release without typing anything.
+    events.push(Event::Key { keycode: 42, pressed: true });
+    events.push(Event::Key { keycode: 42, pressed: false });
+    // A one-step scroll, which destroys nothing.
+    events.push(Event::Scroll { dx: 0.0, dy: 15.0 });
+    // A button is NOT sent: clicking blindly on someone's machine could
+    // press whatever is under the cursor.
     let _ = BTN_LEFT;
 
     let mut buf = BytesMut::new();
-    for e in &eventos {
+    for e in &events {
         buf.clear();
-        e.escrever(&mut buf);
-        envio.write_all(&buf).await?;
+        e.write(&mut buf);
+        send.write_all(&buf).await?;
         tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     }
-    envio.finish()?;
-    // Deixa o host consumir antes de fechar a conexao.
+    send.finish()?;
+    // Let the host consume before closing the connection.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    println!("  {} eventos enviados", eventos.len());
+    println!("  {} events sent", events.len());
     Ok(())
 }

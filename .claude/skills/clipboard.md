@@ -1,133 +1,135 @@
-# Clipboard entre as máquinas
+# Clipboard between the machines
 
-Texto sincronizado nas três, sem KDE Connect. Detalhes de desenho em
+Text synced across the three, without KDE Connect. Design details in
 [[../../specs/004-clipboard.md]].
 
-## Como conferir que está vivo
+## How to check that it is alive
 
 ```bash
-# Ubuntu -> pares
+# Ubuntu -> peers
 echo -n "teste-$(date +%s)" | xclip -selection clipboard
 sleep 5
 ssh mac 'pbpaste'
 ```
 
-No Windows **não** dá para conferir por SSH: o clipboard é por window
-station, e `Get-Clipboard` pela sessão 0 lê outro. Precisa de tarefa
-interativa:
+On Windows you **can't** check over SSH: the clipboard is per window
+station, and `Get-Clipboard` from session 0 reads a different one. It
+needs an interactive task:
 
 ```powershell
 schtasks /create /tn ler-clip /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ps`"" /sc once /st 00:00 /it /f
 schtasks /run /tn ler-clip
 ```
 
-onde o script faz `Get-Clipboard -Raw | Out-File ...` e você lê o
-arquivo. Mesma fronteira de sessão que aparece no cursor e no host de
-tela ([[../rules/cursor-sem-mouse]]).
+where the script does `Get-Clipboard -Raw | Out-File ...` and you read
+the file. The same session boundary that shows up with the cursor and
+the screen host ([[../rules/cursor-without-mouse]]).
 
-## Quando não propaga
+## When it doesn't propagate
 
-O log do `logid` de origem diz. `journalctl --user -u logid -n 30 | grep clip`:
+The source `logid` log tells you. `journalctl --user -u logid -n 30 | grep clip`:
 
-| Mensagem | Causa |
+| Message | Cause |
 |---|---|
-| `command not found: logid` | caminho remoto errado — o shell do SSH não carrega o PATH do login |
-| `recusou (exit status: 1)` com stderr vazio | o `logid` do par é velho e não conhece `clip-set` — faça deploy |
-| `nao consegui falar com <host>` | SSH não conecta: chave, mDNS ou máquina fora |
-| nada no log | a origem não viu a cópia; no Windows/Mac a amostragem é de 2 s |
+| `command not found: logid` | wrong remote path — the SSH shell doesn't load the login PATH |
+| `recusou (exit status: 1)` with empty stderr | the peer's `logid` is old and doesn't know `clip-set` — deploy |
+| `nao consegui falar com <host>` | SSH doesn't connect: key, mDNS or machine offline |
+| nothing in the log | the source didn't see the copy; on Windows/Mac the sampling is every 2 s |
 
-## A chave do Mac
+## The Mac key
 
-O Mac alcança o Ubuntu pelo alias `ubuntu` do `~/.ssh/config` dele, que
-carrega a `IdentityFile` certa. Testar com `user@ubuntu-host.local`
-dá `Permission denied` mesmo com tudo certo — o alias é que tem a
-chave. Use sempre o alias que a config do `logid` declara em `ssh = `.
+The Mac reaches the Ubuntu machine through the `ubuntu` alias in its
+`~/.ssh/config`, which carries the right `IdentityFile`. Testing with
+`user@ubuntu-host.local` gives `Permission denied` even with
+everything right — it's the alias that has the key. Always use the alias
+that the `logid` config declares in `ssh = `.
 
-Se a chave não estiver autorizada deste lado:
+If the key isn't authorized on this side:
 
 ```bash
 ssh mac 'cat ~/.ssh/id_ed25519_logi.pub' >> ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
 ```
 
-## Limites
+## Limits
 
-Só **texto**, teto de 256 KB. Imagem e arquivo não viajam — o KDE
-Connect fazia isso; se fizer falta, é trabalho novo.
+**Text** only, capped at 256 KB. Images and files don't travel — KDE
+Connect did that; if it's missed, it's new work.
 
 ---
 
-# Clipboard de arquivos
+# File clipboard
 
-Mesmo caminho do texto (SSH, sem porta nova), mas a natureza é outra:
-texto **é** o conteúdo; arquivo é uma referência, e o clipboard do
-destino tem de apontar para arquivos que existem no disco dele. Por
-isso os bytes viajam no **Ctrl+C**, não no Ctrl+V — não há como
-interceptar a colagem nos três sistemas.
+Same path as text (SSH, no new port), but the nature is different: text
+**is** the content; a file is a reference, and the destination clipboard
+must point to files that exist on its disk. That's why the bytes travel
+on **Ctrl+C**, not on Ctrl+V — there's no way to intercept the paste on
+all three systems.
 
-## Os três limites
+## The three limits
 
-| Limite | Valor | O que decide |
+| Limit | Value | What it decides |
 |---|---|---|
-| `TETO_EMBUTIDO` | 8 MiB | vai sozinho para todos os pares |
-| `TETO_TOTAL` | 2 GiB | acima disto é acidente, recusa |
-| `TETO_ARQUIVOS` | 2000 | idem, para árvore grande e leve |
+| `TETO_EMBUTIDO` | 8 MiB | goes by itself to all peers |
+| `TETO_TOTAL` | 2 GiB | above this it's an accident, refuse |
+| `TETO_ARQUIVOS` | 2000 | same, for a large but light tree |
 
-Entre 8 MiB e 2 GiB **não** mandamos sozinhos: a bandeja mostra
-"Mandar arquivos para `<host>`" e você escolhe um destino. Copiar 1,4 GB
-para duas máquinas que ninguém está olhando gasta banda e disco alheio.
+Between 8 MiB and 2 GiB we do **not** send by ourselves: the tray shows
+"Mandar arquivos para `<host>`" (Send files to `<host>`) and you pick a
+destination. Copying 1.4 GB to two machines nobody is looking at wastes
+someone else's bandwidth and disk.
 
-Acima de 8 MiB para um destino unix vai por `rsync --partial`; com
-Windows em qualquer ponta vai por `tar`, porque o Windows tem
-`tar.exe` e `scp.exe` em `system32` mas **não tem rsync** (medido).
+Above 8 MiB to a unix destination it goes by `rsync --partial`; with
+Windows at either end it goes by `tar`, because Windows has `tar.exe`
+and `scp.exe` in `system32` but **has no rsync** (measured).
 
-## Testar sem GUI
+## Test without a GUI
 
-Copiar arquivo no Ubuntu sem clicar no Nautilus:
+Copy a file on Ubuntu without clicking in Nautilus:
 
 ```bash
 printf 'file://%s\r\n' "$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "/caminho/com espaço.txt")" \
   | xclip -selection clipboard -t text/uri-list
 ```
 
-No Windows e no macOS a cópia tem de nascer na **sessão gráfica**:
+On Windows and macOS the copy must be born in the **graphical session**:
 
 ```bash
-# Windows: tarefa /IT (pelo SSH é a sessão 0, clipboard próprio e vazio)
+# Windows: /IT task (over SSH it's session 0, with its own empty clipboard)
 scp windows/sondas/por-arquivo-no-clipboard.ps1 'windows-host:AppData/Local/logid/'
 ssh windows-host 'schtasks /create /tn por-arquivo /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $env:LOCALAPPDATA\logid\por-arquivo-no-clipboard.ps1" /sc once /st 00:00 /it /f; schtasks /run /tn por-arquivo'
 
-# macOS: o pasteboard é por usuário, então pelo SSH funciona
+# macOS: the pasteboard is per user, so over SSH it works
 ssh mac 'osascript -l JavaScript -e "ObjC.import(\"AppKit\");const pb=\$.NSPasteboard.generalPasteboard;pb.clearContents;pb.writeObjects(\$([\$.NSURL.fileURLWithPath(\"/tmp/x.txt\")]))"'
 ```
 
-## Conferir o que chegou
+## Check what arrived
 
 ```bash
-# Ubuntu: os três tipos têm de aparecer
+# Ubuntu: the three types must appear
 xclip -selection clipboard -t TARGETS -o
-xclip -selection clipboard -t x-special/gnome-copied-files -o   # começa com `copy`
+xclip -selection clipboard -t x-special/gnome-copied-files -o   # starts with `copy`
 
-# Windows: sessão interativa, via tarefa /IT
+# Windows: interactive session, via /IT task
 ssh windows-host 'schtasks /run /tn ler-clipboard; Start-Sleep 3; Get-Content $env:LOCALAPPDATA\logid\clipboard.txt'
 
 # macOS
 ssh mac 'osascript -l JavaScript /tmp/ler-pb.js'
 ```
 
-`x-special/gnome-copied-files` sempre começa com **`copy`**, nunca
-`cut`: `cut` manda o destino apagar a origem depois de colar, e a
-origem está em outra máquina. Não temos como saber que a colagem
-aconteceu, e apagar arquivo de alguém por engano não tem desfazer.
+`x-special/gnome-copied-files` always starts with **`copy`**, never
+`cut`: `cut` tells the destination to delete the source after pasting,
+and the source is on another machine. We have no way of knowing the
+paste happened, and deleting someone's file by mistake has no undo.
 
-## Armadilhas que já custaram tempo
+## Traps that have already cost time
 
-- **PowerShell não espera processo GUI.** O clipboard de texto para o
-  Windows estava intermitente desde sempre por isso. Ver
-  [[../rules/powershell-remoto]], armadilha #4.
-- **Nome repetido é recusado**, não renomeado: dois `igual.txt` de
-  pastas diferentes viriam um sobre o outro na pasta de passagem e você
-  colaria um achando que são dois.
-- **A pasta de passagem fica em `~/.cache/logi/clipboard/`**, fora de
-  `/tmp`: em algumas distros `/tmp` é tmpfs, e 2 GB de clipboard na RAM
-  é um jeito de achar o OOM killer. Guarda as 5 últimas entregas.
+- **PowerShell doesn't wait for a GUI process.** The text clipboard to
+  Windows had been intermittent forever because of this. See
+  [[../rules/remote-powershell]], trap #4.
+- **A repeated name is refused**, not renamed: two `igual.txt` from
+  different folders would land on top of each other in the staging
+  folder and you would paste one thinking there were two.
+- **The staging folder is `~/.cache/logi/clipboard/`**, outside `/tmp`:
+  on some distros `/tmp` is tmpfs, and 2 GB of clipboard in RAM is a way
+  to meet the OOM killer. It keeps the last 5 deliveries.

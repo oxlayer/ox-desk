@@ -1,10 +1,10 @@
-//! Passar o foco de input para outra maquina.
+//! Handing input focus to another machine.
 //!
 //! Spec: ../specs/005-input-switch.md
 //!
-//! Dry-run por padrao. A rota fisica e IRREVERSIVEL do lado de origem
-//! (depois do ChangeHost este receptor nao alcanca mais o dispositivo),
-//! entao o pre-flight substitui o rollback -- nao ha o que desfazer.
+//! Dry-run by default. The physical route is IRREVERSIBLE on the source
+//! side (after ChangeHost this receiver no longer reaches the device),
+//! so the pre-flight replaces the rollback -- there is nothing to undo.
 
 use crate::agent::{self, AgentInfo};
 use crate::peers;
@@ -14,16 +14,16 @@ use crate::probe;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
-/// Serializa trocas de canal.
+/// Serializes channel switches.
 ///
-/// Existe porque medimos a corrida: a vigilancia de borda e a API podem
-/// disparar ao mesmo tempo, e a segunda chegava com os dispositivos ja
-/// levados pela primeira -- "executed: true" com zero resultados. Uma
-/// troca por vez, e a elegibilidade e reavaliada dentro do lock.
+/// It exists because we measured the race: the edge watcher and the API
+/// can fire at the same time, and the second one arrived with the devices
+/// already taken by the first -- "executed: true" with zero results. One
+/// switch at a time, and eligibility is re-evaluated inside the lock.
 static SWITCH_LOCK: Mutex<()> = Mutex::new(());
 
-/// Compartilhado com o reconciliador ([`crate::follow`]): uma troca por vez,
-/// venha da borda, da API ou dele.
+/// Shared with the reconciler ([`crate::follow`]): one switch at a time,
+/// whether it comes from the edge, the API or from it.
 pub fn switch_lock() -> std::sync::MutexGuard<'static, ()> {
     match SWITCH_LOCK.lock() {
         Ok(g) => g,
@@ -34,11 +34,11 @@ pub fn switch_lock() -> std::sync::MutexGuard<'static, ()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Route {
-    /// Troca de canal Easy-Switch via HID++ 0x1814.
+    /// Easy-Switch channel change via HID++ 0x1814.
     Physical,
-    /// Eventos de input pela rede (Deskflow).
+    /// Input events over the network (Deskflow).
     Lan,
-    /// Nenhuma rota viavel.
+    /// No viable route.
     None,
 }
 
@@ -47,13 +47,13 @@ pub struct FocusRequest {
     pub host: String,
     #[serde(default)]
     pub route: Option<Route>,
-    /// Sem isto, so devolve o plano. Nunca executa por acidente.
+    /// Without this, only the plan is returned. Never executes by accident.
     #[serde(default)]
     pub confirm: bool,
-    /// Usa o estado do par vindo do cache em vez de sondar por SSH.
+    /// Uses the peer state from the cache instead of probing over SSH.
     ///
-    /// Tira ~2,2 s do caminho. A checagem passa a declarar a idade do
-    /// dado, em vez de fingir frescor. E o modo que a borda usa.
+    /// Takes ~2.2 s off the path. The check then declares the age of the
+    /// data instead of faking freshness. It is the mode the edge uses.
     #[serde(default)]
     pub fast: bool,
 }
@@ -63,7 +63,7 @@ pub struct Check {
     pub name: String,
     pub ok: bool,
     pub detail: String,
-    /// Falha bloqueante impede a execucao.
+    /// A blocking failure prevents execution.
     pub blocking: bool,
 }
 
@@ -84,16 +84,16 @@ pub struct Plan {
     pub target: String,
     pub route: Route,
     pub checks: Vec<Check>,
-    /// Todos os bloqueantes passaram.
+    /// Every blocking check passed.
     pub ready: bool,
-    /// Se executado, nao ha como desfazer deste lado.
+    /// If executed, there is no way to undo it from this side.
     pub irreversible: bool,
-    /// O que seria feito, em ordem.
+    /// What would be done, in order.
     pub actions: Vec<String>,
-    /// Como recuperar se der errado -- mostrar ANTES, nao depois.
+    /// How to recover if it goes wrong -- shown BEFORE, not after.
     pub recovery: Vec<String>,
-    /// (nome, slot aqui, canal alvo) ja resolvidos pela varredura do
-    /// plano. Nao vai para o JSON: e detalhe interno.
+    /// (name, slot here, target channel) already resolved by the plan's
+    /// survey. Not in the JSON: it is an internal detail.
     #[serde(skip)]
     resolved: Resolved,
 }
@@ -103,10 +103,11 @@ pub struct Outcome {
     pub plan: Plan,
     pub executed: bool,
     pub results: Vec<String>,
-    /// Alguns dispositivos trocaram e outros nao: mouse e teclado ficaram em
-    /// maquinas diferentes. **Nao ha rollback** para quem ja foi (spec 005),
-    /// entao isto e estado que exige acao humana -- botao Easy-Switch no
-    /// dispositivo que ficou, ou pedir ao detentor que o mande.
+    /// Some devices switched and others did not: mouse and keyboard ended
+    /// up on different machines. **There is no rollback** for the ones that
+    /// left (spec 005), so this is a state that needs a human -- the
+    /// Easy-Switch button on the device that stayed, or asking the holder
+    /// to send it.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub partial: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -117,23 +118,23 @@ fn is_local(h: &crate::config::HostCfg) -> bool {
     h.addr == "127.0.0.1" || h.addr == "localhost" || h.addr == "::1"
 }
 
-/// O que o plano resolveu: (nome, slot aqui, canal alvo).
+/// What the plan resolved: (name, slot here, target channel).
 ///
-/// Guardado para o `execute` NAO refazer a varredura: ela custava ~1,6 s
-/// e ja tinha sido paga aqui.
+/// Kept so `execute` does NOT redo the survey: it cost ~1.6 s and had
+/// already been paid here.
 type Resolved = Vec<(String, u8, u8)>;
 
 pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
     let mut checks = Vec::new();
     let mut actions = Vec::new();
     let recovery = vec![
-        "aperte o botao Easy-Switch no proprio dispositivo (sempre funciona)".into(),
-        "ou plugue um teclado USB".into(),
-        "ou entre por SSH de outra maquina".into(),
+        "press the Easy-Switch button on the device itself (always works)".into(),
+        "or plug in a USB keyboard".into(),
+        "or log in over SSH from another machine".into(),
     ];
 
     let Some(target) = cfg.hosts.iter().find(|h| h.name == req.host) else {
-        checks.push(Check::block("host", format!("'{}' nao esta na config", req.host)));
+        checks.push(Check::block("host", format!("'{}' is not in the config", req.host)));
         return Plan {
             target: req.host.clone(),
             route: Route::None,
@@ -147,7 +148,7 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
     };
 
     if is_local(target) {
-        checks.push(Check::block("host", "o alvo e esta propria maquina"));
+        checks.push(Check::block("host", "the target is this very machine"));
         return Plan {
             target: req.host.clone(),
             route: Route::None,
@@ -161,15 +162,15 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
     }
     checks.push(Check::pass("host", format!("{} ({})", target.name, target.addr)));
 
-    // Alcance: qualquer servico esperado no ar basta para dizer que esta viva.
+    // Reachability: any expected service being up is enough to call it alive.
     let reachable = target
         .services
         .iter()
         .any(|s| probe::tcp_probe(&target.addr, s.port).0);
     if reachable {
-        checks.push(Check::pass("alcance", format!("{} responde", target.addr)));
+        checks.push(Check::pass("reachability", format!("{} answers", target.addr)));
     } else {
-        checks.push(Check::block("alcance", format!("{} nao responde", target.addr)));
+        checks.push(Check::block("reachability", format!("{} does not answer", target.addr)));
     }
 
     let local_name = cfg
@@ -188,17 +189,17 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
 
     match route {
         Route::Physical => {
-            // Varredura local e probe do agente em PARALELO: eram 1,6 s e
-            // 2,7 s em sequencia, e nao dependem um do outro.
-            // No modo rapido NAO sondamos o par: lemos o cache que o
-            // refresher mantem. No modo normal, sondamos em paralelo com a
-            // varredura local -- elas nao dependem uma da outra.
+            // Local survey and agent probe IN PARALLEL: they were 1.6 s and
+            // 2.7 s in sequence, and do not depend on each other.
+            // In fast mode we do NOT probe the peer: we read the cache the
+            // refresher keeps. In normal mode we probe in parallel with the
+            // local survey -- they do not depend on each other.
             let (survey, agent_info, age_ms) = if req.fast {
                 let c = peers::cached(&req.host);
                 (
-                    // Cache curto do survey: a varredura custa ~360 ms e o
-                    // refresher a mantem fresca a cada 1,5 s. Se estiver
-                    // velha, pagamos -- correcao antes de velocidade.
+                    // Short survey cache: the survey costs ~360 ms and the
+                    // refresher keeps it fresh every 1.5 s. If it is stale,
+                    // we pay -- correctness before speed.
                     hidpp::survey_cached_or_fresh(std::time::Duration::from_millis(2500)),
                     c.as_ref().map(|(i, _)| AgentInfo {
                         reachable: i.reachable,
@@ -222,23 +223,23 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                 (r.0, r.1, None)
             };
             if survey.hidraw_access {
-                checks.push(Check::pass("hidraw", "ACL de uaccess presente"));
+                checks.push(Check::pass("hidraw", "uaccess ACL present"));
             } else {
                 checks.push(Check::block(
                     "hidraw",
-                    survey.error.clone().unwrap_or_else(|| "sem acesso".into()),
+                    survey.error.clone().unwrap_or_else(|| "no access".into()),
                 ));
             }
 
             if cfg.devices.is_empty() {
-                checks.push(Check::block("mapa de canais", "nenhum [[devices]] na config"));
+                checks.push(Check::block("channel map", "no [[devices]] in the config"));
             }
 
             for dcfg in &cfg.devices {
                 let Some(&chan) = dcfg.hosts.get(&req.host) else {
                     checks.push(Check::block(
-                        "mapa de canais",
-                        format!("'{}' nao tem canal declarado para '{}'", dcfg.name, req.host),
+                        "channel map",
+                        format!("'{}' has no channel declared for '{}'", dcfg.name, req.host),
                     ));
                     continue;
                 };
@@ -249,25 +250,25 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                     .find(|d| d.name == dcfg.name);
                 match found {
                     None => checks.push(Check::block(
-                        "posse do dispositivo",
-                        format!("'{}' nao esta pareado neste receptor", dcfg.name),
+                        "device ownership",
+                        format!("'{}' is not paired with this receiver", dcfg.name),
                     )),
                     Some(d) if !d.online => checks.push(Check::block(
-                        "posse do dispositivo",
+                        "device ownership",
                         format!(
-                            "'{}' esta offline aqui -- ja esta em outro canal, \
-                             e HID++ nao alcanca dispositivo offline",
+                            "'{}' is offline here -- it is already on another channel, \
+                             and HID++ does not reach an offline device",
                             dcfg.name
                         ),
                     )),
                     Some(d) => {
                         checks.push(Check::pass(
-                            "posse do dispositivo",
-                            format!("'{}' online no slot {}", d.name, d.slot),
+                            "device ownership",
+                            format!("'{}' online on slot {}", d.name, d.slot),
                         ));
                         actions.push(format!(
-                            "HID++ 0x1814 setCurrentHost: slot {} -> canal {} \
-                             ({} em {})",
+                            "HID++ 0x1814 setCurrentHost: slot {} -> channel {} \
+                             ({} on {})",
                             d.slot, chan, d.name, req.host
                         ));
                         resolved.push((d.name.clone(), d.slot, chan));
@@ -275,18 +276,18 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                 }
                 if !local_name.is_empty() && !dcfg.hosts.contains_key(&local_name) {
                     checks.push(Check::warn(
-                        "volta",
+                        "return",
                         format!(
-                            "'{}' nao tem canal declarado para '{}': sem isso \
-                             ninguem sabe como traze-lo de volta",
+                            "'{}' has no channel declared for '{}': without it \
+                             nobody knows how to bring it back",
                             dcfg.name, local_name
                         ),
                     ));
                 }
             }
 
-            // Dead-man's switch: quem devolve o dispositivo e quem passa a
-            // detê-lo, porque a origem NAO pode desfazer (spec 005).
+            // Dead-man's switch: whoever comes to hold the device is the
+            // one who gives it back, because the source CANNOT undo (spec 005).
             match (&target.ssh, &target.agent, agent_info) {
                 (Some(_), Some(_), Some(info)) => {
                     if info.reachable {
@@ -296,60 +297,60 @@ pub fn plan(cfg: &Config, req: &FocusRequest) -> Plan {
                             .filter(|s| s.online)
                             .map(|s| {
                                 format!(
-                                    "slot {} (canal {}/{})",
+                                    "slot {} (channel {}/{})",
                                     s.slot,
                                     s.current_host.unwrap_or(0),
                                     s.num_hosts.unwrap_or(0)
                                 )
                             })
                             .collect();
-                        let idade = match age_ms {
-                            Some(ms) => format!(" (cache de {ms}ms atras)"),
+                        let age = match age_ms {
+                            Some(ms) => format!(" (cache from {ms}ms ago)"),
                             None => String::new(),
                         };
                         checks.push(Check::pass(
-                            "dead-man's switch no alvo",
+                            "dead-man's switch on target",
                             format!(
-                                "agente responde{idade}; dispositivos la: {}",
-                                if online.is_empty() { "nenhum online".into() } else { online.join(", ") }
+                                "agent answers{age}; devices there: {}",
+                                if online.is_empty() { "none online".into() } else { online.join(", ") }
                             ),
                         ));
                     } else {
                         checks.push(Check::block(
-                            "dead-man's switch no alvo",
+                            "dead-man's switch on target",
                             format!(
-                                "agente nao respondeu ({}). Sem ele ninguem devolve \
-                                 o dispositivo, e a origem nao pode desfazer.",
-                                info.error.unwrap_or_else(|| "motivo desconhecido".into())
+                                "agent did not answer ({}). Without it nobody gives \
+                                 the device back, and the source cannot undo.",
+                                info.error.unwrap_or_else(|| "unknown reason".into())
                             ),
                         ));
                     }
                 }
                 _ if req.fast => checks.push(Check::block(
-                    "dead-man's switch no alvo",
-                    "modo rapido sem estado do par em cache -- o refresher \
-                     ainda nao leu, ou o host nao tem `ssh`/`agent`",
+                    "dead-man's switch on target",
+                    "fast mode with no peer state in the cache -- the refresher \
+                     has not read it yet, or the host has no `ssh`/`agent`",
                 )),
                 _ => checks.push(Check::block(
-                    "dead-man's switch no alvo",
-                    "host sem `ssh` e/ou `agent` na config: nao ha como pedir \
-                     ao alvo que devolva o dispositivo se nada chegar la.",
+                    "dead-man's switch on target",
+                    "host has no `ssh` and/or `agent` in the config: there is no \
+                     way to ask the target to give the device back if nothing gets there.",
                 )),
             }
         }
         Route::Lan => {
             let up = probe::tcp_probe(&target.addr, 24800).0;
             if up {
-                checks.push(Check::pass("deskflow", "servidor na 24800 responde"));
+                checks.push(Check::pass("deskflow", "server on 24800 answers"));
             } else {
-                checks.push(Check::block("deskflow", "nada na 24800 do alvo"));
+                checks.push(Check::block("deskflow", "nothing on the target's 24800"));
             }
-            // Honestidade sobre o que o Deskflow permite:
+            // Honesty about what Deskflow allows:
             checks.push(Check::block(
-                "troca programatica",
-                "o Deskflow troca de tela por movimento do cursor ou por \
-                 hotkey configurada NO SERVIDOR -- nao por comando externo. \
-                 Nao ha como forcar o foco pela rota LAN daqui.",
+                "programmatic switch",
+                "Deskflow switches screens by cursor movement or by a hotkey \
+                 configured ON THE SERVER -- not by external command. There is \
+                 no way to force focus over the LAN route from here.",
             ));
         }
         Route::None => {}
@@ -381,7 +382,7 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
             executed: false,
             results: vec![],
             partial: false,
-            error: Some(format!("{n} verificacao(oes) bloqueante(s) falhou(aram)")),
+            error: Some(format!("{n} blocking check(s) failed")),
         };
     }
     if plan.route != Route::Physical {
@@ -390,23 +391,23 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
             executed: false,
             results: vec![],
             partial: false,
-            error: Some("so a rota fisica e executavel".into()),
+            error: Some("only the physical route is executable".into()),
         };
     }
 
-    // Uma troca por vez. Reavaliamos a elegibilidade DEPOIS de pegar o
-    // lock: quem esperou aqui pode ter perdido os dispositivos.
+    // One switch at a time. We re-evaluate eligibility AFTER taking the
+    // lock: whoever waited here may have lost the devices.
     let _guard = switch_lock();
 
-    // Ponto sem volta. Reaproveitamos o que o plano resolveu em vez de
-    // varrer de novo -- a varredura custa ~1,6 s e ja foi paga.
+    // Point of no return. We reuse what the plan resolved instead of
+    // surveying again -- the survey costs ~1.6 s and was already paid.
     let mut results = Vec::new();
     let mut moved = 0usize;
     let mut stuck: Vec<String> = Vec::new();
     if req.fast {
-        // Caminho sentido pelo usuario: dispara os dois EM PARALELO e nao
-        // espera confirmacao. Antes eram 2x (ping + set + 120 ms de espera)
-        // em sequencia; agora e um ping e um set por dispositivo, juntos.
+        // The path the user feels: fire both IN PARALLEL and do not wait
+        // for confirmation. It used to be 2x (ping + set + 120 ms wait) in
+        // sequence; now it is one ping and one set per device, together.
         let resolved = plan.resolved.clone();
         let outs: Vec<(String, Result<(), String>)> = std::thread::scope(|sc| {
             let hs: Vec<_> = resolved
@@ -422,13 +423,13 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
             match r {
                 Ok(()) => {
                     moved += 1;
-                    results.push(format!("{name}: enviado para o canal {chan}"));
-                    // Confirmacao vira log, nao espera.
+                    results.push(format!("{name}: sent to channel {chan}"));
+                    // Confirmation becomes a log line, not a wait.
                     hidpp::verify_left(*slot, *chan);
                 }
                 Err(e) => {
                     stuck.push(name.clone());
-                    results.push(format!("{name}: FALHOU -- {e}"));
+                    results.push(format!("{name}: FAILED -- {e}"));
                 }
             }
         }
@@ -444,32 +445,33 @@ pub fn execute(cfg: &Config, req: &FocusRequest) -> Outcome {
             }
             Err(e) => {
                 stuck.push(name.to_string());
-                results.push(format!("{name}: FALHOU -- {e}"));
+                results.push(format!("{name}: FAILED -- {e}"));
             }
         }
     }
     }
 
-    // A troca nao e atomica: sao comandos independentes, segundos cada um.
-    // Se parte foi e parte ficou, isso tem que gritar.
+    // The switch is not atomic: they are independent commands, seconds each.
+    // If some went and some stayed, that has to shout.
     let partial = moved > 0 && !stuck.is_empty();
     let error = if partial {
         Some(format!(
-            "ESTADO DIVIDIDO: {} trocaram, mas {} ficaram aqui ({}). Nao ha \
-             rollback para quem foi -- use o botao Easy-Switch no que ficou.",
+            "SPLIT STATE: {} switched, but {} stayed here ({}). There is no \
+             rollback for the ones that left -- use the Easy-Switch button on the one that stayed.",
             moved,
             stuck.len(),
             stuck.join(", ")
         ))
     } else if moved == 0 && !stuck.is_empty() {
-        Some(format!("nenhum dispositivo trocou ({})", stuck.join(", ")))
+        Some(format!("no device switched ({})", stuck.join(", ")))
     } else if moved == 0 {
-        // Aconteceu de verdade: o pre-flight passou e, nos segundos ate a
-        // execucao, uma travessia de borda concorrente ja levou tudo.
-        // "executed: true" com results vazio e pior que um erro claro.
+        // It really happened: the pre-flight passed and, in the seconds
+        // before execution, a concurrent edge crossing already took
+        // everything. "executed: true" with empty results is worse than a
+        // clear error.
         Some(
-            "nenhum dispositivo elegivel no momento da execucao -- outra \
-             troca (borda?) pode ter levado todos antes"
+            "no eligible device at execution time -- another \
+             switch (edge?) may have taken them all first"
                 .into(),
         )
     } else {

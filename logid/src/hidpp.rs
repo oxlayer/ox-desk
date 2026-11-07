@@ -1,15 +1,16 @@
-//! Inventario e troca de canal, agora por HID++ direto.
+//! Inventory and channel switching, now over direct HID++.
 //!
 //! Spec: ../specs/005-input-switch.md
 //!
-//! Substituiu o backend via `solaar`, que era caro demais para o caminho
-//! quente: `solaar show` custava 5,9 a 15,3 s e o `change_host` o chamava
-//! 4x por dispositivo -- uma troca levava 105 s, e o usuario concluia que
-//! tinha falhado. Por HID++ direto (crate `hidpp`, sobre hidapi) um ping
-//! custa ~25 ms e a varredura completa ~1,6 s.
+//! Replaced the `solaar` backend, which was too expensive for the hot
+//! path: `solaar show` cost 5.9 to 15.3 s and `change_host` called it 4x
+//! per device -- a switch took 105 s, and the user concluded it had
+//! failed. Over direct HID++ (the `hidpp` crate, on top of hidapi) a ping
+//! costs ~25 ms and the full survey ~1.6 s.
 //!
-//! A fronteira publica deste modulo nao mudou: `survey()` e
-//! `change_host()` tem a mesma forma, e `focus.rs` nao soube da troca.
+//! This module's public boundary did not change: `survey()` and
+//! `change_host()` have the same shape, and `focus.rs` never knew about
+//! the swap.
 
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -17,16 +18,16 @@ use std::sync::Mutex;
 use std::time::Instant;
 use std::time::Duration;
 
-/// Nome por slot, aprendido quando o dispositivo esta online.
+/// Name per slot, learned while the device is online.
 ///
-/// Necessario porque o HID++ **nao le o nome de quem nao responde**: sem
-/// cache, um dispositivo em outro canal simplesmente desaparecia da API e
-/// a GUI ficava em branco -- regressao em relacao ao backend solaar, que
-/// listava offline com nome.
-/// O que lembramos de cada slot. Nome e obrigatorio; bateria e a ULTIMA
-/// leitura, com quando foi -- porque HID++ nao le bateria de dispositivo
-/// ausente, e "5% ha 2 min" vale mais que "?" numa bandeja que se olha de
-/// relance.
+/// Needed because HID++ **does not read the name of whoever does not
+/// answer**: without a cache, a device on another channel simply vanished
+/// from the API and the GUI went blank -- a regression compared to the
+/// solaar backend, which listed offline devices by name.
+/// What we remember of each slot. Name is required; battery is the LAST
+/// reading, with when it was -- because HID++ does not read the battery of
+/// an absent device, and "5% 2 min ago" is worth more than "?" in a tray
+/// you glance at.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Known {
     pub name: String,
@@ -34,7 +35,7 @@ pub struct Known {
     pub battery_percent: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battery_status: Option<String>,
-    /// Epoch em segundos da leitura de bateria.
+    /// Epoch in seconds of the battery reading.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battery_at: Option<u64>,
 }
@@ -48,8 +49,8 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Onde o cache vive entre execucoes. E runtime descartavel, nao config:
-/// apagar nao perde nada alem de uma releitura.
+/// Where the cache lives between runs. It is disposable runtime, not
+/// config: deleting it loses nothing beyond a re-read.
 fn cache_path() -> std::path::PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(std::path::PathBuf::from)
@@ -64,14 +65,14 @@ fn load_cache() -> BTreeMap<u8, Known> {
     let Ok(text) = std::fs::read_to_string(cache_path()) else {
         return BTreeMap::new();
     };
-    // Formato novo.
+    // New format.
     if let Ok(m) = serde_json::from_str::<BTreeMap<String, Known>>(&text) {
         return m
             .into_iter()
             .filter_map(|(k, v)| k.parse::<u8>().ok().map(|s| (s, v)))
             .collect();
     }
-    // Formato antigo ({slot: nome}): migra sem perder o que ja sabiamos.
+    // Old format ({slot: name}): migrates without losing what we knew.
     serde_json::from_str::<BTreeMap<String, String>>(&text)
         .map(|m| {
             m.into_iter()
@@ -103,7 +104,7 @@ fn with_cache<T>(f: impl FnOnce(&mut BTreeMap<u8, Known>) -> T) -> Option<T> {
     Some(f(m))
 }
 
-/// Guarda nome e, quando houver, a leitura de bateria.
+/// Stores the name and, when there is one, the battery reading.
 fn remember(slot: u8, name: &str, bat: Option<(Option<u8>, Option<String>)>) {
     let changed = with_cache(|m| {
         let e = m.entry(slot).or_insert_with(|| Known {
@@ -121,9 +122,9 @@ fn remember(slot: u8, name: &str, bat: Option<(Option<u8>, Option<String>)>) {
             e.battery_percent = pct;
             e.battery_status = lvl;
             e.battery_at = Some(now_secs());
-            // Grava mesmo se o valor nao mudou: o que mudou e o
-            // `battery_at`, e e ele que a GUI usa para dizer "70%
-            // idade=0s" em vez de apresentar memoria como leitura.
+            // Writes even if the value did not change: what changed is
+            // `battery_at`, and it is what the GUI uses to say "70%
+            // age=0s" instead of presenting memory as a reading.
             dirty = true;
         }
         dirty
@@ -143,56 +144,56 @@ fn remembered_full(slot: u8) -> Option<Known> {
     with_cache(|m| m.get(&slot).cloned()).flatten()
 }
 
-/// Quantos slots do receptor varrer.
+/// How many receiver slots to survey.
 const MAX_SLOTS: u8 = 6;
-/// De quantas em quantas varreduras fazemos a completa.
+/// Every how many surveys we do the full one.
 ///
-/// Varrer os 6 slots custa ~1 s so em timeout dos vazios. Com o cache
-/// sabemos quais existem, e varremos so esses -- mas de vez em quando
-/// precisamos olhar tudo, senao um dispositivo pareado depois nunca
-/// apareceria.
+/// Surveying all 6 slots costs ~1 s just in timeouts of the empty ones.
+/// With the cache we know which exist, and survey only those -- but every
+/// now and then we need to look at everything, or a device paired later
+/// would never show up.
 const FULL_SCAN_EVERY: u32 = 10;
 static SCANS: Mutex<u32> = Mutex::new(0);
-/// Tentativas de confirmar que o dispositivo saiu, apos o ChangeHost.
+/// Attempts to confirm the device left, after ChangeHost.
 const LEAVE_CHECKS: u8 = 8;
-/// O dispositivo sai quase instantaneamente; 300 ms era espera morta.
+/// The device leaves almost instantly; 300 ms was dead waiting.
 const LEAVE_WAIT: Duration = Duration::from_millis(120);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Device {
     pub slot: u8,
     pub name: String,
-    /// Vazio: o HID++ nao reporta "kind" direto. Mantido por compat com a
-    /// GUI, que ja exibia a coluna.
+    /// Empty: HID++ does not report "kind" directly. Kept for compat with
+    /// the GUI, which already showed the column.
     pub kind: String,
     pub wpid: String,
     pub hidraw: Option<String>,
-    /// `false` quando o dispositivo esta em outro canal Easy-Switch.
-    /// Enquanto offline, **nenhum comando HID++ o alcanca**.
+    /// `false` when the device is on another Easy-Switch channel.
+    /// While offline, **no HID++ command reaches it**.
     pub online: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ping_ms: Option<f64>,
-    /// Canal atual, 1-based.
+    /// Current channel, 1-based.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_host: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub num_hosts: Option<u8>,
-    /// Porcentagem, quando o dispositivo reporta.
+    /// Percentage, when the device reports it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub battery_percent: Option<u8>,
-    /// Status DECLARADO pelo dispositivo -- nao confie cegamente: um MX
-    /// Keys no cabo subiu de 5% para 50% dizendo "descarregando".
+    /// Status DECLARED by the device -- do not trust it blindly: an MX
+    /// Keys on the cable went from 5% to 50% saying "discharging".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub battery_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub battery_next_level: Option<u8>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub charging: bool,
-    /// Qual feature respondeu (0x1004 ou 0x1000), para diagnostico.
+    /// Which feature answered (0x1004 or 0x1000), for diagnostics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub battery_source: Option<String>,
-    /// Segundos desde a leitura de bateria. `0` = agora; valor alto
-    /// significa que o dispositivo esta ausente e isto e memoria.
+    /// Seconds since the battery reading. `0` = now; a high value means
+    /// the device is absent and this is memory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub battery_age_s: Option<u64>,
 }
@@ -208,56 +209,57 @@ pub struct Receiver {
 
 #[derive(Debug, Serialize)]
 pub struct Survey {
-    /// ACL de `uaccess` nos /dev/hidraw. Sem isso nada funciona.
+    /// `uaccess` ACL on /dev/hidraw. Without it nothing works.
     pub hidraw_access: bool,
-    /// Mantido no JSON para nao quebrar a GUI; agora e a fonte real.
+    /// Kept in the JSON so as not to break the GUI; now it is the real source.
     pub backend: &'static str,
     pub receivers: Vec<Receiver>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Segundos restantes de pausa na leitura, quando pausada.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pausado_s: Option<u64>,
+    /// Seconds of reading pause left, when paused.
+    #[serde(rename = "pausado_s", skip_serializing_if = "Option::is_none")]
+    pub paused_s: Option<u64>,
 }
 
-/// Temos acesso ao hardware HID?
+/// Do we have access to the HID hardware?
 ///
-/// O nome ficou por compatibilidade com o JSON que a GUI le, mas a
-/// pergunta e respondida pela plataforma: ACL de `uaccess` em
-/// `/dev/hidraw` no Linux, abrir o receptor no Windows. Ver
-/// `sys::device_access`.
+/// The name stayed for compatibility with the JSON the GUI reads, but the
+/// question is answered by the platform: `uaccess` ACL on `/dev/hidraw`
+/// on Linux, opening the receiver on Windows. See `sys::device_access`.
 pub fn hidraw_access() -> bool {
     crate::sys::device_access()
 }
 
-/// Ping com retry.
+/// Ping with retry.
 ///
-/// Um ping perdido NAO significa ausencia -- dispositivo em economia de
-/// energia, ou com bateria baixa, estoura os 250 ms e responde na
-/// tentativa seguinte. O `survey` ja tinha retry; o `remap` e o
-/// `change_host` nao tinham, e falhavam com "nao responde" segundos
-/// depois de uma leitura bem-sucedida. Observado com os devices a 5%.
+/// A lost ping does NOT mean absence -- a device in power saving, or with
+/// a low battery, overruns the 250 ms and answers on the next attempt.
+/// `survey` already had retry; `remap` and `change_host` did not, and
+/// failed with "does not answer" seconds after a successful reading.
+/// Observed with the devices at 5%.
 fn ping_retry(rx: &hidpp::Receiver, slot: u8, attempts: u8) -> Result<f64, String> {
-    // Delega ao crate: uma implementacao de retry para os dois lados.
+    // Delegates to the crate: one retry implementation for both sides.
     if rx.present(slot, attempts) {
         rx.ping(slot)
     } else {
-        Err("sem resposta apos retry".into())
+        Err("no answer after retry".into())
     }
 }
 
 fn no_access() -> Survey {
-    // Tres situacoes, tres acoes diferentes. Dizer "sem acesso" para as
-    // tres mandava a pessoa consertar permissao quando o problema era
-    // outro -- e foi o que aconteceu quando o receptor mudou de maquina.
+    // Three situations, three different actions. Saying "no access" for
+    // all three sent the person to fix permissions when the problem was
+    // something else -- which is what happened when the receiver moved to
+    // another machine. These messages reach the tray and the panel, so
+    // they stay pt-BR.
     #[cfg(target_os = "linux")]
-    let erro = {
-        let (total, abriveis) = crate::sys::hidraw_contagem();
+    let error = {
+        let (total, openable) = crate::sys::hidraw_count();
         if total == 0 {
             "nenhum no `/dev/hidraw*` neste sistema: nao ha receptor \
              Logitech conectado aqui (ou o kernel nao o enumerou)"
                 .to_string()
-        } else if abriveis == 0 {
+        } else if openable == 0 {
             format!(
                 "{total} no(s) `/dev/hidraw*` existem, mas nenhum abre: e \
                  permissao. Rode `sudo udevadm trigger \
@@ -269,31 +271,31 @@ fn no_access() -> Survey {
         }
     };
     #[cfg(not(target_os = "linux"))]
-    let erro = "sem acesso ao dispositivo HID bruto".to_string();
+    let error = "sem acesso ao dispositivo HID bruto".to_string();
 
     Survey {
         hidraw_access: false,
         backend: "hidpp",
-        pausado_s: None,
+        paused_s: None,
         receivers: Vec::new(),
-        error: Some(erro),
+        error: Some(error),
     }
 }
 
 
-/// Varredura completa, com nome e bateria.
+/// Full survey, with name and battery.
 pub fn survey() -> Survey {
     survey_opts(true)
 }
 
-/// O que o cache curto guarda de cada dispositivo.
+/// What the short cache keeps of each device.
 ///
-/// Era uma tupla de quatro. Virou struct quando a bandeja precisou da
-/// bateria: a tupla ja estava no limite do legivel, e `(u8, String,
-/// bool, Option<u8>, Option<u8>)` tem dois `Option<u8>` que so a ordem
-/// distingue -- trocar canal por bateria compilaria e mentiria.
+/// It was a 4-tuple. It became a struct when the tray needed the battery:
+/// the tuple was already at the edge of readable, and `(u8, String,
+/// bool, Option<u8>, Option<u8>)` has two `Option<u8>` that only the order
+/// tells apart -- swapping channel for battery would compile and lie.
 #[derive(Clone)]
-pub struct Breve {
+pub struct Brief {
     pub slot: u8,
     pub name: String,
     pub online: bool,
@@ -301,14 +303,14 @@ pub struct Breve {
     pub battery_percent: Option<u8>,
 }
 
-/// Ultimo survey leve, para o caminho quente nao pagar ~360 ms.
-static LAST: Mutex<Option<(std::time::Instant, Vec<Breve>)>> = Mutex::new(None);
+/// Last light survey, so the hot path does not pay ~360 ms.
+static LAST: Mutex<Option<(std::time::Instant, Vec<Brief>)>> = Mutex::new(None);
 
-/// Dispositivos conhecidos do cache curto.
+/// Known devices from the short cache.
 ///
-/// Devolve `None` se nao houver leitura recente -- quem chama decide se
-/// vale pagar a varredura.
-pub fn cached_devices(max_age: Duration) -> Option<Vec<Breve>> {
+/// Returns `None` if there is no recent reading -- the caller decides
+/// whether paying for the survey is worth it.
+pub fn cached_devices(max_age: Duration) -> Option<Vec<Brief>> {
     let g = LAST.lock().ok()?;
     let (at, v) = g.as_ref()?;
     (at.elapsed() <= max_age).then(|| v.clone())
@@ -319,7 +321,7 @@ fn store_last(devs: &[Device]) {
         *g = Some((
             std::time::Instant::now(),
             devs.iter()
-                .map(|d| Breve {
+                .map(|d| Brief {
                     slot: d.slot,
                     name: d.name.clone(),
                     online: d.online,
@@ -331,16 +333,16 @@ fn store_last(devs: &[Device]) {
     }
 }
 
-/// Survey do cache curto quando fresco; varre se estiver velho.
+/// Survey from the short cache when fresh; surveys if it is stale.
 ///
-/// Correcao antes de velocidade: dado velho sobre quem detemos o
-/// dispositivo levaria a tentar trocar o que nao temos.
+/// Correctness before speed: stale data about who holds the device would
+/// lead to trying to switch what we do not have.
 pub fn survey_cached_or_fresh(max_age: Duration) -> Survey {
     if let Some(devs) = cached_devices(max_age) {
         return Survey {
             hidraw_access: true,
             backend: "hidpp (cache)",
-            pausado_s: None,
+            paused_s: None,
             receivers: vec![Receiver {
                 name: "Receptor Logitech".into(),
                 hidraw: None,
@@ -373,134 +375,132 @@ pub fn survey_cached_or_fresh(max_age: Duration) -> Survey {
     survey_opts(false)
 }
 
-/// Mantem o cache curto quente, para a borda nao esperar varredura.
-/// Quando os dispositivos CHEGARAM nesta maquina.
+/// Keeps the short cache warm, so the edge does not wait for a survey.
+/// When the devices ARRIVED on this machine.
 ///
-/// Existe por causa de um bug que o usuario sentiu na pele: com borda
-/// nas duas maquinas apontando uma para a outra, chegar no Windows e
-/// mover o mouse para a esquerda -- o movimento natural, porque voce veio
-/// de la -- bate em x=0 e a borda manda tudo de volta na hora. O log
-/// mostrou o ciclo inteiro em segundos.
+/// It exists because of a bug the user felt first-hand: with edges on
+/// both machines pointing at each other, arriving on Windows and moving
+/// the mouse to the left -- the natural movement, because you came from
+/// there -- hits x=0 and the edge sends everything back at once. The log
+/// showed the whole cycle in seconds.
 ///
-/// Nenhum dos dois lados estava errado isoladamente. O que faltava era
-/// **carencia**: depois de os dispositivos chegarem, a borda daqui
-/// precisa de um tempo calada para a pessoa sair da beirada.
+/// Neither side was wrong in isolation. What was missing was a **grace
+/// period**: after the devices arrive, the edge here needs some quiet
+/// time for the person to get off the border.
 struct Presence {
     here: bool,
-    /// Varreduras seguidas sem ver ninguem.
+    /// Consecutive surveys without seeing anyone.
     misses: u8,
     arrived: Option<Instant>,
 }
 
 static PRESENCE: Mutex<Presence> = Mutex::new(Presence { here: false, misses: 0, arrived: None });
 
-/// Quantas varreduras vazias seguidas valem "foram embora".
+/// How many consecutive empty surveys count as "they left".
 ///
-/// Uma so nao vale: o `survey` faz UM ping por slot, sem retry, e
-/// dispositivo em economia de energia perde ping. Sem histerese o log
-/// enche de CHEGARAM/SAIRAM em segundos -- e foi exatamente o que o log
-/// do usuario mostrou -- e a borda ficaria piscando entre armada e
-/// desarmada.
-const MISSES_PARA_SUMIR: u8 = 2;
+/// One alone does not: `survey` does ONE ping per slot, without retry, and
+/// a device in power saving loses pings. Without hysteresis the log fills
+/// with ARRIVED/LEFT within seconds -- which is exactly what the user's
+/// log showed -- and the edge would flicker between armed and disarmed.
+const MISSES_TO_LEAVE: u8 = 2;
 
-/// Os dispositivos estao NESTA maquina?
+/// Are the devices on THIS machine?
 pub fn devices_here() -> bool {
     PRESENCE.lock().map(|p| p.here).unwrap_or(false)
 }
 
-/// Ha quanto tempo chegaram aqui, em ms. `None` = nenhuma chegada vista.
+/// How long ago they arrived here, in ms. `None` = no arrival seen.
 pub fn arrived_ms_ago() -> Option<u64> {
     PRESENCE.lock().ok()?.arrived.map(|t| t.elapsed().as_millis() as u64)
 }
 
 fn note_presence(survey: &Survey) {
-    let visto = survey.receivers.iter().any(|r| r.devices.iter().any(|d| d.online));
+    let seen = survey.receivers.iter().any(|r| r.devices.iter().any(|d| d.online));
     let Ok(mut p) = PRESENCE.lock() else { return };
-    if visto {
+    if seen {
         p.misses = 0;
         if !p.here {
             p.here = true;
             p.arrived = Some(Instant::now());
-            // Transicao registrada: a borda arma e desarma por esta
-            // leitura, entao quando ela discordar do que o painel mostra
-            // o log tem de permitir ver de onde veio a discordancia.
-            say!("presenca: dispositivos CHEGARAM a esta maquina");
+            // Transition logged: the edge arms and disarms by this
+            // reading, so when it disagrees with what the panel shows the
+            // log has to let you see where the disagreement came from.
+            say!("presence: devices ARRIVED on this machine");
         }
     } else {
         p.misses = p.misses.saturating_add(1);
-        if p.here && p.misses >= MISSES_PARA_SUMIR {
+        if p.here && p.misses >= MISSES_TO_LEAVE {
             p.here = false;
-            say!("presenca: dispositivos SAIRAM desta maquina");
+            say!("presence: devices LEFT this machine");
         }
     }
 }
 
 pub fn spawn_refresher() {
     std::thread::spawn(|| loop {
-        // A varredura periodica ja existia para manter o cache quente; e
-        // o lugar natural para notar chegada, em vez de um segundo
-        // poller falando com o mesmo radio.
+        // The periodic survey already existed to keep the cache warm; it
+        // is the natural place to notice arrival, instead of a second
+        // poller talking to the same radio.
         note_presence(&survey_opts(false));
         std::thread::sleep(Duration::from_millis(1500));
     });
 }
 
-/// `with_battery = false` para o caminho quente: a bateria custa duas
-/// idas e voltas por dispositivo e nao influencia decisao de troca.
-/// Pausa da leitura HID++, para diagnostico.
+/// `with_battery = false` for the hot path: the battery costs two round
+/// trips per device and does not influence the switch decision.
+/// Pause of the HID++ reading, for diagnostics.
 ///
-/// ## Por que isto existe
+/// ## Why this exists
 ///
-/// Os dispositivos voltavam ao canal 1 poucos segundos depois de irem
-/// para o 2, com borda e reconciliador desligados nas tres maquinas e
-/// NENHUMA linha de log reivindicando a acao. Eliminado todo codigo
-/// nosso que troca canal (so a borda e a API chamam `focus::execute`),
-/// sobraram duas hipoteses: a nossa LEITURA perturbando o radio, ou o
-/// hardware.
+/// The devices went back to channel 1 a few seconds after going to 2,
+/// with edge and reconciler off on all three machines and NO log line
+/// claiming the action. With all our code that switches channels ruled
+/// out (only the edge and the API call `focus::execute`), two hypotheses
+/// were left: our READING disturbing the radio, or the hardware.
 ///
-/// Separar as duas exigiria tomar o mouse e o teclado do usuario por
-/// alguns minutos. Em vez de pedir isso, o botao fica com ele: pausada a
-/// leitura, se a troca ficar de pe a culpa e nossa; se continuar
-/// voltando, nao e.
+/// Telling them apart would require taking the user's mouse and keyboard
+/// for a few minutes. Instead of asking for that, the button stays with
+/// him: with the reading paused, if the switch holds the fault is ours;
+/// if it keeps going back, it is not.
 ///
-/// A pausa vale so para a SONDAGEM periodica. `change_host` continua
-/// funcionando -- sem ele nao ha como fazer o teste.
+/// The pause only applies to the periodic PROBING. `change_host` keeps
+/// working -- without it there is no way to run the test.
 ///
-/// Em memoria e nao na config: pausa e estado de diagnostico, e uma que
-/// sobrevivesse a um reinicio seria uma armadilha para o proximo mes.
-static PAUSA: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+/// In memory and not in the config: a pause is diagnostic state, and one
+/// that survived a restart would be a trap for next month.
+static PAUSE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
-/// Pausa por `minutos` (0 retoma). Devolve os segundos restantes.
-pub fn pausar(minutos: u64) -> Option<u64> {
-    let mut g = PAUSA.lock().unwrap_or_else(|e| e.into_inner());
-    *g = (minutos > 0)
-        .then(|| std::time::Instant::now() + Duration::from_secs(minutos * 60));
-    pausa_de(&g)
+/// Pauses for `minutes` (0 resumes). Returns the seconds left.
+pub fn pause(minutes: u64) -> Option<u64> {
+    let mut g = PAUSE.lock().unwrap_or_else(|e| e.into_inner());
+    *g = (minutes > 0)
+        .then(|| std::time::Instant::now() + Duration::from_secs(minutes * 60));
+    pause_left(&g)
 }
 
-fn pausa_de(g: &Option<std::time::Instant>) -> Option<u64> {
-    let ate = (*g)?;
-    let agora = std::time::Instant::now();
-    (ate > agora).then(|| (ate - agora).as_secs())
+fn pause_left(g: &Option<std::time::Instant>) -> Option<u64> {
+    let until = (*g)?;
+    let now = std::time::Instant::now();
+    (until > now).then(|| (until - now).as_secs())
 }
 
-/// Segundos restantes de pausa, ou `None` se a leitura esta livre.
-pub fn pausa_restante_s() -> Option<u64> {
-    let g = PAUSA.lock().unwrap_or_else(|e| e.into_inner());
-    pausa_de(&g)
+/// Seconds of pause left, or `None` if reading is free.
+pub fn pause_remaining_s() -> Option<u64> {
+    let g = PAUSE.lock().unwrap_or_else(|e| e.into_inner());
+    pause_left(&g)
 }
 
-/// O que devolver enquanto a leitura esta pausada: o ultimo retrato
-/// conhecido, sem tocar no radio.
+/// What to return while reading is paused: the last known snapshot,
+/// without touching the radio.
 ///
-/// Devolver vazio faria o painel dizer "nenhum dispositivo", que e
-/// mentira diferente da que estamos investigando.
-fn survey_pausado(restante: u64) -> Survey {
+/// Returning empty would make the panel say "no device", which is a
+/// different lie from the one we are investigating.
+fn survey_paused(remaining: u64) -> Survey {
     let devs = cached_devices(Duration::MAX).unwrap_or_default();
     Survey {
         hidraw_access: true,
         backend: "hidpp (pausado)",
-        pausado_s: Some(restante),
+        paused_s: Some(remaining),
         error: None,
         receivers: vec![Receiver {
             name: "Receptor Logitech".into(),
@@ -532,11 +532,11 @@ fn survey_pausado(restante: u64) -> Survey {
 }
 
 pub fn survey_opts(with_battery: bool) -> Survey {
-    // Pausa ANTES de qualquer acesso ao hardware: o ponto e nao tocar no
-    // radio, e todo caminho de leitura passa por aqui -- inclusive o
-    // painel aberto, que sozinho sonda a cada 10 s.
-    if let Some(restante) = pausa_restante_s() {
-        return survey_pausado(restante);
+    // Pause BEFORE any hardware access: the point is not to touch the
+    // radio, and every reading path goes through here -- including the
+    // open panel, which on its own probes every 10 s.
+    if let Some(remaining) = pause_remaining_s() {
+        return survey_paused(remaining);
     }
     if !hidraw_access() {
         return no_access();
@@ -548,7 +548,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
                 hidraw_access: true,
                 backend: "hidpp",
                 receivers: Vec::new(),
-                pausado_s: None,
+                paused_s: None,
                 error: Some(format!("hidapi: {e}")),
             }
         }
@@ -560,19 +560,19 @@ pub fn survey_opts(with_battery: bool) -> Survey {
                 hidraw_access: true,
                 backend: "hidpp",
                 receivers: Vec::new(),
-                pausado_s: None,
+                paused_s: None,
                 error: Some(e),
             }
         }
     };
 
-    // Um unico ping perdido NAO significa ausencia: dispositivo em
-    // economia de energia pode estourar os 250 ms. Observado em uso real --
-    // o teclado apareceu offline numa leitura e online na seguinte, estavel
-    // em 26 ms. Retry so para slot com nome conhecido (ou seja, pareado):
-    // slot vazio continua falhando rapido.
-    // Nomes NAO sao relidos quando ja estao em cache: eram ~1,1 s dos
-    // 1,6 s de uma varredura, gastos para descobrir o que ja sabiamos.
+    // A single lost ping does NOT mean absence: a device in power saving
+    // can overrun the 250 ms. Observed in real use -- the keyboard showed
+    // offline in one reading and online in the next, steady at 26 ms.
+    // Retry only for slots with a known name (i.e. paired): an empty slot
+    // keeps failing fast.
+    // Names are NOT re-read when already cached: they were ~1.1 s of the
+    // 1.6 s of a survey, spent finding out what we already knew.
     let known: Vec<u8> = (1..=MAX_SLOTS).filter(|s| remembered(*s).is_some()).collect();
     let n = {
         let mut g = SCANS.lock().unwrap_or_else(|e| e.into_inner());
@@ -622,12 +622,12 @@ pub fn survey_opts(with_battery: bool) -> Survey {
     let devices: Vec<Device> = raw
         .into_iter()
         .filter_map(|d| {
-            // Offline sem nome conhecido = slot provavelmente vazio: nao
-            // poluimos a lista com os 6 slots do receptor.
+            // Offline with no known name = probably an empty slot: we do
+            // not pollute the list with the receiver's 6 slots.
             let name = d.name.clone().or_else(|| remembered(d.slot))?;
-            // Gravar a bateria NAO pode depender de ter lido o nome agora:
-            // com o nome em cache (o caso normal) nunca gravavamos, e o
-            // arquivo ficava preso no formato antigo.
+            // Saving the battery must NOT depend on having read the name
+            // now: with the name cached (the normal case) we never saved,
+            // and the file stayed stuck in the old format.
             let bat = d
                 .battery
                 .as_ref()
@@ -638,7 +638,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
             Some((d, name))
         })
         .map(|(d, name)| {
-            // Sem leitura agora? usa a ultima conhecida, declarando a idade.
+            // No reading now? Use the last known one, declaring its age.
             let cached = remembered_full(d.slot);
             let (pct, lvl, age) = match d.battery.as_ref() {
                 Some(b) => (b.percent, b.status.map(String::from), Some(0)),
@@ -675,7 +675,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
     Survey {
         hidraw_access: true,
         backend: "hidpp",
-        pausado_s: None,
+        paused_s: None,
         receivers: vec![Receiver {
             name: format!("Receptor Logitech {:04x}", rx.product_id),
             hidraw: Some(rx.path.clone()),
@@ -687,28 +687,28 @@ pub fn survey_opts(with_battery: bool) -> Survey {
     }
 }
 
-/// Troca de canal SEM esperar confirmacao.
+/// Channel switch WITHOUT waiting for confirmation.
 ///
-/// Para o caminho sentido pelo usuario: ele percebe a troca quando o
-/// dispositivo de fato muda de radio, nao quando nos confirmamos. A
-/// verificacao vira log em background.
+/// For the path the user feels: he perceives the switch when the device
+/// actually changes radio, not when we confirm. The check becomes a
+/// background log line.
 ///
-/// Ainda pingamos uma vez antes -- e o unico jeito de saber que detemos o
-/// dispositivo. Sem isso o `set_host` trata "sem resposta" como sucesso
-/// (porque numa troca real o radio cai antes da resposta) e um no-op
-/// pareceria ter funcionado.
+/// We still ping once first -- it is the only way to know we hold the
+/// device. Without it `set_host` treats "no answer" as success (because in
+/// a real switch the radio drops before the reply) and a no-op would look
+/// like it worked.
 pub fn change_host_now(slot: u8, host: u8) -> Result<(), String> {
     if host == 0 {
-        return Err("canal e 1-based".into());
+        return Err("channel is 1-based".into());
     }
     let api = hidpp::hidapi::HidApi::new().map_err(|e| format!("hidapi: {e}"))?;
     let rx = hidpp::Receiver::open(&api)?;
     rx.ping(slot)
-        .map_err(|_| format!("slot {slot} nao responde -- nao detemos este dispositivo"))?;
+        .map_err(|_| format!("slot {slot} does not answer -- we do not hold this device"))?;
     rx.set_host_nowait(slot, host)
 }
 
-/// Confirma, em background, que o dispositivo saiu. So loga.
+/// Confirms, in the background, that the device left. Only logs.
 pub fn verify_left(slot: u8, host: u8) {
     std::thread::spawn(move || {
         let Ok(api) = hidpp::hidapi::HidApi::new() else { return };
@@ -717,36 +717,36 @@ pub fn verify_left(slot: u8, host: u8) {
             std::thread::sleep(LEAVE_WAIT);
             if !rx.present(slot, 1) {
                 say!(
-                    "verificacao: slot {slot} saiu (canal {host}) em {}ms",
+                    "check: slot {slot} left (channel {host}) in {}ms",
                     i as u32 * LEAVE_WAIT.as_millis() as u32
                 );
                 return;
             }
         }
-        gripe!("verificacao: slot {slot} AINDA responde -- a troca para o canal {host} nao pegou");
+        gripe!("check: slot {slot} STILL answers -- the switch to channel {host} did not take");
     });
 }
 
-/// Manda o dispositivo do slot `slot` para o canal `host` (1-based).
+/// Sends the device in slot `slot` to channel `host` (1-based).
 ///
-/// IRREVERSIVEL DESTE LADO: depois que ele troca, este receptor nao o
-/// alcanca mais. O pre-flight tem de rodar ANTES.
+/// IRREVERSIBLE FROM THIS SIDE: once it switches, this receiver no longer
+/// reaches it. The pre-flight has to run BEFORE.
 ///
-/// Verificamos pelo EFEITO -- o dispositivo parar de responder --, nao por
-/// codigo de retorno. Com o solaar isso era obrigatorio porque ele travava
-/// e mentia; por HID++ a ausencia de resposta ja e o caso esperado, e o
-/// ping confirma em ~25 ms.
+/// We verify by EFFECT -- the device stops answering --, not by return
+/// code. With solaar this was mandatory because it hung and lied; over
+/// HID++ no answer is already the expected case, and the ping confirms in
+/// ~25 ms.
 pub fn change_host(slot: u8, host: u8) -> Result<String, String> {
     if host == 0 {
-        return Err("canal e 1-based".into());
+        return Err("channel is 1-based".into());
     }
     let api = hidpp::hidapi::HidApi::new().map_err(|e| format!("hidapi: {e}"))?;
     let rx = hidpp::Receiver::open(&api)?;
 
     if ping_retry(&rx, slot, 3).is_err() {
         return Err(format!(
-            "slot {slot} nao responde neste receptor (3 tentativas) -- HID++ \
-             nao alcanca dispositivo em outro canal"
+            "slot {slot} does not answer on this receiver (3 attempts) -- HID++ \
+             does not reach a device on another channel"
         ));
     }
 
@@ -756,14 +756,14 @@ pub fn change_host(slot: u8, host: u8) -> Result<String, String> {
         std::thread::sleep(LEAVE_WAIT);
         if rx.ping(slot).is_err() {
             return Ok(format!(
-                "slot {slot} saiu deste receptor (canal {host}), confirmado em {}ms",
+                "slot {slot} left this receiver (channel {host}), confirmed in {}ms",
                 attempt as u32 * LEAVE_WAIT.as_millis() as u32
             ));
         }
     }
     Err(format!(
-        "slot {slot} continua respondendo aqui apos o comando -- a troca \
-         para o canal {host} nao aconteceu"
+        "slot {slot} still answers here after the command -- the switch \
+         to channel {host} did not happen"
     ))
 }
 
@@ -799,10 +799,12 @@ fn open_rx<'a>(api: &'a hidpp::hidapi::HidApi) -> Result<hidpp::Receiver, String
     hidpp::Receiver::open(api)
 }
 
-/// Controles de cada dispositivo ONLINE.
+/// Controls of each ONLINE device.
 ///
-/// Dispositivo ausente nao aparece: HID++ nao alcanca quem esta em outro
-/// canal, e listar nome sem poder ler nem escrever seria enganoso.
+/// An absent device does not show up: HID++ does not reach whoever is on
+/// another channel, and listing a name without being able to read or
+/// write would be misleading. The panel shows this, so its text stays
+/// pt-BR.
 pub fn controls() -> Controls {
     let api = match hidpp::hidapi::HidApi::new() {
         Ok(a) => a,
@@ -848,7 +850,8 @@ pub fn controls() -> Controls {
     Controls { devices: out, error: None }
 }
 
-/// Aplica um remapeamento. `to = 0` volta ao padrao.
+/// Applies a remap. `to = 0` goes back to the default. The panel shows
+/// the result, so its text stays pt-BR.
 pub fn remap(slot: u8, cid: u16, to: u16) -> Result<String, String> {
     let api = hidpp::hidapi::HidApi::new().map_err(|e| format!("hidapi: {e}"))?;
     let rx = open_rx(&api)?;
@@ -858,9 +861,9 @@ pub fn remap(slot: u8, cid: u16, to: u16) -> Result<String, String> {
              outro canal, ou com bateria baixa demais para responder"
         ));
     }
-    // Restaurar o padrao e remapear o controle PARA ELE MESMO, nao para
-    // zero. Medido: com `to = 0` a escrita retorna ok e o dispositivo
-    // continua reportando o remapeamento antigo.
+    // Restoring the default is remapping the control TO ITSELF, not to
+    // zero. Measured: with `to = 0` the write returns ok and the device
+    // keeps reporting the old remap.
     let target = if to == 0 { cid } else { to };
     rx.set_control_remap(slot, cid, target)?;
     Ok(format!(
@@ -875,29 +878,30 @@ pub fn remap(slot: u8, cid: u16, to: u16) -> Result<String, String> {
 }
 
 #[cfg(test)]
-mod testes_pausa {
+mod pause_tests {
     use super::*;
 
     #[test]
-    fn pausar_e_retomar() {
-        // Serializado com o teste abaixo pelo proprio estado global: os
-        // dois mexem no mesmo `PAUSA`, entao cada um limpa no fim.
-        assert!(pausar(1).is_some_and(|s| s > 0 && s <= 60));
-        assert!(pausa_restante_s().is_some());
-        assert_eq!(pausar(0), None, "zero retoma");
-        assert_eq!(pausa_restante_s(), None);
+    fn pause_and_resume() {
+        // Serialized with the test below by the global state itself: both
+        // touch the same `PAUSE`, so each cleans up at the end.
+        assert!(pause(1).is_some_and(|s| s > 0 && s <= 60));
+        assert!(pause_remaining_s().is_some());
+        assert_eq!(pause(0), None, "zero resumes");
+        assert_eq!(pause_remaining_s(), None);
     }
 
     #[test]
-    fn pausa_vencida_nao_vale_mais() {
-        // Deadline no passado conta como livre: a pausa expira sozinha,
-        // sem ninguem precisar lembrar de retomar -- um diagnostico
-        // esquecido ligado seria pior que o bug que ele investiga.
+    fn expired_pause_no_longer_counts() {
+        // A deadline in the past counts as free: the pause expires on its
+        // own, without anyone having to remember to resume -- a
+        // diagnostic left on by mistake would be worse than the bug it
+        // investigates.
         {
-            let mut g = PAUSA.lock().unwrap_or_else(|e| e.into_inner());
+            let mut g = PAUSE.lock().unwrap_or_else(|e| e.into_inner());
             *g = Some(std::time::Instant::now() - Duration::from_secs(1));
         }
-        assert_eq!(pausa_restante_s(), None);
-        pausar(0);
+        assert_eq!(pause_remaining_s(), None);
+        pause(0);
     }
 }

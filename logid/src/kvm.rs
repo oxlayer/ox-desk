@@ -1,261 +1,265 @@
-//! KVM por LAN: manda teclado e mouse para outra maquina pela rede.
+//! LAN KVM: sends keyboard and mouse to another machine over the network.
 //!
 //! Spec: ../../specs/005-input-switch.md
 //!
-//! A alternativa ao HID++ 0x1814. Aquele manda o PROPRIO dispositivo
-//! trocar de canal Easy-Switch, o que exige um receptor pareado na
-//! maquina de destino. Com um dongle so -- que foi onde paramos depois
-//! que dois dongles perto se provaram instaveis -- apertar "mandar para
-//! windows-host" fazia o teclado procurar um receptor que nao existe la,
-//! nao achar, e voltar. Era o comportamento correto do protocolo
-//! resolvendo o problema errado.
+//! The alternative to HID++ 0x1814. That one tells the device ITSELF to
+//! switch Easy-Switch channel, which requires a paired receiver on the
+//! target machine. With a single dongle -- which is where we ended up
+//! after two dongles close together proved unstable -- pressing "send to
+//! windows-host" made the keyboard look for a receiver that does not exist
+//! there, not find it, and come back. It was the protocol's correct
+//! behavior solving the wrong problem.
 //!
-//! Aqui o dispositivo nao sai do lugar: capturamos localmente
-//! (`EVIOCGRAB`) e injetamos na outra ponta pelo mesmo stream de input
-//! que a tela remota ja usa.
+//! Here the device does not move: we capture locally (`EVIOCGRAB`) and
+//! inject on the other end through the same input stream the remote
+//! screen already uses.
 //!
-//! ## Um processo filho, nao uma thread
+//! ## A child process, not a thread
 //!
-//! O `logistream-kvm` roda como processo separado, e isso e desenho,
-//! nao preguica: **matar o processo solta o grab**, porque o kernel
-//! solta quando o fd fecha. Se o KVM fosse uma thread do `logid` e ela
-//! travasse, o teclado ficaria agarrado e a unica saida seria matar o
-//! agente inteiro -- que e a coisa que voce usa para consertar as
-//! outras. Processo filho faz da desistencia uma operacao de uma linha.
+//! `logistream-kvm` runs as a separate process, and that is design, not
+//! laziness: **killing the process releases the grab**, because the
+//! kernel releases it when the fd closes. If the KVM were a `logid` thread
+//! and it hung, the keyboard would stay grabbed and the only way out would
+//! be killing the whole agent -- which is the thing you use to fix the
+//! others. A child process makes giving up a one-line operation.
 
 use std::process::{Child, Stdio};
 use std::sync::Mutex;
 
 use crate::config::Config;
 
-/// Quem esta segurando o teclado: um filho nosso, ou um processo que
-/// sobreviveu a um reinicio do daemon.
-enum Processo {
-    /// Nascido nesta instancia do `logid`.
-    Nosso(Child),
-    /// Encontrado vivo na partida e adotado. So temos o pid.
-    Adotado(u32),
+/// Who is holding the keyboard: a child of ours, or a process that
+/// survived a daemon restart.
+enum Process {
+    /// Born in this `logid` instance.
+    Ours(Child),
+    /// Found alive at startup and adopted. We only have the pid.
+    Adopted(u32),
 }
 
-/// O processo vivo e para quem ele esta mandando.
-static ATUAL: Mutex<Option<(String, Processo)>> = Mutex::new(None);
+/// The live process and who it is sending to.
+static CURRENT: Mutex<Option<(String, Process)>> = Mutex::new(None);
 
-/// O processo ainda existe?
-fn vivo(p: &mut Processo) -> bool {
+/// Does the process still exist?
+fn alive(p: &mut Process) -> bool {
     match p {
-        Processo::Nosso(c) => !matches!(c.try_wait(), Ok(Some(_))),
-        // `/proc/<pid>` e a pergunta mais barata que existe, e nao
-        // depende de o processo ser nosso filho -- `waitpid` dependeria.
+        Process::Ours(c) => !matches!(c.try_wait(), Ok(Some(_))),
+        // `/proc/<pid>` is the cheapest question there is, and it does not
+        // depend on the process being our child -- `waitpid` would.
         //
-        // So existe adocao no Linux, porque so la existe captura. Nos
-        // outros este braco e inalcancavel.
+        // Adoption only exists on Linux, because only there is there
+        // capture. On the others this arm is unreachable.
         #[cfg(target_os = "linux")]
-        Processo::Adotado(pid) => std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        Process::Adopted(pid) => std::path::Path::new(&format!("/proc/{pid}")).exists(),
         #[cfg(not(target_os = "linux"))]
-        Processo::Adotado(_) => false,
+        Process::Adopted(_) => false,
     }
 }
 
-/// Para quem o input esta indo agora, ou `None` se esta aqui.
-pub fn alvo() -> Option<String> {
-    let mut g = ATUAL.lock().ok()?;
-    // Colher o filho antes de responder: se ele morreu (socorro pelos
-    // dois Ctrl, alvo caiu, rede sumiu), o input ja voltou para esta
-    // maquina e dizer o contrario deixaria a bandeja mentindo.
+/// Who the input is going to now, or `None` if it is here.
+pub fn target() -> Option<String> {
+    let mut g = CURRENT.lock().ok()?;
+    // Reap the child before answering: if it died (rescue via the two
+    // Ctrls, target went down, network vanished), the input has already
+    // come back to this machine, and saying otherwise would leave the
+    // tray lying.
     if let Some((_, p)) = g.as_mut() {
-        if !vivo(p) {
+        if !alive(p) {
             *g = None;
         }
     }
     g.as_ref().map(|(n, _)| n.clone())
 }
 
-/// Traz o input de volta para esta maquina. Idempotente.
-pub fn soltar() -> Result<(), String> {
-    let mut g = ATUAL.lock().map_err(|_| "estado do KVM travado")?;
-    if let Some((nome, p)) = g.take() {
+/// Brings the input back to this machine. Idempotent.
+pub fn release() -> Result<(), String> {
+    let mut g = CURRENT.lock().map_err(|_| "KVM state poisoned")?;
+    if let Some((name, p)) = g.take() {
         match p {
-            Processo::Nosso(mut c) => {
+            Process::Ours(mut c) => {
                 let _ = c.kill();
                 let _ = c.wait();
             }
-            // Nao e nosso filho: `kill` do std nao alcanca, entao vai
-            // por sinal. SIGTERM e nao SIGKILL de proposito -- o KVM
-            // solta as teclas presas do outro lado antes de sair, e
-            // SIGKILL pularia isso, deixando Shift travado na outra
-            // maquina.
+            // Not our child: std's `kill` does not reach it, so it goes by
+            // signal. SIGTERM and not SIGKILL on purpose -- the KVM
+            // releases the stuck keys on the other side before exiting,
+            // and SIGKILL would skip that, leaving Shift held down on the
+            // other machine.
             #[cfg(target_os = "linux")]
-            Processo::Adotado(pid) => unsafe {
+            Process::Adopted(pid) => unsafe {
                 libc::kill(pid as libc::pid_t, libc::SIGTERM);
             },
             #[cfg(not(target_os = "linux"))]
-            Processo::Adotado(_) => {}
+            Process::Adopted(_) => {}
         }
-        say!("kvm: input de volta (estava em {nome})");
+        say!("kvm: input back (it was on {name})");
     }
     Ok(())
 }
 
-/// Manda o input para `host`. Solta o alvo anterior, se houver.
+/// Sends the input to `host`. Releases the previous target, if any.
 ///
-/// A ordem importa: soltamos o anterior ANTES de tentar o novo. Dois
-/// `EVIOCGRAB` no mesmo dispositivo nao coexistem, e o segundo falharia
-/// com "Device or resource busy" -- deixando o input preso no destino
-/// velho e a mensagem de erro falando de outra coisa.
-pub fn mandar(cfg: &Config, host: &str) -> Result<String, String> {
+/// Order matters: we release the previous one BEFORE trying the new one.
+/// Two `EVIOCGRAB` on the same device do not coexist, and the second would
+/// fail with "Device or resource busy" -- leaving the input stuck on the
+/// old destination and the error message talking about something else.
+pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     let h = cfg
         .hosts
         .iter()
         .find(|x| x.name == host)
-        .ok_or_else(|| format!("host '{host}' nao esta na config"))?;
-    // Mandar para a maquina local = trazer de volta. Mesmo teste de
-    // "e aqui?" que o focus.rs usa, e nao so a flag `local`: ela e
-    // opcional na config e nem todo host a declara, entao confiar so
-    // nela faria "Trazer para ubuntu-host" tentar abrir um KVM
-    // apontando para nos mesmos.
-    let aqui = h.local.unwrap_or(false)
+        .ok_or_else(|| format!("host '{host}' is not in the config"))?;
+    // Sending to the local machine = bringing it back. Same "is it here?"
+    // test focus.rs uses, and not just the `local` flag: it is optional in
+    // the config and not every host declares it, so trusting only it would
+    // make "Trazer para ubuntu-host" try to open a KVM pointing at
+    // ourselves.
+    let here = h.local.unwrap_or(false)
         || matches!(h.addr.as_str(), "127.0.0.1" | "localhost" | "::1");
-    if aqui {
-        return soltar().map(|()| "input local".to_string());
+    if here {
+        return release().map(|()| "input local".to_string());
     }
     let sc = h
         .screen
         .as_ref()
-        .ok_or_else(|| format!("'{host}' nao tem `[hosts.screen]`: sem porta para mandar input"))?;
+        .ok_or_else(|| format!("'{host}' has no `[hosts.screen]`: no port to send input to"))?;
 
-    // O macOS injeta input desde 04/11 (`input_mac.rs`, CGEvent). A
-    // recusa que existia aqui saiu junto.
+    // macOS has injected input since 04/11 (`input_mac.rs`, CGEvent). The
+    // refusal that used to be here went with it.
     //
-    // O que NAO da para verificar daqui e se o host de la tem permissao
-    // de Acessibilidade: sem ela o `CGEventPost` aceita o evento e o
-    // descarta em silencio. Quem avisa e o proprio host, na partida, no
-    // log dele -- e e la que se procura quando o KVM "nao faz nada".
+    // What we CANNOT check from here is whether the host there has the
+    // Accessibility permission: without it `CGEventPost` accepts the event
+    // and silently drops it. Whoever warns is the host itself, at startup,
+    // in its log -- and that is where to look when the KVM "does nothing".
 
-    soltar()?;
+    release()?;
 
-    // Esta maquina sabe capturar?
+    // Can this machine capture?
     //
-    // So o Linux tem captura (`EVIOCGRAB`). Num Windows ou Mac, clicar
-    // "Mandar para ubuntu-host" nao pode significar "vire origem" --
-    // significa "quero o input LA", e quem tem de agir e quem esta
-    // segurando o teclado agora: a origem.
+    // Only Linux has capture (`EVIOCGRAB`). On a Windows or Mac, clicking
+    // "Mandar para ubuntu-host" cannot mean "become the source" -- it
+    // means "I want the input THERE", and whoever has to act is whoever is
+    // holding the keyboard now: the source.
     //
-    // Sem isto o clique falhava em silencio e o unico caminho de volta
-    // era o socorro dos dois Ctrl. O usuario relatou exatamente assim:
-    // "tentei clicar no tray do windows para mandar para ubuntu-host
-    // e nao voltou, so funcionou apertando dois ctrl".
+    // Without this the click failed silently and the only way back was the
+    // two-Ctrl rescue. The user reported exactly that: "tentei clicar no
+    // tray do windows para mandar para ubuntu-host e nao voltou, so
+    // funcionou apertando dois ctrl" ("I tried clicking the Windows tray
+    // to send to ubuntu-host and it did not come back, it only worked
+    // pressing two ctrl").
     if !cfg!(target_os = "linux") {
-        return pedir_para_soltar(h).map(|()| format!("pedi a {host} que retomasse o input"));
+        return ask_to_release(h).map(|()| format!("asked {host} to take the input back"));
     }
 
-    // Levantar o host da outra ponta primeiro. E ele quem recebe o
-    // stream de input; sem ele de pe o `logistream-kvm` recusa conectar
-    // -- e recusar e o comportamento certo, porque agarrar o teclado
-    // sem destino deixaria a pessoa sem teclado E sem para onde ir.
-    crate::screen::acordar_host(h, sc.port)
-        .map_err(|e| format!("nao consegui levantar o host de {host}: {e}"))?;
+    // Bring up the host on the other end first. It is the one receiving
+    // the input stream; without it up, `logistream-kvm` refuses to connect
+    // -- and refusing is the right behavior, because grabbing the keyboard
+    // with no destination would leave the person without a keyboard AND
+    // without anywhere to go.
+    crate::screen::wake_host(h, sc.port)
+        .map_err(|e| format!("could not bring up {host}'s host: {e}"))?;
 
-    // `porta + 1`: a porta de INPUT do host, nao a de video.
+    // `port + 1`: the host's INPUT port, not the video one.
     //
-    // O host serve um cliente de video por vez. Enquanto o KVM
-    // conectava na porta de video, ele tomava a vaga do visualizador --
-    // o input chegava e era aplicado, mas a tela que a pessoa estava
-    // olhando congelava, e a conclusao obvia era "nao funcionou".
-    // Portas separadas tambem evitam a maquina alvo codificar video
-    // para um cliente que nunca desenha nada.
-    let destino = format!("{}:{}", h.addr, sc.port + 1);
+    // The host serves one video client at a time. While the KVM connected
+    // to the video port, it took the viewer's slot -- the input arrived
+    // and was applied, but the screen the person was looking at froze,
+    // and the obvious conclusion was "it did not work". Separate ports
+    // also keep the target machine from encoding video for a client that
+    // never draws anything.
+    let dest = format!("{}:{}", h.addr, sc.port + 1);
 
-    // Saida do filho num arquivo, nao em /dev/null.
+    // Child output to a file, not to /dev/null.
     //
-    // A primeira versao jogava fora stdout e stderr, como o lancamento
-    // do cliente de tela faz. Mas aquele abre uma JANELA: se ele morre,
-    // a pessoa ve. Este nao abre nada -- o unico sinal de que falhou
-    // seria o teclado continuar aqui, sem uma linha dizendo por que.
-    let registro = crate::sys::state_dir().join("logistream-kvm.log");
-    let saida = std::fs::File::create(&registro)
-        .map_err(|e| format!("nao consegui abrir {}: {e}", registro.display()))?;
-    let erro = saida
+    // The first version threw stdout and stderr away, like the screen
+    // client launch does. But that one opens a WINDOW: if it dies, the
+    // person sees it. This one opens nothing -- the only sign that it
+    // failed would be the keyboard staying here, without a line saying why.
+    let log_path = crate::sys::state_dir().join("logistream-kvm.log");
+    let out = std::fs::File::create(&log_path)
+        .map_err(|e| format!("could not open {}: {e}", log_path.display()))?;
+    let err = out
         .try_clone()
-        .map_err(|e| format!("nao consegui duplicar o descritor: {e}"))?;
+        .map_err(|e| format!("could not duplicate the descriptor: {e}"))?;
 
-    // Alvo Linux aplica a propria repeticao de tecla (o Mutter repete
-    // teclas injetadas), entao mandar a do kernel junto dobraria. No
-    // Windows e o contrario: `SendInput` nao repete nada, e sem a do
-    // kernel segurar backspace apaga um caractere so.
+    // A Linux target applies its own key repeat (Mutter repeats injected
+    // keys), so sending the kernel's too would double it. On Windows it is
+    // the opposite: `SendInput` repeats nothing, and without the kernel's
+    // holding backspace deletes a single character.
     let mut cmd = crate::sys::child("logistream-kvm");
-    cmd.arg(&destino);
+    cmd.arg(&dest);
     if h.os.as_deref() == Some("linux") {
         cmd.arg("--sem-repeticao");
     }
-    let mut filho = cmd
+    let mut child = cmd
         .stdin(Stdio::null())
-        .stdout(Stdio::from(saida))
-        .stderr(Stdio::from(erro))
+        .stdout(Stdio::from(out))
+        .stderr(Stdio::from(err))
         .spawn()
-        .map_err(|e| format!("nao consegui executar logistream-kvm: {e}"))?;
+        .map_err(|e| format!("could not run logistream-kvm: {e}"))?;
 
-    // Confirmar que ele SOBREVIVEU, nao so que nasceu.
+    // Confirm it SURVIVED, not just that it was born.
     //
-    // `spawn` devolve Ok assim que o processo existe -- antes de ele
-    // conectar e antes de agarrar. Reportar sucesso ali faria a bandeja
-    // dizer "mandado para windows-host" enquanto o filho ja morreu porque
-    // o alvo recusou a conexao ou faltou ACL no /dev/input. O estado se
-    // corrigiria sozinho no proximo `alvo()`, mas o usuario ja teria
-    // lido a mentira e estaria esperando o teclado mudar de maquina.
+    // `spawn` returns Ok as soon as the process exists -- before it
+    // connects and before it grabs. Reporting success there would make the
+    // tray say "sent to windows-host" while the child had already died
+    // because the target refused the connection or the /dev/input ACL was
+    // missing. The state would fix itself on the next `target()`, but the
+    // user would already have read the lie and be waiting for the keyboard
+    // to change machines.
     //
-    // 500 ms cobrem conectar + agarrar numa LAN; o caminho feliz nao
-    // sente, e o caminho triste ganha a mensagem de erro de verdade.
+    // 500 ms covers connect + grab on a LAN; the happy path does not feel
+    // it, and the sad path gets the real error message.
     std::thread::sleep(std::time::Duration::from_millis(500));
-    if let Ok(Some(status)) = filho.try_wait() {
-        let motivo = std::fs::read_to_string(&registro)
+    if let Ok(Some(status)) = child.try_wait() {
+        let reason = std::fs::read_to_string(&log_path)
             .unwrap_or_default()
             .lines()
             .last()
-            .unwrap_or("sem detalhe no log")
+            .unwrap_or("no detail in the log")
             .trim()
             .to_string();
-        return Err(format!("o KVM saiu ({status}) antes de agarrar: {motivo}"));
+        return Err(format!("the KVM exited ({status}) before grabbing: {reason}"));
     }
 
-    match ATUAL.lock() {
-        Ok(mut g) => *g = Some((host.to_string(), Processo::Nosso(filho))),
-        Err(_) => return Err("estado do KVM travado".into()),
+    match CURRENT.lock() {
+        Ok(mut g) => *g = Some((host.to_string(), Process::Ours(child))),
+        Err(_) => return Err("KVM state poisoned".into()),
     }
-    say!("kvm: input indo para {host} ({destino})");
-    Ok(destino)
+    say!("kvm: input going to {host} ({dest})");
+    Ok(dest)
 }
 
-/// Pede ao `logid` de outra maquina que solte o KVM dela.
+/// Asks another machine's `logid` to release its KVM.
 ///
-/// Por SSH e `logid kvm-soltar`, pelo mesmo caminho e pelos mesmos
-/// motivos do clipboard: a API escuta so em 127.0.0.1, e SSH ja e o
-/// canal confiavel entre as maquinas.
+/// Over SSH and `logid kvm-soltar`, by the same path and for the same
+/// reasons as the clipboard: the API listens only on 127.0.0.1, and SSH is
+/// already the trusted channel between the machines.
 ///
-/// Nao e erro se a origem nao estiver mandando nada -- soltar o que
-/// nao existe e no-op, e o clique continua querendo dizer a mesma
-/// coisa.
-fn pedir_para_soltar(h: &crate::config::HostCfg) -> Result<(), String> {
-    let destino = h.ssh.clone().ok_or_else(|| {
-        format!("'{}' nao tem `ssh` na config: nao da para pedir nada a ele", h.name)
+/// It is not an error if the source is not sending anything -- releasing
+/// what does not exist is a no-op, and the click still means the same thing.
+fn ask_to_release(h: &crate::config::HostCfg) -> Result<(), String> {
+    let dest = h.ssh.clone().ok_or_else(|| {
+        format!("'{}' has no `ssh` in the config: there is no way to ask it anything", h.name)
     })?;
-    let saida = crate::sys::child("ssh")
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", &destino])
-        .arg(comando_remoto_soltar(h))
+    let out = crate::sys::child("ssh")
+        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", &dest])
+        .arg(remote_release_command(h))
         .output()
-        .map_err(|e| format!("ssh para {}: {e}", h.name))?;
-    if saida.status.success() {
+        .map_err(|e| format!("ssh to {}: {e}", h.name))?;
+    if out.status.success() {
         Ok(())
     } else {
         Err(format!(
-            "{} recusou soltar: {}",
+            "{} refused to release: {}",
             h.name,
-            String::from_utf8_lossy(&saida.stderr).trim()
+            String::from_utf8_lossy(&out.stderr).trim()
         ))
     }
 }
 
-/// Mesma regra de caminho do clipboard: por SO, nao pelo PATH.
-fn comando_remoto_soltar(h: &crate::config::HostCfg) -> String {
+/// Same path rule as the clipboard: by OS, not by PATH.
+fn remote_release_command(h: &crate::config::HostCfg) -> String {
     if h.os.as_deref() == Some("windows") {
         r#"& "$env:LOCALAPPDATA\logid\logid.exe" kvm-soltar"#.into()
     } else {
@@ -263,20 +267,20 @@ fn comando_remoto_soltar(h: &crate::config::HostCfg) -> String {
     }
 }
 
-/// `logid kvm-soltar`: manda o daemon local devolver o input.
+/// `logid kvm-soltar`: tells the local daemon to give the input back.
 ///
-/// Passa pela API local pelo mesmo motivo do `clip-set`: o estado do
-/// KVM vive no daemon, e um CLI separado nao alcanca o processo filho
-/// nem o `ATUAL`.
-pub fn cli_soltar(porta: u16) -> std::process::ExitCode {
+/// Goes through the local API for the same reason as `clip-set`: the KVM
+/// state lives in the daemon, and a separate CLI reaches neither the child
+/// process nor `CURRENT`.
+pub fn cli_release(port: u16) -> std::process::ExitCode {
     use std::io::{Read, Write};
-    let pedido = "POST /api/kvm/soltar HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-    let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", porta)) else {
-        eprintln!("kvm-soltar: o logid local nao respondeu na porta {porta}");
+    let request = "POST /api/kvm/soltar HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
+        eprintln!("kvm-soltar: the local logid did not answer on port {port}");
         return std::process::ExitCode::FAILURE;
     };
-    if s.write_all(pedido.as_bytes()).is_err() {
-        eprintln!("kvm-soltar: falhei ao escrever o pedido");
+    if s.write_all(request.as_bytes()).is_err() {
+        eprintln!("kvm-soltar: failed to write the request");
         return std::process::ExitCode::FAILURE;
     }
     let mut r = String::new();
@@ -284,61 +288,62 @@ pub fn cli_soltar(porta: u16) -> std::process::ExitCode {
     if r.starts_with("HTTP/1.1 200") {
         std::process::ExitCode::SUCCESS
     } else {
-        eprintln!("kvm-soltar: {}", r.lines().next().unwrap_or("sem resposta"));
+        eprintln!("kvm-soltar: {}", r.lines().next().unwrap_or("no response"));
         std::process::ExitCode::FAILURE
     }
 }
 
-/// Adota um `logistream-kvm` que sobreviveu ao reinicio do daemon.
+/// Adopts a `logistream-kvm` that survived a daemon restart.
 ///
-/// **Antes isto matava.** O efeito pratico era brutal: o usuario estava
-/// trabalhando na outra maquina, um deploy reiniciava o `logid`, e o
-/// teclado voltava sozinho para o Ubuntu no meio de uma frase. Ele
-/// relatou exatamente assim -- "do nada voltou para ca teclado e
-/// mouse, nao estamos fazendo por lan agora?".
+/// **This used to kill it.** The practical effect was brutal: the user was
+/// working on the other machine, a deploy restarted `logid`, and the
+/// keyboard came back to Ubuntu on its own in the middle of a sentence. He
+/// reported exactly that -- "do nada voltou para ca teclado e mouse, nao
+/// estamos fazendo por lan agora?" ("out of nowhere keyboard and mouse
+/// came back here, aren't we doing it over LAN now?").
 ///
-/// Matar era defensavel quando o KVM era novo: processo agarrando
-/// teclado sem dono assusta. Mas o dono volta em segundos, e a
-/// alternativa e arrancar o input de alguem que esta usando. Adotar e
-/// o certo.
+/// Killing was defensible when the KVM was new: a process grabbing the
+/// keyboard with no owner is scary. But the owner comes back in seconds,
+/// and the alternative is yanking the input from someone who is using it.
+/// Adopting is the right thing.
 ///
-/// O alvo vem da propria linha de comando do processo (`<host>:<porta>`),
-/// e a porta-1 mapeia de volta para o host da config -- o KVM conecta
-/// em `porta + 1`.
+/// The target comes from the process's own command line (`<host>:<port>`),
+/// and port-1 maps back to the config host -- the KVM connects to
+/// `port + 1`.
 ///
-/// Exige `KillMode=process` no systemd: sem isso o `restart` derruba o
-/// cgroup inteiro e nao sobra ninguem para adotar.
+/// Requires `KillMode=process` in systemd: without it `restart` takes down
+/// the whole cgroup and nobody is left to adopt.
 #[cfg(target_os = "linux")]
-pub fn adotar(cfg: &Config) {
-    let saida = std::process::Command::new("pgrep")
+pub fn adopt(cfg: &Config) {
+    let out = std::process::Command::new("pgrep")
         .args(["-a", "-x", "logistream-kvm"])
         .output();
-    let Ok(o) = saida else { return };
-    let texto = String::from_utf8_lossy(&o.stdout);
-    let Some(linha) = texto.lines().next() else { return };
+    let Ok(o) = out else { return };
+    let text = String::from_utf8_lossy(&o.stdout);
+    let Some(line) = text.lines().next() else { return };
 
     // "12345 logistream-kvm windows-host.local:9778"
-    let mut campos = linha.split_whitespace();
-    let Some(pid) = campos.next().and_then(|p| p.parse::<u32>().ok()) else { return };
-    let Some(destino) = campos.nth(1) else { return };
-    let Some((endereco, porta)) = destino.rsplit_once(':') else { return };
-    let Ok(porta) = porta.parse::<u16>() else { return };
+    let mut fields = line.split_whitespace();
+    let Some(pid) = fields.next().and_then(|p| p.parse::<u32>().ok()) else { return };
+    let Some(dest) = fields.nth(1) else { return };
+    let Some((address, port)) = dest.rsplit_once(':') else { return };
+    let Ok(port) = port.parse::<u16>() else { return };
 
-    let nome = cfg
+    let name = cfg
         .hosts
         .iter()
         .find(|h| {
-            h.addr == endereco && h.screen.as_ref().is_some_and(|s| s.port + 1 == porta)
+            h.addr == address && h.screen.as_ref().is_some_and(|s| s.port + 1 == port)
         })
         .map(|h| h.name.clone())
-        .unwrap_or_else(|| endereco.to_string());
+        .unwrap_or_else(|| address.to_string());
 
-    if let Ok(mut g) = ATUAL.lock() {
-        *g = Some((nome.clone(), Processo::Adotado(pid)));
-        crate::say!("kvm: adotei o processo {pid}, que esta mandando input para {nome}");
+    if let Ok(mut g) = CURRENT.lock() {
+        *g = Some((name.clone(), Process::Adopted(pid)));
+        crate::say!("kvm: adopted process {pid}, which is sending input to {name}");
     }
 }
 
-/// Nos outros sistemas nao ha captura, logo nao ha o que adotar.
+/// On the other systems there is no capture, so nothing to adopt.
 #[cfg(not(target_os = "linux"))]
-pub fn adotar(_cfg: &Config) {}
+pub fn adopt(_cfg: &Config) {}

@@ -1,4 +1,4 @@
-# Compila os binarios das tres maquinas. Por que e assim: specs/013.
+# Builds the binaries for the three machines. Why it is this way: specs/013.
 name: binarios
 
 on:
@@ -25,7 +25,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # A mesma versao do Ubuntu, de onde saem os binarios de hoje.
+  # The same version as the Ubuntu box, where today's binaries come from.
   RUST_VERSION: '1.99.1'
 
 jobs:
@@ -39,8 +39,8 @@ jobs:
         include:
           - alvo: linux
             runner: ubuntu-24.04
-          # Cruzado, como no deploy: e o binario que ja roda no Windows, e
-          # o minuto de runner Linux custa metade do de Windows.
+          # Cross-compiled, as in the deploy: it is the binary that already
+          # runs on Windows, and a Linux runner minute costs half a Windows one.
           - alvo: windows
             runner: ubuntu-24.04
             rust_target: x86_64-pc-windows-gnu
@@ -49,35 +49,35 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # LOGI_BUILD_N e `rev-list --count`: clone raso daria sempre 1.
+          # LOGI_BUILD_N is `rev-list --count`: a shallow clone would always give 1.
           fetch-depth: 0
 
-      - name: Dependencias (linux)
+      - name: Dependencies (linux)
         if: matrix.alvo == 'linux'
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends \
             clang libclang-dev libdbus-1-dev libpipewire-0.3-dev libudev-dev pkg-config
 
-      - name: Dependencias (windows)
+      - name: Dependencies (windows)
         if: matrix.alvo == 'windows'
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends gcc-mingw-w64-x86-64
 
-      - name: Dependencias (mac)
+      - name: Dependencies (mac)
         if: matrix.alvo == 'mac'
         env:
           HOMEBREW_NO_AUTO_UPDATE: '1'
           HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: |
-          # `ffmpeg@7`, nao `ffmpeg`. O soname entra no binario, e o
-          # `ffmpeg` sem versao e 9.0.2 neste runner contra 7.1 no
-          # MacBook -- o pacote saia correto e ininstalavel, e o OTA
-          # recusava o update inteiro nomeando a `libavcodec.63`.
-          # O prefixo versionado e o MESMO nas duas pontas. Ver
-          # FFMPEG_FORMULA em scripts/construir-binarios.sh, que quebra
-          # o build se este passo e aquela declaracao divergirem.
+          # `ffmpeg@7`, not `ffmpeg`. The soname goes into the binary, and
+          # the unversioned `ffmpeg` is 9.0.2 on this runner against 7.1 on
+          # the MacBook -- the package came out correct and uninstallable,
+          # and OTA refused the whole update naming `libavcodec.63`.
+          # The versioned prefix is the SAME on both ends. See
+          # FFMPEG_FORMULA in scripts/construir-binarios.sh, which breaks
+          # the build if this step and that declaration diverge.
           brew install ffmpeg@7 pkgconf
           echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig" >> "$GITHUB_ENV"
           /opt/homebrew/opt/ffmpeg@7/bin/ffmpeg -version | head -1
@@ -91,7 +91,7 @@ jobs:
           if [ -n "$RUST_TARGET" ]; then rustup target add "$RUST_TARGET"; fi
           rustc --version
 
-      - name: Carimbo do build
+      - name: Build stamp
         run: |
           echo "LOGI_BUILD=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
           echo "LOGI_BUILD_N=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
@@ -105,29 +105,30 @@ jobs:
             agent
             ota
 
-      - name: Compilar, conferir e empacotar
+      - name: Build, check and package
         run: bash scripts/construir-binarios.sh "${{ matrix.alvo }}"
 
-      - name: Testes
+      - name: Tests
         if: matrix.alvo == 'linux'
         run: |
           cargo test --release --locked --manifest-path hidpp/Cargo.toml
           cargo test --release --locked --manifest-path logid/Cargo.toml
           cargo test --release --locked --manifest-path ota/Cargo.toml
           cargo test --release --locked --manifest-path logistream/Cargo.toml --lib \
-            -- --skip decode_nv::testes::conversao_cabe_no_orcamento
+            -- --skip decode_nv::tests::conversion_fits_the_budget
 
-      # O orcamento de 12 ms vale para o hardware de casa. Em runner
-      # compartilhado o mesmo codigo mediu 12,18 ms e derrubou o build, entao
-      # aqui ele so imprime o numero: mede, mas nao decide.
-      - name: Orcamento de conversao (informativo)
+      # The 12 ms budget holds for the home hardware. On a shared runner the
+      # same code measured 12.18 ms and broke the build, so here it only
+      # prints the number: it measures, but does not decide.
+      # (The test name below lives in logistream; keep it in sync if renamed.)
+      - name: Conversion budget (informational)
         if: matrix.alvo == 'linux'
         continue-on-error: true
         run: |
           cargo test --release --locked --manifest-path logistream/Cargo.toml --lib \
-            -- --exact decode_nv::testes::conversao_cabe_no_orcamento --nocapture
+            -- --exact decode_nv::tests::conversion_fits_the_budget --nocapture
 
-      # Tar, nao os binarios soltos: upload-artifact perde o bit de execucao.
+      # Tar, not the loose binaries: upload-artifact loses the executable bit.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: logi-${{ matrix.alvo }}
@@ -151,7 +152,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Publicar e conferir
+      - name: Publish and check
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -162,5 +163,5 @@ jobs:
           cat SHA256SUMS
           gh release create "$TAG" *.tar.gz SHA256SUMS --verify-tag --generate-notes
           chegaram=$(gh release view "$TAG" --json assets --jq '.assets | length')
-          echo "anexos na release: $chegaram"
+          echo "assets in the release: $chegaram"
           test "$chegaram" -eq 4

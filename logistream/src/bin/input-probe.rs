@@ -1,13 +1,12 @@
-//! Confere a API de injecao de input do Mutter antes de construir em
-//! cima dela.
+//! Checks Mutter's input injection API before building on top of it.
 //!
-//! `gdbus` nao serve aqui: cada chamada abre uma conexao propria, e o
-//! Mutter destroi a sessao quando o par sai do barramento -- o
-//! introspect chegava depois de ela ja ter morrido.
+//! `gdbus` does not work here: each call opens its own connection, and
+//! Mutter destroys the session when the peer leaves the bus -- the
+//! introspect arrived after it had already died.
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!("so no Linux");
+    eprintln!("Linux only");
 }
 
 #[cfg(target_os = "linux")]
@@ -23,14 +22,14 @@ fn main() -> anyhow::Result<()> {
 
     let conn = Connection::new_session()?;
     let root = conn.with_proxy(RD, RD_OBJ, T);
-    let versao: i32 = root.get(RD, "Version").unwrap_or(-1);
-    let tipos: u32 = root.get(RD, "SupportedDeviceTypes").unwrap_or(0);
-    println!("  RemoteDesktop versao {versao}, dispositivos suportados {tipos:#b}");
-    println!("    (1=teclado 2=mouse 4=touch)");
+    let version: i32 = root.get(RD, "Version").unwrap_or(-1);
+    let kinds: u32 = root.get(RD, "SupportedDeviceTypes").unwrap_or(0);
+    println!("  RemoteDesktop version {version}, supported devices {kinds:#b}");
+    println!("    (1=keyboard 2=mouse 4=touch)");
 
     let (sess,): (Path,) = root.method_call(RD, "CreateSession", ())?;
     let sess = sess.into_static();
-    println!("  sessao: {sess}");
+    println!("  session: {sess}");
 
     let sp = conn.with_proxy(RD, sess.clone(), T);
     let xml: (String,) = sp.method_call("org.freedesktop.DBus.Introspectable", "Introspect", ())?;
@@ -44,7 +43,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let id: String = sp.get("org.gnome.Mutter.RemoteDesktop.Session", "SessionId").unwrap_or_default();
-    println!("  SessionId = {id:?}  (e o que amarra a sessao de tela a esta)");
+    println!("  SessionId = {id:?}  (it is what ties the screen session to this one)");
     let _ = sp.method_call::<(), _, _, _>("org.gnome.Mutter.RemoteDesktop.Session", "Stop", ());
     Ok(())
 }

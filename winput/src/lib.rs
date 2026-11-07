@@ -1,20 +1,22 @@
 #![cfg(windows)]
-//! Win32 que o `logid` e o `logid-agent` compartilham.
+//! Win32 code shared by `logid` and `logid-agent`.
 //!
-//! Estava dentro do agente como `input.rs`. Virou crate quando o daemon
-//! passou a rodar no Windows tambem: duas copias de FFI `unsafe` que
-//! precisam concordar sobre sessao e instancia unica e exatamente o tipo
-//! de duplicacao que silencia um bug em um dos lados.
+//! It lived inside the agent as `input.rs`. It became a crate when the
+//! daemon started running on Windows too: two copies of `unsafe` FFI that
+//! must agree on session and single instance are exactly the kind of
+//! duplication that silences a bug on one of the sides.
 //!
-//! Idade do ultimo input na sessao interativa do Windows.
+//! Age of the last input in the interactive Windows session.
 //!
-//! E o sinal do dead-man's switch (spec 005): depois de receber o
-//! dispositivo, se nenhum input chegar em N segundos, o agente devolve o
-//! canal por conta propria -- porque a maquina de ORIGEM nao pode desfazer.
+//! It is the dead-man's switch signal (spec 005): after receiving the
+//! device, if no input arrives within N seconds, the agent returns the
+//! channel on its own -- because the SOURCE machine cannot undo it.
 //!
-//! GetLastInputInfo e por SESSAO: um servico na sessao 0 nao ve o input do
-//! usuario. Por isso o guard tem que rodar na sessao interativa (atalho em
-//! shell:startup), nao como servico.
+//! GetLastInputInfo is per SESSION: a service in session 0 does not see
+//! the user's input. That is why the guard has to run in the interactive
+//! session (shortcut in shell:startup), not as a service.
+//!
+//! Error strings stay pt-BR: they can reach the panel.
 
 #[repr(C)]
 struct LastInputInfo {
@@ -32,7 +34,7 @@ extern "system" {
     fn GetTickCount64() -> u64;
 }
 
-/// Milissegundos desde o ultimo input (teclado ou mouse) nesta sessao.
+/// Milliseconds since the last input (keyboard or mouse) in this session.
 pub fn idle_ms() -> Result<u64, String> {
     let mut lii = LastInputInfo {
         cb_size: std::mem::size_of::<LastInputInfo>() as u32,
@@ -43,9 +45,9 @@ pub fn idle_ms() -> Result<u64, String> {
         return Err("GetLastInputInfo falhou".into());
     }
     let now = unsafe { GetTickCount64() };
-    // dw_time e 32-bit e da volta a cada ~49 dias; GetTickCount64 nao.
-    // Truncar o agora para 32 bits e subtrair com wrapping da a diferenca
-    // correta mesmo na virada.
+    // dw_time is 32-bit and wraps every ~49 days; GetTickCount64 does not.
+    // Truncating now to 32 bits and subtracting with wrapping gives the
+    // correct difference even across the wrap.
     Ok((now as u32).wrapping_sub(lii.dw_time) as u64)
 }
 
@@ -62,8 +64,8 @@ extern "system" {
     fn GetSystemMetrics(index: i32) -> i32;
 }
 
-// Area virtual: cobre multi-monitor, ao contrario de SM_CXSCREEN que so
-// reporta o monitor primario.
+// Virtual screen: covers multi-monitor, unlike SM_CXSCREEN which only
+// reports the primary monitor.
 const SM_XVIRTUALSCREEN: i32 = 76;
 const SM_YVIRTUALSCREEN: i32 = 77;
 const SM_CXVIRTUALSCREEN: i32 = 78;
@@ -77,7 +79,7 @@ pub fn cursor() -> Option<Point> {
     Some(p)
 }
 
-/// (x, y, largura, altura) da area virtual.
+/// (x, y, width, height) of the virtual screen.
 pub fn virtual_screen() -> (i32, i32, i32, i32) {
     unsafe {
         (
@@ -89,11 +91,12 @@ pub fn virtual_screen() -> (i32, i32, i32, i32) {
     }
 }
 
-/// O cursor esta encostado na borda `edge`?
+/// Is the cursor touching edge `edge`?
 ///
-/// No Windows nao precisamos de portal nem de barreira do compositor: ler
-/// GetCursorPos resolve, e e por isso que este lado e mais simples que o do
-/// GNOME. Tolerancia de 1 px porque o cursor para na ultima coluna valida.
+/// On Windows we need neither a portal nor a compositor barrier: reading
+/// GetCursorPos is enough, which is why this side is simpler than the
+/// GNOME one. 1 px tolerance because the cursor stops at the last valid
+/// column.
 pub fn at_edge(edge: &str, p: Point) -> bool {
     let (x, y, w, h) = virtual_screen();
     match edge {
@@ -117,45 +120,45 @@ extern "system" {
 
 const ERROR_ALREADY_EXISTS: u32 = 183;
 
-/// Garante uma instancia so dos modos residentes.
+/// Are we in the physical console session?
 ///
-/// Sem isto, o atalho do Startup mais um lancamento manual empilham: ja
-/// aconteceu -- tres `watch-edge` ao mesmo tempo, competindo pelo mesmo
-/// receptor e triplicando o trafego HID++.
-///
-/// O handle e deliberadamente vazado: o mutex tem de viver enquanto o
-/// processo viver, e o Windows o libera no encerramento.
-/// Estamos na sessao do console fisico?
-///
-/// Os modos residentes SO funcionam la: GetLastInputInfo e GetCursorPos
-/// sao por sessao. Rodar na sessao 0 (o caso de lancar por SSH) nao e
-/// inofensivo -- aquela instancia nao ve input nenhum, reporta um desktop
-/// falso de 1024x768 e um idle igual ao uptime, e ainda compete pelo
-/// receptor HID++ com a instancia de verdade.
+/// The resident modes ONLY work there: GetLastInputInfo and GetCursorPos
+/// are per session. Running in session 0 (the case of launching over SSH)
+/// is not harmless -- that instance sees no input at all, reports a fake
+/// 1024x768 desktop and an idle equal to the uptime, and still competes
+/// for the HID++ receiver with the real instance.
 pub fn in_console_session() -> bool {
     let console = unsafe { WTSGetActiveConsoleSessionId() };
     let mut mine: u32 = u32::MAX;
     let ok = unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut mine) };
     if ok == 0 || console == u32::MAX {
-        // Nao deu para saber: seguir e melhor que recusar.
+        // Could not tell: carrying on is better than refusing.
         return true;
     }
     mine == console
 }
 
+/// Ensures a single instance of the resident modes.
+///
+/// Without this, the Startup shortcut plus a manual launch stack up: it
+/// already happened -- three `watch-edge` at once, competing for the same
+/// receiver and tripling the HID++ traffic.
+///
+/// The handle is deliberately leaked: the mutex must live as long as the
+/// process does, and Windows releases it on exit.
 pub fn claim_single_instance(name: &str) -> bool {
-    // Local\ e nao Global\: o Global exige SeCreateGlobalPrivilege, e
-    // quando a criacao falha nao da para distinguir "ja existe" de "nao
-    // pude criar" -- medido, duas instancias passaram. O caso entre
-    // sessoes ja e barrado por `in_console_session`, entao o namespace por
-    // sessao e exatamente o escopo que falta cobrir.
+    // Local\ and not Global\: Global requires SeCreateGlobalPrivilege, and
+    // when creation fails there is no telling "already exists" from "could
+    // not create" -- measured, two instances got through. The
+    // cross-session case is already blocked by `in_console_session`, so
+    // the per-session namespace is exactly the scope left to cover.
     let wide: Vec<u16> = format!("Local\\{name}")
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
     let h = unsafe { CreateMutexW(std::ptr::null(), 0, wide.as_ptr()) };
     if h == 0 {
-        // Nao conseguimos criar o mutex: seguir e melhor que nao rodar.
+        // Could not create the mutex: carrying on is better than not running.
         return true;
     }
     unsafe { GetLastError() != ERROR_ALREADY_EXISTS }
@@ -163,15 +166,15 @@ pub fn claim_single_instance(name: &str) -> bool {
 
 // --- clipboard -------------------------------------------------------
 //
-// Existe para o `logid` nao precisar chamar `powershell -Command
-// Get-Clipboard` a cada amostragem. Aquilo funcionava, mas spawnar um
-// PowerShell a cada 2 s custa ~200 ms de CPU por leitura -- e, se quem
-// chama esquecer `CREATE_NO_WINDOW`, abre uma janela de console
-// visivel a cada volta. Foi o que aconteceu: "o windows ta abrindo um
-// powershell a cada 5s".
+// Exists so `logid` does not have to call `powershell -Command
+// Get-Clipboard` on every sample. That worked, but spawning a PowerShell
+// every 2 s costs ~200 ms of CPU per read -- and, if the caller forgets
+// `CREATE_NO_WINDOW`, it opens a visible console window on every round.
+// That is what happened: "o windows ta abrindo um powershell a cada 5s"
+// (Windows is opening a PowerShell every 5 s).
 //
-// Texto Unicode apenas (CF_UNICODETEXT). Arquivos sao CF_HDROP e ficam
-// para quando o clipboard de arquivos existir.
+// Unicode text only (CF_UNICODETEXT). Files are CF_HDROP and are handled
+// by the file clipboard section below.
 
 const CF_UNICODETEXT: u32 = 13;
 const GMEM_MOVEABLE: u32 = 0x0002;
@@ -194,25 +197,25 @@ extern "system" {
     fn GlobalFree(mem: isize) -> isize;
 }
 
-/// Abre o clipboard, roda `f`, e fecha mesmo se `f` falhar.
+/// Opens the clipboard, runs `f`, and closes it even if `f` fails.
 ///
-/// Fechar e obrigatorio: o clipboard e um recurso GLOBAL, e deixa-lo
-/// aberto trava o Ctrl+C e o Ctrl+V de todos os programas da sessao
-/// ate o processo morrer. Por isso nao ha caminho de saida que pule o
+/// Closing is mandatory: the clipboard is a GLOBAL resource, and leaving
+/// it open blocks Ctrl+C and Ctrl+V for every program in the session
+/// until the process dies. That is why no exit path skips
 /// `CloseClipboard`.
-fn com_clipboard<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    // O clipboard pode estar tomado por outro programa por alguns ms.
-    // Cinco tentativas com 20 ms cobrem o caso normal sem travar o
-    // chamador quando alguem o segura de verdade.
-    let mut aberto = false;
+fn with_clipboard<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    // The clipboard may be held by another program for a few ms. Five
+    // attempts 20 ms apart cover the normal case without hanging the
+    // caller when someone really holds it.
+    let mut opened = false;
     for _ in 0..5 {
         if unsafe { OpenClipboard(0) } != 0 {
-            aberto = true;
+            opened = true;
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    if !aberto {
+    if !opened {
         return Err("o clipboard esta ocupado por outro programa".into());
     }
     let r = f();
@@ -220,12 +223,12 @@ fn com_clipboard<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> 
     r
 }
 
-/// Texto do clipboard, ou `None` se nao houver texto nele.
-pub fn clipboard_ler() -> Result<Option<String>, String> {
+/// Clipboard text, or `None` if there is no text in it.
+pub fn clipboard_read() -> Result<Option<String>, String> {
     if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
         return Ok(None);
     }
-    com_clipboard(|| {
+    with_clipboard(|| {
         let mem = unsafe { GetClipboardData(CF_UNICODETEXT) };
         if mem == 0 {
             return Ok(None);
@@ -234,8 +237,8 @@ pub fn clipboard_ler() -> Result<Option<String>, String> {
         if p.is_null() {
             return Err("GlobalLock falhou na leitura".into());
         }
-        // UTF-16 terminado em zero. Andar ate o terminador e o unico
-        // jeito: o tamanho do bloco e arredondado e pode sobrar lixo.
+        // Zero-terminated UTF-16. Walking to the terminator is the only
+        // way: the block size is rounded up and may carry trailing garbage.
         let mut n = 0usize;
         while unsafe { *p.add(n) } != 0 {
             n += 1;
@@ -246,13 +249,13 @@ pub fn clipboard_ler() -> Result<Option<String>, String> {
     })
 }
 
-/// Poe texto no clipboard.
-pub fn clipboard_escrever(texto: &str) -> Result<(), String> {
-    let mut u: Vec<u16> = texto.encode_utf16().collect();
+/// Puts text on the clipboard.
+pub fn clipboard_write(text: &str) -> Result<(), String> {
+    let mut u: Vec<u16> = text.encode_utf16().collect();
     u.push(0);
     let bytes = u.len() * 2;
 
-    com_clipboard(|| {
+    with_clipboard(|| {
         let mem = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) };
         if mem == 0 {
             return Err("GlobalAlloc falhou".into());
@@ -267,9 +270,9 @@ pub fn clipboard_escrever(texto: &str) -> Result<(), String> {
             GlobalUnlock(mem);
         }
         unsafe { EmptyClipboard() };
-        // Depois do SetClipboardData o bloco pertence ao SISTEMA --
-        // liberar aqui seria use-after-free no proximo Ctrl+V. So
-        // liberamos quando o Set FALHA e a posse nao mudou de mao.
+        // After SetClipboardData the block belongs to the SYSTEM -- freeing
+        // it here would be use-after-free on the next Ctrl+V. We only free
+        // it when the Set FAILS and ownership did not change hands.
         if unsafe { SetClipboardData(CF_UNICODETEXT, mem) } == 0 {
             unsafe { GlobalFree(mem) };
             return Err("SetClipboardData falhou".into());
@@ -278,81 +281,81 @@ pub fn clipboard_escrever(texto: &str) -> Result<(), String> {
     })
 }
 
-// --- clipboard de arquivos -------------------------------------------
+// --- file clipboard --------------------------------------------------
 //
-// Arquivos no clipboard do Windows sao `CF_HDROP`: um `DROPFILES`
-// seguido de uma lista de caminhos UTF-16, cada um terminado em zero e
-// a lista inteira terminada por um zero extra. Nao e texto, e nao da
-// para reaproveitar o caminho de `CF_UNICODETEXT`.
+// Files on the Windows clipboard are `CF_HDROP`: a `DROPFILES` followed
+// by a list of UTF-16 paths, each zero-terminated and the whole list
+// terminated by an extra zero. It is not text, and the `CF_UNICODETEXT`
+// path cannot be reused.
 
 const CF_HDROP: u32 = 15;
 
 #[repr(C)]
 struct DropFiles {
-    /// Offset do inicio da lista de nomes, a partir deste struct.
+    /// Offset of the start of the name list, from this struct.
     p_files: u32,
     pt_x: i32,
     pt_y: i32,
-    /// Coordenadas sao de area nao-cliente? Nao usamos; fica 0.
+    /// Are the coordinates in the non-client area? Unused; stays 0.
     f_nc: i32,
-    /// Lista em UTF-16? Sempre 1 aqui -- a versao ANSI perderia acento.
+    /// List in UTF-16? Always 1 here -- the ANSI version would lose accents.
     f_wide: i32,
 }
 
 #[link(name = "shell32")]
 extern "system" {
-    fn DragQueryFileW(drop: isize, indice: u32, buf: *mut u16, tam: u32) -> u32;
+    fn DragQueryFileW(drop: isize, index: u32, buf: *mut u16, size: u32) -> u32;
 }
 
-/// Caminhos de arquivo no clipboard, ou `None` se nao houver arquivos.
-pub fn clipboard_ler_arquivos() -> Result<Option<Vec<String>>, String> {
+/// File paths on the clipboard, or `None` if there are no files.
+pub fn clipboard_read_files() -> Result<Option<Vec<String>>, String> {
     if unsafe { IsClipboardFormatAvailable(CF_HDROP) } == 0 {
         return Ok(None);
     }
-    com_clipboard(|| {
+    with_clipboard(|| {
         let h = unsafe { GetClipboardData(CF_HDROP) };
         if h == 0 {
             return Ok(None);
         }
-        // 0xFFFF_FFFF pede a CONTAGEM em vez de um nome.
+        // 0xFFFF_FFFF asks for the COUNT instead of a name.
         let n = unsafe { DragQueryFileW(h, 0xFFFF_FFFF, std::ptr::null_mut(), 0) };
         let mut v = Vec::with_capacity(n as usize);
         for i in 0..n {
-            // Primeiro o tamanho, depois o nome: pedir com buffer curto
-            // trunca em silencio, e caminho truncado aponta para outro
-            // arquivo -- ou para nenhum.
-            let tam = unsafe { DragQueryFileW(h, i, std::ptr::null_mut(), 0) };
-            if tam == 0 {
+            // Size first, then the name: asking with a short buffer
+            // truncates silently, and a truncated path points to another
+            // file -- or to none.
+            let size = unsafe { DragQueryFileW(h, i, std::ptr::null_mut(), 0) };
+            if size == 0 {
                 continue;
             }
-            let mut buf = vec![0u16; tam as usize + 1];
-            let lidos = unsafe { DragQueryFileW(h, i, buf.as_mut_ptr(), buf.len() as u32) };
-            if lidos == 0 {
+            let mut buf = vec![0u16; size as usize + 1];
+            let read = unsafe { DragQueryFileW(h, i, buf.as_mut_ptr(), buf.len() as u32) };
+            if read == 0 {
                 continue;
             }
-            v.push(String::from_utf16_lossy(&buf[..lidos as usize]));
+            v.push(String::from_utf16_lossy(&buf[..read as usize]));
         }
         Ok(if v.is_empty() { None } else { Some(v) })
     })
 }
 
-/// Poe uma lista de arquivos no clipboard.
-pub fn clipboard_escrever_arquivos(caminhos: &[String]) -> Result<(), String> {
-    if caminhos.is_empty() {
+/// Puts a list of files on the clipboard.
+pub fn clipboard_write_files(paths: &[String]) -> Result<(), String> {
+    if paths.is_empty() {
         return Err("lista de arquivos vazia".into());
     }
-    // DROPFILES + nomes UTF-16, cada um com \0, mais um \0 final.
-    let mut nomes: Vec<u16> = Vec::new();
-    for c in caminhos {
-        nomes.extend(c.encode_utf16());
-        nomes.push(0);
+    // DROPFILES + UTF-16 names, each with \0, plus a final \0.
+    let mut names: Vec<u16> = Vec::new();
+    for c in paths {
+        names.extend(c.encode_utf16());
+        names.push(0);
     }
-    nomes.push(0);
+    names.push(0);
 
-    let cab = std::mem::size_of::<DropFiles>();
-    let bytes = cab + nomes.len() * 2;
+    let header = std::mem::size_of::<DropFiles>();
+    let bytes = header + names.len() * 2;
 
-    com_clipboard(|| {
+    with_clipboard(|| {
         let mem = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) };
         if mem == 0 {
             return Err("GlobalAlloc falhou".into());
@@ -366,13 +369,13 @@ pub fn clipboard_escrever_arquivos(caminhos: &[String]) -> Result<(), String> {
             let df = p as *mut DropFiles;
             std::ptr::write(
                 df,
-                DropFiles { p_files: cab as u32, pt_x: 0, pt_y: 0, f_nc: 0, f_wide: 1 },
+                DropFiles { p_files: header as u32, pt_x: 0, pt_y: 0, f_nc: 0, f_wide: 1 },
             );
-            std::ptr::copy_nonoverlapping(nomes.as_ptr(), p.add(cab) as *mut u16, nomes.len());
+            std::ptr::copy_nonoverlapping(names.as_ptr(), p.add(header) as *mut u16, names.len());
             GlobalUnlock(mem);
             EmptyClipboard();
         }
-        // Mesma regra do texto: depois do Set o bloco e do SISTEMA.
+        // Same rule as for text: after the Set the block is the SYSTEM's.
         if unsafe { SetClipboardData(CF_HDROP, mem) } == 0 {
             unsafe { GlobalFree(mem) };
             return Err("SetClipboardData(CF_HDROP) falhou".into());

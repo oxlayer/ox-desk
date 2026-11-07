@@ -1,24 +1,24 @@
-//! logid -- control plane da infra de duas maquinas na LAN.
+//! logid -- control plane for the two-machine LAN setup.
 //!
 //! Spec: ../specs/001-control-plane.md
 //!
-//! Escuta SO em 127.0.0.1: le portas, executa SSH e (em breve) dispara
-//! troca de canal HID++. E superficie de privilegio, nao um site.
-//! Ver ../specs/008-security.md.
+//! Listens ONLY on 127.0.0.1: reads ports, runs SSH and (soon) triggers
+//! HID++ channel switches. It is a privileged surface, not a website.
+//! See ../specs/008-security.md.
 
-// Sem console no Windows: isto e um daemon, e no Windows ele sobe por
-// tarefa agendada na sessao do usuario -- um app de console abriria uma
-// janela preta a cada login e a cada vez que a GUI o subisse.
+// No console on Windows: this is a daemon, and on Windows it starts from
+// a scheduled task in the user's session -- a console app would open a
+// black window at every login and every time the GUI started it.
 //
-// Nao afeta o JSON por SSH: o subsistema decide se um console e
-// ALOCADO, nao para onde o stdout vai. Quando o pai entrega um pipe (o
-// caso do SSH), a saida continua chegando. O que se perde e rodar o
-// binario a mao num cmd e ver texto -- e para isso existe o log em
-// %LOCALAPPDATA%\logid\logid.log.
+// It does not affect the JSON over SSH: the subsystem decides whether a
+// console is ALLOCATED, not where stdout goes. When the parent hands over
+// a pipe (the SSH case), output still arrives. What is lost is running
+// the binary by hand in a cmd and seeing text -- and for that there is
+// the log at %LOCALAPPDATA%\logid\logid.log.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-// Primeiro de todos: macro_rules tem escopo TEXTUAL, entao `say!` e
-// `gripe!` so existem para os modulos declarados depois deste.
+// First of all: macro_rules has TEXTUAL scope, so `say!` and `gripe!`
+// only exist for the modules declared after this one.
 #[macro_use]
 mod say;
 
@@ -34,7 +34,7 @@ mod focus;
 mod follow;
 mod hidpp;
 mod clip;
-mod clip_arq;
+mod clip_files;
 mod kvm;
 mod logs;
 mod pairing;
@@ -44,7 +44,7 @@ mod procs;
 mod remote;
 mod screen;
 mod setup;
-mod setup_comum;
+mod setup_common;
 #[cfg(target_os = "linux")]
 mod setup_linux;
 #[cfg(target_os = "macos")]
@@ -64,9 +64,9 @@ use tiny_http::{Header, Request, Response, Server};
 const PAGE: &str = include_str!("../static/index.html");
 const SETUP: &str = include_str!("../static/setup.html");
 
-/// Cache do snapshot. Existe porque /api/status faz rede e SSH -- medido
-/// em 2.09 s na versao Python, contra 0.6 ms do /healthz. Reusar e o que
-/// mantem a GUI fluida.
+/// Snapshot cache. It exists because /api/status does network and SSH --
+/// measured at 2.09 s in the Python version, against 0.6 ms for /healthz.
+/// Reusing it is what keeps the GUI smooth.
 struct Cache {
     at: Option<Instant>,
     data: Option<Arc<Snapshot>>,
@@ -82,9 +82,10 @@ fn nostore() -> Header {
     Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap()
 }
 
-/// Responder nunca deve derrubar a thread: cliente que desiste no meio
-/// (health check com timeout curto, aba fechada) virava BrokenPipeError
-/// no journal na versao Python. Aqui o erro e so ignorado.
+/// Responding must never take the thread down: a client that gives up
+/// midway (a health check with a short timeout, a closed tab) became a
+/// BrokenPipeError in the journal in the Python version. Here the error
+/// is simply ignored.
 fn respond(req: Request, resp: Response<std::io::Cursor<Vec<u8>>>) {
     let _ = req.respond(resp);
 }
@@ -124,57 +125,57 @@ fn cached(cfg: &Config, cache: &Mutex<Cache>) -> Arc<Snapshot> {
     fresh
 }
 
-/// Subcomandos antes de servir.
+/// Subcommands before serving.
 ///
-/// O `logid` tambem e o "agente" do proprio host: o par o invoca por SSH
-/// com `devices` / `host-info` / `set-host` e le uma linha de JSON. Sem
-/// isto, o Windows nao conseguia sondar o Ubuntu como o Ubuntu ja sondava
-/// o Windows -- e, sem essa sondagem, `focus::plan` BLOQUEIA a troca,
-/// porque sem alguem do outro lado capaz de devolver o dispositivo a
-/// origem nao pode desfazer (specs/005).
+/// `logid` is also its own host's "agent": the peer invokes it over SSH
+/// with `devices` / `host-info` / `set-host` and reads one line of JSON.
+/// Without this, Windows could not probe Ubuntu the way Ubuntu already
+/// probed Windows -- and, without that probe, `focus::plan` BLOCKS the
+/// switch, because without someone on the other side able to give the
+/// device back, the origin cannot undo (specs/005).
 ///
-/// O formato vem de `hidpp::protocol`, compartilhado com o `logid-agent`:
-/// e o contrato entre as maquinas, e duas copias divergiriam.
+/// The format comes from `hidpp::protocol`, shared with `logid-agent`: it
+/// is the contract between the machines, and two copies would diverge.
 fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
     use std::process::ExitCode;
     match args.first().map(String::as_str) {
         None => None,
         Some("serve") => None,
-        // Recebe o clipboard de outra maquina, por SSH. Entrega ao
-        // daemon local -- ver `clip::cli_set` para o porque de nao
-        // escrever direto.
+        // Receives the clipboard from another machine, over SSH. Hands it
+        // to the local daemon -- see `clip::cli_set` for why it does not
+        // write directly.
         Some("kvm-soltar") => {
-            let porta = Config::load().map(|c| c.port).unwrap_or(8787);
-            Some(crate::kvm::cli_soltar(porta))
+            let port = Config::load().map(|c| c.port).unwrap_or(8787);
+            Some(crate::kvm::cli_release(port))
         }
         Some("clip-set") => {
-            let porta = Config::load().map(|c| c.port).unwrap_or(8787);
-            Some(crate::clip::cli_set(porta))
+            let port = Config::load().map(|c| c.port).unwrap_or(8787);
+            Some(crate::clip::cli_set(port))
         }
         #[cfg(target_os = "linux")]
-        Some("clip-sonda") => Some(crate::clip_arq::cli_sonda()),
-        // Recebe arquivos de outra maquina. `clip-arq-set` le um tar do
-        // stdin; os outros dois servem ao caminho do rsync, que copia
-        // antes e avisa depois.
+        Some("clip-sonda") => Some(crate::clip_files::cli_probe()),
+        // Receives files from another machine. `clip-arq-set` reads a tar
+        // from stdin; the other two serve the rsync path, which copies
+        // first and notifies afterwards.
         Some("clip-arq-set") => {
-            let porta = Config::load().map(|c| c.port).unwrap_or(8787);
-            Some(crate::clip_arq::cli_set(porta))
+            let port = Config::load().map(|c| c.port).unwrap_or(8787);
+            Some(crate::clip_files::cli_set(port))
         }
-        Some("clip-arq-dir") => Some(crate::clip_arq::cli_dir()),
+        Some("clip-arq-dir") => Some(crate::clip_files::cli_dir()),
         Some("clip-arq-prontos") => {
-            let porta = Config::load().map(|c| c.port).unwrap_or(8787);
+            let port = Config::load().map(|c| c.port).unwrap_or(8787);
             match args.get(1) {
-                Some(d) => Some(crate::clip_arq::cli_prontos(porta, d)),
+                Some(d) => Some(crate::clip_files::cli_ready(port, d)),
                 None => {
-                    eprintln!("clip-arq-prontos: informe a pasta");
+                    eprintln!("clip-arq-prontos: give the folder");
                     Some(ExitCode::FAILURE)
                 }
             }
         }
-        // Mesma FORMA do `/healthz` de propósito. Quem pergunta "o daemon
-        // no ar é o binário que está no disco?" compara duas respostas
-        // com um parser só, em vez de inventar um segundo jeito de dizer
-        // a mesma coisa. Ver `setup_comum::daemon_do_disco`.
+        // Same SHAPE as `/healthz` on purpose. Whoever asks "is the live
+        // daemon the binary on disk?" compares two answers with a single
+        // parser, instead of inventing a second way of saying the same
+        // thing. See `setup_common::daemon_on_disk`.
         Some("versao") | Some("--versao") => {
             println!(
                 "{{\"build\":\"{}\",\"n\":{}}}",
@@ -184,35 +185,35 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
             Some(ExitCode::SUCCESS)
         }
         Some("-h") | Some("--help") | Some("help") => {
-            // stderr: stdout e reservado para o JSON do protocolo.
+            // stderr: stdout is reserved for the protocol JSON.
             eprintln!(
-                "logid [comando]
+                "logid [command]
 
-  (sem comando)  sobe o daemon e serve a API em 127.0.0.1
-  serve          idem, explicito
-  versao         o carimbo deste binario, na forma do /healthz
+  (no command)   starts the daemon and serves the API on 127.0.0.1
+  serve          same, explicit
+  versao         this binary's build stamp, in the /healthz shape
 
-  kvm-soltar     devolve o input desta maquina para ela mesma
-                 (usado por um par que quer o input de volta)
-  clip-set       le o stdin e poe no clipboard desta maquina
-                 (usado pelos pares por SSH)
+  kvm-soltar     gives this machine's input back to itself
+                 (used by a peer that wants the input back)
+  clip-set       reads stdin and puts it on this machine's clipboard
+                 (used by the peers over SSH)
 
-  devices        inventario dos slots deste receptor (JSON)
+  devices        inventory of this receiver's slots (JSON)
   host-info <slot>
-                 numero de hosts e canal atual (JSON)
+                 number of hosts and current channel (JSON)
   set-host <slot> <host> --confirm
-                 troca o canal. 1-based. IRREVERSIVEL: o dispositivo
-                 sai deste receptor e nao responde mais aqui.
+                 switches the channel. 1-based. IRREVERSIBLE: the device
+                 leaves this receiver and no longer answers here.
 
-Os tres ultimos existem para o PAR nos sondar por SSH; a saida e uma
-linha de JSON. Ver specs/002-ssh.md."
+The last three exist so the PEER can probe us over SSH; the output is
+one line of JSON. See specs/002-ssh.md."
             );
             Some(ExitCode::SUCCESS)
         }
         Some(_) => {
-            // `::hidpp` e nao `hidpp`: este crate tem um modulo local com
-            // o mesmo nome (o adaptador em hidpp.rs), que sombreia a crate
-            // compartilhada aqui no raiz.
+            // `::hidpp` and not `hidpp`: this crate has a local module with
+            // the same name (the adapter in hidpp.rs), which shadows the
+            // shared crate here at the root.
             let api = match ::hidpp::hidapi::HidApi::new() {
                 Ok(a) => a,
                 Err(e) => {
@@ -230,7 +231,7 @@ linha de JSON. Ver specs/002-ssh.md."
                     println!(
                         "{}",
                         ::hidpp::protocol::fail(format!(
-                            "comando desconhecido: {:?} -- use --help",
+                            "unknown command: {:?} -- use --help",
                             args[0]
                         ))
                     );
@@ -242,8 +243,9 @@ linha de JSON. Ver specs/002-ssh.md."
 }
 
 fn main() -> std::process::ExitCode {
-    // Antes de qualquer coisa: se vier comando, responde e sai. Nao
-    // carrega config, nao abre porta -- o par so quer uma linha de JSON.
+    // Before anything else: if a command came, answer and exit. Do not
+    // load the config, do not open the port -- the peer only wants one
+    // line of JSON.
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(code) = run_cli(&args) {
         return code;
@@ -252,7 +254,8 @@ fn main() -> std::process::ExitCode {
     let cfg = match Config::load() {
         Ok(c) => c,
         Err(e) => {
-            // Falhar barulhento: config invalida nao vira default silencioso.
+            // Fail loudly: an invalid config does not become a silent
+            // default.
             gripe!("logid: {e}");
             std::process::exit(1);
         }
@@ -262,46 +265,48 @@ fn main() -> std::process::ExitCode {
     let server = match Server::http(&addr) {
         Ok(s) => s,
         Err(e) => {
-            gripe!("logid: nao consegui escutar em {addr}: {e}");
+            gripe!("logid: could not listen on {addr}: {e}");
             std::process::exit(1);
         }
     };
-    say!("logid em http://{addr}  (config: {})", Config::path().display());
+    say!("logid on http://{addr}  (config: {})", Config::path().display());
 
     let cfg = Arc::new(RwLock::new(cfg));
     let cache = Arc::new(Mutex::new(Cache { at: None, data: None }));
 
-    // Vigilancia de borda numa thread propria; falha nao derruba o daemon.
+    // Border watch on its own thread; a failure does not take the daemon
+    // down.
     sys::spawn_border(Arc::clone(&cfg));
-    // Reconciliador do "seguir o lider", em thread propria.
+    // "Follow the leader" reconciler, on its own thread.
     follow::spawn(Arc::clone(&cfg));
-    // Mantem o estado dos pares fresco, para o caminho quente nao esperar SSH.
+    // Keeps the peers' state fresh, so the hot path does not wait on SSH.
     peers::spawn(Arc::clone(&cfg));
-    // Mantem o survey local quente: a borda nao pode pagar ~360 ms.
+    // Keeps the local survey warm: the border cannot pay ~360 ms.
     hidpp::spawn_refresher();
-    // Um KVM que sobreviveu ao reinicio continua valendo: adotar, nao
-    // matar. Matar arrancava o input de quem estava usando a outra
-    // maquina toda vez que um deploy reiniciava o daemon.
+    // A KVM that survived the restart is still valid: adopt it, do not
+    // kill it. Killing it yanked the input away from whoever was using
+    // the other machine every time a deploy restarted the daemon.
     if let Ok(g) = cfg.read() {
-        kvm::adotar(&g);
+        kvm::adopt(&g);
     }
 
-    // Clipboard compartilhado. No Linux uma thread com sessao D-Bus
-    // propria observa e publica; nos outros, amostragem.
+    // Shared clipboard. On Linux a thread with its own D-Bus session
+    // watches and publishes; on the others, polling.
     #[cfg(target_os = "linux")]
     {
-        let canal = clip::linux::spawn(Arc::clone(&cfg));
-        clip::guardar_canal(canal);
+        let channel = clip::linux::spawn(Arc::clone(&cfg));
+        clip::store_channel(channel);
     }
     #[cfg(not(target_os = "linux"))]
-    clip::vigiar(Arc::clone(&cfg));
-    // Bandeja nativa. Nao e fatal se nao subir: sem extensao de
-    // AppIndicator (ou sem bandeja nenhuma) o icone nao aparece e o
-    // daemon segue servindo painel e API. Derrubar o logid porque nao
-    // ha onde desenhar um icone seria trocar inconveniencia por queda.
+    clip::watch(Arc::clone(&cfg));
+    // Native tray. Not fatal if it does not come up: without the
+    // AppIndicator extension (or without any tray) the icon does not
+    // appear and the daemon keeps serving the panel and the API. Taking
+    // logid down because there is nowhere to draw an icon would trade an
+    // inconvenience for an outage.
     #[cfg(target_os = "linux")]
-    if let Some(h) = tray::iniciar(Arc::clone(&cfg)) {
-        tray::vigiar(h, Arc::clone(&cfg));
+    if let Some(h) = tray::start(Arc::clone(&cfg)) {
+        tray::watch(h, Arc::clone(&cfg));
     }
 
     let server = Arc::new(server);
@@ -321,7 +326,7 @@ fn main() -> std::process::ExitCode {
     for w in workers {
         let _ = w.join();
     }
-    // So chegamos aqui se todas as threads morreram: o servidor caiu.
+    // We only get here if all threads died: the server went down.
     std::process::ExitCode::FAILURE
 }
 
@@ -332,10 +337,11 @@ fn invalidate(cache: &Mutex<Cache>) {
     }
 }
 
-/// PATCH /api/config -- merge raso no topo, valida, grava, invalida cache.
+/// PATCH /api/config -- shallow top-level merge, validate, save,
+/// invalidate the cache.
 ///
-/// Merge raso de proposito: substituir `hosts` inteiro e explicito e
-/// previsivel. Merge profundo em lista de hosts seria adivinhacao.
+/// Shallow merge on purpose: replacing `hosts` whole is explicit and
+/// predictable. A deep merge into a list of hosts would be guesswork.
 fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
@@ -377,7 +383,8 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     if next.hosts.is_empty() {
         return err_json(req, 422, "precisa de ao menos um host");
     }
-    // Grava antes de aplicar: se o disco recusar, nada muda em memoria.
+    // Save before applying: if the disk refuses, nothing changes in
+    // memory.
     if let Err(e) = next.save() {
         return err_json(req, 500, &e);
     }
@@ -394,11 +401,11 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     ok_json(req, body);
 }
 
-/// POST /api/focus -- passa o foco de input para outra maquina.
+/// POST /api/focus -- hands input focus to another machine.
 ///
-/// **Dry-run por padrao.** Sem `"confirm": true` devolve apenas o plano,
-/// porque a rota fisica e irreversivel do lado de origem: depois do
-/// ChangeHost este receptor nao alcanca mais o dispositivo. Ver
+/// **Dry-run by default.** Without `"confirm": true` it returns only the
+/// plan, because the physical route is irreversible on the origin side:
+/// after ChangeHost this receiver no longer reaches the device. See
 /// ../specs/005-input-switch.md.
 fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
@@ -413,23 +420,23 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "estado da config corrompido"),
     };
-    // Modo LAN: captura aqui e manda pela rede. Nao passa pelo
-    // planejador do HID++ porque nao ha nada a planejar -- nenhum
-    // dispositivo troca de canal, nenhum receptor precisa existir do
-    // outro lado, e nao ha estado parcial possivel (ou o filho subiu
-    // com os dois dispositivos, ou nao subiu).
+    // LAN mode: capture here and send over the network. It does not go
+    // through the HID++ planner because there is nothing to plan -- no
+    // device switches channel, no receiver needs to exist on the other
+    // side, and there is no possible partial state (either the child
+    // started with both devices, or it did not).
     //
-    // E **nao exige `confirm`**. O dry-run existe porque o ChangeHost e
-    // irreversivel da origem: depois dele este receptor nao alcanca
-    // mais o dispositivo. O LAN se desfaz com os dois Ctrl ou mandando
-    // para a maquina local, entao pedir confirmacao seria cerimonia sem
-    // risco por tras.
+    // And it **does not require `confirm`**. The dry-run exists because
+    // ChangeHost is irreversible from the origin: after it this receiver
+    // no longer reaches the device. LAN is undone with the two Ctrls or
+    // by sending to the local machine, so asking for confirmation would
+    // be ceremony with no risk behind it.
     if snap.input.mode == "lan" {
-        let resposta = match kvm::mandar(&snap, &fr.host) {
-            Ok(destino) => serde_json::json!({
+        let response = match kvm::send(&snap, &fr.host) {
+            Ok(dest) => serde_json::json!({
                 "plan": { "host": fr.host, "route": "lan" },
                 "executed": true,
-                "results": [format!("input indo para {} ({destino})", fr.host)],
+                "results": [format!("input indo para {} ({dest})", fr.host)],
             }),
             Err(e) => serde_json::json!({
                 "plan": { "host": fr.host, "route": "lan" },
@@ -438,10 +445,10 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
                 "error": e,
             }),
         };
-        let code = if resposta.get("error").is_some() { 409 } else { 200 };
+        let code = if response.get("error").is_some() { 409 } else { 200 };
         return respond(
             req,
-            Response::from_string(resposta.to_string())
+            Response::from_string(response.to_string())
                 .with_status_code(code)
                 .with_header(json_header())
                 .with_header(nostore()),
@@ -462,17 +469,17 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
     }
 }
 
-/// POST /api/controls/remap -- remapeia um botao.
+/// POST /api/controls/remap -- remaps a button.
 ///
-/// Exige `confirm`: escrever no dispositivo muda comportamento fisico, e
-/// um remapeamento errado deixa o botao inutil ate ser desfeito.
+/// Requires `confirm`: writing to the device changes physical behavior,
+/// and a wrong remap leaves the button useless until it is undone.
 fn post_remap(mut req: Request) {
     #[derive(serde::Deserialize)]
     struct Body {
         slot: u8,
-        /// "0x0053" ou decimal.
+        /// "0x0053" or decimal.
         cid: String,
-        /// Destino; "0x0" ou "0" volta ao padrao.
+        /// Target; "0x0" or "0" restores the default.
         to: String,
         #[serde(default)]
         confirm: bool,
@@ -506,58 +513,59 @@ fn post_remap(mut req: Request) {
     }
 }
 
-/// POST /api/clipboard -- texto cru no corpo, vai para o clipboard local.
+/// POST /api/clipboard -- raw text in the body, goes to the local
+/// clipboard.
 ///
-/// Sem JSON de proposito: o corpo E o texto. Embrulhar clipboard em
-/// JSON obrigaria a escapar o que a pessoa copiou, e clipboard carrega
-/// exatamente o tipo de coisa que quebra escape -- aspas, barras,
-/// quebras de linha, bytes estranhos.
+/// No JSON on purpose: the body IS the text. Wrapping the clipboard in
+/// JSON would force escaping what the person copied, and the clipboard
+/// carries exactly the kind of thing that breaks escaping -- quotes,
+/// slashes, line breaks, odd bytes.
 fn post_clipboard(mut req: Request) {
-    let mut texto = String::new();
-    if req.as_reader().read_to_string(&mut texto).is_err() {
+    let mut text = String::new();
+    if req.as_reader().read_to_string(&mut text).is_err() {
         return err_json(req, 400, "corpo ilegivel");
     }
-    if texto.len() > clip::LIMITE {
+    if text.len() > clip::LIMIT {
         return err_json(req, 413, "texto acima do limite");
     }
-    match clip::aplicar_local(&texto) {
+    match clip::apply_local(&text) {
         Ok(()) => ok_json(req, "{\"ok\":true}".into()),
         Err(e) => err_json(req, 500, &e),
     }
 }
 
-/// POST /api/clipboard-arquivos {"paths":[...]} -- arquivos recebidos.
+/// POST /api/clipboard-arquivos {"paths":[...]} -- received files.
 ///
-/// JSON aqui, ao contrario do clipboard de texto, porque o corpo e uma
-/// LISTA: separar caminhos por quebra de linha falharia no primeiro
-/// arquivo com quebra de linha no nome, que e legal no Linux.
-fn post_clipboard_arquivos(mut req: Request) {
+/// JSON here, unlike the text clipboard, because the body is a LIST:
+/// separating paths by line break would fail on the first file with a
+/// line break in its name, which is legal on Linux.
+fn post_clipboard_files(mut req: Request) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
         return err_json(req, 400, "corpo ilegivel");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-    let caminhos: Vec<String> = v
+    let paths: Vec<String> = v
         .get("paths")
         .and_then(|p| p.as_array())
         .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
         .unwrap_or_default();
-    if caminhos.is_empty() {
+    if paths.is_empty() {
         return err_json(req, 400, "informe {\"paths\": [...]}");
     }
-    match clip_arq::aplicar_local(&caminhos) {
+    match clip_files::apply_local(&paths) {
         Ok(()) => ok_json(req, "{\"ok\":true}".into()),
         Err(e) => err_json(req, 500, &e),
     }
 }
 
-/// POST /api/clipboard-arquivos/enviar {"host":"<nome>"} -- manda a
-/// selecao grande pendente para UM destino.
+/// POST /api/clipboard-arquivos/enviar {"host":"<name>"} -- sends the
+/// pending large selection to ONE destination.
 ///
-/// Existe porque acima do teto nao mandamos sozinhos: 1,4 GB para duas
-/// maquinas que ninguem esta olhando gasta banda e disco alheio. A
-/// bandeja chama isto com o host escolhido.
-fn post_clipboard_enviar(mut req: Request, cfg: &RwLock<Config>) {
+/// It exists because above the cap we do not send on our own: 1.4 GB to
+/// two machines nobody is looking at wastes someone else's bandwidth and
+/// disk. The tray calls this with the chosen host.
+fn post_clipboard_send(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
         return err_json(req, 400, "corpo ilegivel");
@@ -570,35 +578,35 @@ fn post_clipboard_enviar(mut req: Request, cfg: &RwLock<Config>) {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "estado da config corrompido"),
     };
-    match clip_arq::mandar_oferta(&snap, &host) {
+    match clip_files::send_offer(&snap, &host) {
         Ok(d) => ok_json(req, serde_json::json!({ "ok": true, "detail": d }).to_string()),
         Err(e) => err_json(req, 409, &e),
     }
 }
 
-/// POST /api/screen {"host": "<nome>"} -- lanca o cliente de tela.
+/// POST /api/screen {"host": "<name>"} -- launches the screen client.
 ///
-/// Separado do GET de proposito: o GET responde "da para clicar?" e a UI
-/// desabilita o botao com o motivo escrito do lado. Um botao que abre
-/// nada e pior que um botao desabilitado explicado.
-fn post_transferir(mut req: Request, cfg: &RwLock<Config>) {
+/// Separate from the GET on purpose: the GET answers "can it be clicked?"
+/// and the UI disables the button with the reason written beside it. A
+/// button that opens nothing is worse than a disabled, explained button.
+fn post_transfer(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
         return err_json(req, 400, "corpo ilegivel");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-    let campo = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
+    let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "config travada"),
     };
-    match files::transferir(&snap, &campo("de"), &campo("caminho"), &campo("para"), &campo("pasta")) {
+    match files::transfer(&snap, &field("de"), &field("caminho"), &field("para"), &field("pasta")) {
         Ok(id) => ok_json(req, serde_json::json!({ "id": id }).to_string()),
         Err(e) => err_json(req, 409, &e),
     }
 }
 
-fn post_sessao(mut req: Request, cfg: &RwLock<Config>) {
+fn post_session(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
         return err_json(req, 400, "corpo ilegivel");
@@ -611,7 +619,7 @@ fn post_sessao(mut req: Request, cfg: &RwLock<Config>) {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "config travada"),
     };
-    match screen::abrir_sessao(&snap, &host) {
+    match screen::open_session(&snap, &host) {
         Ok(s) => match serde_json::to_string(&s) {
             Ok(b) => ok_json(req, b),
             Err(e) => err_json(req, 500, &format!("serializar: {e}")),
@@ -629,11 +637,11 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
     let Some(host) = v.get("host").and_then(|h| h.as_str()).map(String::from) else {
         return err_json(req, 400, "informe {\"host\": \"<nome>\"}");
     };
-    // Omitir uma opcao vale o default: controlar sim, som e microfone
-    // nao. Ligar audio sem pedir e o tipo de surpresa que assusta numa
-    // reuniao.
+    // Omitting an option means the default: control yes, sound and
+    // microphone no. Turning audio on without asking is the kind of
+    // surprise that scares people in a meeting.
     let d = screen::Opts::default();
-    let flag = |k: &str, padrao: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(padrao);
+    let flag = |k: &str, fallback: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(fallback);
     let opts = screen::Opts {
         control: flag("control", d.control),
         audio: flag("audio", d.audio),
@@ -644,19 +652,19 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
         Err(_) => return err_json(req, 500, "config travada"),
     };
     match screen::launch(&snap, &host, opts) {
-        Ok(linha) => {
-            ok_json(req, serde_json::json!({ "ok": true, "command": linha }).to_string())
+        Ok(line) => {
+            ok_json(req, serde_json::json!({ "ok": true, "command": line }).to_string())
         }
         Err(e) => err_json(req, 409, &e),
     }
 }
 
-/// POST /api/hidpp/pause {"minutes": N}  (0 retoma)
+/// POST /api/hidpp/pause {"minutes": N}  (0 resumes)
 ///
-/// Pausa a SONDAGEM periodica dos dispositivos, nao a troca de canal.
-/// Serve para separar "nossa leitura perturba o radio" de "o hardware
-/// faz isso sozinho" sem precisar tomar o mouse de ninguem para testar:
-/// pausada a leitura, se a troca ficar de pe a culpa e nossa.
+/// Pauses the periodic POLLING of the devices, not channel switching. It
+/// serves to tell "our reading disturbs the radio" apart from "the
+/// hardware does this on its own" without taking anyone's mouse away to
+/// test: with reading paused, if the switch holds, the fault is ours.
 fn post_hidpp_pause(mut req: Request) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
@@ -664,15 +672,15 @@ fn post_hidpp_pause(mut req: Request) {
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let min = v.get("minutes").and_then(|x| x.as_u64()).unwrap_or(10).min(60);
-    let restante = hidpp::pausar(min);
-    match restante {
-        Some(s) => say!("hidpp: leitura PAUSADA por {}s (diagnostico)", s),
-        None => say!("hidpp: leitura retomada"),
+    let remaining = hidpp::pause(min);
+    match remaining {
+        Some(s) => say!("hidpp: polling PAUSED for {}s (diagnostics)", s),
+        None => say!("hidpp: polling resumed"),
     }
     ok_json(
         req,
-        serde_json::json!({ "ok": true, "pausado_s": restante,
-            "nota": if restante.is_some() {
+        serde_json::json!({ "ok": true, "pausado_s": remaining,
+            "nota": if remaining.is_some() {
                 "a sondagem parou; trocar de canal continua funcionando"
             } else {
                 "sondagem retomada"
@@ -681,37 +689,38 @@ fn post_hidpp_pause(mut req: Request) {
     )
 }
 
-/// POST /api/follow {"enabled": bool, "leader": "<nome HID++>"}
+/// POST /api/follow {"enabled": bool, "leader": "<HID++ name>"}
 ///
-/// Qual dispositivo manda depende de COMO a pessoa troca de maquina:
-/// pela borda quem atravessa e o mouse; pelo botao Easy-Switch do
-/// teclado, o lider tem de ser o teclado -- senao o reconciliador desfaz
-/// a acao que ela acabou de fazer. Por isso e escolha, nao constante.
+/// Which device leads depends on HOW the person switches machines: over
+/// the border it is the mouse that crosses; with the keyboard's
+/// Easy-Switch button, the leader has to be the keyboard -- otherwise
+/// the reconciler undoes the action they just took. That is why it is a
+/// choice, not a constant.
 fn post_follow(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
         return err_json(req, 400, "corpo ilegivel");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-    let atual = cfg.read().map(|g| g.input.follow.enabled).unwrap_or(false);
-    let on = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(atual);
+    let current = cfg.read().map(|g| g.input.follow.enabled).unwrap_or(false);
+    let on = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(current);
     let leader = v.get("leader").and_then(|x| x.as_str());
     if let Err(e) = config::save_follow(on, leader) {
         return err_json(req, 500, &e);
     }
     match Config::load() {
-        Ok(novo) => {
-            let lider = novo.input.follow.leader.clone().unwrap_or_default();
+        Ok(reloaded) => {
+            let leader_name = reloaded.input.follow.leader.clone().unwrap_or_default();
             if let Ok(mut g) = cfg.write() {
-                *g = novo;
+                *g = reloaded;
             }
             if let Ok(mut c) = cache.lock() {
                 c.at = None;
             }
-            say!("follow: {} com lider '{lider}'", if on { "LIGADO" } else { "desligado" });
+            say!("follow: {} with leader '{leader_name}'", if on { "ON" } else { "off" });
             ok_json(
                 req,
-                serde_json::json!({ "ok": true, "enabled": on, "leader": lider,
+                serde_json::json!({ "ok": true, "enabled": on, "leader": leader_name,
                     "nota": if on { "ligado agora; o laco le o estado a cada passada" } else { "desligado agora -- a proxima passada nao age" } })
                 .to_string(),
             )
@@ -720,7 +729,7 @@ fn post_follow(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     }
 }
 
-/// POST /api/border {"enabled": bool} -- liga/desliga o KVM por borda.
+/// POST /api/border {"enabled": bool} -- turns the border KVM on/off.
 fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
@@ -734,14 +743,14 @@ fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         return err_json(req, 500, &e);
     }
     match Config::load() {
-        Ok(novo) => {
+        Ok(reloaded) => {
             if let Ok(mut g) = cfg.write() {
-                *g = novo;
+                *g = reloaded;
             }
             if let Ok(mut c) = cache.lock() {
                 c.at = None;
             }
-            say!("border: KVM por borda {} pela GUI", if on { "LIGADO" } else { "DESLIGADO" });
+            say!("border: border KVM {} from the GUI", if on { "ON" } else { "OFF" });
             ok_json(
                 req,
                 serde_json::json!({ "ok": true, "enabled": on,
@@ -759,9 +768,9 @@ fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 
 /// POST /api/layout {"posicoes": {"<host>": {"col": N, "row": M}}}
 ///
-/// Grava por edicao cirurgica do TOML, nao por reserializacao: os
-/// comentarios da config sao o registro de por que cada escolha foi
-/// feita, e nao se perde isso para salvar duas coordenadas.
+/// Saves by surgical TOML editing, not by reserializing: the config's
+/// comments are the record of why each choice was made, and that is not
+/// lost to save two coordinates.
 fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
@@ -772,37 +781,37 @@ fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         return err_json(req, 400, "informe {\"posicoes\": {\"<host>\": {\"col\":N,\"row\":M}}}");
     };
     let mut pos = std::collections::BTreeMap::new();
-    for (nome, c) in obj {
+    for (name, c) in obj {
         let (Some(col), Some(row)) = (
             c.get("col").and_then(|x| x.as_i64()),
             c.get("row").and_then(|x| x.as_i64()),
         ) else {
-            return err_json(req, 400, &format!("posicao invalida para '{nome}'"));
+            return err_json(req, 400, &format!("posicao invalida para '{name}'"));
         };
-        pos.insert(nome.clone(), config::Cell { col: col as i32, row: row as i32 });
+        pos.insert(name.clone(), config::Cell { col: col as i32, row: row as i32 });
     }
     if let Err(e) = config::save_layout(&pos) {
         return err_json(req, 500, &e);
     }
-    // Recarrega do disco: o que vale e o arquivo, e assim a resposta
-    // reflete o que ficou gravado, nao o que pedimos.
+    // Reload from disk: the file is what counts, and this way the
+    // response reflects what was saved, not what we asked for.
     match Config::load() {
-        Ok(novo) => {
-            let bordas: Vec<_> = novo
+        Ok(reloaded) => {
+            let edges: Vec<_> = reloaded
                 .border_edges_full()
                 .into_iter()
                 .map(|(e, t, ok)| serde_json::json!({ "edge": e, "target": t, "ativa": ok }))
                 .collect();
             if let Ok(mut g) = cfg.write() {
-                *g = novo;
+                *g = reloaded;
             }
             if let Ok(mut c) = cache.lock() {
                 c.at = None;
             }
-            say!("layout: grade salva; bordas agora {}", bordas.len());
+            say!("layout: grid saved; edges now {}", edges.len());
             ok_json(
                 req,
-                serde_json::json!({ "ok": true, "edges": bordas,
+                serde_json::json!({ "ok": true, "edges": edges,
                     "nota": "a grade vale agora; barreiras novas exigem reiniciar o daemon" })
                 .to_string(),
             )
@@ -813,9 +822,9 @@ fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 
 /// POST /api/processes/kill {"host","pid","force"?,"confirm":true}
 ///
-/// `confirm` obrigatorio pelo mesmo motivo do `/api/focus`: matar
-/// processo na maquina de alguem nao pode sair de um clique distraido, e
-/// nao tem desfazer.
+/// `confirm` is mandatory for the same reason as `/api/focus`: killing a
+/// process on someone's machine cannot come from a distracted click, and
+/// it has no undo.
 fn post_kill(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
@@ -835,70 +844,71 @@ fn post_kill(mut req: Request, cfg: &RwLock<Config>) {
         Err(_) => return err_json(req, 500, "config travada"),
     };
     match procs::kill(&snap, &host, pid, force, confirm) {
-        Ok(detalhe) => {
-            ok_json(req, serde_json::json!({ "ok": true, "detail": detalhe }).to_string())
+        Ok(detail) => {
+            ok_json(req, serde_json::json!({ "ok": true, "detail": detail }).to_string())
         }
         Err(e) => err_json(req, 409, &e),
     }
 }
 
-/// GET /api/setup -- o que falta nesta maquina.
+/// GET /api/setup -- what this machine still lacks.
 ///
-/// Mede sob demanda, e NAO entra no ciclo de refresh do painel: o passo
-/// `pares` abre SSH para cada host, e um painel que repete isso a cada
-/// 10 s seria uma tempestade de conexoes para responder uma pergunta que
-/// muda uma vez por mes. A pagina mostra a hora da medicao e um botao.
+/// Measures on demand, and does NOT join the panel's refresh cycle: the
+/// `pares` step opens SSH to each host, and a panel repeating that every
+/// 10 s would be a storm of connections to answer a question that changes
+/// once a month. The page shows the measurement time and a button.
 fn get_setup(req: Request, cfg: &RwLock<Config>) {
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "config travada"),
     };
-    let passos = setup::catalogo_local();
-    let medidas = setup::medir(&snap);
-    let resumo = setup::resumo(&passos, &medidas);
+    let steps = setup::local_catalog();
+    let checks = setup::measure(&snap);
+    let summary = setup::summarize(&steps, &checks);
 
-    // Junta catalogo e medida num objeto so: a pagina nao deveria ter de
-    // casar duas listas por id para desenhar uma linha.
-    let linhas: Vec<serde_json::Value> = passos
+    // Joins catalog and check in a single object: the page should not
+    // have to match two lists by id to draw one row.
+    let rows: Vec<serde_json::Value> = steps
         .iter()
         .map(|p| {
-            let m = medidas.iter().find(|m| m.id == p.id);
+            let m = checks.iter().find(|m| m.id == p.id);
             serde_json::json!({
                 "id": p.id,
-                "titulo": p.titulo,
-                "porque": p.porque,
-                "arrumo": p.arrumo,
-                "essencial": p.essencial,
-                "depende": p.depende,
-                "estado": m.map(|m| m.estado).unwrap_or(setup::Estado::Erro),
-                "detalhe": m.map(|m| m.detalhe.clone()).unwrap_or_else(|| "nao medido".into()),
-                "esperando": setup::bloqueado_por(p, &medidas),
+                "titulo": p.title,
+                "porque": p.why,
+                "arrumo": p.fix,
+                "essencial": p.essential,
+                "depende": p.depends_on,
+                "estado": m.map(|m| m.state).unwrap_or(setup::State::Error),
+                "detalhe": m.map(|m| m.detail.clone()).unwrap_or_else(|| "nao medido".into()),
+                "esperando": setup::blocked_by(p, &checks),
             })
         })
         .collect();
 
-    let eu = snap.hosts.iter().find(|h| h.is_local());
-    let corpo = serde_json::json!({
-        "sistema": setup::Sistema::desta_maquina(),
-        "maquina": eu.map(|h| h.name.clone()),
-        "papel": eu.map(|h| h.role.clone()),
+    let me = snap.hosts.iter().find(|h| h.is_local());
+    let body = serde_json::json!({
+        "sistema": setup::System::this_machine(),
+        "maquina": me.map(|h| h.name.clone()),
+        "papel": me.map(|h| h.role.clone()),
         "build": env!("LOGI_BUILD"),
         "medido": sys::hhmmss(),
-        "passos": linhas,
-        "resumo": resumo,
+        "passos": rows,
+        "resumo": summary,
     });
-    match serde_json::to_string(&corpo) {
+    match serde_json::to_string(&body) {
         Ok(b) => ok_json(req, b),
         Err(e) => err_json(req, 500, &format!("serializar: {e}")),
     }
 }
 
-/// POST /api/setup/arrumar {"id":"<passo>"}
+/// POST /api/setup/arrumar {"id":"<step>"}
 ///
-/// Devolve 409, nao 500, quando o reparo nao resolve: nao e defeito do
-/// servidor, e o caso normal de "abri a janela, agora e com voce". A
-/// pagina mostra a mensagem como instrucao, e nao como erro.
-fn post_setup_arrumar(mut req: Request, cfg: &RwLock<Config>) {
+/// Returns 409, not 500, when the repair does not solve it: it is not a
+/// server defect, it is the normal "I opened the window, now it is up to
+/// you" case. The page shows the message as an instruction, not as an
+/// error.
+fn post_setup_repair(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
         return err_json(req, 400, "corpo ilegivel");
@@ -907,24 +917,24 @@ fn post_setup_arrumar(mut req: Request, cfg: &RwLock<Config>) {
     let Some(id) = v.get("id").and_then(|i| i.as_str()) else {
         return err_json(req, 400, "informe {\"id\": \"<passo>\"}");
     };
-    // So ids do catalogo DESTA maquina. Sem isto, um id qualquer cairia
-    // direto no `match` do modulo de plataforma -- que hoje recusa, mas
-    // nada garantiria isso no proximo passo adicionado.
-    if !setup::catalogo_local().iter().any(|p| p.id == id) {
+    // Only ids from THIS machine's catalog. Without this, any id would
+    // fall straight into the platform module's `match` -- which refuses
+    // today, but nothing would guarantee that for the next step added.
+    if !setup::local_catalog().iter().any(|p| p.id == id) {
         return err_json(req, 404, &format!("'{id}' nao e um passo desta maquina"));
     }
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "config travada"),
     };
-    say!("setup: arrumando '{id}'");
-    match setup::arrumar(id, &snap) {
-        Ok(detalhe) => {
-            say!("setup: '{id}' ok -- {detalhe}");
-            ok_json(req, serde_json::json!({"ok": true, "detalhe": detalhe}).to_string())
+    say!("setup: repairing '{id}'");
+    match setup::repair(id, &snap) {
+        Ok(detail) => {
+            say!("setup: '{id}' ok -- {detail}");
+            ok_json(req, serde_json::json!({"ok": true, "detalhe": detail}).to_string())
         }
         Err(e) => {
-            say!("setup: '{id}' nao resolveu -- {e}");
+            say!("setup: '{id}' not solved -- {e}");
             err_json(req, 409, &e)
         }
     }
@@ -938,13 +948,13 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         return patch_config(req, cfg, cache);
     }
     if path == "/api/kvm/soltar" && method == "POST" {
-        return match kvm::soltar() {
+        return match kvm::release() {
             Ok(()) => ok_json(req, "{\"ok\":true}".into()),
             Err(e) => err_json(req, 500, &e),
         };
     }
     if path == "/api/setup/arrumar" && method == "POST" {
-        return post_setup_arrumar(req, cfg);
+        return post_setup_repair(req, cfg);
     }
     if path == "/api/setup" && method == "GET" {
         return get_setup(req, cfg);
@@ -953,19 +963,19 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         return post_clipboard(req);
     }
     if path == "/api/clipboard-arquivos" && method == "POST" {
-        return post_clipboard_arquivos(req);
+        return post_clipboard_files(req);
     }
     if path == "/api/clipboard-arquivos/enviar" && method == "POST" {
-        return post_clipboard_enviar(req, cfg);
+        return post_clipboard_send(req, cfg);
     }
     if path == "/api/screen" && method == "POST" {
         return post_screen(req, cfg);
     }
     if path == "/api/sessao" && method == "POST" {
-        return post_sessao(req, cfg);
+        return post_session(req, cfg);
     }
     if path == "/api/files/transferir" && method == "POST" {
-        return post_transferir(req, cfg);
+        return post_transfer(req, cfg);
     }
     if path == "/api/processes/kill" && method == "POST" {
         return post_kill(req, cfg);
@@ -989,48 +999,48 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         return post_remap(req);
     }
 
-    // Snapshot curto da config para as rotas de leitura: nao segurar o
-    // lock durante rede nem durante o respond.
+    // Short config snapshot for the read routes: do not hold the lock
+    // during network calls or during respond.
     let snap_cfg = match cfg.read() {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "estado da config corrompido"),
     };
 
     match path.as_str() {
-        // Barato de proposito: NAO toca em rede. O health check do Electron
-        // batia no /api/status com 800 ms de timeout e falhava sempre.
-        // O `build` existe para o deploy conferir que as tres maquinas
-        // rodam o MESMO commit. Ja aconteceu de o Mac ficar para tras e o
-        // usuario notar antes de mim.
+        // Cheap on purpose: does NOT touch the network. The Electron health
+        // check hit /api/status with an 800 ms timeout and always failed.
+        // `build` exists so the deploy can check that the three machines
+        // run the SAME commit. The Mac has already fallen behind and the
+        // user noticed before I did.
         "/healthz" => ok_json(
             req,
             serde_json::json!({
                 "ok": true,
                 "build": env!("LOGI_BUILD"),
-                // Incremental: diz QUAL maquina esta atras, nao so que
-                // estao diferentes.
+                // Incremental: says WHICH machine is behind, not just that
+                // they differ.
                 "n": env!("LOGI_BUILD_N").parse::<u64>().unwrap_or(0),
             })
             .to_string(),
         ),
 
-        // Para onde o input esta indo, e por qual mecanismo.
+        // Where input is going, and through which mechanism.
         //
-        // A bandeja PRECISA disto. Ela so mostrava "Trazer para aqui"
-        // quando algum dispositivo aparecia offline -- sinal que servia
-        // no HID++, onde o dispositivo some do nosso receptor ao trocar
-        // de canal. No modo LAN os dispositivos NUNCA saem daqui, que e
-        // o ponto: continuam online e o item nunca apareceria. O
-        // usuario ficaria sem caminho de volta pelo menu, dependendo de
-        // lembrar dos dois Ctrl.
+        // The tray NEEDS this. It only showed "Trazer para aqui" when some
+        // device appeared offline -- a signal that worked for HID++, where
+        // the device vanishes from our receiver when it switches channel.
+        // In LAN mode the devices NEVER leave here, which is the point:
+        // they stay online and the item would never appear. The user
+        // would have no way back through the menu, depending on
+        // remembering the two Ctrls.
         "/api/kvm" => {
-            let modo = match cfg.read() {
+            let mode = match cfg.read() {
                 Ok(g) => g.input.mode.clone(),
                 Err(_) => return err_json(req, 500, "config travada"),
             };
             ok_json(
                 req,
-                serde_json::json!({ "mode": modo, "target": kvm::alvo() }).to_string(),
+                serde_json::json!({ "mode": mode, "target": kvm::target() }).to_string(),
             )
         }
 
@@ -1043,7 +1053,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         }
 
         "/api/logs" => {
-            // ?lines=N, limitado dentro de logs::tail.
+            // ?lines=N, capped inside logs::tail.
             let n = req
                 .url()
                 .split_once("lines=")
@@ -1057,9 +1067,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         }
 
         "/api/files" => {
-            // ?host=<nome>&path=<caminho>. O `path` vem percent-encoded:
-            // ele carrega `/`, `\\`, `:` e espaco, e nenhum deles pode
-            // ser confundido com separador da query.
+            // ?host=<name>&path=<path>. `path` comes percent-encoded: it
+            // carries `/`, `\\`, `:` and spaces, and none of them can be
+            // mistaken for a query separator.
             let q = req.url().split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
             let param = |k: &str| -> Option<String> {
                 q.split('&')
@@ -1071,8 +1081,8 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 Ok(g) => g.clone(),
                 Err(_) => return err_json(req, 500, "config travada"),
             };
-            // Sem `host`: a propria maquina, que e o caso comum de abrir
-            // o painel e so olhar.
+            // No `host`: this machine, which is the common case of opening
+            // the panel and just looking.
             let host = param("host").unwrap_or_else(|| {
                 snap.hosts
                     .iter()
@@ -1087,7 +1097,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             }
         }
 
-        "/api/files/transferencias" => match serde_json::to_string(&files::transferencias()) {
+        "/api/files/transferencias" => match serde_json::to_string(&files::transfers()) {
             Ok(b) => ok_json(req, b),
             Err(e) => err_json(req, 500, &format!("serializar: {e}")),
         },
@@ -1103,7 +1113,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             }
         }
 
-        "/api/changelog" => match serde_json::to_string(&changelog::entradas()) {
+        "/api/changelog" => match serde_json::to_string(&changelog::entries()) {
             Ok(b) => ok_json(req, b),
             Err(e) => err_json(req, 500, &format!("serializar: {e}")),
         },
@@ -1125,18 +1135,18 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                     })
                 })
                 .collect();
-            let bordas: Vec<_> = snap
+            let edges: Vec<_> = snap
                 .border_edges_full()
                 .into_iter()
                 .map(|(e, t, ok)| serde_json::json!({ "edge": e, "target": t, "ativa": ok }))
                 .collect();
             let body = serde_json::json!({
                 "hosts": hosts,
-                "edges": bordas,
+                "edges": edges,
                 "border_enabled": snap.input.border.enabled,
                 "follow_enabled": snap.input.follow.enabled,
                 "follow_leader": snap.input.follow.leader,
-                "hidpp_pausado_s": hidpp::pausa_restante_s(),
+                "hidpp_pausado_s": hidpp::pause_remaining_s(),
                 "devices": snap.devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>(),
             });
             ok_json(req, body.to_string())
@@ -1187,8 +1197,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         ),
 
         "/" | "/index.html" => {
-            // Renderizado por requisicao: se refresh_seconds mudar por
-            // PATCH, a pagina reflete sem reiniciar o daemon.
+            // Rendered per request: if refresh_seconds changes via PATCH,
+            // the page reflects it without restarting the daemon.
+
             let page = PAGE.replace("__REFRESH__", &snap_cfg.refresh_seconds.to_string());
             respond(
                 req,

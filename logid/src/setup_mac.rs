@@ -1,37 +1,37 @@
-//! Medição e reparo do setup, no MacBook.
+//! Setup measurement and repair, on the MacBook.
 //!
 //! Spec: ../../specs/011-onboarding.md
 //!
-//! Aqui vive a parte mais traiçoeira do conjunto, e por um motivo só: no
-//! macOS a falta de permissão quase nunca se parece com falta de
-//! permissão. O AVFoundation **trava** sem Gravação de Tela, o
-//! `codesign` falha com `errSecInternalComponent` sem o chaveiro
-//! destrancado, e a injeção de input é aceita e descartada sem
-//! Acessibilidade. Três sintomas que não mencionam a causa.
+//! The most treacherous part of the set lives here, for one reason only:
+//! on macOS a missing permission almost never looks like a missing
+//! permission. AVFoundation **hangs** without Screen Recording,
+//! `codesign` fails with `errSecInternalComponent` without the keychain
+//! unlocked, and input injection is accepted and dropped without
+//! Accessibility. Three symptoms that do not mention the cause.
 //!
-//! ## Por que as permissões se perguntam ao HOST, por fora
+//! ## Why the permissions are asked of the HOST, from outside
 //!
-//! O TCC amarra a concessão ao binário -- ao designated requirement
-//! dele. Perguntar daqui, do processo do `logid`, daria uma resposta
-//! correta sobre o programa errado. Então a medição roda
-//! `logistream-host --conferir` e lê as duas linhas que ele imprime.
+//! TCC ties the grant to the binary -- to its designated requirement.
+//! Asking from here, from the `logid` process, would give a correct
+//! answer about the wrong program. So the measurement runs
+//! `logistream-host --conferir` and reads the two lines it prints.
 //!
-//! ## A ordem importa, e o catálogo a impõe
+//! ## Order matters, and the catalog enforces it
 //!
-//! `gravacao-de-tela` e `acessibilidade` dependem de `assinatura`. Não é
-//! zelo: com binário ad-hoc a amarração é pelo cdhash, que muda a cada
-//! compilação, então conceder antes de assinar **desperdiça** a
-//! concessão -- e só o dono da máquina pode dar de volta, à mão, na
-//! interface. Isso já aconteceu duas vezes aqui.
+//! `gravacao-de-tela` and `acessibilidade` depend on `assinatura`. It is
+//! not fussiness: with an ad-hoc binary the binding is by cdhash, which
+//! changes on every build, so granting before signing **wastes** the
+//! grant -- and only the machine's owner can give it back, by hand, in
+//! the UI. That has already happened twice here.
 
 use crate::config::Config;
-use crate::setup::{Estado, Medida};
-use crate::setup_comum::rodar;
+use crate::setup::{State, Check};
+use crate::setup_common::run_timed;
 use std::path::PathBuf;
 
 const BINS: [&str; 5] = ["logid", "logistream-host", "logistream-view", "logistream-ponte", "logi-ota"];
-const IDENTIDADE: &str = "logi local signing";
-const CHAVEIRO: &str = "Library/Keychains/logi.keychain-db";
+const SIGNING_IDENTITY: &str = "logi local signing";
+const KEYCHAIN: &str = "Library/Keychains/logi.keychain-db";
 
 fn bin_dir() -> PathBuf {
     crate::sys::home_dir().join(".local/bin")
@@ -40,315 +40,316 @@ fn host_bin() -> PathBuf {
     bin_dir().join("logistream-host")
 }
 fn uid() -> u32 {
-    // Mesmo caminho que `sys::macos::unit_state` usa. `id -u` daria o
-    // mesmo número ao custo de um processo por medição.
+    // Same path `sys::macos::unit_state` uses. `id -u` would give the
+    // same number at the cost of one process per measurement.
     unsafe { getuid() }
 }
 extern "C" {
     fn getuid() -> u32;
 }
 
-pub fn medir(cfg: &Config) -> Vec<Medida> {
-    // As duas permissões saem de UMA execução do host: são duas linhas
-    // da mesma saída, e rodar o binário duas vezes dobraria o custo da
-    // medição mais caro da lista sem responder nada a mais.
-    let tcc = conferir_permissoes();
+pub fn measure(cfg: &Config) -> Vec<Check> {
+    // Both permissions come from ONE run of the host: they are two lines
+    // of the same output, and running the binary twice would double the
+    // cost of the most expensive measurement on the list without
+    // answering anything more.
+    let tcc = check_permissions();
     vec![
-        binarios(),
-        crate::setup_comum::config_desta_maquina(cfg),
+        binaries(),
+        crate::setup_common::this_machine_config(cfg),
         daemon(),
         ffmpeg(),
-        identidade(),
-        assinatura(),
+        identity(),
+        signature(),
         tcc.0,
         tcc.1,
         launchagent(),
-        crate::setup_comum::clipboard(),
-        login_remoto(),
+        crate::setup_common::clipboard(),
+        remote_login(),
         tailscale(),
-        crate::setup_comum::pares(cfg),
+        crate::setup_common::peers(cfg),
         ota(),
     ]
 }
 
-fn token_ota() -> PathBuf {
+fn ota_token() -> PathBuf {
     crate::sys::home_dir().join(".config/logi/ota-token")
 }
 
-fn ota() -> Medida {
-    crate::setup_comum::ota(&bin_dir().join("logi-ota"), &token_ota(), relogio())
+fn ota() -> Check {
+    crate::setup_common::ota(&bin_dir().join("logi-ota"), &ota_token(), clock())
 }
 
-/// O LaunchAgent que acorda o `logi-ota`.
+/// The LaunchAgent that wakes `logi-ota` up.
 ///
-/// `launchctl print` e não `list`: o `list` responde pelo rótulo mesmo
-/// quando o job está carregado de um plist que não existe mais, e aqui
-/// a pergunta é "o launchd vai acordar isto?".
-fn relogio() -> Result<String, String> {
-    let rotulo = "ai.logi.ota";
-    let saida = rodar("/bin/launchctl", &["print", &format!("gui/{}/{rotulo}", uid())], 5)
-        .map_err(|e| format!("{rotulo}: {e}"))?;
-    // O intervalo sai do próprio launchd, não do que escrevemos: plist
-    // editado à mão (ou de uma versão anterior) apareceria como o
-    // intervalo de hoje se a frase viesse de uma constante nossa.
-    let s = saida
+/// `launchctl print` and not `list`: `list` answers for the label even
+/// when the job is loaded from a plist that no longer exists, and here
+/// the question is "will launchd wake this up?".
+fn clock() -> Result<String, String> {
+    let label = "ai.logi.ota";
+    let output = run_timed("/bin/launchctl", &["print", &format!("gui/{}/{label}", uid())], 5)
+        .map_err(|e| format!("{label}: {e}"))?;
+    // The interval comes from launchd itself, not from what we wrote: a
+    // hand-edited plist (or one from an earlier version) would show up as
+    // today's interval if the phrase came from a constant of ours.
+    let s = output
         .lines()
         .map(str::trim)
         .find(|l| l.starts_with("interval ="))
         .and_then(|l| l.split('=').nth(1))
         .map(|v| v.trim().to_string());
     Ok(match s {
-        Some(seg) => format!("LaunchAgent a cada {seg} s"),
-        None => format!("{rotulo} carregado (o launchd não informou intervalo)"),
+        Some(secs) => format!("LaunchAgent a cada {secs} s"),
+        None => format!("{label} carregado (o launchd não informou intervalo)"),
     })
 }
 
-fn binarios() -> Medida {
+fn binaries() -> Check {
     let dir = bin_dir();
-    let faltam: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
-    if !faltam.is_empty() {
-        return Medida::falta("binarios", format!("faltam: {}", faltam.join(", ")));
+    let absent: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
+    if !absent.is_empty() {
+        return Check::missing("binarios", format!("faltam: {}", absent.join(", ")));
     }
-    // Existir no disco não é estar no ar. Ver
-    // `setup_comum::veredito_do_carimbo`: um deploy pode instalar o
-    // arquivo novo e ninguém executá-lo.
-    if let Some(p) = crate::setup_comum::daemon_do_disco(&dir.join("logid")) {
-        return Medida::falta("binarios", p);
+    // Existing on disk is not being live. See
+    // `setup_common::stamp_verdict`: a deploy can install the new file
+    // and nobody runs it.
+    if let Some(p) = crate::setup_common::daemon_on_disk(&dir.join("logid")) {
+        return Check::missing("binarios", p);
     }
-    Medida::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
+    Check::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
 }
 
-fn daemon() -> Medida {
-    let rotulo = "ai.logi.logid";
-    let carregado = rodar("/bin/launchctl", &["print", &format!("gui/{}/{rotulo}", uid())], 5);
-    match carregado {
-        // Carregado não é rodando. O `print` traz `state` e
-        // `last exit code`; ignorá-los aprovava um job em crash-loop --
-        // ver `setup_comum::veredito_do_launchd`.
-        Ok(saida) => match crate::setup_comum::veredito_do_launchd(&saida) {
-            Some(p) => Medida::falta("daemon", format!("{rotulo}: {p}")),
-            None => Medida::ok("daemon", format!("{rotulo} rodando na sessão gráfica")),
+fn daemon() -> Check {
+    let label = "ai.logi.logid";
+    let loaded = run_timed("/bin/launchctl", &["print", &format!("gui/{}/{label}", uid())], 5);
+    match loaded {
+        // Loaded is not running. `print` brings `state` and
+        // `last exit code`; ignoring them passed a job in a crash loop --
+        // see `setup_common::launchd_verdict`.
+        Ok(output) => match crate::setup_common::launchd_verdict(&output) {
+            Some(p) => Check::missing("daemon", format!("{label}: {p}")),
+            None => Check::ok("daemon", format!("{label} rodando na sessão gráfica")),
         },
-        // Processo vivo sem LaunchAgent é o caso que engana: funciona
-        // agora e não volta no próximo login.
-        Err(_) if crate::setup_comum::processo_vivo("logid") => {
-            Medida::falta("daemon", "o processo está rodando, mas fora do launchd: não volta no próximo login")
+        // A live process without a LaunchAgent is the misleading case: it
+        // works now and does not come back on the next login.
+        Err(_) if crate::setup_common::process_alive("logid") => {
+            Check::missing("daemon", "o processo está rodando, mas fora do launchd: não volta no próximo login")
         }
-        Err(e) => Medida::falta("daemon", format!("{rotulo}: {e}")),
+        Err(e) => Check::missing("daemon", format!("{label}: {e}")),
     }
 }
 
-/// As dylibs do brew que os binarios instalados pedem existem aqui?
+/// Do the brew dylibs the installed binaries ask for exist here?
 ///
-/// O soname do ffmpeg entra no binario. Um `logistream-host` vindo do
-/// pacote da CI pede `libavcodec.61` sob o prefixo `ffmpeg@7`; se a
-/// formula nao estiver instalada, o `dyld` recusa o processo e o
-/// AVFoundation nunca e alcancado. Perguntar ao `otool` o que o arquivo
-/// pede, e conferir se cada caminho existe, e barato e responde
-/// exatamente isso.
+/// The ffmpeg soname goes into the binary. A `logistream-host` from the
+/// CI package asks for `libavcodec.61` under the `ffmpeg@7` prefix; if
+/// the formula is not installed, `dyld` refuses the process and
+/// AVFoundation is never reached. Asking `otool` what the file requests,
+/// and checking that each path exists, is cheap and answers exactly that.
 ///
-/// Ver FFMPEG_FORMULA em scripts/construir-binarios.sh: as duas pontas
-/// declaram o mesmo prefixo, e o build quebra se divergirem.
-fn ffmpeg() -> Medida {
+/// See FFMPEG_FORMULA in scripts/construir-binarios.sh: both ends declare
+/// the same prefix, and the build breaks if they diverge.
+fn ffmpeg() -> Check {
     let host = bin_dir().join("logistream-host");
     if !host.exists() {
-        return Medida::falta("ffmpeg", "sem o logistream-host instalado para perguntar");
+        return Check::missing("ffmpeg", "sem o logistream-host instalado para perguntar");
     }
-    let saida = match rodar("/usr/bin/otool", &["-L", &host.to_string_lossy()], 10) {
+    let output = match run_timed("/usr/bin/otool", &["-L", &host.to_string_lossy()], 10) {
         Ok(s) => s,
-        Err(e) => return Medida::erro("ffmpeg", format!("otool: {e}")),
+        Err(e) => return Check::error("ffmpeg", format!("otool: {e}")),
     };
-    let pedidas: Vec<&str> = saida
+    let requested: Vec<&str> = output
         .lines()
         .map(str::trim)
         .filter(|l| l.starts_with("/opt/"))
         .filter_map(|l| l.split_whitespace().next())
         .collect();
-    let faltam: Vec<&&str> =
-        pedidas.iter().filter(|c| !std::path::Path::new(c).exists()).collect();
-    if !faltam.is_empty() {
-        return Medida::falta(
+    let absent: Vec<&&str> =
+        requested.iter().filter(|c| !std::path::Path::new(c).exists()).collect();
+    if !absent.is_empty() {
+        return Check::missing(
             "ffmpeg",
             format!(
                 "{} dylib(s) que o host pede não existem aqui, a começar por {}",
-                faltam.len(),
-                faltam[0]
+                absent.len(),
+                absent[0]
             ),
         );
     }
-    match pedidas.iter().find(|c| c.contains("libavcodec")) {
-        Some(c) => Medida::ok("ffmpeg", format!("{} dylib(s) do brew resolvem; {c}", pedidas.len())),
-        // Sem libavcodec o binario nem e o host de tela -- ou e um build
-        // de outra plataforma. Dizer "ok" aqui seria aprovar o que nao
-        // foi medido.
-        None => Medida::falta("ffmpeg", "o logistream-host instalado não pede libavcodec"),
+    match requested.iter().find(|c| c.contains("libavcodec")) {
+        Some(c) => Check::ok("ffmpeg", format!("{} dylib(s) do brew resolvem; {c}", requested.len())),
+        // Without libavcodec the binary is not even the screen host -- or
+        // it is a build for another platform. Saying "ok" here would pass
+        // what was not measured.
+        None => Check::missing("ffmpeg", "o logistream-host instalado não pede libavcodec"),
     }
 }
 
-fn identidade() -> Medida {
-    let kc = crate::sys::home_dir().join(CHAVEIRO);
+fn identity() -> Check {
+    let kc = crate::sys::home_dir().join(KEYCHAIN);
     if !kc.exists() {
-        return Medida::falta("identidade", format!("sem o chaveiro {}", kc.display()));
+        return Check::missing("identidade", format!("sem o chaveiro {}", kc.display()));
     }
-    // Destrancar antes de perguntar. Por SSH o chaveiro esta trancado e
-    // `security` responde "User interaction is not allowed" -- que nao
-    // e "nao existe". A senha nao e segredo de proposito (ver
-    // mac/criar-identidade.sh): o chaveiro guarda UMA chave
-    // auto-assinada cujo unico poder e assinar os nossos binarios.
-    let _ = rodar("/usr/bin/security", &["unlock-keychain", "-p", "logi", &kc.to_string_lossy()], 8);
+    // Unlock before asking. Over SSH the keychain is locked and
+    // `security` answers "User interaction is not allowed" -- which is
+    // not "does not exist". The password is not a secret on purpose (see
+    // mac/criar-identidade.sh): the keychain holds ONE self-signed key
+    // whose only power is signing our binaries.
+    let _ = run_timed("/usr/bin/security", &["unlock-keychain", "-p", "logi", &kc.to_string_lossy()], 8);
 
-    // `find-identity` SEM `-v`.
+    // `find-identity` WITHOUT `-v`.
     //
-    // Com `-v` o `security` lista so identidades **validas**, e valido
-    // ali significa confiada pelo sistema. Um certificado auto-assinado
-    // nunca e: ele sai como `CSSMERR_TP_NOT_TRUSTED` e o `-v` devolve
-    // "0 valid identities found". Medido no MacBook, com a identidade
-    // presente e o binario assinado por ela no mesmo minuto.
+    // With `-v`, `security` lists only **valid** identities, and valid
+    // there means trusted by the system. A self-signed certificate never
+    // is: it comes out as `CSSMERR_TP_NOT_TRUSTED` and `-v` returns
+    // "0 valid identities found". Measured on the MacBook, with the
+    // identity present and the binary signed by it in the same minute.
     //
-    // Isso importa porque o diagnostico errado mandava recriar a
-    // identidade -- e recriar gera chave nova, muda o designated
-    // requirement, e o TCC DESCARTA a concessao de Gravacao de Tela.
-    // O conserto teria causado exatamente o estrago que o
-    // `criar-identidade.sh` e idempotente para evitar.
-    match rodar("/usr/bin/security", &["find-identity", &kc.to_string_lossy()], 8) {
-        Ok(s) if s.contains(IDENTIDADE) => {
-            Medida::ok("identidade", format!("\"{IDENTIDADE}\" no chaveiro próprio"))
+    // This matters because the wrong diagnosis said to recreate the
+    // identity -- and recreating generates a new key, changes the
+    // designated requirement, and TCC DISCARDS the Screen Recording
+    // grant. The fix would have caused exactly the damage that
+    // `criar-identidade.sh` is idempotent to avoid.
+    match run_timed("/usr/bin/security", &["find-identity", &kc.to_string_lossy()], 8) {
+        Ok(s) if s.contains(SIGNING_IDENTITY) => {
+            Check::ok("identidade", format!("\"{SIGNING_IDENTITY}\" no chaveiro próprio"))
         }
-        Ok(_) => Medida::falta("identidade", format!("o chaveiro existe mas não tem \"{IDENTIDADE}\"")),
-        Err(e) => Medida::erro("identidade", format!("security: {e}")),
+        Ok(_) => Check::missing("identidade", format!("o chaveiro existe mas não tem \"{SIGNING_IDENTITY}\"")),
+        Err(e) => Check::error("identidade", format!("security: {e}")),
     }
 }
 
-fn assinatura() -> Medida {
-    let alvo = host_bin();
-    if !alvo.exists() {
-        return Medida::falta("assinatura", "o host de tela não está instalado");
+fn signature() -> Check {
+    let target = host_bin();
+    if !target.exists() {
+        return Check::missing("assinatura", "o host de tela não está instalado");
     }
-    // `codesign -dvvv`, nao `-dv`.
+    // `codesign -dvvv`, not `-dv`.
     //
-    // Dois achados na mesma linha. (1) O `codesign` escreve tudo em
-    // STDERR, inclusive no sucesso -- a primeira versao disto lia so o
-    // stdout e achava que nada estava assinado. (2) `-dv` **nao
-    // imprime a linha `Authority`**; ela so aparece a partir de
-    // `-dvv`. Com `-dv` a saida nao tem nem "Authority", nem "adhoc",
-    // nem "not signed", e o passo caia no ramo "nao reconheci" --
-    // sobre um binario corretamente assinado.
-    let saida = crate::sys::child("/usr/bin/codesign")
-        .args(["-dvvv", &alvo.to_string_lossy()])
+    // Two findings on the same line. (1) `codesign` writes everything to
+    // STDERR, even on success -- the first version of this read only
+    // stdout and thought nothing was signed. (2) `-dv` **does not print
+    // the `Authority` line**; it only appears from `-dvv` on. With `-dv`
+    // the output has neither "Authority", nor "adhoc", nor "not signed",
+    // and the step fell into the "did not recognize" branch -- on a
+    // correctly signed binary.
+    let output = crate::sys::child("/usr/bin/codesign")
+        .args(["-dvvv", &target.to_string_lossy()])
         .output();
-    let Ok(o) = saida else {
-        return Medida::erro("assinatura", "não consegui executar o codesign");
+    let Ok(o) = output else {
+        return Check::error("assinatura", "não consegui executar o codesign");
     };
-    let texto = format!(
+    let text = format!(
         "{}{}",
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
-    if texto.contains(IDENTIDADE) {
-        Medida::ok("assinatura", "assinado com a identidade estável")
-    } else if texto.contains("adhoc") || texto.contains("linker-signed") {
-        Medida::falta(
+    if text.contains(SIGNING_IDENTITY) {
+        Check::ok("assinatura", "assinado com a identidade estável")
+    } else if text.contains("adhoc") || text.contains("linker-signed") {
+        Check::missing(
             "assinatura",
             "ad-hoc / linker-signed: a permissão de tela morre no próximo deploy",
         )
-    } else if texto.contains("not signed") {
-        Medida::falta("assinatura", "sem assinatura nenhuma")
+    } else if text.contains("not signed") {
+        Check::missing("assinatura", "sem assinatura nenhuma")
     } else {
-        Medida::erro("assinatura", "não reconheci a saída do codesign")
+        Check::error("assinatura", "não reconheci a saída do codesign")
     }
 }
 
-/// Lê as duas permissões do próprio host.
-/// Roda o `--conferir` do host como job próprio do launchd.
+/// Reads both permissions from the host itself.
+/// Runs the host's `--conferir` as its own launchd job.
 ///
-/// Como filho do `logid`, a resposta seria sobre o `logid`: o macOS
-/// atribui a permissão ao processo responsável. A concessão do host
-/// estava certa e o wizard dizia "falta", porque a do `logid` era de um
-/// binário antigo. É a mesma pergunta que o LaunchAgent do host responde.
-fn conferir_fora_do_logid(alvo: &std::path::Path) -> Result<String, String> {
-    const ROTULO: &str = "ai.logi.conferir";
-    let arquivo = crate::sys::config_dir().join("conferir.out");
-    let caminho = arquivo.to_string_lossy().into_owned();
-    let _ = std::fs::remove_file(&arquivo);
-    let _ = rodar("/bin/launchctl", &["remove", ROTULO], 5);
-    rodar(
+/// As a child of `logid`, the answer would be about `logid`: macOS
+/// attributes the permission to the responsible process. The host's
+/// grant was right and the wizard said "missing", because `logid`'s was
+/// for an old binary. It is the same question the host's LaunchAgent
+/// answers.
+fn check_outside_logid(target: &std::path::Path) -> Result<String, String> {
+    const LABEL: &str = "ai.logi.conferir";
+    let file = crate::sys::config_dir().join("conferir.out");
+    let path = file.to_string_lossy().into_owned();
+    let _ = std::fs::remove_file(&file);
+    let _ = run_timed("/bin/launchctl", &["remove", LABEL], 5);
+    run_timed(
         "/bin/launchctl",
         &[
-            "submit", "-l", ROTULO, "-o", &caminho, "-e", &caminho, "--",
-            &alvo.to_string_lossy(), "--conferir",
+            "submit", "-l", LABEL, "-o", &path, "-e", &path, "--",
+            &target.to_string_lossy(), "--conferir",
         ],
         5,
     )?;
-    let limite = std::time::Instant::now() + std::time::Duration::from_secs(8);
-    let mut texto = String::new();
-    while std::time::Instant::now() < limite {
-        texto = std::fs::read_to_string(&arquivo).unwrap_or_default();
-        if texto.contains("acessibilidade: ") {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let mut text = String::new();
+    while std::time::Instant::now() < deadline {
+        text = std::fs::read_to_string(&file).unwrap_or_default();
+        if text.contains("acessibilidade: ") {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    let _ = rodar("/bin/launchctl", &["remove", ROTULO], 5);
-    let _ = std::fs::remove_file(&arquivo);
-    if texto.is_empty() {
+    let _ = run_timed("/bin/launchctl", &["remove", LABEL], 5);
+    let _ = std::fs::remove_file(&file);
+    if text.is_empty() {
         return Err("o host não respondeu em 8 s".into());
     }
-    Ok(texto)
+    Ok(text)
 }
 
-fn conferir_permissoes() -> (Medida, Medida) {
-    let alvo = host_bin();
-    if !alvo.exists() {
-        let m = |id: &str| Medida::erro(id, "o host de tela não está instalado: não há a quem perguntar");
+fn check_permissions() -> (Check, Check) {
+    let target = host_bin();
+    if !target.exists() {
+        let m = |id: &str| Check::error(id, "o host de tela não está instalado: não há a quem perguntar");
         return (m("gravacao-de-tela"), m("acessibilidade"));
     }
-    // 10 s porque o binário só imprime duas linhas e sai; se passar
-    // disso, algo está pendurado e pendurado não é "ok".
-    let saida = conferir_fora_do_logid(&alvo);
-    let ler = |texto: &str, chave: &str| -> Option<bool> {
-        texto
+    // 10 s because the binary only prints two lines and exits; if it
+    // takes longer, something is hung, and hung is not "ok".
+    let output = check_outside_logid(&target);
+    let read = |text: &str, key: &str| -> Option<bool> {
+        text
             .lines()
-            .find_map(|l| l.strip_prefix(&format!("{chave}: ")))
+            .find_map(|l| l.strip_prefix(&format!("{key}: ")))
             .map(|v| v.trim() == "ok")
     };
-    match saida {
-        Ok(texto) => {
-            let uma = |id: &str, tipo: &str| match ler(&texto, id) {
-                Some(true) => Medida::ok(id, format!("concedida a {}", alvo.display())),
-                Some(false) => Medida::falta(id, format!("o host não tem {tipo}")),
-                // Binário antigo, de antes do `--conferir`: não medir é
-                // diferente de medir "falta", e dizer qual é o caso
-                // poupa a tarde que eu perderia procurando no lugar
-                // errado.
-                None => Medida::erro(id, "o host instalado não entende --conferir: rode o deploy"),
+    match output {
+        Ok(text) => {
+            let one = |id: &str, kind: &str| match read(&text, id) {
+                Some(true) => Check::ok(id, format!("concedida a {}", target.display())),
+                Some(false) => Check::missing(id, format!("o host não tem {kind}")),
+                // An old binary, from before `--conferir`: not measuring
+                // is different from measuring "missing", and saying which
+                // case it is saves the afternoon I would lose looking in
+                // the wrong place.
+                None => Check::error(id, "o host instalado não entende --conferir: rode o deploy"),
             };
             (
-                uma("gravacao-de-tela", "Gravação de Tela"),
-                uma("acessibilidade", "Acessibilidade"),
+                one("gravacao-de-tela", "Gravação de Tela"),
+                one("acessibilidade", "Acessibilidade"),
             )
         }
         Err(e) => (
-            Medida::erro("gravacao-de-tela", format!("--conferir: {e}")),
-            Medida::erro("acessibilidade", format!("--conferir: {e}")),
+            Check::error("gravacao-de-tela", format!("--conferir: {e}")),
+            Check::error("acessibilidade", format!("--conferir: {e}")),
         ),
     }
 }
 
-fn launchagent() -> Medida {
-    let rotulo = "ai.logi.logistream-host";
-    match rodar("/bin/launchctl", &["print", &format!("gui/{}/{rotulo}", uid())], 5) {
-        Ok(_) => Medida::ok("launchagent", format!("{rotulo} carregado")),
-        Err(e) => Medida::falta("launchagent", format!("{rotulo}: {e}")),
+fn launchagent() -> Check {
+    let label = "ai.logi.logistream-host";
+    match run_timed("/bin/launchctl", &["print", &format!("gui/{}/{label}", uid())], 5) {
+        Ok(_) => Check::ok("launchagent", format!("{label} carregado")),
+        Err(e) => Check::missing("launchagent", format!("{label}: {e}")),
     }
 }
 
-fn login_remoto() -> Medida {
-    // Conexão TCP em 127.0.0.1:22, não `systemsetup -getremotelogin`:
-    // o `systemsetup` pede Acesso Total ao Disco em macOS recente e
-    // falharia por um motivo que não tem nada a ver com a pergunta.
-    // Quem responde "este Mac aceita SSH?" é o soquete.
+fn remote_login() -> Check {
+    // A TCP connection to 127.0.0.1:22, not `systemsetup
+    // -getremotelogin`: `systemsetup` asks for Full Disk Access on recent
+    // macOS and would fail for a reason that has nothing to do with the
+    // question. What answers "does this Mac accept SSH?" is the socket.
     let (up, ms) = crate::probe::tcp_probe("127.0.0.1", 22);
-    Medida::se(
+    Check::when(
         "login-remoto",
         up,
         format!("sshd responde em {:.0} ms", ms.unwrap_or(0.0)),
@@ -356,36 +357,37 @@ fn login_remoto() -> Medida {
     )
 }
 
-fn tailscale() -> Medida {
-    // Só os caminhos do brew. O `/usr/local/bin/tailscale` que o app
-    // instala é um script que abre o app, e abrir o app é o que dispara
-    // o pedido de VPN: medir por ele muda o que está sendo medido.
+fn tailscale() -> Check {
+    // Only the brew paths. The `/usr/local/bin/tailscale` the app
+    // installs is a script that opens the app, and opening the app is
+    // what triggers the VPN prompt: measuring through it changes what is
+    // being measured.
     let app = std::path::Path::new("/Applications/Tailscale.app").exists();
     let cli = ["/opt/homebrew/bin/tailscale", "/usr/local/opt/tailscale/bin/tailscale"]
         .into_iter()
         .find(|c| std::path::Path::new(c).exists());
     let Some(cli) = cli else {
-        return Medida::falta("tailscale", "tailscale do brew não instalado");
+        return Check::missing("tailscale", "tailscale do brew não instalado");
     };
-    match rodar(cli, &["status", "--json"], 5) {
-        Ok(json) => crate::setup_comum::veredito_tailscale(&json, app),
-        Err(e) => Medida::falta("tailscale", format!("o tailscaled não respondeu: {e}")),
+    match run_timed(cli, &["status", "--json"], 5) {
+        Ok(json) => crate::setup_common::tailscale_verdict(&json, app),
+        Err(e) => Check::missing("tailscale", format!("o tailscaled não respondeu: {e}")),
     }
 }
 
-// ------------------------------------------------------------------ reparos
+// ------------------------------------------------------------------ repairs
 
-pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
+pub fn repair(id: &str, _cfg: &Config) -> Result<String, String> {
     match id {
-        "config" => crate::setup_comum::escrever_config(),
-        "clipboard" => crate::setup_comum::testar_clipboard(),
-        "daemon" => instalar_agente(
+        "config" => crate::setup_common::write_config(),
+        "clipboard" => crate::setup_common::test_clipboard(),
+        "daemon" => install_agent(
             "ai.logi.logid",
             &[bin_dir().join("logid").to_string_lossy().into_owned()],
             true,
             None,
         ),
-        "launchagent" => instalar_agente(
+        "launchagent" => install_agent(
             "ai.logi.logistream-host",
             &[
                 host_bin().to_string_lossy().into_owned(),
@@ -395,200 +397,202 @@ pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
             false,
             None,
         ),
-        "ota" => instalar_relogio(),
-        "tailscale" => instalar_tailscale(),
-        "assinatura" => assinar(),
-        "gravacao-de-tela" => pedir("gravacao-de-tela", "Privacy_ScreenCapture"),
-        "acessibilidade" => pedir("acessibilidade", "Privacy_Accessibility"),
+        "ota" => install_clock(),
+        "tailscale" => install_tailscale(),
+        "assinatura" => sign(),
+        "gravacao-de-tela" => request_permission("gravacao-de-tela", "Privacy_ScreenCapture"),
+        "acessibilidade" => request_permission("acessibilidade", "Privacy_Accessibility"),
         _ => Err(format!("'{id}' não se arruma sozinho nesta máquina")),
     }
 }
 
-/// Escreve o plist e carrega o agente.
+/// Writes the plist and loads the agent.
 ///
-/// Gera o XML aqui em vez de copiar o arquivo do repo porque os plists
-/// versionados têm `/Users/user` embutido -- um caminho absoluto
-/// não tem como ser relativo, e `~` não expande em plist. Gerado, o
-/// mesmo wizard serve qualquer conta.
-fn instalar_agente(
-    rotulo: &str,
+/// Generates the XML here instead of copying the file from the repo
+/// because the versioned plists have `/Users/user` baked in -- an
+/// absolute path cannot be relative, and `~` does not expand in a plist.
+/// Generated, the same wizard serves any account.
+fn install_agent(
+    label: &str,
     argv: &[String],
     run_at_load: bool,
-    intervalo: Option<u64>,
+    interval: Option<u64>,
 ) -> Result<String, String> {
     let home = crate::sys::home_dir();
-    let log = home.join(".local/state").join(format!("{}.log", rotulo.rsplit('.').next().unwrap_or(rotulo)));
+    let log = home.join(".local/state").join(format!("{}.log", label.rsplit('.').next().unwrap_or(label)));
     std::fs::create_dir_all(home.join(".local/state")).map_err(|e| format!("criar ~/.local/state: {e}"))?;
 
     let args: String = argv
         .iter()
-        .map(|a| format!("    <string>{}</string>\n", escapar(a)))
+        .map(|a| format!("    <string>{}</string>\n", escape(a)))
         .collect();
     let plist = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
          \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-         <!-- Gerado pelo wizard de setup (logid/src/setup_mac.rs). -->\n\
+         <!-- Generated by the setup wizard (logid/src/setup_mac.rs). -->\n\
          <plist version=\"1.0\">\n<dict>\n\
-         \x20 <key>Label</key><string>{rotulo}</string>\n\
+         \x20 <key>Label</key><string>{label}</string>\n\
          \x20 <key>ProgramArguments</key>\n  <array>\n{args}  </array>\n\
          \x20 <key>RunAtLoad</key><{ral}/>\n\
          \x20 <key>KeepAlive</key><{ral}/>\n\
-         {intervalo}\
+         {interval}\
          \x20 <key>ProcessType</key><string>Interactive</string>\n\
          \x20 <key>StandardOutPath</key><string>{log}</string>\n\
          \x20 <key>StandardErrorPath</key><string>{log}</string>\n\
          </dict>\n</plist>\n",
         ral = if run_at_load { "true" } else { "false" },
-        // `StartInterval` e `RunAtLoad false` juntos: o launchd dispara
-        // a primeira vez só depois do intervalo. É o que se quer aqui --
-        // disparar no `bootstrap` faria o agente aplicar um build novo e
-        // reiniciar o `logid` no meio da requisição que o instalou.
-        intervalo = match intervalo {
+        // `StartInterval` and `RunAtLoad false` together: launchd fires
+        // the first time only after the interval. That is what we want
+        // here -- firing on `bootstrap` would make the agent apply a new
+        // build and restart `logid` in the middle of the request that
+        // installed it.
+        interval = match interval {
             Some(s) => format!("  <key>StartInterval</key><integer>{s}</integer>\n"),
             None => String::new(),
         },
-        log = escapar(&log.to_string_lossy()),
+        log = escape(&log.to_string_lossy()),
     );
 
     let dir = home.join("Library/LaunchAgents");
     std::fs::create_dir_all(&dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
-    let caminho = dir.join(format!("{rotulo}.plist"));
-    std::fs::write(&caminho, &plist).map_err(|e| format!("gravar {}: {e}", caminho.display()))?;
+    let path = dir.join(format!("{label}.plist"));
+    std::fs::write(&path, &plist).map_err(|e| format!("gravar {}: {e}", path.display()))?;
 
-    let alvo = format!("gui/{}", uid());
-    let _ = rodar("/bin/launchctl", &["bootout", &format!("{alvo}/{rotulo}")], 10);
-    // O bootstrap falha com I/O error se o anterior ainda está saindo.
-    // Uma pausa curta cobre, e repetir é idempotente.
+    let target = format!("gui/{}", uid());
+    let _ = run_timed("/bin/launchctl", &["bootout", &format!("{target}/{label}")], 10);
+    // bootstrap fails with an I/O error if the previous one is still
+    // exiting. A short pause covers it, and retrying is idempotent.
     std::thread::sleep(std::time::Duration::from_secs(1));
-    let p = caminho.to_string_lossy().into_owned();
-    if let Err(e) = rodar("/bin/launchctl", &["bootstrap", &alvo, &p], 15) {
-        if rodar("/bin/launchctl", &["bootstrap", &alvo, &p], 15).is_err() {
+    let p = path.to_string_lossy().into_owned();
+    if let Err(e) = run_timed("/bin/launchctl", &["bootstrap", &target, &p], 15) {
+        if run_timed("/bin/launchctl", &["bootstrap", &target, &p], 15).is_err() {
             return Err(format!("escrevi o plist, mas o bootstrap falhou: {e}"));
         }
     }
-    // Conferir que carregou mesmo. `bootstrap` que volta 0 e agente que
-    // não aparece no `print` é um par que já vi.
-    rodar("/bin/launchctl", &["print", &format!("{alvo}/{rotulo}")], 5)
+    // Check that it really loaded. A `bootstrap` that returns 0 and an
+    // agent that does not show up in `print` is a pair I have seen.
+    run_timed("/bin/launchctl", &["print", &format!("{target}/{label}")], 5)
         .map_err(|e| format!("carreguei e o launchd não o lista: {e}"))?;
-    Ok(format!("{rotulo} instalado e carregado"))
+    Ok(format!("{label} instalado e carregado"))
 }
 
-/// Instala o LaunchAgent do `logi-ota` e confere uma vez.
+/// Installs the `logi-ota` LaunchAgent and checks once.
 ///
-/// Uma hora de intervalo. `RunAtLoad false`: o `bootstrap` não pode
-/// disparar o agente agora, porque ele aplicaria o build novo e
-/// reiniciaria o `logid` -- que é quem está respondendo esta
-/// requisição. A primeira checagem aqui é `--conferir`, que não troca
-/// nada; a troca acontece no primeiro tique, sem ninguém esperando.
+/// One-hour interval. `RunAtLoad false`: `bootstrap` must not fire the
+/// agent now, because it would apply the new build and restart `logid`
+/// -- which is what is answering this request. The first check here is
+/// `--conferir`, which swaps nothing; the swap happens on the first
+/// tick, with nobody waiting.
 ///
-/// Consequência aceita e documentada: depois de um boot, o Mac pode
-/// levar até uma hora para olhar. Para quem viaja com o laptop, isso é
-/// "quando eu abrir a tampa e for fazer café".
-fn instalar_relogio() -> Result<String, String> {
+/// Accepted and documented consequence: after a boot, the Mac may take
+/// up to an hour to look. For someone travelling with the laptop, that
+/// is "when I open the lid and go make coffee".
+fn install_clock() -> Result<String, String> {
     let bin = bin_dir().join("logi-ota");
     if !bin.is_file() {
         return Err(format!("não achei {}: rode o deploy", bin.display()));
     }
-    instalar_agente(
+    install_agent(
         "ai.logi.ota",
         &[bin.to_string_lossy().into_owned()],
         false,
         Some(3600),
     )?;
-    relogio()?;
-    let primeira = rodar(&bin.to_string_lossy(), &["--conferir"], 60);
-    Ok(match primeira {
+    clock()?;
+    let first = run_timed(&bin.to_string_lossy(), &["--conferir"], 60);
+    Ok(match first {
         Ok(s) => format!("agente instalado; primeira checagem: {}", s.trim()),
         Err(e) => format!("agente instalado, mas a primeira checagem falhou: {e}"),
     })
 }
 
-/// Abre o Terminal com o instalador que vem dentro do binário.
+/// Opens Terminal with the installer embedded in the binary.
 ///
-/// O `sudo` e o login precisam de gente, e o Terminal é o lugar deles.
-/// Máquina nova não tem clone do repo, então os dois arquivos saem daqui.
-fn instalar_tailscale() -> Result<String, String> {
+/// `sudo` and the login need a person, and Terminal is their place. A
+/// new machine has no clone of the repo, so both files come from here.
+fn install_tailscale() -> Result<String, String> {
     const SCRIPT: &str = include_str!("../setup/instalar-tailscale-mac.sh");
     let dir = crate::sys::config_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("criar {dir:?}: {e}"))?;
     let script = dir.join("instalar-tailscale-mac.sh");
-    let abrir = dir.join("instalar-tailscale.command");
+    let opener = dir.join("instalar-tailscale.command");
     std::fs::write(&script, SCRIPT).map_err(|e| format!("gravar {script:?}: {e}"))?;
-    let comando = format!(
+    let command = format!(
         "#!/bin/bash\n\
          export PATH=/opt/homebrew/bin:/usr/local/bin:$PATH\n\
          if ! command -v brew >/dev/null; then\n\
-         \x20 echo 'falta o Homebrew: https://brew.sh'\n\
+         \x20 echo 'Homebrew is missing: https://brew.sh'\n\
          else\n\
          \x20 brew list tailscale >/dev/null 2>&1 || brew install tailscale\n\
          \x20 sudo bash '{}'\n\
          fi\n\
-         read -r -p 'Enter para fechar '\n",
+         read -r -p 'Press Enter to close '\n",
         script.display()
     );
-    std::fs::write(&abrir, comando).map_err(|e| format!("gravar {abrir:?}: {e}"))?;
+    std::fs::write(&opener, command).map_err(|e| format!("gravar {opener:?}: {e}"))?;
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&abrir, std::fs::Permissions::from_mode(0o700))
-        .map_err(|e| format!("permissão de {abrir:?}: {e}"))?;
-    rodar("/usr/bin/open", &[&abrir.to_string_lossy()], 10)?;
+    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("permissão de {opener:?}: {e}"))?;
+    run_timed("/usr/bin/open", &[&opener.to_string_lossy()], 10)?;
     let m = tailscale();
-    match m.estado {
-        Estado::Ok => Ok(m.detalhe),
-        _ => Err(format!("{} -- termine no Terminal que abriu e meça de novo", m.detalhe)),
+    match m.state {
+        State::Ok => Ok(m.detail),
+        _ => Err(format!("{} -- termine no Terminal que abriu e meça de novo", m.detail)),
     }
 }
 
-fn escapar(s: &str) -> String {
+fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-fn assinar() -> Result<String, String> {
+fn sign() -> Result<String, String> {
     let script = bin_dir().join("assinar.sh");
-    let alvo = host_bin();
+    let target = host_bin();
     if !script.exists() {
         return Err(format!("não achei {}: rode o deploy", script.display()));
     }
-    // O script é deliberadamente não-fatal (ele não derruba o deploy
-    // quando a identidade falta), então o exit code dele não diz se
-    // assinou. Quem decide é a medição depois.
-    let _ = rodar("/bin/bash", &[&script.to_string_lossy(), &alvo.to_string_lossy()], 30);
-    match assinatura().estado {
-        Estado::Ok => Ok("assinado com a identidade estável".into()),
+    // The script is deliberately non-fatal (it does not break the deploy
+    // when the identity is missing), so its exit code does not say
+    // whether it signed. The measurement afterwards decides.
+    let _ = run_timed("/bin/bash", &[&script.to_string_lossy(), &target.to_string_lossy()], 30);
+    match signature().state {
+        State::Ok => Ok("assinado com a identidade estável".into()),
         _ => Err("rodei o assinar.sh e o binário continua sem a identidade; \
                   veja ~/.local/state/assinar.log"
             .into()),
     }
 }
 
-/// Dispara o diálogo do sistema e abre o painel certo.
+/// Triggers the system dialog and opens the right settings pane.
 ///
-/// Os dois, e nesta ordem: o diálogo do TCC aparece **uma vez na vida do
-/// binário**. Se a pessoa já respondeu um dia (ou se o host foi lançado
-/// por SSH alguma vez e a chamada passou sem diálogo), a única via é a
-/// interface -- e achar o item na lista é o passo em que todo mundo
-/// desiste. Abrir o painel sempre custa uma janela a mais e salva a
-/// tarde.
-fn pedir(id: &str, painel: &str) -> Result<String, String> {
-    let alvo = host_bin();
-    if !alvo.exists() {
+/// Both, and in this order: the TCC dialog appears **once in the
+/// binary's life**. If the person already answered one day (or if the
+/// host was ever launched over SSH and the call went through without a
+/// dialog), the only way is the UI -- and finding the item in the list is
+/// the step where everyone gives up. Always opening the pane costs one
+/// more window and saves the afternoon.
+fn request_permission(id: &str, pane: &str) -> Result<String, String> {
+    let target = host_bin();
+    if !target.exists() {
         return Err("o host de tela não está instalado".into());
     }
-    let _ = rodar(&alvo.to_string_lossy(), &["--pedir"], 20);
-    let url = format!("x-apple.systempreferences:com.apple.preference.security?{painel}");
-    let _ = rodar("/usr/bin/open", &[&url], 10);
+    let _ = run_timed(&target.to_string_lossy(), &["--pedir"], 20);
+    let url = format!("x-apple.systempreferences:com.apple.preference.security?{pane}");
+    let _ = run_timed("/usr/bin/open", &[&url], 10);
 
-    let (tela, input) = conferir_permissoes();
-    let m = if id == "gravacao-de-tela" { tela } else { input };
-    match m.estado {
-        Estado::Ok => Ok(m.detalhe),
-        // NÃO é erro: o fluxo normal é a pessoa marcar a caixa na janela
-        // que acabou de abrir, e só então a resposta muda. Dizer
-        // "falhou" aqui ensinaria a desconfiar de um wizard que está
-        // certo.
+    let (screen, input) = check_permissions();
+    let m = if id == "gravacao-de-tela" { screen } else { input };
+    match m.state {
+        State::Ok => Ok(m.detail),
+        // NOT an error: the normal flow is the person ticking the box in
+        // the window that just opened, and only then does the answer
+        // change. Saying "failed" here would teach distrust of a wizard
+        // that is right.
+
         _ => Err(format!(
             "{} -- marque a caixa na janela que abriu e meça de novo",
-            m.detalhe
+            m.detail
         )),
     }
 }

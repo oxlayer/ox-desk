@@ -1,7 +1,7 @@
-# O que esta no clipboard da SESSAO INTERATIVA.
+# What is on the clipboard of the INTERACTIVE SESSION.
 #
-# Pelo SSH se le a sessao 0, que tem clipboard proprio e sempre vazio --
-# numero invalido toda vez. Daí a tarefa com /IT.
+# Over SSH you read session 0, which has its own clipboard and it is always
+# empty -- an invalid reading every time. Hence the task with /IT.
 $out = "$env:LOCALAPPDATA\logid\clipboard.txt"
 $linhas = @()
 $arq = Get-Clipboard -Format FileDropList -ErrorAction SilentlyContinue

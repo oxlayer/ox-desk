@@ -1,37 +1,41 @@
-//! O protocolo entre os pares: uma linha de JSON por comando.
+//! The protocol between peers: one line of JSON per command.
 //!
-//! Quem fala: `logid-agent` no Windows e o `logid` em qualquer SO, cada um
-//! invocado por SSH pelo par (ver `logid/src/agent.rs`). Quem le: o
-//! `agent.rs` do outro lado, que procura a primeira linha comecando com
-//! `{`.
+//! Who speaks: `logid-agent` on Windows and `logid` on any OS, each
+//! invoked over SSH by the peer (see `logid/src/agent.rs`). Who reads:
+//! the `agent.rs` on the other side, which looks for the first line
+//! starting with `{`.
 //!
-//! ## Por que mora na crate compartilhada
+//! ## Why it lives in the shared crate
 //!
-//! Isto era `survey()` dentro do `agent/src/main.rs`. Quando o `logid`
-//! passou a precisar responder os mesmos comandos -- para o Windows poder
-//! sondar o Ubuntu como o Ubuntu ja sondava o Windows -- a escolha era
-//! copiar ou compartilhar. Duas copias do **contrato entre as maquinas**
-//! divergiriam, e a primeira divergencia apareceria como "agente nao
-//! respondeu JSON" num log, longe da causa.
+//! This used to be `survey()` inside `agent/src/main.rs`. When `logid`
+//! started needing to answer the same commands -- so Windows could probe
+//! Ubuntu the way Ubuntu already probed Windows -- the choice was copy or
+//! share. Two copies of the **contract between the machines** would
+//! drift, and the first drift would show up as "agent did not answer
+//! JSON" in a log, far from the cause.
 //!
-//! Aqui, os dois binarios emitem o mesmo formato por construcao.
+//! Here, both binaries emit the same format by construction.
+//!
+//! JSON keys (`nome`, `receptor`, `receptores`, ...) are the wire format
+//! and stay as they are. The `error` texts stay pt-BR: they reach the
+//! panel.
 
 use crate::{endpoints, Receiver};
 use hidapi::HidApi;
 use serde_json::{json, Value};
 
-/// Resultado de um comando do protocolo.
+/// Result of a protocol command.
 pub enum Handled {
-    /// Comando conhecido; este e o JSON a imprimir.
+    /// Known command; this is the JSON to print.
     Json(Value),
-    /// Nao e um comando do protocolo -- quem chamou trata (o agente tem
-    /// `watch-edge` e `guard`; o logid, servir HTTP).
+    /// Not a protocol command -- the caller handles it (the agent has
+    /// `watch-edge` and `guard`; logid, serving HTTP).
     Unknown,
 }
 
-/// Executa um comando do protocolo, se for um deles.
+/// Runs a protocol command, if it is one of them.
 ///
-/// `args` e a linha de comando **sem** o nome do programa.
+/// `args` is the command line **without** the program name.
 pub fn run(api: &HidApi, args: &[String]) -> Handled {
     let Some(cmd) = args.first().map(String::as_str) else {
         return Handled::Unknown;
@@ -63,28 +67,29 @@ pub fn run(api: &HidApi, args: &[String]) -> Handled {
     }
 }
 
-/// Os hosts de um dispositivo, LIDOS DELE (0x1815 HOSTS_INFO).
+/// A device's hosts, READ FROM IT (0x1815 HOSTS_INFO).
 ///
-/// Existe porque passei uma manha deduzindo para onde o canal 2 aponta a
-/// partir do que os RECEPTORES mostram, e errei duas vezes: o receptor
-/// nao sabe nomear dispositivo ausente, e slot vazio sai igual a slot
-/// pareado-mas-fora. A config tambem nao serve de prova -- ela e o que
-/// alguem DIGITOU. Quem sabe e o dispositivo.
+/// Exists because I spent a morning deducing where channel 2 points
+/// from what the RECEIVERS show, and got it wrong twice: the receiver
+/// cannot name an absent device, and an empty slot looks the same as a
+/// paired-but-away slot. The config is no proof either -- it is what
+/// someone TYPED. The device is who knows.
 ///
-/// O layout saiu de resposta real, nao de suposicao (ver `Receiver::raw`
-/// e o historico em specs/005):
+/// The layout came from a real reply, not from guessing (see
+/// `Receiver::raw` and the history in specs/005):
 ///
 /// ```text
-/// func 1 (getHostInfo),  param [i]:     i, ?, bus, ?, tam_nome, max
-/// func 3 (getHostName),  param [i,off]: i, off, bytes do nome...
+/// func 1 (getHostInfo),  param [i]:     i, ?, bus, ?, name_len, max
+/// func 3 (getHostName),  param [i,off]: i, off, name bytes...
 /// ```
 ///
-/// O `bus` veio 0x01 nos hosts por receptor Unifying e 0x04 no host por
-/// Bluetooth -- foi o que distinguiu, nos tres hosts do MX Keys,
-/// `ubuntu-host` e `windows-host` (Unifying) do MacBook (Bluetooth).
+/// `bus` came as 0x01 on hosts through a Unifying receiver and 0x04 on
+/// the Bluetooth host -- that is what told apart, among the MX Keys'
+/// three hosts, `ubuntu-host` and `windows-host` (Unifying) from the
+/// MacBook (Bluetooth).
 ///
-/// Nao e probe: o `0x1815` e opcional e o MX Anywhere 3 nao o implementa,
-/// entao a resposta diz isso em vez de inventar.
+/// Not a probe: `0x1815` is optional and the MX Anywhere 3 does not
+/// implement it, so the reply says so instead of making something up.
 pub fn hosts(api: &HidApi, slot: u8) -> Value {
     let link = match Receiver::open(api) {
         Ok(l) => l,
@@ -92,66 +97,67 @@ pub fn hosts(api: &HidApi, slot: u8) -> Value {
     };
     const F: u16 = 0x1815;
     const INFO: u8 = 1;
-    const NOME: u8 = 3;
-    /// Bytes de nome por resposta, depois dos dois de cabecalho.
-    const POR_PEDACO: usize = 14;
+    const NAME: u8 = 3;
+    /// Name bytes per reply, after the two header bytes.
+    const PER_CHUNK: usize = 14;
 
-    let mut lista = Vec::new();
+    let mut list = Vec::new();
     for i in 0u8..8 {
-        // Fim da lista e erro, nao sentinela: o dispositivo recusa indice
-        // fora de faixa. Para no primeiro que recusar.
+        // End of list is an error, not a sentinel: the device rejects an
+        // out-of-range index. Stop at the first rejection.
         let info = match link.raw(slot, F, INFO, &[i, 0, 0]) {
             Ok(r) if r.len() >= 6 => r,
             Ok(_) => break,
             Err(e) if i == 0 => return fail(format!("0x1815 em slot {slot}: {e}")),
             Err(_) => break,
         };
-        let tam = info[4] as usize;
+        let len = info[4] as usize;
         let bus = info[2];
 
-        let mut nome = Vec::new();
+        let mut name = Vec::new();
         let mut off = 0usize;
-        while nome.len() < tam && off < 64 {
-            match link.raw(slot, F, NOME, &[i, off as u8, 0]) {
-                Ok(r) if r.len() > 2 => nome.extend_from_slice(&r[2..]),
+        while name.len() < len && off < 64 {
+            match link.raw(slot, F, NAME, &[i, off as u8, 0]) {
+                Ok(r) if r.len() > 2 => name.extend_from_slice(&r[2..]),
                 _ => break,
             }
-            off += POR_PEDACO;
+            off += PER_CHUNK;
         }
-        nome.truncate(tam);
-        // O nome vem em UTF-8 (o do Mac traz a apostrofe tipografica em
-        // tres bytes), entao nao da para tratar byte a byte como ASCII.
-        let nome = String::from_utf8_lossy(&nome).trim_end_matches('\0').to_string();
+        name.truncate(len);
+        // The name comes in UTF-8 (the Mac's carries the typographic
+        // apostrophe in three bytes), so it cannot be treated byte by byte
+        // as ASCII.
+        let name = String::from_utf8_lossy(&name).trim_end_matches('\0').to_string();
 
-        lista.push(json!({
+        list.push(json!({
             "host": i + 1,
-            "nome": nome,
+            "nome": name,
             "bus": match bus { 0x01 => "unifying", 0x04 => "bluetooth", _ => "?" },
             "bus_byte": bus,
         }));
     }
-    json!({ "ok": true, "slot": slot, "hosts": lista })
+    json!({ "ok": true, "slot": slot, "hosts": list })
 }
 
 pub fn fail(msg: impl Into<String>) -> Value {
     json!({ "ok": false, "error": msg.into() })
 }
 
-/// Nomes vistos por slot, em disco.
+/// Names seen per slot, on disk.
 ///
-/// ## Por que existe
+/// ## Why it exists
 ///
-/// Ler o nome exige o dispositivo RESPONDER, entao um slot pareado cujo
-/// dispositivo esta em outra maquina sai do inventario igual a um slot
-/// vazio: `{"slot": 1, "online": false}`. Isso nao e detalhe -- foi o que
-/// me fez afirmar, errado, que o teclado nao estava pareado no receptor
-/// do Windows, e perder uma hora investigando um problema de pareamento
-/// que nao existia. O dispositivo estava pareado, so estava fora.
+/// Reading the name requires the device to ANSWER, so a paired slot
+/// whose device is on another machine comes out of the inventory the
+/// same as an empty slot: `{"slot": 1, "online": false}`. That is no
+/// detail -- it is what made me claim, wrongly, that the keyboard was not
+/// paired to the Windows receiver, and lose an hour investigating a
+/// pairing problem that did not exist. The device was paired, just away.
 ///
-/// O lado Linux ja guardava nomes dentro do `logid`; o agente nao tinha
-/// nada. Agora mora aqui, no crate que os dois usam, porque a pergunta
-/// ("vazio ou ausente?") e a mesma nos dois.
-fn caminho_cache() -> Option<std::path::PathBuf> {
+/// The Linux side already kept names inside `logid`; the agent had
+/// nothing. Now it lives here, in the crate both use, because the
+/// question ("empty or absent?") is the same for both.
+fn cache_path() -> Option<std::path::PathBuf> {
     let base = if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from)?.join("logid")
     } else {
@@ -164,31 +170,31 @@ fn caminho_cache() -> Option<std::path::PathBuf> {
     Some(base.join("slot-names.json"))
 }
 
-fn nomes_lidos() -> std::collections::BTreeMap<String, String> {
-    caminho_cache()
+fn read_names() -> std::collections::BTreeMap<String, String> {
+    cache_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
-/// Grava o que foi visto agora, preservando o resto.
+/// Writes what was seen now, keeping the rest.
 ///
-/// Falha em silencio de proposito: cache e conveniencia, e um inventario
-/// que recusa responder porque nao conseguiu escrever em disco seria pior
-/// que um inventario sem o nome de um slot ausente.
-fn nomes_gravar(vistos: &std::collections::BTreeMap<String, String>) {
-    let Some(p) = caminho_cache() else { return };
-    let mut atual = nomes_lidos();
-    atual.extend(vistos.clone());
+/// Fails silently on purpose: the cache is a convenience, and an
+/// inventory that refuses to answer because it could not write to disk
+/// would be worse than an inventory without the name of an absent slot.
+fn write_names(seen: &std::collections::BTreeMap<String, String>) {
+    let Some(p) = cache_path() else { return };
+    let mut current = read_names();
+    current.extend(seen.clone());
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    if let Ok(t) = serde_json::to_string(&atual) {
+    if let Ok(t) = serde_json::to_string(&current) {
         let _ = std::fs::write(p, t);
     }
 }
 
-/// Inventario dos slots do receptor local.
+/// Inventory of the local receiver's slots.
 pub fn devices(api: &HidApi) -> Value {
     let interfaces: Vec<_> = endpoints(api)
         .into_iter()
@@ -198,22 +204,22 @@ pub fn devices(api: &HidApi) -> Value {
         })
         .collect();
 
-    // TODOS os receptores, nao o primeiro. Com dois na mesma maquina,
-    // escolher um fazia o agente listar os slots de um e declarar os
-    // dispositivos do outro ausentes.
+    // ALL receivers, not the first. With two on the same machine, picking
+    // one made the agent list the slots of one and declare the devices of
+    // the other absent.
     let links = Receiver::open_all(api);
     if links.is_empty() {
         return json!({ "ok": false, "interfaces": interfaces,
                        "error": "nenhum receptor HID++ Logitech conectado aqui" });
     }
 
-    // Caminho eficiente: ping de 250 ms primeiro, e host_info (mais caro)
-    // so para quem respondeu. Antes chamavamos host_info nos 6 slots --
-    // medido, 6,4 s por probe.
-    // Com nomes: o reconciliador casa dispositivo por NOME, nao por canal
-    // -- canal e ambiguo quando mouse e teclado declaram o mesmo.
-    let conhecidos = nomes_lidos();
-    let mut vistos = std::collections::BTreeMap::new();
+    // Efficient path: 250 ms ping first, and host_info (more expensive)
+    // only for those that answered. We used to call host_info on all 6
+    // slots -- measured, 6.4 s per probe.
+    // With names: the reconciler matches devices by NAME, not by channel
+    // -- the channel is ambiguous when mouse and keyboard declare the same.
+    let known = read_names();
+    let mut seen = std::collections::BTreeMap::new();
     let slots: Vec<_> = links
         .iter()
         .enumerate()
@@ -224,7 +230,7 @@ pub fn devices(api: &HidApi) -> Value {
         .map(|(rid, d)| {
             if d.online {
                 if let Some(n) = d.name.clone() {
-                    vistos.insert(format!("{rid}/{}", d.slot), n);
+                    seen.insert(format!("{rid}/{}", d.slot), n);
                 }
                 json!({
                     "slot": d.slot,
@@ -233,26 +239,26 @@ pub fn devices(api: &HidApi) -> Value {
                     "online": true,
                     "paired": true,
                     "num_hosts": d.host.map(|h| h.num_hosts),
-                    // Ja 1-based: o crate converte do protocolo.
+                    // Already 1-based: the crate converts from the protocol.
                     "current_host": d.host.map(|h| h.current),
                     "ping_ms": d.reply_ms,
                 })
             } else {
-                // Nome do cache: separa "slot vazio" de "pareado, mas o
-                // dispositivo esta em outra maquina". Sem isto os dois
-                // casos sao o mesmo JSON, e quem le conclui errado.
-                let lembrado = conhecidos.get(&format!("{rid}/{}", d.slot));
+                // Name from the cache: separates "empty slot" from "paired,
+                // but the device is on another machine". Without this both
+                // cases are the same JSON, and the reader concludes wrong.
+                let remembered = known.get(&format!("{rid}/{}", d.slot));
                 json!({
                     "slot": d.slot,
                     "receptor": rid,
-                    "name": lembrado,
+                    "name": remembered,
                     "online": false,
-                    "paired": lembrado.is_some(),
+                    "paired": remembered.is_some(),
                 })
             }
         })
         .collect();
-    nomes_gravar(&vistos);
+    write_names(&seen);
     json!({ "ok": true, "interfaces": interfaces,
             "receptores": links.len(), "slots": slots })
 }
@@ -273,8 +279,8 @@ pub fn set_host(api: &HidApi, slot: u8, host: u8, confirmed: bool) -> Value {
     if host == 0 {
         return fail("host e 1-based");
     }
-    // Mesma postura do /api/focus: acao irreversivel nao acontece por
-    // acidente nem por digitacao distraida.
+    // Same stance as /api/focus: an irreversible action does not happen
+    // by accident or by distracted typing.
     if !confirmed {
         return fail(
             "falta --confirm: esta acao e irreversivel \

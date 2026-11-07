@@ -1,12 +1,12 @@
-//! Estado dos pares, mantido em background.
+//! The peers' state, kept in the background.
 //!
-//! Existe para o caminho quente nao esperar SSH. Medido: o probe do
-//! agente custa ~2,2 s, e era 90% dos 3,9 s de uma troca. Numa travessia
-//! de borda esperar por isso e inaceitavel -- o usuario encosta e quer
-//! que aconteca.
+//! It exists so the hot path does not wait on SSH. Measured: the agent
+//! probe costs ~2.2 s, and it was 90% of the 3.9 s of a switch. On a
+//! border crossing, waiting for that is unacceptable -- the user touches
+//! the edge and wants it to happen.
 //!
-//! O refresher roda a cada `REFRESH`; o caminho quente le o cache e
-//! declara a idade dele, para a checagem nao fingir frescor que nao tem.
+//! The refresher runs every `REFRESH`; the hot path reads the cache and
+//! declares its age, so the check does not fake a freshness it lacks.
 
 use crate::agent::{self, AgentInfo};
 use crate::config::Config;
@@ -23,7 +23,7 @@ struct Entry {
 
 static CACHE: Mutex<Option<HashMap<String, Entry>>> = Mutex::new(None);
 
-/// Estado do par, e quantos ms atras foi lido.
+/// The peer's state, and how many ms ago it was read.
 pub fn cached(host: &str) -> Option<(AgentInfo, u64)> {
     let g = CACHE.lock().ok()?;
     let m = g.as_ref()?;
@@ -45,8 +45,9 @@ fn store(host: &str, info: AgentInfo) {
     }
 }
 
-/// Atualiza agora, sincronicamente. Usado no boot para o cache nao nascer
-/// vazio, e por quem precisa de dado fresco.
+/// Refreshes now, synchronously. Used at boot so the cache is not born
+/// empty, and by whoever needs fresh data.
+
 pub fn refresh(cfg: &Config) {
     for h in &cfg.hosts {
         if h.ssh.is_none() || h.agent.is_none() {
