@@ -87,7 +87,9 @@ async fn main() -> anyhow::Result<()> {
         if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
     let ep = net::cliente(bind)?;
     let conexao = ep.connect(destino, "logistream")?.await?;
-    println!("conectado em {destino}");
+    // stderr, e nao stdout: quem nos lançou lê só a porta e fecha o pipe, e um
+    // `println!` num pipe fechado derruba o processo no meio da sessão.
+    eprintln!("conectado em {destino}");
 
     let (tx_in, mut rx_in) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
     let conexao_in = conexao.clone();
