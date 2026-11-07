@@ -62,7 +62,11 @@ remota própria, e o controle de tudo num painel só.
 receptor.
 
 **Nunca escreva IP em config.** O IP do Windows já mudou uma vez e
-quebrou Deskflow, SSH e o painel de uma vez. Use mDNS.
+quebrou Deskflow, SSH e o painel de uma vez. Use mDNS, ou o nome do
+tailnet na máquina que sai de casa ([`specs/012`](specs/012-fora-da-lan.md)).
+
+**No Mac o Tailscale é o do brew, nunca o app.** A extensão de rede dele
+derrubou a internet da máquina em 07/11.
 
 **O RDP e o KDE Connect saíram** (04/11). Os quatro caminhos de tela
 são nossos, e o clipboard também — pela API privada do Mutter no

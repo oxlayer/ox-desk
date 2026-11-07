@@ -49,3 +49,16 @@ Dois tipos de movimento de ponteiro:
 - [[maquinas]]
 - [[../specs/010-remote-desktop.md]] — o stack completo
 - [[../specs/005-input-switch.md]] — troca de máquina e KVM
+
+## Ubuntu sem monitor ligado
+
+Com as saídas em `disconnected`, o `RecordMonitor` responde `Unknown
+monitor`. O host passa a pedir `RecordVirtual`, em 1920×1080, e o GNOME
+cria o monitor `Meta-0` enquanto o host viver.
+
+O stream virtual renegocia o formato logo depois de nascer, com o mesmo
+tamanho. Trocar o `Codificador` nessa hora dava SIGSEGV (saída 139), por
+isso o host mantém o que já tem.
+
+Medido em 07/11: 25 quadros em 10 s, zero perdidos, com a tela parada.
+O Mutter só entrega quadro quando algo muda.

@@ -61,6 +61,18 @@ por dependência. Conceder Gravação de Tela a um binário ad-hoc
 desperdiça a concessão: ela morre no próximo `deploy.sh`, porque o TCC
 amarra no cdhash, que muda a cada compilação. Já aconteceu duas vezes.
 
+## Tailscale no Mac
+
+O passo `tailscale` é opcional e mede pelo `tailscale` do brew. Com o
+app instalado ele aparece como falta, mesmo conectado: apague o app pelo
+Finder e **negue** qualquer pedido de VPN. Ver
+[[../../specs/012-fora-da-lan]].
+
+```bash
+brew install tailscale
+sudo bash scripts/instalar-tailscale-mac.sh   # no clone do repo
+```
+
 ## O que ele não faz
 
 Não instala binário (use `install.sh` ou `scripts/deploy.sh`), não roda
