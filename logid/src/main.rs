@@ -37,6 +37,7 @@ mod clip;
 mod clip_arq;
 mod kvm;
 mod logs;
+mod pairing;
 mod peers;
 mod probe;
 mod procs;
