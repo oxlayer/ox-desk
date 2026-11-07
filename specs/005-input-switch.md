@@ -19,7 +19,7 @@ the two.** Choosing is the product.
 The physical route is better when available: native latency, it works with
 the network down, and it does not depend on input injection through the portal — which
 **works around the Deskflow server-mode segfault on Linux**
-([`README`](../README.md#ubuntu-como-servidor-testado-e-não-funciona-1270)).
+([`README`](../README.md#ubuntu-as-server-tested-and-it-does-not-work-1270)).
 Today both machines have a Unifying receiver, so the physical route is
 possible in both directions.
 

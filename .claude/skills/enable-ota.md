@@ -48,7 +48,7 @@ git tag v0.3.0 && git push origin v0.3.0
 
 Without a tag there is no Release, and without a Release the OTA has
 nothing to download — it says `igual` (same) forever. Recipe and cost in
-[`specs/013`](../../specs/013-ci-cd.md#publicar-uma-versão).
+[`specs/013`](../../specs/013-ci-cd.md#publishing-a-version).
 
 ## Asking by hand
 
