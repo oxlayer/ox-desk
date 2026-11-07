@@ -466,9 +466,10 @@ mod visual {
             drop(s);
             let _ = buf.present();
             if self.medir {
-                self.atrasos.push(
-                    logistream::serve::agora_ns().saturating_sub(capturado) as f64 / 1e6,
-                );
+                // Com sinal: entre maquinas o relogio do host pode estar
+                // adiantado, e zerar o negativo escondia isso.
+                let agora = logistream::serve::agora_ns() as i128;
+                self.atrasos.push((agora - capturado as i128) as f64 / 1e6);
                 if self.atrasos.len() == 120 {
                     self.atrasos.sort_by(f64::total_cmp);
                     eprintln!(
