@@ -205,6 +205,7 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
     let proximo_quadro = Rc::new(Cell::new(Instant::now()));
     let proximo_proc = Rc::clone(&proximo_quadro);
     let cod_fmt = Rc::clone(&cod);
+    let tam_fmt = Cell::new((0u32, 0u32));
     let cod_proc = Rc::clone(&cod);
     let desc_proc = Rc::clone(&descartados);
     let sinais_proc = std::sync::Arc::clone(&sinais);
@@ -227,10 +228,18 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
                 return;
             }
             let (w, h) = (info.size().width, info.size().height);
+            // A tela virtual renegocia logo depois de nascer, com o mesmo
+            // tamanho. Trocar o codificador nesse instante derrubava o
+            // processo com SIGSEGV (saida 139, medido); o monitor fisico
+            // negocia uma vez so e nunca passava por aqui.
+            if cod_fmt.borrow().is_some() && tam_fmt.get() == (w, h) {
+                return;
+            }
             match Codificador::novo(w, h) {
                 Ok(c) => {
                     println!("  capturando {w}x{h}, NVENC a {:.1} Mbps", c.alvo_mbps());
                     *cod_fmt.borrow_mut() = Some(c);
+                    tam_fmt.set((w, h));
                 }
                 Err(err) => eprintln!("  NVENC: {err}"),
             }
