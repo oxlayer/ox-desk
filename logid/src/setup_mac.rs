@@ -57,6 +57,7 @@ pub fn medir(cfg: &Config) -> Vec<Medida> {
         binarios(),
         crate::setup_comum::config_desta_maquina(cfg),
         daemon(),
+        ffmpeg(),
         identidade(),
         assinatura(),
         tcc.0,
@@ -133,6 +134,53 @@ fn daemon() -> Medida {
             Medida::falta("daemon", "o processo está rodando, mas fora do launchd: não volta no próximo login")
         }
         Err(e) => Medida::falta("daemon", format!("{rotulo}: {e}")),
+    }
+}
+
+/// As dylibs do brew que os binarios instalados pedem existem aqui?
+///
+/// O soname do ffmpeg entra no binario. Um `logistream-host` vindo do
+/// pacote da CI pede `libavcodec.61` sob o prefixo `ffmpeg@7`; se a
+/// formula nao estiver instalada, o `dyld` recusa o processo e o
+/// AVFoundation nunca e alcancado. Perguntar ao `otool` o que o arquivo
+/// pede, e conferir se cada caminho existe, e barato e responde
+/// exatamente isso.
+///
+/// Ver FFMPEG_FORMULA em scripts/construir-binarios.sh: as duas pontas
+/// declaram o mesmo prefixo, e o build quebra se divergirem.
+fn ffmpeg() -> Medida {
+    let host = bin_dir().join("logistream-host");
+    if !host.exists() {
+        return Medida::falta("ffmpeg", "sem o logistream-host instalado para perguntar");
+    }
+    let saida = match rodar("/usr/bin/otool", &["-L", &host.to_string_lossy()], 10) {
+        Ok(s) => s,
+        Err(e) => return Medida::erro("ffmpeg", format!("otool: {e}")),
+    };
+    let pedidas: Vec<&str> = saida
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("/opt/"))
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    let faltam: Vec<&&str> =
+        pedidas.iter().filter(|c| !std::path::Path::new(c).exists()).collect();
+    if !faltam.is_empty() {
+        return Medida::falta(
+            "ffmpeg",
+            format!(
+                "{} dylib(s) que o host pede não existem aqui, a começar por {}",
+                faltam.len(),
+                faltam[0]
+            ),
+        );
+    }
+    match pedidas.iter().find(|c| c.contains("libavcodec")) {
+        Some(c) => Medida::ok("ffmpeg", format!("{} dylib(s) do brew resolvem; {c}", pedidas.len())),
+        // Sem libavcodec o binario nem e o host de tela -- ou e um build
+        // de outra plataforma. Dizer "ok" aqui seria aprovar o que nao
+        // foi medido.
+        None => Medida::falta("ffmpeg", "o logistream-host instalado não pede libavcodec"),
     }
 }
 

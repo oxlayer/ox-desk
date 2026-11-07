@@ -380,6 +380,20 @@ fn mac() -> Vec<Passo> {
             essencial: true,
         },
         Passo {
+            id: "ffmpeg",
+            titulo: "ffmpeg que os binários pedem",
+            porque: "o Mac é a única máquina que liga no ffmpeg -- captura \
+                     por avfoundation, codificação por h264_videotoolbox -- \
+                     e o soname entra NO BINÁRIO: compilado contra o major \
+                     9 ele não carrega com o major 7 instalado. Sem a \
+                     formula certa a tela não sobe e o OTA recusa o update \
+                     inteiro: está certo, mas chega como recusa de hora em \
+                     hora, e não como uma linha aqui.",
+            arrumo: Arrumo::Receita { linha: "brew install ffmpeg@7" },
+            depende: &["binarios"],
+            essencial: true,
+        },
+        Passo {
             id: "identidade",
             titulo: "Identidade local de assinatura",
             porque: "sem ela o binário é ad-hoc, a amarração do TCC é pelo \

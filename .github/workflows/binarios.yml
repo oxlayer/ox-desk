@@ -71,9 +71,16 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: '1'
           HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: |
-          brew install ffmpeg pkgconf
-          echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig" >> "$GITHUB_ENV"
-          ffmpeg -version | head -1
+          # `ffmpeg@7`, nao `ffmpeg`. O soname entra no binario, e o
+          # `ffmpeg` sem versao e 9.0.2 neste runner contra 7.1 no
+          # MacBook -- o pacote saia correto e ininstalavel, e o OTA
+          # recusava o update inteiro nomeando a `libavcodec.63`.
+          # O prefixo versionado e o MESMO nas duas pontas. Ver
+          # FFMPEG_FORMULA em scripts/construir-binarios.sh, que quebra
+          # o build se este passo e aquela declaracao divergirem.
+          brew install ffmpeg@7 pkgconf
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig" >> "$GITHUB_ENV"
+          /opt/homebrew/opt/ffmpeg@7/bin/ffmpeg -version | head -1
 
       - name: Rust
         env:

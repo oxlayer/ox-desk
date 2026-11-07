@@ -408,12 +408,16 @@ else
   # PKG_CONFIG_PATH do brew: o `ffmpeg-next` so acha o libavcodec por
   # ele, e o SSH nao carrega o perfil do shell.
   #
+  # `ffmpeg@7` e nao `ffmpeg`: o binario que a CI constroi vai substituir
+  # ESTE pelo OTA, e os dois tem de referenciar o mesmo prefixo. Ver
+  # FFMPEG_FORMULA em construir-binarios.sh.
+  #
   # O HOST estava faltando aqui. So o cliente era compilado, entao a
   # maquina podia assistir as outras e nunca ser assistida -- e o
   # painel caia no VNC por nao haver alternativa instalada. O sintoma
   # chegou como "testei mas chamou vnc, nao deveria ser nativo?".
   if out=$(timeout 900 ssh -n -o BatchMode=yes mac \
-            "cd ~/logi/logistream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig &&
+            "cd ~/logi/logistream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig &&
              ~/.cargo/bin/cargo build --release --bin logistream-view --bin logistream-host 2>&1 | tail -3 &&
              mkdir -p ~/.local/bin ~/.local/state &&
              install -m755 target/release/logistream-view ~/.local/bin/ &&
@@ -462,6 +466,39 @@ else
              sleep 1
              launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.logistream-host.plist 2>/dev/null || \
              launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.logistream-host.plist" 2>&1); then ok; else erro "$out"; fi
+
+  passo "mac: casca da GUI"
+  # O Windows recebia `main.js` solto a cada deploy; o Mac tinha a casca
+  # dentro de um `app.asar`, editavel so com ferramenta de asar -- que
+  # nao existe nesta maquina nem naquela. Resultado: a casca do Mac era
+  # de semanas atras e NINGUEM sabia, porque nenhum passo a tocava. Foi
+  # assim que o conserto do "um supervisor por daemon" quase nao chegou
+  # na maquina que mais precisava dele.
+  #
+  # Convertido para `Resources/app/`, o layout classico do Electron, que
+  # segue suportado: a partir daqui a casca do Mac viaja por rsync como
+  # a do Windows. O `app.asar` vira `.off` em vez de sumir, o
+  # `ElectronAsarIntegrity` sai do Info.plist (ele carimba o hash de um
+  # asar que deixou de ser lido) e o bundle e re-assinado ad-hoc para o
+  # selo nao ficar quebrado. Tudo idempotente.
+  #
+  # Nao reiniciamos a GUI aqui: ela le o `main.js` no proximo lancamento,
+  # e matar a janela de quem esta usando a maquina nao e papel do deploy.
+  if out=$(ssh -n -o BatchMode=yes mac \
+             'mkdir -p ~/Applications/Logi.app/Contents/Resources/app' 2>&1 &&
+           rsync -az -e "ssh -o BatchMode=yes" gui/main.js gui/package.json gui/icon.png gui/tray.png \
+             mac:Applications/Logi.app/Contents/Resources/app/ 2>&1 &&
+           ssh -n -o BatchMode=yes mac '
+             APP=$HOME/Applications/Logi.app
+             if [ -f "$APP/Contents/Resources/app.asar" ]; then
+               mv "$APP/Contents/Resources/app.asar" "$APP/Contents/Resources/app.asar.off"
+               /usr/libexec/PlistBuddy -c "Delete :ElectronAsarIntegrity" "$APP/Contents/Info.plist" >/dev/null 2>&1
+               codesign --force --deep --sign - "$APP" 2>&1 | tail -1
+             fi
+             grep -q comandoDoSupervisor "$APP/Contents/Resources/app/main.js" ||
+               echo "ERRO: o main.js que chegou no Mac nao e o deste repo"' 2>&1); then
+    if ruim "$out"; then erro "$out"; else ok; fi
+  else erro "$out"; fi
 fi
 
 # ---------- token do OTA ----------
