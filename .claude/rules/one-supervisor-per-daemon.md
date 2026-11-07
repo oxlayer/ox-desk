@@ -38,7 +38,7 @@ machine, where the GUI is how you reach the wizard.
 `pkill -x logid` before `kickstart -k` / `systemctl restart`. It's not
 brutality: `-k` already kills the supervised copy anyway, so the net
 effect is exactly *"also the ones the supervisor doesn't know about"*.
-It is in `plano::Plano::limpar` (OTA) and in the `deploy.sh` steps.
+It is in `plan::Plan::clear` (OTA) and in the `deploy.sh` steps.
 
 OTA without this is worse than the deploy: it restarts, asks `/healthz`,
 hears the orphan's old build and **rolls back an update that was
