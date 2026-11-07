@@ -58,6 +58,7 @@ case "$ALVO" in
     BINARIOS="logid/target/release/logid
 logistream/target/release/logistream-host
 logistream/target/release/logistream-view
+logistream/target/release/logistream-ponte
 logistream/target/release/logistream-kvm
 ota/target/release/logi-ota"
     ;;
@@ -78,6 +79,7 @@ ota/target/$WIN/release/logi-ota.exe"
     BINARIOS="logid/target/release/logid
 logistream/target/release/logistream-host
 logistream/target/release/logistream-view
+logistream/target/release/logistream-ponte
 ota/target/release/logi-ota"
     ;;
   *) echo "alvo desconhecido: $ALVO" >&2; exit 2 ;;
@@ -89,7 +91,7 @@ compilar() {
       cargo build --release --locked --manifest-path logid/Cargo.toml &&
       cargo build --release --locked --manifest-path ota/Cargo.toml &&
       cargo build --release --locked --manifest-path logistream/Cargo.toml \
-        --bin logistream-host --bin logistream-view --bin logistream-kvm
+        --bin logistream-host --bin logistream-view --bin logistream-ponte --bin logistream-kvm
       ;;
     windows)
       cargo build --release --locked --target "$WIN" --manifest-path logid/Cargo.toml &&
@@ -102,7 +104,7 @@ compilar() {
       cargo build --release --locked --manifest-path logid/Cargo.toml &&
       cargo build --release --locked --manifest-path ota/Cargo.toml &&
       cargo build --release --locked --manifest-path logistream/Cargo.toml \
-        --bin logistream-host --bin logistream-view
+        --bin logistream-host --bin logistream-view --bin logistream-ponte
       ;;
   esac
 }

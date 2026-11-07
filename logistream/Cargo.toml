@@ -32,6 +32,8 @@ cudarc = { version = "0.19", default-features = false, features = ["driver", "dy
 # decodificar aqui e no Windows.
 softbuffer = "0.4"
 if-addrs = "0.13"
+tokio-tungstenite = "0.26"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 
 # Captura no Linux: o Mutter entrega o stream por PipeWire e a negociacao
 # acontece por D-Bus. Mesma crate de D-Bus que o logid usa.
@@ -99,6 +101,10 @@ path = "src/bin/host.rs"
 [[bin]]
 name = "logistream-kvm"
 path = "src/bin/kvm.rs"
+
+[[bin]]
+name = "logistream-ponte"
+path = "src/bin/ponte.rs"
 
 [[bin]]
 name = "logistream-view"
