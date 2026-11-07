@@ -23,11 +23,12 @@ use crate::setup::{Estado, Medida};
 use crate::setup_comum::rodar;
 use std::path::PathBuf;
 
-const BINS: [&str; 5] = [
+const BINS: [&str; 6] = [
     "logid.exe",
     "logid-agent.exe",
     "logistream-host.exe",
     "logistream-view.exe",
+    "logistream-ponte.exe",
     "logi-ota.exe",
 ];
 

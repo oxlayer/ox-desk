@@ -580,6 +580,23 @@ fn post_clipboard_enviar(mut req: Request, cfg: &RwLock<Config>) {
 /// Separado do GET de proposito: o GET responde "da para clicar?" e a UI
 /// desabilita o botao com o motivo escrito do lado. Um botao que abre
 /// nada e pior que um botao desabilitado explicado.
+fn post_transferir(mut req: Request, cfg: &RwLock<Config>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "corpo ilegivel");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let campo = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
+    let snap = match cfg.read() {
+        Ok(g) => g.clone(),
+        Err(_) => return err_json(req, 500, "config travada"),
+    };
+    match files::transferir(&snap, &campo("de"), &campo("caminho"), &campo("para"), &campo("pasta")) {
+        Ok(id) => ok_json(req, serde_json::json!({ "id": id }).to_string()),
+        Err(e) => err_json(req, 409, &e),
+    }
+}
+
 fn post_sessao(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
@@ -946,6 +963,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     if path == "/api/sessao" && method == "POST" {
         return post_sessao(req, cfg);
     }
+    if path == "/api/files/transferir" && method == "POST" {
+        return post_transferir(req, cfg);
+    }
     if path == "/api/processes/kill" && method == "POST" {
         return post_kill(req, cfg);
     }
@@ -1065,6 +1085,11 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 Err(e) => err_json(req, 500, &format!("serializar: {e}")),
             }
         }
+
+        "/api/files/transferencias" => match serde_json::to_string(&files::transferencias()) {
+            Ok(b) => ok_json(req, b),
+            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+        },
 
         "/api/screen" => {
             let snap = match cfg.read() {

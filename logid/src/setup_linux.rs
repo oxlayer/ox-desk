@@ -19,8 +19,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-const BINS: [&str; 5] =
-    ["logid", "logistream-host", "logistream-view", "logistream-kvm", "logi-ota"];
+const BINS: [&str; 6] =
+    ["logid", "logistream-host", "logistream-view", "logistream-ponte", "logistream-kvm", "logi-ota"];
 
 fn bin_dir() -> PathBuf {
     crate::sys::home_dir().join(".local/bin")

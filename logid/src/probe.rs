@@ -5,6 +5,8 @@
 
 use crate::config::{Config, Expect, HostCfg, HostOs};
 use serde::Serialize;
+use std::collections::HashSet;
+use std::sync::Mutex;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
@@ -167,6 +169,7 @@ fn resolve_for_ssh(addr: &str, port: u16) -> Option<SocketAddr> {
 pub fn tcp_probe(addr: &str, port: u16) -> (bool, Option<f64>) {
     let alvos = resolve_all(addr, port);
     if alvos.is_empty() {
+        anotar_falha(addr, port, Some("o nome nao resolveu".into()));
         return (false, None);
     }
     // Divide o orcamento: com tres enderecos mortos, um timeout cheio por
@@ -178,11 +181,30 @@ pub fn tcp_probe(addr: &str, port: u16) -> (bool, Option<f64>) {
         for sa in &alvos {
             let t0 = Instant::now();
             if TcpStream::connect_timeout(sa, por_alvo).is_ok() {
+                anotar_falha(addr, port, None);
                 return (true, Some(t0.elapsed().as_secs_f64() * 1000.0));
             }
         }
     }
+    anotar_falha(addr, port, Some(format!("sem resposta em {alvos:?}")));
     (false, None)
+}
+
+/// Registra quando uma porta para de responder e quando volta, com o motivo.
+///
+/// So na mudanca de estado, senao maquina desligada encheria o log. Existe
+/// porque o painel mostrou uma maquina viva como offline e nada dizia por
+/// que: nao havia como separar nome que nao resolveu de conexao sem resposta.
+fn anotar_falha(addr: &str, port: u16, motivo: Option<String>) {
+    static FALHANDO: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+    let chave = format!("{addr}:{port}");
+    let Ok(mut g) = FALHANDO.lock() else { return };
+    let set = g.get_or_insert_with(HashSet::new);
+    match motivo {
+        Some(m) if set.insert(chave.clone()) => say!("sonda: {chave} parou: {m}"),
+        None if set.remove(&chave) => say!("sonda: {chave} voltou"),
+        _ => {}
+    }
 }
 
 /// Uptime e RAM do par por SSH. Silencioso em qualquer falha: detalhe e
