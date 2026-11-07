@@ -1,38 +1,40 @@
-# Configurar uma máquina (wizard de setup)
+# Configure a machine (setup wizard)
 
-Abra `http://127.0.0.1:8787/setup` **na máquina que você quer
-configurar**. Pela bandeja: "Configurar esta máquina". A casca Electron
-abre essa página sozinha, em tela cheia, quando falta algo essencial.
+Open `http://127.0.0.1:8787/setup` **on the machine you want to
+configure**. From the tray: "Configurar esta máquina" (Configure this
+machine). The Electron shell opens this page by itself, fullscreen, when
+something essential is missing.
 
 ```bash
 xdg-open http://127.0.0.1:8787/setup     # Ubuntu
-ssh windows-host 'start http://127.0.0.1:8787/setup'   # não serve: ver abaixo
+ssh windows-host 'start http://127.0.0.1:8787/setup'   # doesn't work: see below
 ```
 
-> ⚠️ **Não dá para configurar uma máquina a partir de outra.** O wizard
-> mede a sessão gráfica de quem o serve. Por SSH o Windows cai na sessão
-> 0 (área de transferência sempre vazia) e o macOS não tem concessão de
-> TCC nenhuma. Ver [[../rules/graphical-session]].
+> ⚠️ **You can't configure one machine from another.** The wizard
+> measures the graphical session of whoever serves it. Over SSH Windows
+> lands in session 0 (clipboard always empty) and macOS has no TCC grant
+> at all. See [[../rules/graphical-session]].
 
-## Ler a tela
+## Reading the screen
 
-Quatro estados, e o terceiro é o que importa:
+Four states, and the third is the one that matters:
 
-| Marca | Significa |
+| Mark | Means |
 |---|---|
-| ✓ verde | medido e de pé |
-| ! vermelho | medido e falta |
-| ? âmbar | **não consegui medir** — não é "ok" |
-| – apagado | não se aplica a esta máquina |
+| ✓ green | measured and up |
+| ! red | measured and missing |
+| ? amber | **I couldn't measure** — it is not "ok" |
+| – dimmed | doesn't apply to this machine |
 
-O passo destacado com o anel azul é onde agir **agora**. Passos
-apagados com "espera por: X" dependem de outro que ainda falta — não
-adianta mexer neles antes.
+The step highlighted with the blue ring is where to act **now**. Dimmed
+steps with "espera por: X" (waits for: X) depend on another one that is
+still missing — there's no point touching them before.
 
-A barra conta só os **essenciais**. Opcionais pendentes aparecem no
-canto direito ("2 opcional(is) pendente(s)") e não impedem o "pronto".
+The bar counts only the **essential** ones. Pending optional ones show up
+in the right corner ("2 opcional(is) pendente(s)") and don't block
+"pronto" (ready).
 
-## Pela linha de comando
+## From the command line
 
 ```bash
 curl -s http://127.0.0.1:8787/api/setup | python3 -m json.tool
@@ -40,72 +42,77 @@ curl -s -X POST http://127.0.0.1:8787/api/setup/arrumar \
      -H 'Content-Type: application/json' -d '{"id":"daemon"}'
 ```
 
-`/api/setup` leva alguns segundos: o passo `pares` abre SSH para cada
-máquina. É por isso que a página **não** se atualiza sozinha.
+`/api/setup` takes a few seconds: the `pares` step opens SSH to each
+machine. That's why the page does **not** refresh by itself.
 
-## Quando o botão diz que não resolveu
+## When the button says it didn't fix it
 
-Ele está dizendo o que **mediu depois** de agir, não que o comando
-falhou. Dois casos normais:
+It's telling you what it **measured after** acting, not that the command
+failed. Two normal cases:
 
-- **TCC do macOS**: o reparo abre o painel do sistema e volta "marque a
-  caixa na janela que abriu". É o fluxo esperado — marque e clique
-  "Medir de novo".
-- **`sudo`**: o wizard nunca roda sudo. Copie a linha, cole num
-  terminal, volte e meça.
+- **macOS TCC**: the repair opens the system panel and comes back with
+  "marque a caixa na janela que abriu" (check the box in the window that
+  opened). That's the expected flow — check it and click "Medir de novo"
+  (Measure again).
+- **`sudo`**: the wizard never runs sudo. Copy the line, paste it in a
+  terminal, come back and measure.
 
-## Ordem que importa no Mac
+## Order that matters on the Mac
 
-`Assinar` vem **antes** de pedir as permissões, e o wizard impõe isso
-por dependência. Conceder Gravação de Tela a um binário ad-hoc
-desperdiça a concessão: ela morre no próximo `deploy.sh`, porque o TCC
-amarra no cdhash, que muda a cada compilação. Já aconteceu duas vezes.
+`Assinar` (Sign) comes **before** asking for the permissions, and the
+wizard enforces it through a dependency. Granting Screen Recording to an
+ad-hoc binary wastes the grant: it dies at the next `deploy.sh`, because
+TCC ties it to the cdhash, which changes on every build. It has happened
+twice.
 
-## Tailscale no Mac
+## Tailscale on the Mac
 
-O passo `tailscale` é opcional e mede pelo `tailscale` do brew. Com o
-app instalado ele aparece como falta, mesmo conectado: apague o app pelo
-Finder e **negue** qualquer pedido de VPN. Ver
+The `tailscale` step is optional and measures through the brew
+`tailscale`. With the app installed it shows as missing, even when
+connected: delete the app from Finder and **deny** any VPN request. See
 [[../../specs/012-outside-the-lan]].
 
 ```bash
 brew install tailscale
-sudo bash logid/setup/instalar-tailscale-mac.sh   # no clone do repo
+sudo bash logid/setup/instalar-tailscale-mac.sh   # in the repo clone
 ```
 
-O botão do wizard faz o mesmo sem clone: abre o Terminal com o script.
+The wizard button does the same without a clone: it opens Terminal with
+the script.
 
-## Windows sem monitor
+## Windows without a monitor
 
-O passo `tela-virtual` conta os monitores presentes. Com zero, o
-visualizador conecta e nenhum quadro chega. O botão instala o driver da
-`logid/setup/instalar-tela-virtual.ps1`, com versão e hash fixados. Por
-SSH, como administrador, o script roda direto, sem pedido na tela.
+The `tela-virtual` step counts the monitors present. With zero, the
+viewer connects and no frame arrives. The button installs the driver
+from `logid/setup/instalar-tela-virtual.ps1`, with pinned version and
+hash. Over SSH, as administrator, the script runs directly, without a
+prompt on screen.
 
-## Computador novo
+## New computer
 
-A ordem por sistema está em [[../../docs/new-computer]].
+The order per system is in [[../../docs/new-computer]].
 
-## O que ele não faz
+## What it doesn't do
 
-Não instala binário (use `install.sh` ou `scripts/deploy.sh`), não roda
-sudo, e não fica medindo em laço.
+It doesn't install binaries (use `install.sh` or `scripts/deploy.sh`),
+doesn't run sudo, and doesn't keep measuring in a loop.
 
-## Conferir que a página ainda funciona
+## Check that the page still works
 
 ```bash
 cd gui && env -u ELECTRON_RUN_AS_NODE \
   ./node_modules/electron/dist/electron check-setup.js
 ```
 
-Sai `ERROS []` quando passa. O teste compara a tela com o que a API
-mediu — contador, número de linhas, destaque do passo ativo, nenhuma
-linha sem detalhe, nenhuma rolagem horizontal em 420 px. Ele já pegou um
-acordeão que mantinha dois passos abertos enquanto o estado dizia um.
+It prints `ERROS []` when it passes. The test compares the screen with
+what the API measured — counter, number of rows, highlight of the active
+step, no row without detail, no horizontal scroll at 420 px. It has
+already caught an accordion that kept two steps open while the state
+said one.
 
-## Veja também
+## See also
 
-- [[../../specs/011-onboarding]] — o desenho e as três regras
-- [[deploy]] — o que leva binário para as três máquinas
-- [[verify-the-mac]] — quando a tela do Mac não abre
-- [[grant-input-access]] — a regra de udev em detalhe
+- [[../../specs/011-onboarding]] — the design and the three rules
+- [[deploy]] — what takes binaries to the three machines
+- [[verify-the-mac]] — when the Mac screen doesn't open
+- [[grant-input-access]] — the udev rule in detail
