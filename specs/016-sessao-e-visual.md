@@ -16,17 +16,18 @@ identidade visual continua nossa.
 
 ### 1. Tela inicial
 
-- Trilho lateral com Máquinas, Arquivos, Configurar e Ajuda.
 - Um cartão por máquina: nome, sistema, estado e **Conectar** como botão
   principal.
 - Portas, RAM, CPU e serviços ficam num detalhe que se abre.
+- Só aparece a opção que o cliente sabe cumprir.
 - Busca só a partir de cinco máquinas. Com três, ela é ruído.
-- Tema escuro como padrão, mantendo o claro.
 
-### 2. Barra da sessão
+### 2. A sessão é uma aba
 
-Uma barra fina que aparece quando o ponteiro chega à borda de cima do
-visualizador, e some depois. Ela não pode roubar clique da máquina remota.
+Conectar abre uma aba na janela do painel, e não outra janela. Várias
+máquinas ficam abertas lado a lado, e a tela inicial é a primeira aba.
+
+A barra fica no topo da aba, e não pode roubar clique da máquina remota.
 
 | Botão | Faz |
 |---|---|
@@ -44,13 +45,17 @@ receber mostram progresso e erro por arquivo.
 
 ## Como
 
-**A barra é desenhada no visualizador.** Ele é uma janela `winit` com
-`softbuffer`, sem toolkit, e a barra são ícones em bitmap compostos sobre
-o quadro. Puxar `egui` para isso custaria mais que a barra inteira.
+**O vídeo é decodificado na página.** O `logistream-view` é outro processo
+com janela nativa, e isso não se embute numa aba. Uma ponte local fala QUIC
+com o host e entrega H.264 à página por WebSocket em `127.0.0.1`, com um
+token por sessão. A página decodifica com WebCodecs, por hardware, e desenha
+num `<canvas>`; teclado e mouse fazem o caminho inverso.
 
-**O gerenciador é uma página do `logid`** (`/arquivos`), aberta pela barra.
-HTML resolve tabela, rolagem e arrastar sem reescrever isso em pixel, e o
-`gui/` continua sem lógica. Ver a [spec 003](003-files.md).
+Com isso aba, barra e arquivos são a mesma página, e a barra é HTML. O
+`logistream-view` fica como alternativa até a latência da aba estar medida:
+ela só substitui o nativo se não for pior.
+
+**O gerenciador é uma aba do mesmo jeito.** Ver a [spec 003](003-files.md).
 
 **A transferência vai por SFTP**, como a listagem. A rota nova é
 `POST /api/files/transfer`, com o progresso lido pelo painel.
@@ -64,6 +69,7 @@ ele, com a chave que já tem.
   ([[../docs/caminhos-de-tela]]).
 - **Clique na barra não vai para a máquina remota.** O teste confere que
   nenhum `Evento::Mouse` saiu.
+- **A aba se mede contra o `logistream-view`:** o atraso da captura à tela.
 - **Transferência se prova pelo hash dos dois lados**, e não pelo fim da
   barra de progresso ([[../.claude/rules/verificar-o-que-chegou]]).
 - **O caminho do Windows é o do SFTP** (`/C:/Users/...`), que já tem
@@ -72,9 +78,10 @@ ele, com a chave que já tem.
 ## Ordem
 
 1. Tela inicial, sem mexer em API. É só `static/index.html`.
-2. Gerenciador de arquivos e a rota de transferência.
-3. Barra da sessão, abrindo o gerenciador e os atalhos.
-4. Qualidade e troca de monitor, que dependem de mudar o host em sessão.
+2. Ponte e aba da sessão, com a latência medida contra o nativo.
+3. Barra da sessão, com os atalhos.
+4. Gerenciador de arquivos e a rota de transferência.
+5. Qualidade e troca de monitor, que dependem de mudar o host em sessão.
 
 ## Fora daqui
 

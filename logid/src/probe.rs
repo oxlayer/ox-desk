@@ -172,10 +172,14 @@ pub fn tcp_probe(addr: &str, port: u16) -> (bool, Option<f64>) {
     // Divide o orcamento: com tres enderecos mortos, um timeout cheio por
     // endereco seria 4,5 s num unico servico do snapshot.
     let por_alvo = TCP_TIMEOUT / alvos.len() as u32;
-    for sa in &alvos {
-        let t0 = Instant::now();
-        if TcpStream::connect_timeout(sa, por_alvo).is_ok() {
-            return (true, Some(t0.elapsed().as_secs_f64() * 1000.0));
+    // Duas rodadas: pelo tailnet um pacote perdido fazia a maquina piscar
+    // offline no painel, com ping e SSH de pe. Maquina morta custa o dobro.
+    for _ in 0..2 {
+        for sa in &alvos {
+            let t0 = Instant::now();
+            if TcpStream::connect_timeout(sa, por_alvo).is_ok() {
+                return (true, Some(t0.elapsed().as_secs_f64() * 1000.0));
+            }
         }
     }
     (false, None)
