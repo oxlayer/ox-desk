@@ -259,6 +259,43 @@ fn assinatura() -> Medida {
 }
 
 /// Lê as duas permissões do próprio host.
+/// Roda o `--conferir` do host como job próprio do launchd.
+///
+/// Como filho do `logid`, a resposta seria sobre o `logid`: o macOS
+/// atribui a permissão ao processo responsável. A concessão do host
+/// estava certa e o wizard dizia "falta", porque a do `logid` era de um
+/// binário antigo. É a mesma pergunta que o LaunchAgent do host responde.
+fn conferir_fora_do_logid(alvo: &std::path::Path) -> Result<String, String> {
+    const ROTULO: &str = "ai.logi.conferir";
+    let arquivo = crate::sys::config_dir().join("conferir.out");
+    let caminho = arquivo.to_string_lossy().into_owned();
+    let _ = std::fs::remove_file(&arquivo);
+    let _ = rodar("/bin/launchctl", &["remove", ROTULO], 5);
+    rodar(
+        "/bin/launchctl",
+        &[
+            "submit", "-l", ROTULO, "-o", &caminho, "-e", &caminho, "--",
+            &alvo.to_string_lossy(), "--conferir",
+        ],
+        5,
+    )?;
+    let limite = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let mut texto = String::new();
+    while std::time::Instant::now() < limite {
+        texto = std::fs::read_to_string(&arquivo).unwrap_or_default();
+        if texto.contains("acessibilidade: ") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    let _ = rodar("/bin/launchctl", &["remove", ROTULO], 5);
+    let _ = std::fs::remove_file(&arquivo);
+    if texto.is_empty() {
+        return Err("o host não respondeu em 8 s".into());
+    }
+    Ok(texto)
+}
+
 fn conferir_permissoes() -> (Medida, Medida) {
     let alvo = host_bin();
     if !alvo.exists() {
@@ -267,7 +304,7 @@ fn conferir_permissoes() -> (Medida, Medida) {
     }
     // 10 s porque o binário só imprime duas linhas e sai; se passar
     // disso, algo está pendurado e pendurado não é "ok".
-    let saida = rodar(&alvo.to_string_lossy(), &["--conferir"], 10);
+    let saida = conferir_fora_do_logid(&alvo);
     let ler = |texto: &str, chave: &str| -> Option<bool> {
         texto
             .lines()
@@ -353,7 +390,7 @@ pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
             &[
                 host_bin().to_string_lossy().into_owned(),
                 "9777".into(),
-                "1".into(),
+                "Capture screen 0".into(),
             ],
             false,
             None,
