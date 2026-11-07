@@ -320,11 +320,39 @@ fn instalar_relogio() -> Result<String, String> {
     let dir = crate::sys::home_dir().join(".config/systemd/user");
     std::fs::create_dir_all(&dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
 
-    let service = "[Unit]\n        Description=logi-ota - confere a Release publicada e aplica se for mais nova\n        Documentation=file:///home/user/dev/logi/specs/015-ota.md\n\n        [Service]\n        Type=oneshot\n        ExecStart=%h/.local/bin/logi-ota\n";
-    // `OnBootSec` pequeno e `OnUnitActiveSec` de uma hora: a primeira
-    // checagem depois de ligar a máquina é a que importa, e uma por
-    // hora cabe folgado no limite da API com token (5.000/h).
-    let timer = "[Unit]\n        Description=relógio do logi-ota\n\n        [Timer]\n        OnBootSec=3min\n        OnUnitActiveSec=1h\n        Unit=logi-ota.service\n\n        [Install]\n        WantedBy=timers.target\n";
+    // `concat!` e nao continuacao de linha com `\`: a versao anterior
+    // escrevia o arquivo com a indentacao do codigo-fonte dentro. O
+    // systemd engoliu e funcionou, mas unit com espaco a esquerda e
+    // bomba de efeito retardado.
+    let service = concat!(
+        "[Unit]\n",
+        "Description=logi-ota - confere a Release publicada e aplica se for mais nova\n",
+        "Documentation=file:///home/user/dev/logi/specs/015-ota.md\n",
+        "\n",
+        "[Service]\n",
+        "Type=oneshot\n",
+        "ExecStart=%h/.local/bin/logi-ota\n",
+    );
+    // `OnActiveSec` e nao `OnBootSec`: numa maquina ligada ha horas,
+    // `OnBootSec=3min` ja passou, e `enable --now` dispara o servico NA
+    // HORA -- ou seja, o botao do wizard aplicaria um build novo e
+    // reiniciaria o `logid` no meio da requisicao que o instalou. Foi o
+    // que aconteceu aqui na primeira versao (o `list-timers` mostrou
+    // "LAST 495ms ago" logo depois do POST). Relativo a ativacao do
+    // timer, a primeira checagem cai 10 min depois -- de instalar ou de
+    // ligar a maquina -- e ninguem esta mais esperando resposta.
+    let timer = concat!(
+        "[Unit]\n",
+        "Description=relogio do logi-ota\n",
+        "\n",
+        "[Timer]\n",
+        "OnActiveSec=10min\n",
+        "OnUnitActiveSec=1h\n",
+        "Unit=logi-ota.service\n",
+        "\n",
+        "[Install]\n",
+        "WantedBy=timers.target\n",
+    );
 
     std::fs::write(dir.join("logi-ota.service"), service)
         .map_err(|e| format!("gravar logi-ota.service: {e}"))?;

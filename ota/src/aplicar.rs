@@ -554,9 +554,19 @@ fn porta(base: &Path, s: Sistema) -> u16 {
     if let Some(p) = std::env::var("LOGI_PORT").ok().and_then(|p| p.parse::<u16>().ok()) {
         return p;
     }
+    // No Windows a config NAO fica junto dos binarios: o `logid` a le de
+    // `%APPDATA%\logi` (Roaming), e os binarios vivem em
+    // `%LOCALAPPDATA%\logid`. Procurar no mesmo lugar dos dois seria
+    // nunca achar -- e cair no 8787 chumbado, que e o bug que esta
+    // funcao existe para evitar. Conferido na saida do wizard de la:
+    // `C:\Users\user\AppData\Roaming\logi\config.toml`.
     let cfg = match s {
         Sistema::Linux | Sistema::Mac => base.join(".config").join("logi").join("config.toml"),
-        Sistema::Windows => base.join("logid").join("config.toml"),
+        Sistema::Windows => std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| base.to_path_buf())
+            .join("logi")
+            .join("config.toml"),
     };
     fs::read_to_string(cfg)
         .ok()
