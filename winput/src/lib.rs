@@ -16,8 +16,7 @@
 //! the user's input. That is why the guard has to run in the interactive
 //! session (shortcut in shell:startup), not as a service.
 //!
-//! The public `clipboard_*` names stay as they are for now (logid calls
-//! them). Error strings stay pt-BR: they can reach the panel.
+//! Error strings stay pt-BR: they can reach the panel.
 
 #[repr(C)]
 struct LastInputInfo {
@@ -225,7 +224,7 @@ fn with_clipboard<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String>
 }
 
 /// Clipboard text, or `None` if there is no text in it.
-pub fn clipboard_ler() -> Result<Option<String>, String> {
+pub fn clipboard_read() -> Result<Option<String>, String> {
     if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
         return Ok(None);
     }
@@ -251,7 +250,7 @@ pub fn clipboard_ler() -> Result<Option<String>, String> {
 }
 
 /// Puts text on the clipboard.
-pub fn clipboard_escrever(text: &str) -> Result<(), String> {
+pub fn clipboard_write(text: &str) -> Result<(), String> {
     let mut u: Vec<u16> = text.encode_utf16().collect();
     u.push(0);
     let bytes = u.len() * 2;
@@ -309,7 +308,7 @@ extern "system" {
 }
 
 /// File paths on the clipboard, or `None` if there are no files.
-pub fn clipboard_ler_arquivos() -> Result<Option<Vec<String>>, String> {
+pub fn clipboard_read_files() -> Result<Option<Vec<String>>, String> {
     if unsafe { IsClipboardFormatAvailable(CF_HDROP) } == 0 {
         return Ok(None);
     }
@@ -341,7 +340,7 @@ pub fn clipboard_ler_arquivos() -> Result<Option<Vec<String>>, String> {
 }
 
 /// Puts a list of files on the clipboard.
-pub fn clipboard_escrever_arquivos(paths: &[String]) -> Result<(), String> {
+pub fn clipboard_write_files(paths: &[String]) -> Result<(), String> {
     if paths.is_empty() {
         return Err("lista de arquivos vazia".into());
     }

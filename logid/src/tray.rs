@@ -11,7 +11,7 @@
 //!   process alive just for the icon to exist; killing it took the tray
 //!   along, and with it the only way back from the KVM through the menu.
 //! - **It talked to `logid` over HTTP** to read state and send focus.
-//!   Here the tray IS `logid`: it calls `kvm::mandar` directly, without
+//!   Here the tray IS `logid`: it calls `kvm::send` directly, without
 //!   serializing anything.
 //!
 //! StatusNotifierItem is pure D-Bus -- it needs neither GTK nor a
@@ -166,15 +166,15 @@ impl ksni::Tray for LogidTray {
         // Above the cap we do not send to everyone on our own: copying
         // 1.4 GB to two machines nobody is looking at wastes someone
         // else's bandwidth and disk. So the menu asks where, one
-        // destination at a time. See [`crate::clip_arq::ao_copiar`].
-        if let Some((paths, bytes)) = crate::clip_arq::oferta() {
+        // destination at a time. See [`crate::clip_files::on_copy`].
+        if let Some((paths, bytes)) = crate::clip_files::offer() {
             items.push(MenuItem::Separator);
             items.push(
                 StandardItem {
                     label: format!(
                         "{} arquivo(s) copiado(s), {}",
                         paths.len(),
-                        crate::clip_arq::humano(bytes)
+                        crate::clip_files::human_size(bytes)
                     ),
                     enabled: false,
                     ..Default::default()
@@ -226,7 +226,7 @@ impl LogidTray {
         let snap = g.clone();
         drop(g);
         let target = host.to_string();
-        std::thread::spawn(move || match crate::clip_arq::mandar_oferta(&snap, &target) {
+        std::thread::spawn(move || match crate::clip_files::send_offer(&snap, &target) {
             Ok(m) => crate::say!("tray: {m}"),
             Err(e) => crate::say!("tray: {e}"),
         });
@@ -239,7 +239,7 @@ impl LogidTray {
         };
         // Directly, without going through HTTP: the tray IS logid.
         let r = if snap.input.mode == "lan" {
-            crate::kvm::mandar(&snap, host).map(|d| format!("input to {host} ({d})"))
+            crate::kvm::send(&snap, host).map(|d| format!("input to {host} ({d})"))
         } else {
             let req = crate::focus::FocusRequest {
                 host: host.to_string(),
@@ -324,7 +324,7 @@ pub fn watch(handle: ksni::blocking::Handle<LogidTray>, cfg: Arc<std::sync::RwLo
                 fresh.remotes.join(","),
                 fresh.here,
                 fresh.target,
-                crate::clip_arq::oferta().map(|(c, b)| (c.len(), b))
+                crate::clip_files::offer().map(|(c, b)| (c.len(), b))
             );
             if key != previous {
                 previous = key;
@@ -366,5 +366,5 @@ fn build_state(cfg: &Arc<std::sync::RwLock<Config>>) -> TrayState {
         Err(_) => (Vec::new(), None),
     };
 
-    TrayState { devices, remotes, here, target: crate::kvm::alvo() }
+    TrayState { devices, remotes, here, target: crate::kvm::target() }
 }

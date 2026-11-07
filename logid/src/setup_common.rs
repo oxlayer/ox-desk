@@ -113,7 +113,7 @@ pub fn peers(cfg: &Config) -> Check {
 
 /// Is the clipboard watcher up?
 ///
-/// Reads the note the watcher itself leaves (`clip::vigia`), instead of
+/// Reads the note the watcher itself leaves (`clip::watch_status`), instead of
 /// testing from outside. Testing from outside would require writing to
 /// the person's clipboard -- and a wizard that erases what you copied to
 /// prove it works is worse than the problem.
@@ -160,7 +160,7 @@ pub fn monitors_verdict(output: &str) -> Check {
 }
 
 pub fn clipboard() -> Check {
-    match crate::clip::vigia() {
+    match crate::clip::watch_status() {
         Some((true, d)) => Check::ok("clipboard", d),
         Some((false, d)) => Check::missing("clipboard", d),
         None => Check::error("clipboard", "a vigilância ainda não reportou nada"),
@@ -199,7 +199,7 @@ pub fn test_clipboard() -> Result<String, String> {
         // D-Bus thread to "test" would lose ownership of the current
         // selection -- what the person copied would vanish on the next
         // Ctrl+V.
-        match crate::clip::vigia() {
+        match crate::clip::watch_status() {
             Some((true, d)) => Ok(d),
             Some((false, d)) => Err(format!("{d}. Reinicie o daemon para tentar de novo.")),
             None => Err("a thread do clipboard não reportou: veja o journal do logid".into()),
@@ -210,8 +210,8 @@ pub fn test_clipboard() -> Result<String, String> {
         // One read now, through the same path as the watcher: it writes
         // the note, and we read the note. Reading directly here would
         // measure a different path from the one that actually runs.
-        let _ = crate::clip_arq::ler_local();
-        match crate::clip::vigia() {
+        let _ = crate::clip_files::read_local();
+        match crate::clip::watch_status() {
             Some((true, d)) => Ok(d),
             Some((false, d)) => Err(d),
             None => Err("a leitura não reportou nada".into()),

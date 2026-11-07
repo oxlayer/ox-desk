@@ -266,7 +266,7 @@ fn install(
     drop(data);
 
     // The system's `tar`: it exists on all three machines (Windows 10 has
-    // shipped `tar.exe` since 1803, and clip_arq.rs already uses it on all
+    // shipped `tar.exe` since 1803, and clip_files.rs already uses it on all
     // three).
     let s = exec::run(
         "tar",

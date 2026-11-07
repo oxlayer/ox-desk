@@ -42,15 +42,22 @@ pub struct Logs {
 
 /// The patterns match the log lines written by `border`, `follow` and
 /// `focus`; whoever rewords those lines updates these too.
+///
+/// `falhou` stays: error strings from `winput` (pt-BR on purpose, they can
+/// reach the panel) still end up in the log through these modules.
 fn classify(msg: &str) -> &'static str {
     let m = msg.to_ascii_lowercase();
-    if m.contains("falhou") || m.contains("error") || m.contains("fatal") || m.contains("nao trocou")
+    if m.contains("failed")
+        || m.contains("falhou")
+        || m.contains("error")
+        || m.contains("fatal")
+        || m.contains("did not switch")
     {
         "error"
-    } else if m.contains("aviso")
-        || m.contains("estado dividido")
+    } else if m.contains("warning")
+        || m.contains("split state")
         || m.contains("cooldown")
-        || m.contains("desarmada")
+        || m.contains("disarmed")
     {
         "warn"
     } else {
@@ -60,7 +67,7 @@ fn classify(msg: &str) -> &'static str {
 
 /// Lines that only add noise: the D-Bus signal echo and the heartbeat.
 fn noise(msg: &str) -> bool {
-    msg.starts_with("border[sinal]") || msg.contains("border: vivo")
+    msg.starts_with("border[signal]") || msg.contains("border: alive")
 }
 
 pub fn tail(lines: usize) -> Logs {
@@ -84,16 +91,22 @@ mod tests {
 
     #[test]
     fn classifies_by_text() {
-        assert_eq!(classify("slot 1 FALHOU: sem resposta"), "error");
-        assert_eq!(classify("border: cooldown ate 18:00"), "warn");
-        assert_eq!(classify("troca concluida em 46ms"), "info");
+        assert_eq!(classify("border: MX Keys: FAILED -- slot 1 does not answer"), "error");
+        assert_eq!(classify("border: did NOT switch -- plan not ready (blockers: hidraw)"), "error");
+        assert_eq!(classify("border: SPLIT STATE: 1 switched, but 1 stayed here"), "warn");
+        assert_eq!(classify("border: disarmed -- the devices are not here"), "warn");
+        assert_eq!(classify("border: cooldown over, watching again"), "warn");
+        assert_eq!(classify("border: armed -- the devices are here"), "info");
+        assert_eq!(classify("border: input detected -- dead-man's switch stood down"), "info");
+        assert_eq!(classify("switch done in 46ms"), "info");
+        // pt-BR error text from winput still counts.
+        assert_eq!(classify("clip: GlobalLock falhou na leitura"), "error");
     }
 
     #[test]
     fn noise_is_dropped() {
-
-        assert!(noise("border[sinal] Activated x=2560.0"));
-        assert!(noise("border: vivo"));
-        assert!(!noise("border: permanencia 1/1, trocando"));
+        assert!(noise("border[signal] Activated x=2560.0"));
+        assert!(noise("border: alive, 3 min watching 1 edge(s), armed"));
+        assert!(!noise("border: dwell 1/2, waiting"));
     }
 }

@@ -34,7 +34,7 @@ mod focus;
 mod follow;
 mod hidpp;
 mod clip;
-mod clip_arq;
+mod clip_files;
 mod kvm;
 mod logs;
 mod pairing;
@@ -146,26 +146,26 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
         // write directly.
         Some("kvm-soltar") => {
             let port = Config::load().map(|c| c.port).unwrap_or(8787);
-            Some(crate::kvm::cli_soltar(port))
+            Some(crate::kvm::cli_release(port))
         }
         Some("clip-set") => {
             let port = Config::load().map(|c| c.port).unwrap_or(8787);
             Some(crate::clip::cli_set(port))
         }
         #[cfg(target_os = "linux")]
-        Some("clip-sonda") => Some(crate::clip_arq::cli_sonda()),
+        Some("clip-sonda") => Some(crate::clip_files::cli_probe()),
         // Receives files from another machine. `clip-arq-set` reads a tar
         // from stdin; the other two serve the rsync path, which copies
         // first and notifies afterwards.
         Some("clip-arq-set") => {
             let port = Config::load().map(|c| c.port).unwrap_or(8787);
-            Some(crate::clip_arq::cli_set(port))
+            Some(crate::clip_files::cli_set(port))
         }
-        Some("clip-arq-dir") => Some(crate::clip_arq::cli_dir()),
+        Some("clip-arq-dir") => Some(crate::clip_files::cli_dir()),
         Some("clip-arq-prontos") => {
             let port = Config::load().map(|c| c.port).unwrap_or(8787);
             match args.get(1) {
-                Some(d) => Some(crate::clip_arq::cli_prontos(port, d)),
+                Some(d) => Some(crate::clip_files::cli_ready(port, d)),
                 None => {
                     eprintln!("clip-arq-prontos: give the folder");
                     Some(ExitCode::FAILURE)
@@ -287,18 +287,18 @@ fn main() -> std::process::ExitCode {
     // kill it. Killing it yanked the input away from whoever was using
     // the other machine every time a deploy restarted the daemon.
     if let Ok(g) = cfg.read() {
-        kvm::adotar(&g);
+        kvm::adopt(&g);
     }
 
     // Shared clipboard. On Linux a thread with its own D-Bus session
     // watches and publishes; on the others, polling.
     #[cfg(target_os = "linux")]
     {
-        let canal = clip::linux::spawn(Arc::clone(&cfg));
-        clip::guardar_canal(canal);
+        let channel = clip::linux::spawn(Arc::clone(&cfg));
+        clip::store_channel(channel);
     }
     #[cfg(not(target_os = "linux"))]
-    clip::vigiar(Arc::clone(&cfg));
+    clip::watch(Arc::clone(&cfg));
     // Native tray. Not fatal if it does not come up: without the
     // AppIndicator extension (or without any tray) the icon does not
     // appear and the daemon keeps serving the panel and the API. Taking
@@ -432,7 +432,7 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
     // by sending to the local machine, so asking for confirmation would
     // be ceremony with no risk behind it.
     if snap.input.mode == "lan" {
-        let response = match kvm::mandar(&snap, &fr.host) {
+        let response = match kvm::send(&snap, &fr.host) {
             Ok(dest) => serde_json::json!({
                 "plan": { "host": fr.host, "route": "lan" },
                 "executed": true,
@@ -525,10 +525,10 @@ fn post_clipboard(mut req: Request) {
     if req.as_reader().read_to_string(&mut text).is_err() {
         return err_json(req, 400, "corpo ilegivel");
     }
-    if text.len() > clip::LIMITE {
+    if text.len() > clip::LIMIT {
         return err_json(req, 413, "texto acima do limite");
     }
-    match clip::aplicar_local(&text) {
+    match clip::apply_local(&text) {
         Ok(()) => ok_json(req, "{\"ok\":true}".into()),
         Err(e) => err_json(req, 500, &e),
     }
@@ -553,7 +553,7 @@ fn post_clipboard_files(mut req: Request) {
     if paths.is_empty() {
         return err_json(req, 400, "informe {\"paths\": [...]}");
     }
-    match clip_arq::aplicar_local(&paths) {
+    match clip_files::apply_local(&paths) {
         Ok(()) => ok_json(req, "{\"ok\":true}".into()),
         Err(e) => err_json(req, 500, &e),
     }
@@ -578,7 +578,7 @@ fn post_clipboard_send(mut req: Request, cfg: &RwLock<Config>) {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "estado da config corrompido"),
     };
-    match clip_arq::mandar_oferta(&snap, &host) {
+    match clip_files::send_offer(&snap, &host) {
         Ok(d) => ok_json(req, serde_json::json!({ "ok": true, "detail": d }).to_string()),
         Err(e) => err_json(req, 409, &e),
     }
@@ -600,7 +600,7 @@ fn post_transfer(mut req: Request, cfg: &RwLock<Config>) {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "config travada"),
     };
-    match files::transferir(&snap, &field("de"), &field("caminho"), &field("para"), &field("pasta")) {
+    match files::transfer(&snap, &field("de"), &field("caminho"), &field("para"), &field("pasta")) {
         Ok(id) => ok_json(req, serde_json::json!({ "id": id }).to_string()),
         Err(e) => err_json(req, 409, &e),
     }
@@ -672,7 +672,7 @@ fn post_hidpp_pause(mut req: Request) {
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let min = v.get("minutes").and_then(|x| x.as_u64()).unwrap_or(10).min(60);
-    let remaining = hidpp::pausar(min);
+    let remaining = hidpp::pause(min);
     match remaining {
         Some(s) => say!("hidpp: polling PAUSED for {}s (diagnostics)", s),
         None => say!("hidpp: polling resumed"),
@@ -948,7 +948,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         return patch_config(req, cfg, cache);
     }
     if path == "/api/kvm/soltar" && method == "POST" {
-        return match kvm::soltar() {
+        return match kvm::release() {
             Ok(()) => ok_json(req, "{\"ok\":true}".into()),
             Err(e) => err_json(req, 500, &e),
         };
@@ -1040,7 +1040,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             };
             ok_json(
                 req,
-                serde_json::json!({ "mode": mode, "target": kvm::alvo() }).to_string(),
+                serde_json::json!({ "mode": mode, "target": kvm::target() }).to_string(),
             )
         }
 
@@ -1097,7 +1097,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             }
         }
 
-        "/api/files/transferencias" => match serde_json::to_string(&files::transferencias()) {
+        "/api/files/transferencias" => match serde_json::to_string(&files::transfers()) {
             Ok(b) => ok_json(req, b),
             Err(e) => err_json(req, 500, &format!("serializar: {e}")),
         },
@@ -1146,7 +1146,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 "border_enabled": snap.input.border.enabled,
                 "follow_enabled": snap.input.follow.enabled,
                 "follow_leader": snap.input.follow.leader,
-                "hidpp_pausado_s": hidpp::pausa_restante_s(),
+                "hidpp_pausado_s": hidpp::pause_remaining_s(),
                 "devices": snap.devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>(),
             });
             ok_json(req, body.to_string())

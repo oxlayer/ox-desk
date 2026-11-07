@@ -1,7 +1,7 @@
-//! Ponte para o agente do outro lado.
+//! Bridge to the agent on the other side.
 //!
-//! Invocado por SSH de proposito: reaproveita a chave que ja temos, sem
-//! porta nova nem auth nova. Ver ../specs/002-ssh.md.
+//! Invoked over SSH on purpose: it reuses the key we already have, with
+//! no new port and no new auth. See ../specs/002-ssh.md.
 
 use crate::config::{HostCfg, HostOs};
 use serde::Serialize;
@@ -9,14 +9,14 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub struct Slot {
     pub slot: u8,
-    /// Nome HID++, quando o agente consegue ler. E por ele que o
-    /// reconciliador casa dispositivo: canal e ambiguo.
+    /// HID++ name, when the agent can read it. The reconciler matches
+    /// devices by it: the channel is ambiguous.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub online: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub num_hosts: Option<u8>,
-    /// 1-based, como a config usa.
+    /// 1-based, as the config uses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_host: Option<u8>,
 }
@@ -29,40 +29,40 @@ pub struct AgentInfo {
     pub error: Option<String>,
 }
 
-/// Monta a linha a executar NO par, respeitando o shell de lá.
+/// Builds the line to run ON the peer, honoring the shell there.
 ///
-/// No Windows o shell e o PowerShell, que expande `%VAR%` so via
-/// `$env:`, e precisa do operador `&` para executar um caminho entre
-/// aspas. No Unix e `sh`: aspas simples bastam, e `$HOME` ja e expandido
-/// pelo proprio shell.
+/// On Windows the shell is PowerShell, which expands `%VAR%` only via
+/// `$env:`, and needs the `&` operator to run a quoted path. On Unix it
+/// is `sh`: single quotes are enough, and `$HOME` is expanded by the
+/// shell itself.
 ///
-/// Rodar a forma errada falha de um jeito chato: no Unix o `& "..."`
-/// viraria "comando em background" e devolveria sucesso vazio, que o
-/// chamador leria como "agente nao respondeu JSON".
+/// Running the wrong form fails in an annoying way: on Unix `& "..."`
+/// would become "background command" and return empty success, which
+/// the caller would read as "agent did not answer JSON".
 fn remote_cmd(os: HostOs, exe: &str, args: &str) -> String {
     match os {
         HostOs::Windows => {
             format!("& \"{}\" {args}", exe.replace("%LOCALAPPDATA%", "$env:LOCALAPPDATA"))
         }
-        // `Unknown` tratado como Unix: e o default seguro depois de o par
-        // deixar de ser sempre Windows, e um caminho com `%` ou `\` ja foi
-        // classificado como Windows por `HostCfg::os`.
+        // `Unknown` treated as Unix: it is the safe default now that the
+        // peer is no longer always Windows, and a path with `%` or `\` has
+        // already been classified as Windows by `HostCfg::os`.
         _ => format!("'{}' {args}", exe.replace('\'', "")),
     }
 }
 
-/// Roda `<agent> devices` no host remoto e interpreta a saida.
+/// Runs `<agent> devices` on the remote host and parses the output.
 ///
-/// Recebe o host inteiro, e nao alias+exe+os soltos, porque precisa de
-/// quatro coisas dele: o alias, o caminho do agente, o SO (para montar o
-/// comando no shell certo) e o `addr` (para resolver aqui em vez de
-/// deixar o ssh resolver -- ver `probe::ssh_addr_opts`).
+/// Takes the whole host, not loose alias+exe+os, because it needs four
+/// things from it: the alias, the agent path, the OS (to build the
+/// command for the right shell) and the `addr` (to resolve here instead
+/// of letting ssh resolve -- see `probe::ssh_addr_opts`).
 pub fn devices(h: &HostCfg) -> AgentInfo {
     let (Some(ssh_alias), Some(exe)) = (&h.ssh, &h.agent) else {
         return AgentInfo {
             reachable: false,
             slots: vec![],
-            error: Some("host sem `ssh` e/ou `agent` na config".into()),
+            error: Some("host has no `ssh` and/or `agent` in the config".into()),
         };
     };
     let ps = remote_cmd(h.os(), exe, "devices");
@@ -80,19 +80,19 @@ pub fn devices(h: &HostCfg) -> AgentInfo {
         return AgentInfo {
             reachable: false,
             slots: vec![],
-            error: Some("nao consegui executar ssh".into()),
+            error: Some("could not run ssh".into()),
         };
     };
 
-    // O OpenSSH do Windows e antigo e imprime aviso de post-quantum em
-    // stderr; a linha de JSON e a que importa.
+    // Windows' OpenSSH is old and prints a post-quantum warning on
+    // stderr; the JSON line is the one that matters.
     let text = String::from_utf8_lossy(&out.stdout);
     let Some(line) = text.lines().find(|l| l.trim_start().starts_with('{')) else {
         let err = String::from_utf8_lossy(&out.stderr)
             .lines()
             .filter(|l| !l.contains("post-quantum") && !l.contains("openssh.com") && !l.contains("store now"))
             .last()
-            .unwrap_or("agente nao respondeu JSON")
+            .unwrap_or("agent did not answer JSON")
             .to_string();
         return AgentInfo { reachable: false, slots: vec![], error: Some(err) };
     };
@@ -101,7 +101,7 @@ pub fn devices(h: &HostCfg) -> AgentInfo {
         return AgentInfo {
             reachable: false,
             slots: vec![],
-            error: Some("JSON do agente ilegivel".into()),
+            error: Some("unreadable agent JSON".into()),
         };
     };
     if v.get("ok").and_then(|b| b.as_bool()) != Some(true) {
@@ -131,13 +131,13 @@ pub fn devices(h: &HostCfg) -> AgentInfo {
     AgentInfo { reachable: true, slots, error: None }
 }
 
-/// Pede ao agente do par que mande um slot para outro canal.
+/// Asks the peer's agent to send a slot to another channel.
 ///
-/// Usado pelo reconciliador: quem detem o dispositivo e quem pode
-/// empurra-lo, e as vezes nao somos nos.
+/// Used by the reconciler: whoever holds the device is the one who can
+/// push it, and sometimes that is not us.
 pub fn set_host(h: &HostCfg, slot: u8, host: u8) -> Result<(), String> {
     let (Some(ssh_alias), Some(exe)) = (&h.ssh, &h.agent) else {
-        return Err("host sem `ssh` e/ou `agent` na config".into());
+        return Err("host has no `ssh` and/or `agent` in the config".into());
     };
     let ps = remote_cmd(h.os(), exe, &format!("set-host {slot} {host} --confirm"));
     let mut args: Vec<String> = vec![
@@ -153,13 +153,13 @@ pub fn set_host(h: &HostCfg, slot: u8, host: u8) -> Result<(), String> {
     let line = text
         .lines()
         .find(|l| l.trim_start().starts_with('{'))
-        .ok_or("agente nao respondeu JSON")?;
+        .ok_or("agent did not answer JSON")?;
     let v: serde_json::Value =
-        serde_json::from_str(line).map_err(|_| "JSON do agente ilegivel".to_string())?;
+        serde_json::from_str(line).map_err(|_| "unreadable agent JSON".to_string())?;
     if v.get("ok").and_then(|b| b.as_bool()) == Some(true) {
         Ok(())
     } else {
-        Err(v.get("error").and_then(|e| e.as_str()).unwrap_or("falhou").to_string())
+        Err(v.get("error").and_then(|e| e.as_str()).unwrap_or("failed").to_string())
     }
 }
 
@@ -168,14 +168,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn comando_remoto_respeita_o_shell_do_par() {
-        // Windows: PowerShell precisa do `&` e expande %VAR% via $env:.
+    fn remote_command_honors_the_peer_shell() {
+        // Windows: PowerShell needs the `&` and expands %VAR% via $env:.
         assert_eq!(
             remote_cmd(HostOs::Windows, r"%LOCALAPPDATA%\logid\logid-agent.exe", "devices"),
             "& \"$env:LOCALAPPDATA\\logid\\logid-agent.exe\" devices"
         );
-        // Unix: aspas simples, sem `&` -- que ali significaria background
-        // e devolveria sucesso vazio, lido como "nao respondeu JSON".
+        // Unix: single quotes, no `&` -- which there would mean background
+        // and return empty success, read as "did not answer JSON".
         assert_eq!(
             remote_cmd(HostOs::Linux, "/home/user/.local/bin/logid", "devices"),
             "'/home/user/.local/bin/logid' devices"
@@ -184,7 +184,7 @@ mod tests {
             remote_cmd(HostOs::Macos, "/opt/homebrew/bin/logid", "set-host 1 2 --confirm"),
             "'/opt/homebrew/bin/logid' set-host 1 2 --confirm"
         );
-        // Desconhecido cai no Unix, que e o default seguro agora.
+        // Unknown falls back to Unix, which is the safe default now.
         assert_eq!(
             remote_cmd(HostOs::Unknown, "/usr/local/bin/logid", "devices"),
             "'/usr/local/bin/logid' devices"
