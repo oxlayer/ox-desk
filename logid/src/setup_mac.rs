@@ -29,7 +29,7 @@ use crate::setup::{Estado, Medida};
 use crate::setup_comum::rodar;
 use std::path::PathBuf;
 
-const BINS: [&str; 4] = ["logid", "logistream-host", "logistream-view", "logi-ota"];
+const BINS: [&str; 5] = ["logid", "logistream-host", "logistream-view", "logistream-ponte", "logi-ota"];
 const IDENTIDADE: &str = "logi local signing";
 const CHAVEIRO: &str = "Library/Keychains/logi.keychain-db";
 

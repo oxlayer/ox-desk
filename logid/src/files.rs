@@ -11,12 +11,12 @@
 //! agente significaria mais superficie para manter e nada a mais em
 //! troca.
 //!
-//! ## Somente listagem, nesta versao
+//! ## Copia sim, apagar nao
 //!
-//! Sem download, sem upload, sem apagar. O daemon e superficie de
-//! privilegio (spec 008): ele ja pode executar SSH, entao a listagem nao
-//! concede nada novo -- mas escrever concede, e escrever por acidente num
-//! painel que eu mesmo sirvo e o tipo de erro que nao tem desfazer.
+//! O daemon e superficie de privilegio (spec 008), e escrever por acidente
+//! num painel que eu mesmo sirvo e o tipo de erro que nao tem desfazer. Por
+//! isso a escrita e estreita: so copia, entre esta maquina e outra, e nunca
+//! por cima de algo que ja existe. Apagar e mover continuam de fora.
 //!
 //! ## Caminhos nao sao comparaveis entre as duas origens
 //!
@@ -28,6 +28,7 @@
 
 use crate::config::Config;
 use serde::Serialize;
+use std::sync::Mutex;
 use std::io::Write;
 use std::process::Stdio;
 
@@ -437,9 +438,154 @@ fn sort_entries(v: &mut [Entry]) {
     });
 }
 
+// --- transferencia ---------------------------------------------------------
+
+/// Uma copia pedida pela tela. O `estado` e `andando`, `ok` ou `erro`.
+#[derive(Debug, Clone, Serialize)]
+pub struct Transferencia {
+    pub id: u64,
+    pub nome: String,
+    pub de: String,
+    pub para: String,
+    pub estado: &'static str,
+    pub detalhe: String,
+}
+
+static TRANSFERENCIAS: Mutex<Vec<Transferencia>> = Mutex::new(Vec::new());
+/// Quantas ficam na lista da tela. A copia em si nao depende disso.
+const MAX_TRANSFERENCIAS: usize = 30;
+
+pub fn transferencias() -> Vec<Transferencia> {
+    TRANSFERENCIAS.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+fn concluir(id: u64, estado: &'static str, detalhe: String) {
+    if let Ok(mut g) = TRANSFERENCIAS.lock() {
+        if let Some(t) = g.iter_mut().find(|t| t.id == id) {
+            t.estado = estado;
+            t.detalhe = detalhe;
+        }
+    }
+}
+
+/// Recusa o que nao cabe entre aspas no lote do sftp, em vez de alterar o
+/// nome em silencio e copiar outra coisa. `*?[` seriam glob no `get`.
+fn caminho_seguro(c: &str) -> Result<(), String> {
+    match c.chars().find(|x| matches!(x, '\'' | '"' | '\n' | '\r' | '*' | '?' | '[')) {
+        Some(x) => Err(format!("o caminho tem um caractere que nao sei copiar: {x:?}")),
+        None => Ok(()),
+    }
+}
+
+/// Junta pasta e nome com `/`: o sftp usa isso nos dois sistemas.
+fn juntar(pasta: &str, nome: &str) -> String {
+    format!("{}/{nome}", pasta.trim_end_matches(['/', '\\']))
+}
+
+fn nome_de(caminho: &str) -> Option<&str> {
+    caminho.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().filter(|n| !n.is_empty())
+}
+
+fn tamanho_em(cfg: &Config, host: &str, pasta: &str, nome: &str) -> Result<Option<Entry>, String> {
+    let l = list(cfg, host, pasta);
+    if let Some(e) = l.error {
+        return Err(e);
+    }
+    Ok(l.entries.into_iter().find(|e| e.name == nome))
+}
+
+/// Copia `caminho` de `de` para a pasta `pasta` de `para`. Devolve o id, e a
+/// copia segue numa thread: um arquivo grande nao pode prender o servidor.
+pub fn transferir(
+    cfg: &Config,
+    de: &str,
+    caminho: &str,
+    para: &str,
+    pasta: &str,
+) -> Result<u64, String> {
+    let achar = |n: &str| {
+        cfg.hosts.iter().find(|h| h.name == n).ok_or_else(|| format!("host '{n}' nao esta na config"))
+    };
+    let (ho, hd) = (achar(de)?, achar(para)?);
+    let remoto = match (ho.is_local(), hd.is_local()) {
+        (true, false) => hd,
+        (false, true) => ho,
+        _ => return Err("uma das pontas tem de ser esta maquina".into()),
+    };
+    let alias = remoto.ssh.clone().ok_or_else(|| format!("'{}' nao tem `ssh`", remoto.name))?;
+    caminho_seguro(caminho)?;
+    caminho_seguro(pasta)?;
+    let nome = nome_de(caminho).ok_or("caminho sem nome")?.to_string();
+    let pai = caminho.trim_end_matches(['/', '\\']);
+    let pai = pai[..pai.len() - nome.len()].to_string();
+
+    let origem = tamanho_em(cfg, de, &pai, &nome)?.ok_or("o arquivo nao esta mais la")?;
+    if tamanho_em(cfg, para, pasta, &nome)?.is_some() {
+        return Err(format!("'{nome}' ja existe no destino: nada foi copiado"));
+    }
+
+    let destino = juntar(pasta, &nome);
+    let comando = if ho.is_local() { "put" } else { "get" };
+    let script = format!("{comando} -r '{caminho}' '{destino}'\n");
+    let mut g = TRANSFERENCIAS.lock().map_err(|_| "lista travada")?;
+    let id = g.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+    g.push(Transferencia {
+        id,
+        nome: nome.clone(),
+        de: de.into(),
+        para: para.into(),
+        estado: "andando",
+        detalhe: String::new(),
+    });
+    let sobra = g.len().saturating_sub(MAX_TRANSFERENCIAS);
+    g.drain(..sobra);
+    drop(g);
+
+    let (cfg, para, pasta, addr) =
+        (cfg.clone(), para.to_string(), pasta.to_string(), remoto.addr.clone());
+    std::thread::spawn(move || {
+        if let Err(e) = sftp_batch(&alias, &addr, &script) {
+            return concluir(id, "erro", e);
+        }
+        // Terminar nao e ter chegado: quem responde e o destino.
+        match tamanho_em(&cfg, &para, &pasta, &nome) {
+            Ok(Some(e)) if origem.kind != "file" || e.size == origem.size => {
+                let t = e.size.map(|b| format!("{b} bytes")).unwrap_or_else(|| "pasta".into());
+                say!("files: {nome} copiado para {para}");
+                concluir(id, "ok", t);
+            }
+            Ok(Some(e)) => concluir(
+                id,
+                "erro",
+                format!("chegou com {:?} bytes, esperava {:?}", e.size, origem.size),
+            ),
+            Ok(None) => concluir(id, "erro", "o destino nao tem o arquivo".into()),
+            Err(e) => concluir(id, "erro", e),
+        }
+    });
+    Ok(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caminho_com_aspas_ou_glob_e_recusado() {
+        assert!(caminho_seguro("/C:/Users/user/Meus Arquivos/a.txt").is_ok());
+        assert!(caminho_seguro("/tmp/a'b").is_err());
+        assert!(caminho_seguro("/tmp/*").is_err());
+        assert!(caminho_seguro("/tmp/a\nb").is_err());
+    }
+
+    #[test]
+    fn nome_sai_do_fim_do_caminho() {
+        assert_eq!(nome_de("/C:/Users/a.txt"), Some("a.txt"));
+        assert_eq!(nome_de("C:\\Users\\pasta\\"), Some("pasta"));
+        assert_eq!(nome_de("/"), None);
+        assert_eq!(juntar("/tmp/", "a"), "/tmp/a");
+    }
+
 
     #[test]
     fn decodifica_percent_e_mais() {

@@ -366,6 +366,50 @@
   .aba .x:hover{opacity:1}
   .palco{position:relative;height:calc(100vh - 92px);background:#000;border-radius:12px;
     overflow:hidden}
+  /* A barra fica fora do canvas: clique nela nunca vira clique remoto. */
+  .barra{height:40px;display:flex;align-items:center;gap:4px;padding:0 8px;
+    background:#16191f;border-bottom:1px solid #262b34;color:#d7dbe2}
+  .barra button{font:inherit;font-size:12.5px;color:inherit;background:none;border:0;
+    padding:5px 9px;border-radius:7px;cursor:pointer;white-space:nowrap}
+  .barra button:hover{background:rgba(255,255,255,.1)}
+  .barra button:focus-visible{outline:2px solid var(--accent)}
+  .barra .fim{color:#ff8a8a}
+  .barra .esp{flex:1}
+  .barra .nome{font-weight:620;font-size:13px;padding:0 8px}
+  .palco .tela{position:absolute;inset:40px 0 0 0}
+  .palco:fullscreen{border-radius:0;height:100vh}
+  /* Gerenciador sobre a tela remota: duas pastas e a fila embaixo. */
+  .arq{position:absolute;inset:0;z-index:2;display:grid;gap:10px;padding:12px;
+    grid-template-columns:minmax(0,1fr) 92px minmax(0,1fr);
+    grid-template-rows:minmax(0,1fr) auto;background:var(--bg);color:var(--fg)}
+  .arq[hidden]{display:none}
+  .pane{display:flex;flex-direction:column;min-height:0;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .pane .ptop{padding:10px 12px;border-bottom:1px solid var(--line)}
+  .pane .pquem{font-size:13px;font-weight:640}
+  .pane .pnav{display:flex;align-items:center;gap:6px;margin-top:6px}
+  .pane .pnav button{font:inherit;font-size:13px;color:var(--fg);background:var(--inset);
+    border:1px solid var(--line);border-radius:7px;padding:1px 8px;cursor:pointer}
+  .pane .pnav button:disabled{opacity:.4;cursor:default}
+  .pane .pcam{font:11.5px var(--mono);color:var(--dim);min-width:0;flex:1;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+  .pane .plista{overflow:auto;flex:1;min-height:0;padding:4px}
+  .pane .item{display:grid;grid-template-columns:18px minmax(0,1fr) 76px;gap:8px;width:100%;
+    align-items:center;padding:5px 8px;border-radius:7px;cursor:pointer;font-size:13px;
+    background:none;border:0;color:inherit;text-align:left;font-family:inherit}
+  .pane .item:hover{background:var(--selbg)}
+  .pane .item.sel{background:color-mix(in srgb,var(--accent) 24%,transparent)}
+  .pane .item .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pane .item .t{font:11px var(--mono);color:var(--faint);text-align:right}
+  .pane .nota{padding:14px;color:var(--dim);font-size:13px}
+  .meio{display:flex;flex-direction:column;justify-content:center;gap:8px}
+  .meio button{font:inherit;font-size:12.5px;font-weight:600;padding:8px 4px;border-radius:9px;
+    cursor:pointer;color:#fff;border:0;background:color-mix(in srgb,var(--accent) 88%,#000)}
+  .meio button:disabled{opacity:.35;cursor:default}
+  .fila{grid-column:1/-1;max-height:96px;overflow:auto;font-size:12.5px;color:var(--dim)}
+  .fila:empty{display:none}
+  .fila div{padding:2px 4px}
+  .fila .ok{color:var(--up)} .fila .erro{color:var(--down)}
   .palco canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
     outline:0;display:none;cursor:default}
   .palco canvas.on{display:block}
@@ -419,7 +463,29 @@
 </aside>
 <main class="wrap">
 <nav class="abas" id="abas" hidden></nav>
-<div class="palco" id="palco" hidden></div>
+<div class="palco" id="palco" hidden>
+  <div class="barra" id="barra">
+    <span class="nome" id="barranome"></span>
+    <button data-combo="alttab" title="Alt+Tab na maquina remota">Alt+Tab</button>
+    <button data-combo="super" title="Tecla Windows ou Super">Iniciar</button>
+    <button data-combo="tarefas" title="Ctrl+Shift+Esc na maquina remota">Tarefas</button>
+    <button id="barraarq">Arquivos</button>
+    <span class="esp"></span>
+    <button id="barracheia">Tela cheia</button>
+    <button class="fim" id="barrafim">Encerrar</button>
+  </div>
+  <div class="tela" id="tela">
+    <div class="arq" id="arq" hidden>
+      <div class="pane" data-lado="esq"></div>
+      <div class="meio">
+        <button id="arqenviar" title="Copiar o selecionado para a maquina remota">Enviar &rarr;</button>
+        <button id="arqreceber" title="Copiar o selecionado para esta maquina">&larr; Receber</button>
+      </div>
+      <div class="pane" data-lado="dir"></div>
+      <div class="fila" id="arqfila"></div>
+    </div>
+  </div>
+</div>
 <header>
   <h1>Maquinas</h1>
   <div class="summary" id="sum"></div>
@@ -758,6 +824,7 @@ async function tick(){
     const r = await fetch('/api/status', {cache:'no-store'});
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
+    window.HOSTS = d.hosts;
     grid.innerHTML = d.hosts.map(card).join('');
     renderSide(d.hosts);
     fsHosts(d.hosts);
@@ -953,15 +1020,20 @@ function ligarVideo(s){
   const c = s.canvas, ctx = c.getContext('2d', {alpha:false, desynchronized:true});
   let pronto = false, n = 0;
   const chegada = new Map();
+  s.atrasos = [];
   const dec = new VideoDecoder({
     output: f => {
       if (c.width !== f.displayWidth || c.height !== f.displayHeight){
         c.width = f.displayWidth; c.height = f.displayHeight;
       }
       ctx.drawImage(f, 0, 0);
-      const t0 = chegada.get(f.timestamp);
+      const m = chegada.get(f.timestamp);
       chegada.delete(f.timestamp);
-      if (t0 != null) s.decodMs = performance.now() - t0;
+      if (m){
+        s.decodMs = performance.now() - m.t0;
+        s.atrasos.push(Date.now() - m.capturado);
+        if (s.atrasos.length > 600) s.atrasos.shift();
+      }
       f.close();
       s.quadros++;
       s.aviso.hidden = true;
@@ -971,6 +1043,7 @@ function ligarVideo(s){
   s.dec = dec;
   s.ws.onmessage = ev => {
     const b = new Uint8Array(ev.data), chave = (b[0] & 1) === 1, u = b.subarray(9);
+    const capturado = Number(new DataView(ev.data).getBigUint64(1)) / 1e6;
     if (!pronto){
       if (!chave) return;
       const codec = codecDe(u);
@@ -982,7 +1055,7 @@ function ligarVideo(s){
       s.codec = codec; pronto = true;
     }
     const ts = ++n * 1000;
-    chegada.set(ts, performance.now());
+    chegada.set(ts, {t0: performance.now(), capturado});
     dec.decode(new EncodedVideoChunk({type: chave ? 'key' : 'delta', timestamp: ts, data: u}));
   };
 }
@@ -996,6 +1069,8 @@ function pintaAbas(){
       `<span class="x" data-fecha="${esc(h)}" title="encerrar sessao">&times;</span></button>`).join('');
   document.querySelector('.wrap').classList.toggle('emsessao', !!abaAtual);
   document.getElementById('palco').hidden = !abaAtual;
+  document.getElementById('barranome').textContent = abaAtual || '';
+  if (!document.getElementById('arq').hidden) arqMostra(false);
   SESSOES.forEach((s, h) => {
     const on = h === abaAtual;
     s.canvas.classList.toggle('on', on);
@@ -1029,14 +1104,13 @@ async function abrirAba(host){
     if (!r.ok) return false;
     d = await r.json();
   }catch(e){ return false; }
-  const palco = document.getElementById('palco');
   const s = {host, quadros:0, decodMs:null};
   s.canvas = document.createElement('canvas');
   s.canvas.tabIndex = 0; s.canvas.width = 1280; s.canvas.height = 720;
   s.aviso = document.createElement('div'); s.aviso.className = 'aviso';
   s.aviso.textContent = 'Conectando em ' + host + '...';
   s.medida = document.createElement('div'); s.medida.className = 'medida';
-  palco.append(s.canvas, s.aviso, s.medida);
+  document.getElementById('tela').append(s.canvas, s.aviso, s.medida);
   s.ws = new WebSocket(`ws://127.0.0.1:${d.porta}/${d.token}`);
   s.ws.binaryType = 'arraybuffer';
   ligarVideo(s); ligarInput(s);
@@ -1055,6 +1129,134 @@ async function abrirAba(host){
   pintaAbas();
   return true;
 }
+
+// Atalho que o sistema local engoliria: vai pela barra. Ctrl+Alt+Del nao
+// esta aqui porque o Windows nao aceita essa combinacao injetada.
+const COMBOS = {alttab:[56, 15], super:[125], tarefas:[29, 42, 1]};
+document.getElementById('barra').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-combo]');
+  const s = SESSOES.get(abaAtual);
+  if (!b || !s || s.ws.readyState !== 1) return;
+  const teclas = COMBOS[b.dataset.combo];
+  teclas.forEach(k => s.ws.send(evento(T_TECLA, k, true)));
+  [...teclas].reverse().forEach(k => s.ws.send(evento(T_TECLA, k, false)));
+  s.canvas.focus();
+});
+document.getElementById('barrafim').addEventListener('click', () => {
+  if (abaAtual) fechaAba(abaAtual);
+});
+document.getElementById('barracheia').addEventListener('click', () => {
+  const p = document.getElementById('palco');
+  if (document.fullscreenElement) document.exitFullscreen(); else p.requestFullscreen();
+  const s = SESSOES.get(abaAtual);
+  if (s) s.canvas.focus();
+});
+
+// --- gerenciador de arquivos -------------------------------------------
+// Esta maquina a esquerda, a da aba a direita. So copia: a rota recusa
+// sobrescrever, e quem diz que chegou e o destino.
+const ARQ = {esq:{host:'', path:'', sel:null, d:null}, dir:{host:'', path:'', sel:null, d:null},
+             relogio:0, erro:''};
+const painelDe = l => document.querySelector(`.pane[data-lado="${l}"]`);
+
+async function arqLista(lado){
+  const p = ARQ[lado], box = painelDe(lado);
+  const q = new URLSearchParams({host:p.host}); if (p.path) q.set('path', p.path);
+  box.innerHTML = `<div class="ptop"><div class="pquem">${esc(p.host)}</div></div>` +
+    `<div class="nota">carregando...</div>`;
+  let d;
+  try{ d = await (await fetch('/api/files?' + q, {cache:'no-store'})).json(); }
+  catch(e){ d = {error:e.message, entries:[]}; }
+  p.d = d; p.sel = null;
+  if (d.path) p.path = d.path;
+  const quem = lado === 'esq' ? `${esc(p.host)} (esta maquina)` : esc(p.host);
+  const itens = (d.entries || []).map((e, i) =>
+    `<button class="item" data-i="${i}"><span>${e.kind === 'dir' ? '&#128193;' : '&#128196;'}</span>` +
+    `<span class="n">${esc(e.name)}</span>` +
+    `<span class="t">${e.kind === 'dir' ? '' : fsSize(e.size)}</span></button>`).join('');
+  box.innerHTML =
+    `<div class="ptop"><div class="pquem">${quem}</div><div class="pnav">` +
+    `<button data-subir${d.parent ? '' : ' disabled'} title="Pasta acima">&uarr;</button>` +
+    `<button data-recarrega title="Recarregar">&#8635;</button>` +
+    `<span class="pcam" title="${esc(d.display || '')}">${esc(d.display || '')}</span></div></div>` +
+    `<div class="plista">${d.error ? `<div class="nota">${esc(d.error)}</div>`
+      : (itens || '<div class="nota">Pasta vazia</div>')}</div>`;
+  arqBotoes();
+}
+
+function arqBotoes(){
+  document.getElementById('arqenviar').disabled = !ARQ.esq.sel;
+  document.getElementById('arqreceber').disabled = !ARQ.dir.sel;
+}
+
+async function arqFila(){
+  let t = [];
+  try{ t = await (await fetch('/api/files/transferencias', {cache:'no-store'})).json(); }catch(e){}
+  const andando = t.some(x => x.estado === 'andando');
+  const rotulo = {andando:'copiando...', ok:'chegou', erro:'falhou'};
+  const fila = document.getElementById('arqfila');
+  const linhas = t.slice(-4).reverse().map(x =>
+    `<div class="${x.estado}">${esc(x.nome)}: ${esc(x.de)} &rarr; ${esc(x.para)} &middot; ` +
+    `${rotulo[x.estado]}${x.detalhe ? ' &middot; ' + esc(x.detalhe) : ''}</div>`).join('');
+  fila.innerHTML = (ARQ.erro ? `<div class="erro">${esc(ARQ.erro)}</div>` : '') + linhas;
+  if (ARQ.andava && !andando){ arqLista('esq'); arqLista('dir'); }
+  ARQ.andava = andando;
+}
+
+async function arqCopia(de, para){
+  const o = ARQ[de], e = o.d.entries[o.sel];
+  ARQ.erro = '';
+  const r = await fetch('/api/files/transferir', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({de:o.host, caminho:o.path.replace(/[\/\\]+$/, '') + '/' + e.name,
+      para:ARQ[para].host, pasta:ARQ[para].path})});
+  if (!r.ok) ARQ.erro = (await r.json()).error || ('HTTP ' + r.status);
+  arqFila();
+}
+
+function arqMostra(abrir){
+  const a = document.getElementById('arq');
+  a.hidden = !abrir;
+  clearInterval(ARQ.relogio);
+  if (!abrir){ const s = SESSOES.get(abaAtual); if (s) s.canvas.focus(); return; }
+  const local = (window.HOSTS || []).find(h => h.addr === '127.0.0.1' || h.addr === 'localhost');
+  ARQ.erro = '';
+  if (ARQ.dir.host !== abaAtual) Object.assign(ARQ.dir, {host:abaAtual, path:''});
+  ARQ.esq.host = local ? local.name : '';
+  arqLista('esq'); arqLista('dir'); arqFila();
+  ARQ.relogio = setInterval(arqFila, 1000);
+}
+
+document.getElementById('barraarq').addEventListener('click', () => {
+  arqMostra(document.getElementById('arq').hidden);
+});
+document.getElementById('arqenviar').addEventListener('click', () => arqCopia('esq', 'dir'));
+document.getElementById('arqreceber').addEventListener('click', () => arqCopia('dir', 'esq'));
+document.getElementById('arq').addEventListener('click', ev => {
+  const box = ev.target.closest('.pane');
+  if (!box) return;
+  const lado = box.dataset.lado, p = ARQ[lado];
+  if (ev.target.closest('[data-recarrega]')) return arqLista(lado);
+  if (ev.target.closest('[data-subir]')){ p.path = p.d.parent; return arqLista(lado); }
+  const b = ev.target.closest('.item');
+  if (!b) return;
+  const e = p.d.entries[+b.dataset.i];
+  if (e.kind === 'dir' && p.sel === +b.dataset.i){
+    p.path = p.path.replace(/[\/\\]+$/, '') + '/' + e.name;
+    return arqLista(lado);
+  }
+  box.querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel'));
+  b.classList.add('sel'); p.sel = +b.dataset.i;
+  arqBotoes();
+});
+document.getElementById('arq').addEventListener('dblclick', ev => {
+  const b = ev.target.closest('.item'), box = ev.target.closest('.pane');
+  if (!b || !box) return;
+  const p = ARQ[box.dataset.lado], e = p.d.entries[+b.dataset.i];
+  if (e.kind !== 'dir') return;
+  p.path = p.path.replace(/[\/\\]+$/, '') + '/' + e.name;
+  arqLista(box.dataset.lado);
+});
 
 document.getElementById('abas').addEventListener('click', ev => {
   const x = ev.target.closest('[data-fecha]');

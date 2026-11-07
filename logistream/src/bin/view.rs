@@ -81,6 +81,8 @@ mod visual {
         pub jh: u32,
         /// Sobe a cada quadro novo; a janela so redesenha quando muda.
         pub geracao: u64,
+        /// Instante da captura do quadro no slot, para `LOGI_MEDIR`.
+        pub capturado_ns: u64,
     }
 
     /// Cor das barras quando a proporcao da janela nao bate com a da tela
@@ -255,6 +257,8 @@ mod visual {
             tx_in,
             tam_janela: (1280.0, 720.0),
             tam,
+            medir: std::env::var_os("LOGI_MEDIR").is_some(),
+            atrasos: Vec::new(),
         };
         ev.run_app(&mut app)?;
         Ok(())
@@ -273,6 +277,9 @@ mod visual {
         tam_janela: (f64, f64),
         /// Mesmo tamanho, em pixels fisicos, para a thread que escala.
         tam: Arc<Mutex<(u32, u32)>>,
+        /// `LOGI_MEDIR=1`: imprime o atraso da captura ate a tela.
+        medir: bool,
+        atrasos: Vec<f64>,
     }
 
     impl ApplicationHandler for App {
@@ -455,8 +462,22 @@ mod visual {
                     .copy_from_slice(&s.rgb[origem..origem + largura]);
             }
             self.desenhada = s.geracao;
+            let capturado = s.capturado_ns;
             drop(s);
             let _ = buf.present();
+            if self.medir {
+                self.atrasos.push(
+                    logistream::serve::agora_ns().saturating_sub(capturado) as f64 / 1e6,
+                );
+                if self.atrasos.len() == 120 {
+                    self.atrasos.sort_by(f64::total_cmp);
+                    eprintln!(
+                        "captura ate a tela: p50 {:.1} ms, p95 {:.1} ms",
+                        self.atrasos[60], self.atrasos[114]
+                    );
+                    self.atrasos.clear();
+                }
+            }
 
             self.n += 1;
             if self.n % 120 == 0 {
@@ -586,6 +607,7 @@ mod visual {
                     s.jw = jw;
                     s.jh = jh;
                     s.geracao += 1;
+                    s.capturado_ns = cab.captured_at_ns;
                 }
                 // Acorda a interface. `Err` aqui significa que o laco da
                 // janela acabou -- a pessoa fechou -- e ai nao ha mais

@@ -71,6 +71,7 @@ ota/target/release/logi-ota"
 agent/target/$WIN/release/logid-agent.exe
 logistream/target/$WIN/release/logistream-host.exe
 logistream/target/$WIN/release/logistream-view.exe
+logistream/target/$WIN/release/logistream-ponte.exe
 ota/target/$WIN/release/logi-ota.exe"
     ;;
   mac)
@@ -98,7 +99,7 @@ compilar() {
       cargo build --release --locked --target "$WIN" --manifest-path agent/Cargo.toml &&
       cargo build --release --locked --target "$WIN" --manifest-path ota/Cargo.toml &&
       cargo build --release --locked --target "$WIN" --manifest-path logistream/Cargo.toml \
-        --bin logistream-host --bin logistream-view
+        --bin logistream-host --bin logistream-view --bin logistream-ponte
       ;;
     mac)
       cargo build --release --locked --manifest-path logid/Cargo.toml &&

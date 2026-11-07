@@ -283,6 +283,46 @@ PS1
   rm -f "$VWSIG"
 else erro "$out"; fi
 
+passo "windows: ponte da aba"
+# Sem ela o Conectar do Windows cai na janela nativa (specs/016).
+if out=$(cargo build --release --target x86_64-pc-windows-gnu \
+           --manifest-path logistream/Cargo.toml --bin logistream-ponte 2>&1); then
+  PT=logistream/target/x86_64-pc-windows-gnu/release/logistream-ponte.exe
+  PTSIG=$(mktemp -u /tmp/logistream-ponte-assinado-XXXX.exe)
+  if out=$(cp "$PT" "$PTSIG" && bash scripts/sign-windows.sh "$PTSIG" 2>&1 &&
+           timeout 180 scp -q "$PTSIG" \
+             'windows-host:C:/Users/user/AppData/Local/logid/logistream-ponte.new.exe' 2>&1); then
+    out=$({ cat <<'PS1' | psrun; } 2>&1
+$dst = Join-Path $env:LOCALAPPDATA 'logid'
+$novo = Join-Path $dst 'logistream-ponte.new.exe'
+if (-not (Test-Path $novo)) { Write-Output 'ERRO: o arquivo nao chegou (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $novo
+if ($v.Status -ne 'Valid') { Write-Output ('ERRO: assinatura ' + $v.Status); exit 1 }
+# Uma aba aberta segura o arquivo: a sessao cai e reabre.
+Get-Process -Name logistream-ponte -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 400
+# Tamanho ANTES de mover, comparado DEPOIS. Em PowerShell, nao
+# passado pelo bash: assinatura valida nao garante que o arquivo ficou
+# (o Defender reverteu a gravacao do agente em silencio por uma hora
+# enquanto este script dizia "ok"), e trazer o numero de fora exigiria
+# heredoc expandido -- que foi como eu quebrei este mesmo passo.
+$esperado = (Get-Item $novo).Length
+Copy-Item -Force $novo (Join-Path $dst 'logistream-ponte.exe')
+Remove-Item -Force $novo
+Start-Sleep -Milliseconds 500
+$tem = (Get-Item (Join-Path $dst 'logistream-ponte.exe')).Length
+if ($tem -ne $esperado) {
+  Write-Output ('ERRO: gravou mas tem ' + $tem + ' bytes, esperado ' + $esperado + ' -- antivirus revertendo? confira a exclusao de ' + $dst)
+  exit 1
+}
+exit 0
+PS1
+)
+    if ruim "$out"; then erro "$out"; else ok; fi
+  else erro "$out"; fi
+  rm -f "$PTSIG"
+else erro "$out"; fi
+
 passo "windows: host de tela (logistream)"
 # O Windows virou HOST do nosso protocolo (v4): DXGI -> NVENC -> QUIC.
 # Precisa de assinatura pelo mesmo motivo que o logid -- o Defender
