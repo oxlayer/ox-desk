@@ -327,7 +327,11 @@ pub fn veredito_do_carimbo(no_ar: (u64, &str), no_disco: (u64, &str)) -> Option<
 /// Binário que não entende `versao` devolve `None`: durante a transição
 /// a resposta honesta é "não sei", não um alarme.
 pub fn daemon_do_disco(bin: &std::path::Path) -> Option<String> {
-    let s = std::process::Command::new(bin).arg("versao").output().ok()?;
+    // `sys::child` e nao `Command::new`: no Windows um processo filho sem
+    // `CREATE_NO_WINDOW` abre um console NOVO, e o painel e lido a toda
+    // hora -- seria uma janela de cmd piscando na tela. Ja foi reclamado
+    // uma vez (ver sys/windows.rs).
+    let s = crate::sys::child(&bin.to_string_lossy()).arg("versao").output().ok()?;
     if !s.status.success() {
         return None;
     }

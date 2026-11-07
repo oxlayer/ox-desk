@@ -27,6 +27,20 @@ mentira. Todo passo do Windows captura stderr e confere o tamanho do
 arquivo que aterrissou, justamente porque isso já aconteceu
 ([[../rules/verificar-o-que-chegou]]).
 
+## Não edite a árvore enquanto o deploy roda
+
+O carimbo (`LOGI_BUILD`) é tirado **uma vez, no início**; o `rsync` para
+o Mac acontece **no meio**. Editar um `.rs` entre as duas coisas produz
+dois binários com o **mesmo carimbo e código diferente** — Ubuntu e
+Windows com o arquivo antigo, o Mac com o novo, e a conferência do
+rodapé dizendo "três máquinas no mesmo build".
+
+É o carimbo mentindo, que é pior que divergência visível: a divergência
+o painel acha, essa não.
+
+Aconteceu. Se você editou no meio, a saída é commitar e rodar de novo —
+com a árvore limpa o carimbo volta a valer.
+
 ## O que o deploy NÃO leva
 
 - **Config.** Ver [[mudar-config-nas-tres]].
@@ -90,6 +104,29 @@ tail -3 ~/.local/state/logi-gui.log
 ```
 
 O aviso de Vulkan/ozone no log é cosmético.
+
+### No Mac e no Windows
+
+O deploy **leva** o `main.js` para as duas (`Resources/app/main.js` no
+Mac, `%LOCALAPPDATA%\logid\gui\main.js` no Windows), mas não mata a
+janela de ninguém: entra no próximo lançamento do app.
+
+Para forçar no Mac:
+
+```bash
+ssh mac 'pkill -f "Logi.app/Contents/MacOS/Logi"; sleep 1; open -a ~/Applications/Logi.app'
+# conferir QUAL casca carregou -- o `--app-path` do processo renderer
+# nao mente, e é a unica forma de saber se foi o `app/` ou um `app.asar`
+# esquecido:
+ssh mac 'ps -eo command | grep -o "app-path=[^ ]*Logi[^ ]*" | sort -u'
+```
+
+Até hoje a casca do Mac morava num `app.asar` que **nenhum passo
+tocava** — ela era de semanas atrás e ninguém sabia. Virou
+`Resources/app/` solto (layout clássico do Electron, ainda suportado),
+com o `app.asar` renomeado para `.off`, o `ElectronAsarIntegrity` fora
+do `Info.plist` e o bundle re-assinado ad-hoc. O passo do deploy é
+idempotente e refaz a conversão se alguém reinstalar o app.
 
 ## Abrir direto na configuração
 
