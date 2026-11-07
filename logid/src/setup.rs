@@ -481,8 +481,9 @@ fn mac() -> Vec<Passo> {
             porque: "é o que alcança as outras máquinas fora de casa. Vai pelo \
                      brew, com serviço próprio, e nunca pelo app: a extensão \
                      de rede do app, sem login, derrubou a internet do Mac.",
-            arrumo: Arrumo::Receita {
-                linha: "brew install tailscale && sudo bash scripts/instalar-tailscale-mac.sh",
+            arrumo: Arrumo::Clique {
+                rotulo: "Instalar pelo brew",
+                onde: "o Terminal que vai abrir: digite a senha e abra o link de login",
             },
             depende: &[],
             essencial: false,
@@ -590,6 +591,19 @@ fn windows() -> Vec<Passo> {
             arrumo: Arrumo::Receita { linha: "ssh-keygen e copiar a pública para o outro lado" },
             depende: &["config"],
             essencial: true,
+        },
+        Passo {
+            id: "tela-virtual",
+            titulo: "Tela sem monitor ligado",
+            porque: "sem monitor o Windows não tem o que capturar: o visualizador \
+                     conecta, o clique passa e nenhum quadro chega. Uma tela \
+                     virtual mantém o acesso com a máquina sozinha.",
+            arrumo: Arrumo::Clique {
+                rotulo: "Instalar a tela virtual",
+                onde: "o pedido de administrador do Windows",
+            },
+            depende: &[],
+            essencial: false,
         },
         Passo {
             id: "protetor-de-tela",

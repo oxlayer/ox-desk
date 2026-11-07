@@ -185,8 +185,11 @@ O caminho que funcionou é o `tailscaled` do brew como root, com `utun`:
 
 ```bash
 brew install tailscale
-sudo bash scripts/instalar-tailscale-mac.sh
+sudo bash logid/setup/instalar-tailscale-mac.sh
 ```
+
+O passo `tailscale` do wizard faz isso sozinho: o script vai dentro do
+binário, e o botão abre o Terminal com ele.
 
 Ele não passa pela extensão, só acrescenta a rota de `100.64.0.0/10`, e
 a rota padrão fica onde estava. Os nomes do tailnet funcionam por
@@ -207,6 +210,8 @@ nome, então a regra de não escrever IP continua valendo.
 ## O que falta
 
 - Mac: `--bind overlay` no host de tela.
+- Um protocolo próprio no lugar do Tailscale, para sair da dependência
+  da conta e do coordenador (o "Risco aceito" acima).
 - Adaptação de bitrate pelo `quinn::Connection::stats()`.
 - Pareamento por chave pinada no canal de tela.
 - O teste do hotspot (acima), que é o único que vale.

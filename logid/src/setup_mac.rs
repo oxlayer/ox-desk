@@ -359,6 +359,7 @@ pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
             None,
         ),
         "ota" => instalar_relogio(),
+        "tailscale" => instalar_tailscale(),
         "assinatura" => assinar(),
         "gravacao-de-tela" => pedir("gravacao-de-tela", "Privacy_ScreenCapture"),
         "acessibilidade" => pedir("acessibilidade", "Privacy_Accessibility"),
@@ -464,6 +465,41 @@ fn instalar_relogio() -> Result<String, String> {
         Ok(s) => format!("agente instalado; primeira checagem: {}", s.trim()),
         Err(e) => format!("agente instalado, mas a primeira checagem falhou: {e}"),
     })
+}
+
+/// Abre o Terminal com o instalador que vem dentro do binário.
+///
+/// O `sudo` e o login precisam de gente, e o Terminal é o lugar deles.
+/// Máquina nova não tem clone do repo, então os dois arquivos saem daqui.
+fn instalar_tailscale() -> Result<String, String> {
+    const SCRIPT: &str = include_str!("../setup/instalar-tailscale-mac.sh");
+    let dir = crate::sys::config_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("criar {dir:?}: {e}"))?;
+    let script = dir.join("instalar-tailscale-mac.sh");
+    let abrir = dir.join("instalar-tailscale.command");
+    std::fs::write(&script, SCRIPT).map_err(|e| format!("gravar {script:?}: {e}"))?;
+    let comando = format!(
+        "#!/bin/bash\n\
+         export PATH=/opt/homebrew/bin:/usr/local/bin:$PATH\n\
+         if ! command -v brew >/dev/null; then\n\
+         \x20 echo 'falta o Homebrew: https://brew.sh'\n\
+         else\n\
+         \x20 brew list tailscale >/dev/null 2>&1 || brew install tailscale\n\
+         \x20 sudo bash '{}'\n\
+         fi\n\
+         read -r -p 'Enter para fechar '\n",
+        script.display()
+    );
+    std::fs::write(&abrir, comando).map_err(|e| format!("gravar {abrir:?}: {e}"))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&abrir, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("permissão de {abrir:?}: {e}"))?;
+    rodar("/usr/bin/open", &[&abrir.to_string_lossy()], 10)?;
+    let m = tailscale();
+    match m.estado {
+        Estado::Ok => Ok(m.detalhe),
+        _ => Err(format!("{} -- termine no Terminal que abriu e meça de novo", m.detalhe)),
+    }
 }
 
 fn escapar(s: &str) -> String {

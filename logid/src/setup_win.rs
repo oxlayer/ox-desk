@@ -19,7 +19,7 @@
 //! "ESTADO" em vez de "STATE".
 
 use crate::config::Config;
-use crate::setup::Medida;
+use crate::setup::{Estado, Medida};
 use crate::setup_comum::rodar;
 use std::path::PathBuf;
 
@@ -46,6 +46,7 @@ pub fn medir(cfg: &Config) -> Vec<Medida> {
         sshd(),
         chave_admin(),
         crate::setup_comum::pares(cfg),
+        tela_virtual(),
         protetor_de_tela(),
         ota(),
     ]
@@ -171,6 +172,33 @@ fn chave_admin() -> Medida {
     }
 }
 
+fn tela_virtual() -> Medida {
+    let contar = "@(Get-PnpDevice -Class Monitor | Where-Object Present).Count";
+    match rodar("powershell", &["-NoProfile", "-Command", contar], 15) {
+        Ok(saida) => crate::setup_comum::veredito_monitores(&saida),
+        Err(e) => Medida::erro("tela-virtual", format!("não consegui contar os monitores: {e}")),
+    }
+}
+
+/// Grava o instalador que vem dentro do binário e o roda como
+/// administrador. Máquina nova não tem clone do repo.
+fn instalar_tela_virtual() -> Result<String, String> {
+    const SCRIPT: &str = include_str!("../setup/instalar-tela-virtual.ps1");
+    let alvo = bin_dir().join("instalar-tela-virtual.ps1");
+    std::fs::write(&alvo, SCRIPT).map_err(|e| format!("gravar {alvo:?}: {e}"))?;
+    let elevar = format!(
+        "Start-Process powershell -Verb RunAs -Wait -ArgumentList \
+         '-NoProfile','-ExecutionPolicy','Bypass','-File','\"{}\"'",
+        alvo.display()
+    );
+    let _ = rodar("powershell", &["-NoProfile", "-Command", &elevar], 180);
+    let m = tela_virtual();
+    match m.estado {
+        Estado::Ok => Ok(m.detalhe),
+        _ => Err(format!("{} -- aceite o pedido de administrador e meça de novo", m.detalhe)),
+    }
+}
+
 fn protetor_de_tela() -> Medida {
     // Nomes de valor do registro não são traduzidos, a saída do `reg
     // query` é estável, e a pergunta é pequena: o protetor vai entrar e
@@ -226,6 +254,7 @@ pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
             &["/sc", "once", "/st", "00:00"],
         ),
         "ota" => instalar_relogio(),
+        "tela-virtual" => instalar_tela_virtual(),
         _ => Err(format!("'{id}' não se arruma sozinho nesta máquina")),
     }
 }

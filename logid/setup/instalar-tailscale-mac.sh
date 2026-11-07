@@ -4,7 +4,7 @@
 # Spec: ../specs/012-fora-da-lan.md
 #
 #   brew install tailscale
-#   sudo bash scripts/instalar-tailscale-mac.sh
+#   sudo bash logid/setup/instalar-tailscale-mac.sh
 #
 # WHY NOT THE APP
 #
