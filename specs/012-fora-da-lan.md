@@ -1,9 +1,7 @@
 # 012 — Alcançar as máquinas fora da LAN
 
-> Estado: Ubuntu e Windows **dentro** do tailnet e falando direto
-> (`direct 192.168.1.42:41641`, sem DERP). O Mac tem o app instalado e a
-> extensão de rede **aprovada**, e falta só o login — que é um clique na
-> máquina, por um motivo que vale escrito (ver "O Mac"). O `--bind` e o
+> Estado: as três máquinas **dentro** do tailnet. O Mac entrou pelo
+> `tailscaled` do brew, e não pelo app (ver "O Mac"). O `--bind` e o
 > `--mbps` estão prontos e medidos.
 
 ## O que muda em relação à spec 008
@@ -161,51 +159,54 @@ Wi-Fi de casa) e abrir uma tela de verdade. O que importa medir lá:
 - fps e quadros perdidos no `logistream-sink`.
 - latência de ponteiro, que é o que a pessoa percebe primeiro.
 
-## O Mac — e por que o login não sai daqui
+## O Mac — pelo brew, nunca pelo app
 
-O `tailscale-app` (variante `macsys`) é o cask com extensão de rede do
-sistema. Hoje, no MacBook:
+O plano era o `tailscale-app`, o cask com extensão de rede do sistema.
+Em 07/11/2026 ele derrubou a internet do Mac, e saiu.
 
-```
-/Applications/Tailscale.app                       instalado
-io.tailscale.ipn.macsys.network-extension         [activated enabled]
-tailscale status (por SSH)                        CLIError error 1
-```
-
-A extensão **já está aprovada** — essa era a parte que exigia o clique
-no diálogo do sistema, e ela está feita. O que resta é o login, e ele
-não sai por SSH:
+Sem login terminado, a extensão ficava em "Connecting…" com **Connect
+on demand** ligado. Medido no log (macOS 14.0, app 1.104.5):
 
 ```
-$ ssh mac /Applications/Tailscale.app/Contents/MacOS/Tailscale status
-The Tailscale CLI failed to start: ... (Tailscale.CLIError error 1.)
-$ ssh mac launchctl asuser $(id -u) ... Tailscale status
-Could not switch to audit session: Operation not permitted
+Failed to current profile: notFound
+setGUIVisible=true failed: noSessionID
+Tunnel did not connect ...  stopTunnel: "connectionFailed"
 ```
 
-O CLI dessa variante fala com o app pelo **container do grupo na sessão
-gráfica**, e uma sessão de `sshd` está em outra *audit session*. É a
-mesma parede da [[../.claude/rules/sessao-grafica]], e nenhum
-`launchctl asuser` a atravessa sem root. Não é um detalhe de
-configuração: autenticação de máquina nova é consentimento humano, e o
-navegador que confirma é o do dono.
+Ela desistia em 5 minutos e o on demand a religava. Enquanto isso o Mac
+ficava sem internet, e o login precisa de internet para abrir. A saída
+era apagar a configuração em Ajustes → VPN. Clicar "Allow" repetia tudo.
 
-O que falta, uma vez só, no Mac:
+O `/usr/local/bin/tailscale` que o app instala é um script que **abre o
+app**, então até um `tailscale status` por ali dispara o pedido de VPN.
+A medição mudava o que era medido.
 
-1. clicar o ícone do Tailscale na barra de menus → **Log in**
-2. autenticar como `<your-tailnet-login>` (mesmo tailnet das
-   outras duas)
-3. na mesma visita, marcar **Run Tailscale at login** —
-   `TailscaleStartOnLogin` está `0` hoje, e sem isso a máquina que
-   **viaja** só entra no overlay quando alguém abre o app
+O caminho que funcionou é o `tailscaled` do brew como root, com `utun`:
 
-Depois disso, daqui: `tailscale status` passa a listar três nós, e só
-então o host do Mac vira `--bind overlay`. Flipar antes deixaria o Mac
-sem tela remota nem em casa.
+```bash
+brew install tailscale
+sudo bash scripts/instalar-tailscale-mac.sh
+```
+
+Ele não passa pela extensão, só acrescenta a rota de `100.64.0.0/10`, e
+a rota padrão fica onde estava. Os nomes do tailnet funcionam por
+`/etc/resolver`, só para o domínio do tailnet: o DNS geral não muda. O
+script desfaz o passo se a internet falhar. O wizard mede isso no passo
+`tailscale`, e conta o app instalado como falta.
+
+Medido no Mac: `100.64/10` em `utun15`, rota padrão em `en0`, SSH nas
+outras duas pelo nome curto.
+
+Modo userspace (`--tun=userspace-networking`) também funciona, sem
+root, mas os apps do Mac só alcançam o tailnet por proxy SOCKS.
+
+**O nome do tailnet entra na config, no lugar do `.local`.** Fora da
+LAN o mDNS não resolve, e o painel marca as máquinas como mortas. É um
+nome, então a regra de não escrever IP continua valendo.
 
 ## O que falta
 
-- Mac: o login acima (clique do dono) e depois `--bind overlay`.
+- Mac: `--bind overlay` no host de tela.
 - Adaptação de bitrate pelo `quinn::Connection::stats()`.
 - Pareamento por chave pinada no canal de tela.
 - O teste do hotspot (acima), que é o único que vale.

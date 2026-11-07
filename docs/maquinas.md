@@ -9,7 +9,9 @@
 | ssh | — | `ssh windows-host` | `ssh mac` |
 
 **Nunca escreva IP em config.** O IP do Windows já mudou uma vez e
-quebrou tudo de uma vez. mDNS (`avahi` + `libnss-mdns`).
+quebrou tudo de uma vez. mDNS (`avahi` + `libnss-mdns`), ou o nome do
+tailnet (`ubuntu-host`, `windows-host`) na máquina que sai de casa: ver
+[`specs/012`](../specs/012-fora-da-lan.md).
 
 ## Caminhos que divergem
 

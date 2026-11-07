@@ -115,6 +115,36 @@ pub fn pares(cfg: &Config) -> Medida {
 /// de testar de fora. Testar de fora exigiria escrever no clipboard da
 /// pessoa -- e um wizard que apaga o que você copiou para provar que
 /// funciona é pior que o problema.
+/// Lê o `tailscale status --json` e diz se esta máquina está no overlay.
+///
+/// O app conta como falta mesmo com o overlay de pé: a extensão dele
+/// sem login prendeu o tráfego do Mac inteiro, e o pedido de VPN volta
+/// a cada vez que ele abre. Ver specs/012-fora-da-lan.md.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn veredito_tailscale(json: &str, app_instalado: bool) -> Medida {
+    const ID: &str = "tailscale";
+    if app_instalado {
+        return Medida::falta(
+            ID,
+            "o app Tailscale.app está instalado: apague pelo Finder e negue o pedido de VPN",
+        );
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Medida::erro(ID, "o `tailscale status` não devolveu JSON");
+    };
+    let ip = v["Self"]["TailscaleIPs"][0].as_str();
+    match (v["BackendState"].as_str(), ip) {
+        (Some("Running"), Some(ip)) => {
+            let nome = v["Self"]["HostName"].as_str().unwrap_or("?");
+            Medida::ok(ID, format!("no tailnet como {nome} ({ip})"))
+        }
+        (Some("Running"), None) => Medida::erro(ID, "conectado, mas sem endereço no tailnet"),
+        (Some("NeedsLogin"), _) => Medida::falta(ID, "o serviço está de pé e falta o login"),
+        (Some(estado), _) => Medida::falta(ID, format!("estado do Tailscale: {estado}")),
+        (None, _) => Medida::erro(ID, "o `tailscale status` não trouxe o estado"),
+    }
+}
+
 pub fn clipboard() -> Medida {
     match crate::clip::vigia() {
         Some((true, d)) => Medida::ok("clipboard", d),
@@ -414,6 +444,7 @@ pub fn veredito_do_launchd(print: &str) -> Option<String> {
 #[cfg(test)]
 mod testes {
     use super::*;
+    use crate::setup::Estado;
 
     /// A frase do painel é lida por humano: 5400 s é "1 h e meia", e
     /// mostrar "5400s" seria obrigar quem lê a dividir de cabeça.
@@ -554,5 +585,34 @@ mod testes {
     #[test]
     fn print_sem_state_nao_inventa_falha() {
         assert!(veredito_do_launchd("\tpath = /x.plist\n\tstateful = sim\n").is_none());
+    }
+
+    #[test]
+    fn tailscale_de_pe_diz_nome_e_endereco() {
+        let m = veredito_tailscale(
+            r#"{"BackendState":"Running","Self":{"HostName":"mac","TailscaleIPs":["100.1.2.3"]}}"#,
+            false,
+        );
+        assert_eq!(m.estado, Estado::Ok);
+        assert!(m.detalhe.contains("100.1.2.3"));
+    }
+
+    #[test]
+    fn tailscale_com_o_app_instalado_e_falta_mesmo_conectado() {
+        let m = veredito_tailscale(
+            r#"{"BackendState":"Running","Self":{"TailscaleIPs":["100.1.2.3"]}}"#,
+            true,
+        );
+        assert_eq!(m.estado, Estado::Falta);
+    }
+
+    #[test]
+    fn tailscale_sem_login_e_falta_e_sem_medida_e_erro() {
+        let sem_login = r#"{"BackendState":"NeedsLogin","Self":{}}"#;
+        assert_eq!(veredito_tailscale(sem_login, false).estado, Estado::Falta);
+        assert_eq!(veredito_tailscale("", false).estado, Estado::Erro);
+        assert_eq!(veredito_tailscale("{}", false).estado, Estado::Erro);
+        let sem_ip = r#"{"BackendState":"Running","Self":{}}"#;
+        assert_eq!(veredito_tailscale(sem_ip, false).estado, Estado::Erro);
     }
 }
