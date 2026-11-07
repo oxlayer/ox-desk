@@ -1,42 +1,44 @@
 # `hidpp`
 
-HID++ 2.0 sobre HID cru. Usado pelo [`logid`](../logid/) (Linux) e pelo
-[`agent`](../agent/) (Windows) — **uma cópia só** do protocolo.
+HID++ 2.0 over raw HID. Used by [`logid`](../logid/) (Linux) and by
+[`agent`](../agent/) (Windows) — **a single copy** of the protocol.
 
-Substituiu o backend via `solaar` no Linux. Medido:
+It replaced the `solaar`-based backend on Linux. Measured:
 
-| | solaar | HID++ direto |
+| | solaar | direct HID++ |
 |---|---|---|
-| presença de um dispositivo | 5,9 a 15,3 s | **22 a 81 ms** |
-| inventário completo | 5,9 a 15,3 s | ~1,5 s |
-| troca de canal, ponta a ponta | 105 s | ~9 s |
+| presence of one device | 5.9 to 15.3 s | **22 to 81 ms** |
+| full inventory | 5.9 to 15.3 s | ~1.5 s |
+| channel switch, end to end | 105 s | ~9 s |
 
-## Diagnóstico
+## Diagnostics
 
 ```bash
 cargo run --release --bin probe
 ```
 
-Lista endpoints, abre o receptor e varre os slots com nome, canal e ping.
-Útil para descobrir o **nome exato** que a config precisa: o HID++ reporta
-`MX Keys Wireless Keyboard`, enquanto o solaar dizia `MX Keys Keyboard`.
+Lists endpoints, opens the receiver and scans the slots with name,
+channel and ping. Useful to find the **exact name** the config needs:
+HID++ reports `MX Keys Wireless Keyboard`, while solaar said `MX Keys
+Keyboard`.
 
-## Decisões que custaram medição
+## Decisions that took measurement
 
-**Report longo na coleção usage 2.** O receptor expõe uma coleção HID por
-tipo de report (1 = curto `0x10`, 2 = longo `0x11`, 4 = muito longo).
-Escrever o tamanho errado na coleção errada falha com `hidapi error:`
-vazio. Usamos sempre o longo, para escrever e ler na mesma coleção.
+**Long report on the usage 2 collection.** The receiver exposes one HID
+collection per report type (1 = short `0x10`, 2 = long `0x11`, 4 = very
+long). Writing the wrong size to the wrong collection fails with an empty
+`hidapi error:`. We always use the long one, to write and read on the
+same collection.
 
-**Endereçamos o receptor, não o nó do dispositivo.** No Linux cada
-dispositivo pareado tem nó hidraw próprio, mas ele atende no **índice de
-slot do receptor** (medido: `/dev/hidraw2` responde em `idx=1`), não em
-`0xFF`. Como o nó do receptor atende todos os slots, é ele que abrimos.
+**We address the receiver, not the device node.** On Linux each paired
+device has its own hidraw node, but it answers on the **receiver's slot
+index** (measured: `/dev/hidraw2` answers at `idx=1`), not on `0xFF`.
+Since the receiver node answers for all slots, that's the one we open.
 
-**Timeout de ping separado (250 ms) do de chamada (700 ms).** Um
-dispositivo presente responde em 26-90 ms; varredura de 6 slots vazios
-caiu de 4,4 s para 1,5 s.
+**Ping timeout (250 ms) separate from the call timeout (700 ms).** A
+present device answers in 26-90 ms; scanning 6 empty slots dropped from
+4.4 s to 1.5 s.
 
-**Ausência de resposta no `set_host` é o caso esperado.** O dispositivo
-troca de canal e o rádio cai antes da resposta. Tratar isso como erro
-fazia o sistema reportar falha numa troca bem-sucedida.
+**No response to `set_host` is the expected case.** The device switches
+channel and the radio drops before the response. Treating that as an
+error made the system report failure on a successful switch.

@@ -1,79 +1,80 @@
-# As três máquinas
+# The three machines
 
 | | Ubuntu | Windows | macOS |
 |---|---|---|---|
-| nome | `ubuntu-host` | `windows-host` | `mac-host` |
-| endereço | local | `windows-host.local` | `mac-host.local` |
-| SO | Ubuntu 26.04, GNOME 50.1, Wayland | Windows 10 Pro | macOS 14 (Apple Silicon) |
-| usuário | `user` | `user` | `user` |
+| name | `ubuntu-host` | `windows-host` | `mac-host` |
+| address | local | `windows-host.local` | `mac-host.local` |
+| OS | Ubuntu 26.04, GNOME 50.1, Wayland | Windows 10 Pro | macOS 14 (Apple Silicon) |
+| user | `user` | `user` | `user` |
 | ssh | — | `ssh windows-host` | `ssh mac` |
 
-**Nunca escreva IP em config.** O IP do Windows já mudou uma vez e
-quebrou tudo de uma vez. mDNS (`avahi` + `libnss-mdns`), ou o nome do
-tailnet (`ubuntu-host`, `windows-host`) na máquina que sai de casa: ver
-[`specs/012`](../specs/012-outside-the-lan.md).
+**Never write an IP in config.** The Windows IP changed once and broke
+everything at once. Use mDNS (`avahi` + `libnss-mdns`), or the tailnet
+name (`ubuntu-host`, `windows-host`) on the machine that leaves the
+house: see [`specs/012`](../specs/012-outside-the-lan.md).
 
-## Caminhos que divergem
+## Paths that differ
 
-É aqui que se perde tempo. Nada disso segue um padrão só.
+This is where time gets lost. None of it follows a single pattern.
 
-| O quê | Ubuntu | Windows | macOS |
+| What | Ubuntu | Windows | macOS |
 |---|---|---|---|
 | config | `~/.config/logi/config.toml` | `%APPDATA%\logi\config.toml` | `~/.config/logi/config.toml` |
-| binários | `~/.local/bin/` | `%LOCALAPPDATA%\logid\` | `~/.local/bin/` |
-| processo do agente | `logid` | `logid.exe` | `logid` |
-| reiniciar | `systemctl --user restart logid.service` | `taskkill /F /IM logid.exe` + `schtasks /run /tn logid` | `launchctl kickstart -k gui/$(id -u)/ai.logi.logid` |
-| log do host de tela | `~/.local/state/logistream-host.log` | `%LOCALAPPDATA%\logid\logistream-host.log` | idem Ubuntu |
+| binaries | `~/.local/bin/` | `%LOCALAPPDATA%\logid\` | `~/.local/bin/` |
+| agent process | `logid` | `logid.exe` | `logid` |
+| restart | `systemctl --user restart logid.service` | `taskkill /F /IM logid.exe` + `schtasks /run /tn logid` | `launchctl kickstart -k gui/$(id -u)/ai.logi.logid` |
+| screen host log | `~/.local/state/logistream-host.log` | `%LOCALAPPDATA%\logid\logistream-host.log` | same as Ubuntu |
 
-Note que a **tarefa** agendada no Windows chama-se `logid` enquanto o
-**executável** é `logid.exe` — e o host de tela é `logistream-host` nos
-dois. Conferir sempre com
+Note that the scheduled **task** on Windows is called `logid` while the
+**executable** is `logid.exe` — and the screen host is `logistream-host`
+in both. Always check with
 `schtasks /query /fo table | findstr /i logi`.
 
-## Portas
+## Ports
 
-| Porta | Serviço |
+| Port | Service |
 |---|---|
-| 8787 | API + painel do `logid` (cada máquina serve o seu) |
-| 9777 | host de tela `logistream` (QUIC: vídeo por datagrama, input por stream) |
-| 22 | SSH (Windows e Mac) |
-| 1716 | ~~KDE Connect~~ — saiu em 04/11, substituído pelo clipboard nativo |
-| 5900 | VNC do Mac — fica enquanto o host do Mac não produzir quadro |
+| 8787 | `logid` API + panel (each machine serves its own) |
+| 9777 | `logistream` screen host (QUIC: video by datagram, input by stream) |
+| 22 | SSH (Windows and Mac) |
+| 1716 | ~~KDE Connect~~ — removed on 2026-11-04, replaced by the native clipboard |
+| 5900 | Mac VNC — stays while the Mac host doesn't produce frames |
 
-RDP (3389) saiu em 04/11: os quatro caminhos de tela são nossos.
+RDP (3389) was removed on 2026-11-04: the four screen paths are ours.
 
-## A sessão interativa do Windows
+## The Windows interactive session
 
-SSH no Windows cai na **sessão 0**, onde não existe desktop. Nada que
-precise de tela ou de `SendInput` funciona por SSH direto — nem
-duplicar a tela, nem injetar input, nem apagar o monitor.
+SSH on Windows lands in **session 0**, where there is no desktop.
+Nothing that needs a screen or `SendInput` works over plain SSH — not
+duplicating the screen, not injecting input, not turning off the
+monitor.
 
-O que funciona: tarefa agendada com `/IT`, que roda na sessão
-interativa. É assim que `logid` e `logistream-host` sobem.
+What works: a scheduled task with `/IT`, which runs in the interactive
+session. That is how `logid` and `logistream-host` start.
 
-## Veja também
+## See also
 
 - [[screen-paths]]
 - [[../.claude/rules/config-per-machine]]
 - [[../.claude/rules/restart-the-agent]]
 
-## Como o input troca de máquina
+## How input switches machines
 
-`input.mode` na config:
+`input.mode` in the config:
 
-| Modo | Mecanismo | Precisa de quê |
+| Mode | Mechanism | What it needs |
 |---|---|---|
-| `lan` (padrão) | captura aqui (`EVIOCGRAB`) e manda pelo stream de input da tela remota | ACL no `/dev/input` ([[../.claude/skills/grant-input-access]]) e o host de tela de pé no destino |
-| `hidpp` | manda o dispositivo trocar de canal Easy-Switch (0x1814) | um receptor pareado **na máquina de destino** |
+| `lan` (default) | captures here (`EVIOCGRAB`) and sends over the remote screen's input stream | ACL on `/dev/input` ([[../.claude/skills/grant-input-access]]) and the screen host up on the destination |
+| `hidpp` | tells the device to switch Easy-Switch channel (0x1814) | a receiver paired **on the destination machine** |
 
-O padrão virou `lan` quando ficamos com um dongle só: no `hidpp`,
-"mandar para windows-host" fazia o teclado procurar um receptor que não
-existe lá, não achar, e voltar.
+The default became `lan` when we were left with a single dongle: in
+`hidpp`, "send to windows-host" made the keyboard look for a receiver that
+doesn't exist there, not find it, and come back.
 
-Diferença que importa na UI: no `hidpp` o dispositivo **some** do nosso
-receptor ao trocar, então "algum dispositivo offline" era o sinal de
-"está fora". No `lan` ele nunca sai daqui. Quem responde "para onde o
-input está indo" é `GET /api/kvm`.
+A difference that matters in the UI: in `hidpp` the device **disappears**
+from our receiver when it switches, so "some device offline" was the
+signal for "it's away". In `lan` it never leaves here. What answers
+"where is input going" is `GET /api/kvm`.
 
-A captura só existe no Linux por enquanto. Log do processo:
+Capture only exists on Linux for now. Process log:
 `~/.local/state/logistream-kvm.log`.

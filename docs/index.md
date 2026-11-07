@@ -1,12 +1,12 @@
-# logi — conhecimento de domínio
+# logi — domain knowledge
 
-As [`specs/`](../specs/) descrevem **o que construímos e por quê**.
-Isto aqui é o que não cabe numa spec: o estado das máquinas, os nomes
-que divergem entre elas, e o mapa dos caminhos de tela.
+The [`specs/`](../specs/) describe **what we built and why**. This is
+what doesn't fit in a spec: the state of the machines, the names that
+differ between them, and the map of the screen paths.
 
-- [[machines]] — as três máquinas, caminhos, nomes de processo, portas
-- [[new-computer]] — a ordem para montar uma máquina do zero
-- [[screen-paths]] — quem captura, quem decodifica, quem injeta
+- [[machines]] — the three machines, paths, process names, ports
+- [[new-computer]] — the order to set up a machine from scratch
+- [[screen-paths]] — who captures, who decodes, who injects
 
-As regras invioláveis estão em [`.claude/rules/`](../.claude/rules/) e
-os procedimentos em [`.claude/skills/`](../.claude/skills/).
+The inviolable rules are in [`.claude/rules/`](../.claude/rules/) and
+the procedures in [`.claude/skills/`](../.claude/skills/).

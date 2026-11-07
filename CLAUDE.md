@@ -1,98 +1,99 @@
-# logi — porta de entrada para agentes
+# logi — entry point for agents
 
-Infra pessoal de **três** computadores na mesma LAN: Ubuntu
-(principal), Windows ao lado, MacBook Air. Começou como "um Logitech
-Flow que funcione no Linux" e virou mais: troca de máquina, tela
-remota própria, e o controle de tudo num painel só.
+Personal infrastructure for **three** computers on the same LAN: Ubuntu
+(main), Windows next to it, and a MacBook Air. It started as "a Logitech
+Flow that works on Linux" and grew: switching machines, our own remote
+screen, and control of everything from a single panel.
 
-| Diretório | Conteúdo | Quando consultar |
+| Directory | Contents | When to read it |
 |---|---|---|
-| [`.claude/rules/`](.claude/rules/) | Regras invioláveis — armadilhas que já custaram tempo | Antes de mexer em qualquer máquina |
-| [`.claude/skills/`](.claude/skills/) | Procedimentos — receitas que funcionaram | Quando a tarefa for "como faço X de novo" |
-| [`docs/`](docs/) | Conhecimento de domínio com [[wikilinks]] | Para entender como as peças se encaixam |
-| [`specs/`](specs/) | Especificações, de `000-overview` a `017-product` | Para entender *por que* o sistema é assim |
-| [`README.md`](README.md) | Runbook histórico — o que testei e falhou | Antes de reintroduzir algo que já saiu |
+| [`.claude/rules/`](.claude/rules/) | Inviolable rules — traps that have already cost time | Before touching any machine |
+| [`.claude/skills/`](.claude/skills/) | Procedures — recipes that worked | When the task is "how do I do X again" |
+| [`docs/`](docs/) | Domain knowledge with [[wikilinks]] | To understand how the pieces fit together |
+| [`specs/`](specs/) | Specifications, from `000-overview` to `017-product` | To understand *why* the system is the way it is |
+| [`README.md`](README.md) | Historical runbook — what I tried and what failed | Before reintroducing something that was removed |
 
-## Regras (resumo executivo)
+## Rules (executive summary)
 
-1. [Cada máquina tem a própria config, e nada sincroniza](.claude/rules/config-per-machine.md)
-2. [Reiniciar agente: o nome do processo não é o nome do binário](.claude/rules/restart-the-agent.md)
-3. [PowerShell remoto: sempre `-EncodedCommand` a partir de arquivo](.claude/rules/remote-powershell.md)
-4. [`E_ACCESSDENIED` no DXGI: quatro causas, e a mais comum é o protetor de tela](.claude/rules/windows-locked-screen.md)
-5. [Windows sem mouse não tem cursor, e desenhar no stream não ajuda quem olha o monitor](.claude/rules/cursor-without-mouse.md)
-6. [O que depende da sessão gráfica não nasce por SSH](.claude/rules/graphical-session.md)
-7. [Mandar não é ter chegado; número que ninguém imprime ninguém confere](.claude/rules/verify-what-arrived.md)
-8. [Pixel de captura ≠ ponto de injeção](.claude/rules/coordinate-spaces.md)
-9. [Código de outro sistema compila aqui — troque o `cfg` e confira](.claude/rules/check-the-other-cfg.md)
-10. [Um supervisor por daemon — e nunca a GUI](.claude/rules/one-supervisor-per-daemon.md)
+1. [Each machine has its own config, and nothing syncs](.claude/rules/config-per-machine.md)
+2. [Restarting the agent: the process name is not the binary name](.claude/rules/restart-the-agent.md)
+3. [Remote PowerShell: always `-EncodedCommand` from a file](.claude/rules/remote-powershell.md)
+4. [`E_ACCESSDENIED` in DXGI: four causes, and the most common is the screensaver](.claude/rules/windows-locked-screen.md)
+5. [Windows without a mouse has no cursor, and drawing it in the stream doesn't help whoever looks at the monitor](.claude/rules/cursor-without-mouse.md)
+6. [What depends on the graphical session is not born over SSH](.claude/rules/graphical-session.md)
+7. [Sent is not arrived; a number nobody prints, nobody checks](.claude/rules/verify-what-arrived.md)
+8. [Capture pixel ≠ injection point](.claude/rules/coordinate-spaces.md)
+9. [Code for another OS compiles here — switch the `cfg` and check](.claude/rules/check-the-other-cfg.md)
+10. [One supervisor per daemon — and never the GUI](.claude/rules/one-supervisor-per-daemon.md)
 
-## Skills (procedimentos)
+## Skills (procedures)
 
-- [Deploy nas três máquinas](.claude/skills/deploy.md)
-- [Mudar config nas três máquinas](.claude/skills/change-config-on-all-three.md)
-- [Dar acesso aos dispositivos de input (KVM)](.claude/skills/grant-input-access.md)
-- [Testar o host de tela com a tela apagada](.claude/skills/test-with-screen-off.md)
-- [Clipboard entre as máquinas](.claude/skills/clipboard.md)
-- [Verificar tela, mouse e teclado no Mac](.claude/skills/verify-the-mac.md)
-- [Configurar uma máquina (wizard de setup)](.claude/skills/configure-a-machine.md)
-- [Alcançar as máquinas fora da LAN](specs/012-outside-the-lan.md)
-- [Ligar e operar a atualização automática (OTA)](.claude/skills/enable-ota.md)
+- [Deploy to the three machines](.claude/skills/deploy.md)
+- [Change config on the three machines](.claude/skills/change-config-on-all-three.md)
+- [Grant access to the input devices (KVM)](.claude/skills/grant-input-access.md)
+- [Test the screen host with the screen off](.claude/skills/test-with-screen-off.md)
+- [Clipboard between the machines](.claude/skills/clipboard.md)
+- [Verify screen, mouse and keyboard on the Mac](.claude/skills/verify-the-mac.md)
+- [Configure a machine (setup wizard)](.claude/skills/configure-a-machine.md)
+- [Reach the machines outside the LAN](specs/012-outside-the-lan.md)
+- [Enable and operate automatic updates (OTA)](.claude/skills/enable-ota.md)
 
 ## Docs
 
-- [[docs/index]] — índice
-- [[docs/machines]] — as três máquinas, caminhos e nomes que divergem
-- [[docs/screen-paths]] — quem captura, codifica e decodifica em cada par
+- [[docs/index]] — index
+- [[docs/machines]] — the three machines, paths and names that differ
+- [[docs/screen-paths]] — who captures, encodes and decodes on each pair
 
-## Os componentes
+## The components
 
-| Dir | O quê |
+| Dir | What |
 |---|---|
-| [`logid/`](logid/) | Control plane em Rust: API, painel, troca de máquina, probes |
-| [`logistream/`](logistream/) | Tela remota e KVM: captura, NVENC/NVDEC, QUIC, input |
-| [`hidpp/`](hidpp/) | HID++ 2.0 sobre HID cru — troca de canal Easy-Switch |
-| [`gui/`](gui/) | Casca Electron: janela e bandeja. **Sem lógica** |
-| [`agent/`](agent/) | Lado Windows: CLI por SSH |
-| [`ota/`](ota/) | `logi-ota`: baixa a Release, confere, assina, troca e reverte |
+| [`logid/`](logid/) | Control plane in Rust: API, panel, machine switching, probes |
+| [`logistream/`](logistream/) | Remote screen and KVM: capture, NVENC/NVDEC, QUIC, input |
+| [`hidpp/`](hidpp/) | HID++ 2.0 over raw HID — Easy-Switch channel switching |
+| [`gui/`](gui/) | Electron shell: window and tray. **No logic** |
+| [`agent/`](agent/) | Windows side: CLI over SSH |
+| [`ota/`](ota/) | `logi-ota`: downloads the Release, verifies, signs, swaps and rolls back |
 
-## Decisões que não se refazem sem justificar
+## Decisions not to be undone without justification
 
-**O Deskflow e o Solaar saíram.** A troca de máquina é física (HID++
-0x1814) e a detecção de borda é nossa. O Solaar competia pelo mesmo
-receptor.
+**Deskflow and Solaar are gone.** Machine switching is physical (HID++
+0x1814) and edge detection is ours. Solaar competed for the same
+receiver.
 
-**Nunca escreva IP em config.** O IP do Windows já mudou uma vez e
-quebrou Deskflow, SSH e o painel de uma vez. Use mDNS, ou o nome do
-tailnet na máquina que sai de casa ([`specs/012`](specs/012-outside-the-lan.md)).
+**Never write an IP in config.** The Windows IP changed once and broke
+Deskflow, SSH and the panel all at once. Use mDNS, or the tailnet name on
+the machine that leaves the house ([`specs/012`](specs/012-outside-the-lan.md)).
 
-**No Mac o Tailscale é o do brew, nunca o app.** A extensão de rede dele
-derrubou a internet da máquina em 07/11.
+**On the Mac, Tailscale is the brew one, never the app.** Its network
+extension took down the machine's internet on 2026-11-07.
 
-**O RDP e o KDE Connect saíram** (04/11). Os quatro caminhos de tela
-são nossos, e o clipboard também — pela API privada do Mutter no
-Linux, com SSH como transporte. Só texto, por enquanto.
+**RDP and KDE Connect are gone** (2026-11-04). The four screen paths are
+ours, and so is the clipboard — through Mutter's private API on Linux,
+with SSH as transport. Text only, for now.
 
-**Um dongle só.** Dois receptores Logitech perto não funcionam: a cola
-segue o dongle, não a máquina. Ver [`specs/005`](specs/005-input-switch.md).
+**One dongle only.** Two Logitech receivers close together don't work:
+the pairing follows the dongle, not the machine. See [`specs/005`](specs/005-input-switch.md).
 
-## Regras de trabalho neste repo
+## Working rules in this repo
 
-1. **Verifique, não presuma.** Metade dos achados aqui contradiz a
-   documentação oficial — e metade contradiz o que eu mesmo escrevi no
-   commit anterior. O `InputCapture` do GNOME existe e **não** serve
-   para ativar captura sob demanda; a "tela bloqueada" que eu
-   diagnostiquei era tela apagada; o dongle "defeituoso" não está
-   provado. Teste antes de afirmar, e corrija o que já afirmou.
-2. **Meça antes de otimizar, e imprima o que mediu.** Dois bugs de
-   semanas sobreviveram por falta de uma linha de log.
-3. **Registre as falhas, não só os sucessos.** Vale mais que o que
-   funciona, porque evita repetir a tarde perdida.
-4. **UI em pt-BR; código, commits e nomes de arquivo em inglês.** Script,
-   binário, módulo, variável de ambiente e chave de config também
-   (`sign.sh`, e não `assinar.sh`). Os nomes antigos em português saem
-   junto com a troca para oxdesk ([`specs/017`](specs/017-product.md)).
-5. **Telemetria mínima e desligável; nuvem opcional; LAN sempre.** Desde
-   07/11 o ox-desk é produto ([`specs/017`](specs/017-product.md)): a
-   confiança vem da chave de cada máquina, o servidor é nosso ou da
-   pessoa, e só com LAN tudo continua funcionando. O trust model antigo
-   está em [`specs/008-security.md`](specs/008-security.md).
+1. **Verify, don't assume.** Half the findings here contradict the
+   official documentation — and half contradict what I myself wrote in
+   the previous commit. GNOME's `InputCapture` exists and does **not**
+   work for enabling capture on demand; the "locked screen" I diagnosed
+   was a screen that was off; the "faulty" dongle is not proven. Test
+   before asserting, and correct what you already asserted.
+2. **Measure before optimizing, and print what you measured.** Two bugs
+   survived for weeks for lack of one log line.
+3. **Record the failures, not just the successes.** They are worth more
+   than what works, because they avoid repeating the lost afternoon.
+4. **UI in pt-BR; code, commits and file names in English.** Scripts,
+   binaries, modules, environment variables and config keys too
+   (`sign.sh`, not `assinar.sh`). The old Portuguese names go away along
+   with the switch to oxdesk ([`specs/017`](specs/017-product.md)).
+5. **Minimal telemetry that can be turned off; cloud optional; LAN
+   always.** Since 2026-11-07 ox-desk is a product
+   ([`specs/017`](specs/017-product.md)): trust comes from each
+   machine's key, the server is ours or the user's, and with LAN alone
+   everything keeps working. The old trust model is in
+   [`specs/008-security.md`](specs/008-security.md).

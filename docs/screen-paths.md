@@ -1,10 +1,10 @@
-# Os caminhos de tela
+# The screen paths
 
-Quatro combinações de quem assiste e quem é assistido. Desde o NVDEC
-(04/11) **todos são nossos** — nenhum passa por RDP ou VNC, exceto o
-Mac como host, que ainda não produz quadro.
+Four combinations of who watches and who is watched. Since NVDEC
+(2026-11-04) **all of them are ours** — none goes through RDP or VNC,
+except the Mac as host, which doesn't produce frames yet.
 
-| De (assiste) | Para (host) | Captura | Codifica | Decodifica |
+| From (watches) | To (host) | Capture | Encode | Decode |
 |---|---|---|---|---|
 | Ubuntu | Windows | DXGI Desktop Duplication | NVENC | NVDEC |
 | Windows | Ubuntu | PipeWire via Mutter ScreenCast | NVENC | NVDEC |
@@ -12,75 +12,79 @@ Mac como host, que ainda não produz quadro.
 | Mac | Ubuntu | PipeWire | NVENC | ffmpeg |
 | Ubuntu/Windows | Mac | avfoundation | VideoToolbox | NVDEC / ffmpeg |
 
-O host do Mac sobe por **LaunchAgent**, não por SSH: a captura depende
-de permissão TCC concedida a quem lançou, e por SSH o AVFoundation
-trava em vez de falhar ([[../.claude/rules/graphical-session]]).
+The Mac host starts through a **LaunchAgent**, not over SSH: capture
+depends on a TCC permission granted to whoever launched it, and over SSH
+AVFoundation hangs instead of failing
+([[../.claude/rules/graphical-session]]).
 
-O Mac decodifica por ffmpeg porque não tem NVDEC. Isso deixou de ser
-detalhe quando virou **grupo de controle**: o caminho do Mac usava
-`swscale` (bilinear) e estava ótimo enquanto o caminho pela GPU, com
-amostragem por vizinho mais próximo, serrilhava cada letra. Comparar os
-dois foi o que apontou o bug — ver [[../specs/010-remote-desktop.md]].
+The Mac decodes with ffmpeg because it has no NVDEC. That stopped being a
+detail when it became the **control group**: the Mac path used
+`swscale` (bilinear) and looked great while the GPU path, with
+nearest-neighbor sampling, jagged every letter. Comparing the two is what
+pointed to the bug — see [[../specs/010-remote-desktop.md]].
 
-## Transporte
+## Transport
 
-QUIC (`quinn`): vídeo por **datagrama** (perder quadro é melhor que
-atrasar), input por **stream** (não pode perder tecla nem reordenar).
+QUIC (`quinn`): video by **datagram** (losing a frame is better than
+delaying), input by **stream** (it can't lose a key or reorder).
 
-O host serve **um cliente por vez**. Um segundo `logistream-sink`
-tentando medir enquanto alguém assiste leva timeout — não é bug, é a
-fila de accept.
+The host serves **one client at a time**. A second `logistream-sink`
+trying to measure while someone is watching times out — it's not a bug,
+it's the accept queue.
 
 ## Input
 
-O protocolo carrega keycode de **evdev** em todos os caminhos, porque é
-o que `NotifyKeyboardKeycode` do Mutter recebe; `scancode_de_evdev()`
-traduz para Set-1 no Windows.
+The protocol carries **evdev** keycodes on every path, because that is
+what Mutter's `NotifyKeyboardKeycode` receives; `scancode_de_evdev()`
+translates to Set-1 on Windows.
 
-Dois tipos de movimento de ponteiro:
+Two kinds of pointer movement:
 
-- `Mouse { x, y }` — absoluto, no espaço do stream. O visualizador usa
-  este: ele sabe onde o cursor está dentro da janela.
-- `MouseRel { dx, dy }` — relativo. O KVM por LAN usa este, porque jogo
-  lê movimento relativo e com absoluto a mira trava nas bordas.
+- `Mouse { x, y }` — absolute, in stream space. The viewer uses this one:
+  it knows where the cursor is inside the window.
+- `MouseRel { dx, dy }` — relative. The LAN KVM uses this one, because
+  games read relative movement and with absolute the aim gets stuck at
+  the edges.
 
-## Veja também
+## See also
 
 - [[machines]]
-- [[../specs/010-remote-desktop.md]] — o stack completo
-- [[../specs/005-input-switch.md]] — troca de máquina e KVM
+- [[../specs/010-remote-desktop.md]] — the full stack
+- [[../specs/005-input-switch.md]] — machine switching and KVM
 
-## Ubuntu sem monitor ligado
+## Ubuntu with no monitor on
 
-Com as saídas em `disconnected`, o `RecordMonitor` responde `Unknown
-monitor`. O host passa a pedir `RecordVirtual`, em 1920×1080, e o GNOME
-cria o monitor `Meta-0` enquanto o host viver.
+With the outputs `disconnected`, `RecordMonitor` answers `Unknown
+monitor`. The host then asks for `RecordVirtual`, at 1920×1080, and GNOME
+creates the monitor `Meta-0` for as long as the host lives.
 
-O stream virtual renegocia o formato logo depois de nascer, com o mesmo
-tamanho. Trocar o `Codificador` nessa hora dava SIGSEGV (saída 139), por
-isso o host mantém o que já tem.
+The virtual stream renegotiates the format right after it is born, with
+the same size. Swapping the `Codificador` (encoder) at that moment caused
+SIGSEGV (exit 139), so the host keeps the one it has.
 
-Medido em 07/11: 25 quadros em 10 s, zero perdidos, com a tela parada.
-O Mutter só entrega quadro quando algo muda.
+Measured on 2026-11-07: 25 frames in 10 s, zero lost, with the screen
+still. Mutter only delivers a frame when something changes.
 
-## Windows sem monitor ligado
+## Windows with no monitor on
 
-Sem monitor o DXGI não tem saída: `DuplicateOutput` recusa com
-`0x80070057` e o cliente conecta sem receber quadro. O Windows não tem
-tela virtual nativa, então vai o Virtual Display Driver, assinado pela
-SignPath Foundation (`logid/setup/instalar-tela-virtual.ps1`).
+With no monitor DXGI has no output: `DuplicateOutput` refuses with
+`0x80070057` and the client connects without receiving frames. Windows
+has no native virtual screen, so we use the Virtual Display Driver,
+signed by the SignPath Foundation (`logid/setup/instalar-tela-virtual.ps1`).
 
-O script põe o publicador em `TrustedPublisher` só durante a instalação,
-porque o pedido de confirmação não aparece por SSH, e o retira depois.
-Sem isso, nada ali pede para confiar em certificado autoassinado.
+The script puts the publisher in `TrustedPublisher` only during the
+installation, because the confirmation prompt doesn't show up over SSH,
+and removes it afterwards. Apart from that, nothing there asks to trust a
+self-signed certificate.
 
-Medido em 07/11, do Ubuntu pelo tailnet: 243 quadros em 10 s, zero
-perdidos.
+Measured on 2026-11-07, from Ubuntu over the tailnet: 243 frames in
+10 s, zero lost.
 
-O driver nasce em 800×600, e foi isso que mostrou o defeito do passo de
-linha em `nvenc.rs`: o quadro chegava embaralhado em horizontal, com
-faixa preta embaixo, e o `sink` contava 243 quadros perfeitos. Contar
-quadro não prova imagem: decodifique um com `ffmpeg` e olhe.
+The driver starts at 800×600, and that is what exposed the row-stride
+bug in `nvenc.rs`: the frame arrived scrambled horizontally, with a
+black band at the bottom, and the `sink` counted 243 perfect frames.
+Counting frames doesn't prove the image: decode one with `ffmpeg` and
+look at it.
 
-A tela virtual nasce em 30 Hz, e isso segurava o stream em ~24 fps. O
-instalador pede 60 Hz.
+The virtual screen starts at 30 Hz, and that held the stream at
+~24 fps. The installer asks for 60 Hz.
