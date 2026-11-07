@@ -526,7 +526,7 @@ mod scancode_tests {
 ///
 /// The protocol carries `Event::Mouse` in **frame pixels**: the viewer
 /// knows the size of what it receives and maps the window onto it
-/// (`ponto_remoto`, in bin/view.rs). But not every system injects in that
+/// (`remote_point`, in bin/view.rs). But not every system injects in that
 /// same space.
 ///
 /// On macOS the difference is a factor of 2 and it is visible: `CGEvent`
