@@ -221,15 +221,33 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, relogio: Result<Strin
     if !bin.is_file() {
         return Medida::falta("ota", format!("{} não está instalado; rode o deploy", bin.display()));
     }
+    // O relógio é configuração DESTA máquina; o token é credencial. Os
+    // dois podem faltar juntos, e reportar só um esconde o outro: quem
+    // lê o painel conserta o que está escrito e acha que acabou.
+    //
+    // O caso concreto: sem token, as três máquinas dizem "falta o
+    // token" -- e nessa frase caberia uma máquina sem relógio nenhum,
+    // que nunca vai conferir nada mesmo depois de o token chegar. É
+    // mascaramento de pendência, não erro de diagnóstico, e por isso a
+    // mensagem agora soma as duas.
+    let (relogio, sem_relogio) = match relogio {
+        Ok(t) => (t, None),
+        Err(e) => (String::new(), Some(format!("o relógio não está de pé: {e}"))),
+    };
+    let e_tambem = |s: String| match &sem_relogio {
+        Some(r) => format!("{s}; e {r}"),
+        None => s,
+    };
+
     // Sem token nada funciona, e o sintoma seria um "Not Found" da API
     // que manda procurar na CI. Então a falta do token é o diagnóstico.
     if !token.is_file() {
         return Medida::falta(
             "ota",
-            format!(
+            e_tambem(format!(
                 "falta o token de leitura em {}: o repo é privado e a API responde \"Not Found\" sem ele",
                 token.display()
-            ),
+            )),
         );
     }
     // Segredo legível por qualquer processo da máquina é segredo
@@ -242,15 +260,18 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, relogio: Result<Strin
             if modo != 0 {
                 return Medida::falta(
                     "ota",
-                    format!("{} está com modo {:o}: só o dono deve ler (chmod 600)", token.display(), m.permissions().mode() & 0o777),
+                    e_tambem(format!(
+                        "{} está com modo {:o}: só o dono deve ler (chmod 600)",
+                        token.display(),
+                        m.permissions().mode() & 0o777
+                    )),
                 );
             }
         }
     }
-    let relogio = match relogio {
-        Ok(t) => t,
-        Err(e) => return Medida::falta("ota", format!("o relógio não está de pé: {e}")),
-    };
+    if let Some(r) = sem_relogio {
+        return Medida::falta("ota", r);
+    }
 
     let linha = match rodar(&bin.to_string_lossy(), &["--estado", "--curto"], 8) {
         Ok(l) => l.trim().to_string(),
@@ -456,6 +477,25 @@ mod testes {
     fn idade_ilegivel_nao_passa_por_fresca() {
         assert_eq!(veredito("igual\tabc\tfrase", "x").estado, crate::setup::Estado::Falta);
     }
+    /// Token e relógio faltando juntos têm de aparecer juntos.
+    ///
+    /// Sem token as três máquinas dizem "falta o token", e nessa frase
+    /// caberia uma máquina sem relógio nenhum -- que não vai conferir
+    /// nada nem depois de o token chegar. Quem lê o painel conserta o
+    /// que está escrito e acha que acabou.
+    #[test]
+    fn token_e_relogio_faltando_aparecem_os_dois() {
+        let m = ota(
+            std::path::Path::new("/bin/sh"), // existe, para passar do primeiro teste
+            std::path::Path::new("/nao/existe/token"),
+            Err("tarefa 'ota' não existe".into()),
+        );
+        assert_eq!(m.estado, crate::setup::Estado::Falta);
+        assert!(m.detalhe.contains("falta o token"), "{}", m.detalhe);
+        assert!(m.detalhe.contains("relógio não está de pé"), "{}", m.detalhe);
+        assert!(m.detalhe.contains("tarefa 'ota' não existe"), "{}", m.detalhe);
+    }
+
     /// O caso do Mac: a GUI subiu um `logid` filho dela, o filho ficou
     /// com a porta, e a cópia do launchd morria em loop. Os dois
     /// carimbos divergem -- e isso tem de chegar ao painel, porque foi
