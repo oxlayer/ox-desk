@@ -1,6 +1,7 @@
 # 017 — De infra pessoal a produto
 
-> Estado: decidido em 07/11. Fase A do pareamento em andamento.
+> Estado: decidido em 07/11. Fase A do pareamento no ar desde 07/11 (#11,
+> build #166 nas três máquinas).
 
 ## A decisão
 
@@ -47,7 +48,7 @@ nome passa a ser **oxdesk**.
 | `~/.config/logi`, `%APPDATA%\logi` | `~/.config/oxdesk`, `%APPDATA%\oxdesk` |
 | `%LOCALAPPDATA%\logid` | `%LOCALAPPDATA%\oxdesk` |
 | `ai.logi.*` (launchd), tarefa `logid`, `logid.service` | `app.oxdesk.*`, tarefa `oxdesk`, `oxdesk.service` |
-| `LOGI_*` | `OXDESK_*`, aceitando `LOGI_*` por um tempo |
+| `LOGI_*` (`LOGI_PAR`, `LOGI_PONTE_TOKEN`...) | `OXDESK_*` em inglês (`OXDESK_PIN`, `OXDESK_BRIDGE_TOKEN`...), aceitando o antigo por um tempo |
 | crate `hidpp` | fica: é o protocolo da Logitech, e o nome é dele |
 
 É uma troca de dois lados, e tem três armadilhas medidas antes:
@@ -59,6 +60,16 @@ nome passa a ser **oxdesk**.
 - **No Windows, a exclusão do Defender é do caminho** `%LOCALAPPDATA%\logid`.
   A pasta nova precisa da exclusão antes de o binário chegar, ou ele é
   apagado na escrita (spec 008).
+
+**E tudo que não é texto de tela fica em inglês:** nome de arquivo, script,
+binário, módulo, identificador, variável de ambiente, chave de config, rótulo
+de launchd e de tarefa. Português só no que a pessoa lê na tela, nos logs que
+ela lê e nas specs. Entra no mesmo PR da troca de nome: `assinar.sh` →
+`sign.sh`, `construir-binarios.sh` → `build-binaries.sh`, `ponte.rs` →
+`bridge.rs`, `qualidade.rs` → `quality.rs`, `setup_comum.rs` →
+`setup_common.rs`, `instalar-tela-virtual.ps1` → `install-virtual-display.ps1`,
+e assim por diante. O que é chamado de fora (deploy, OTA, tarefas, launchd)
+muda junto, e a busca pelo nome antigo tem de dar zero no fim.
 
 A config e a identidade migram na primeira partida: se a pasta nova não
 existe e a antiga existe, ela é movida, e o log diz isso.
