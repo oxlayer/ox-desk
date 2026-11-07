@@ -58,17 +58,18 @@ fn redirecionar_saida() {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Spec 017: the fingerprint other machines pin, read over SSH by the
+    // panel. Answered BEFORE the Windows redirect, or it would land in the
+    // log file instead of the SSH pipe.
+    if std::env::args().nth(1).as_deref() == Some("--digital") {
+        println!("{}", logistream::identity::load()?.fingerprint());
+        return Ok(());
+    }
+
     #[cfg(windows)]
     redirecionar_saida();
 
     let a: Vec<String> = std::env::args().skip(1).collect();
-
-    // Spec 017: the fingerprint other machines pin. Read over SSH by the
-    // panel, which is how phase B learns it without trusting the network.
-    if a.first().is_some_and(|v| v == "--digital") {
-        println!("{}", logistream::identity::load()?.fingerprint());
-        return Ok(());
-    }
 
     // `--conferir` e `--pedir` existem NESTE binario e nao no daemon
     // porque o TCC do macOS amarra a concessao ao binario -- ao

@@ -272,11 +272,13 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
     // O host de tela sobe sob demanda, antes de o cliente tentar
     // conectar. Capturar e codificar sem ninguem assistindo so gastaria
     // GPU na maquina do outro.
+    let mut pin = None;
     if plan.kind == "logistream" {
         if let Some(h) = cfg.hosts.iter().find(|x| x.name == host) {
             if let Err(e) = acordar_host(h, plan.port) {
                 return Err(format!("nao consegui levantar o host de tela: {e}"));
             }
+            pin = Some(crate::pairing::pin_for(h, &local_host_bin())?);
         }
     }
 
@@ -286,7 +288,12 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
     // `spawn` e nao `output`: o cliente de tela e interativo e vive
     // minutos ou horas. Esperar por ele travaria a thread do servidor.
     // stdio ignorado para o filho nao herdar o nosso e manter pipe aberto.
-    crate::sys::child(prog)
+    let mut filho = crate::sys::child(prog);
+    if let Some(p) = &pin {
+        // Spec 017: the viewer refuses a host whose identity is not this one.
+        filho.env("LOGI_PAR", p);
+    }
+    filho
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -333,6 +340,7 @@ pub fn abrir_sessao(cfg: &Config, host: &str) -> Result<Sessao, String> {
     let nome = if cfg!(windows) { "logistream-ponte.exe" } else { "logistream-ponte" };
     let ponte = find_program(nome).ok_or("logistream-ponte nao instalada")?;
     acordar_host(h, plan.port).map_err(|e| format!("nao consegui levantar o host de tela: {e}"))?;
+    let pin = crate::pairing::pin_for(h, &local_host_bin())?;
 
     let mut bytes = [0u8; 24];
     getrandom::getrandom(&mut bytes).map_err(|e| format!("token: {e}"))?;
@@ -341,6 +349,7 @@ pub fn abrir_sessao(cfg: &Config, host: &str) -> Result<Sessao, String> {
     let mut filho = crate::sys::child(&ponte.to_string_lossy())
         .arg(format!("{}:{}", h.addr, plan.port))
         .env("LOGI_PONTE_TOKEN", &token)
+        .env("LOGI_PAR", &pin)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -361,6 +370,13 @@ pub fn abrir_sessao(cfg: &Config, host: &str) -> Result<Sessao, String> {
     });
     say!("screen: aba de {host} pela ponte na porta {porta}");
     Ok(Sessao { porta, token })
+}
+
+/// This machine's own host binary, which knows this machine's identity.
+/// A missing one only costs the self-authorization step (see `pairing`).
+fn local_host_bin() -> PathBuf {
+    let nome = if cfg!(windows) { "logistream-host.exe" } else { "logistream-host" };
+    find_program(nome).unwrap_or_else(|| PathBuf::from(nome))
 }
 
 /// Garante que o `logistream-host` esta rodando na outra maquina.
