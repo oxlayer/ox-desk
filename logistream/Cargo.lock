@@ -1140,6 +1140,7 @@ dependencies = [
  "quinn",
  "rcgen",
  "reed-solomon-erasure",
+ "ring",
  "rustls",
  "softbuffer",
  "tokio",

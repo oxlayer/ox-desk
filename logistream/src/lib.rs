@@ -27,6 +27,7 @@ pub mod encode;
 pub mod host_linux;
 pub mod host_mac;
 pub mod host_win;
+pub mod identity;
 pub mod input;
 pub mod input_mac;
 pub mod input_win;

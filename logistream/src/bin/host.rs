@@ -63,6 +63,13 @@ fn main() -> anyhow::Result<()> {
 
     let a: Vec<String> = std::env::args().skip(1).collect();
 
+    // Spec 017: the fingerprint other machines pin. Read over SSH by the
+    // panel, which is how phase B learns it without trusting the network.
+    if a.first().is_some_and(|v| v == "--digital") {
+        println!("{}", logistream::identity::load()?.fingerprint());
+        return Ok(());
+    }
+
     // `--conferir` e `--pedir` existem NESTE binario e nao no daemon
     // porque o TCC do macOS amarra a concessao ao binario -- ao
     // designated requirement dele. O `logid` perguntando "tenho

@@ -10,7 +10,7 @@ remota própria, e o controle de tudo num painel só.
 | [`.claude/rules/`](.claude/rules/) | Regras invioláveis — armadilhas que já custaram tempo | Antes de mexer em qualquer máquina |
 | [`.claude/skills/`](.claude/skills/) | Procedimentos — receitas que funcionaram | Quando a tarefa for "como faço X de novo" |
 | [`docs/`](docs/) | Conhecimento de domínio com [[wikilinks]] | Para entender como as peças se encaixam |
-| [`specs/`](specs/) | Especificações, de `000-overview` a `016-sessao-e-visual` | Para entender *por que* o sistema é assim |
+| [`specs/`](specs/) | Especificações, de `000-overview` a `017-produto` | Para entender *por que* o sistema é assim |
 | [`README.md`](README.md) | Runbook histórico — o que testei e falhou | Antes de reintroduzir algo que já saiu |
 
 ## Regras (resumo executivo)
@@ -88,5 +88,8 @@ segue o dongle, não a máquina. Ver [`specs/005`](specs/005-input-switch.md).
 3. **Registre as falhas, não só os sucessos.** Vale mais que o que
    funciona, porque evita repetir a tarde perdida.
 4. **UI em pt-BR, código e commits em inglês.**
-5. **Nada de telemetria, nada de nuvem.** Tudo na LAN. O trust model
+5. **Telemetria mínima e desligável; nuvem opcional; LAN sempre.** Desde
+   07/11 o ox-desk é produto ([`specs/017`](specs/017-produto.md)): a
+   confiança vem da chave de cada máquina, o servidor é nosso ou da
+   pessoa, e só com LAN tudo continua funcionando. O trust model antigo
    está em [`specs/008-security.md`](specs/008-security.md).

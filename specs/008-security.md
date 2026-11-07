@@ -1,5 +1,9 @@
 # 008 — Segurança e trust model
 
+> **Mudou em 07/11:** a [`017`](017-produto.md) troca "nenhuma telemetria"
+> por telemetria mínima e desligável, e a confiança da LAN pela chave de
+> cada máquina. O resto desta spec continua valendo.
+
 Tudo na LAN. Nenhuma conta, nenhuma nuvem, nenhuma telemetria.
 Auditado nos binários que já usamos (ver README): Deskflow, Solaar e
 GSConnect não têm endpoint de telemetria; o único capaz de falar com a

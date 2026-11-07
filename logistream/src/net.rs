@@ -136,64 +136,38 @@ impl Reassembler {
     }
 }
 
-/// Certificado efemero, auto-assinado.
-///
-/// A identidade do par e a chave publica, nao uma CA: pareamento aqui e
-/// "aceitei esta chave uma vez". Por enquanto e efemero -- persistir e
-/// comparar e a etapa de pareamento (v5).
-fn cert_proprio() -> Result<(rustls::pki_types::CertificateDer<'static>, rustls::pki_types::PrivateKeyDer<'static>)> {
-    let cert = rcgen::generate_simple_self_signed(vec!["logistream".into()])?;
-    let der = rustls::pki_types::CertificateDer::from(cert.cert.der().to_vec());
-    let key = rustls::pki_types::PrivateKeyDer::try_from(cert.key_pair.serialize_der())
-        .map_err(|e| anyhow::anyhow!("chave: {e}"))?;
-    Ok((der, key))
-}
-
-/// Aceita qualquer certificado.
-///
-/// **Temporario e nao esconde isso.** Vale enquanto o transporte esta
-/// sendo provado em LAN; a v5 troca por "confio nesta chave publica
-/// especifica", que e o pareamento de verdade. Deixar isto passar
-/// despercebido seria o tipo de buraco que o projeto ja pagou.
-#[derive(Debug)]
-struct AceitaQualquer;
-
-impl rustls::client::danger::ServerCertVerifier for AceitaQualquer {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _m: &[u8],
-        _c: &rustls::pki_types::CertificateDer<'_>,
-        _d: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _m: &[u8],
-        _c: &rustls::pki_types::CertificateDer<'_>,
-        _d: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider().signature_verification_algorithms.supported_schemes()
-    }
+/// A throwaway identity, only when the persistent one cannot be loaded.
+fn efemera() -> Result<crate::identity::Identity> {
+    let c = rcgen::generate_simple_self_signed(vec!["logistream".into()])?;
+    Ok(crate::identity::Identity {
+        cert: rustls::pki_types::CertificateDer::from(c.cert.der().to_vec()),
+        key: rustls::pki_types::PrivateKeyDer::try_from(c.key_pair.serialize_der())
+            .map_err(|e| anyhow::anyhow!("chave: {e}"))?,
+    })
 }
 
 pub fn servidor(bind: SocketAddr) -> Result<quinn::Endpoint> {
-    let (cert, key) = cert_proprio()?;
-    let mut cfg = quinn::ServerConfig::with_single_cert(vec![cert], key)
+    // Spec 017, phase A: the persistent identity, and the client is asked
+    // for its certificate without being required to send one.
+    let id = match crate::identity::load() {
+        Ok(id) => id,
+        Err(e) => {
+            println!("  AVISO identidade indisponivel ({e:#}); certificado efemero");
+            efemera()?
+        }
+    };
+    servidor_com(bind, id)
+}
+
+fn servidor_com(bind: SocketAddr, id: crate::identity::Identity) -> Result<quinn::Endpoint> {
+    println!("  identidade do host: {}", crate::identity::short(&id.fingerprint()));
+    let cripto = rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+        .with_client_cert_verifier(Arc::new(crate::identity::ObservedClient))
+        .with_single_cert(vec![id.cert], id.key)
         .context("config do servidor")?;
+    let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(
+        quinn::crypto::rustls::QuicServerConfig::try_from(cripto)?,
+    ));
     // Sem keep-alive o NAT fecha o buraco no silencio entre quadros.
     //
     // Ocioso CURTO (5s, nao 10s) porque o host serve um cliente de cada
@@ -209,11 +183,29 @@ pub fn servidor(bind: SocketAddr) -> Result<quinn::Endpoint> {
 }
 
 pub fn cliente(bind: SocketAddr) -> Result<quinn::Endpoint> {
+    let fixada = crate::identity::pinned_from_env();
+    if fixada.is_none() {
+        eprintln!("  AVISO sem LOGI_PAR: a digital do host nao e conferida (spec 017, fase A)");
+    }
+    let id = crate::identity::load()
+        .map_err(|e| eprintln!("  AVISO identidade indisponivel ({e:#}); conectando sem certificado"))
+        .ok();
+    cliente_com(bind, id, fixada)
+}
+
+fn cliente_com(
+    bind: SocketAddr,
+    id: Option<crate::identity::Identity>,
+    fixada: Option<String>,
+) -> Result<quinn::Endpoint> {
     let mut ep = quinn::Endpoint::client(bind).context("abrir cliente")?;
-    let cripto = rustls::ClientConfig::builder()
+    let base = rustls::ClientConfig::builder()
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AceitaQualquer))
-        .with_no_client_auth();
+        .with_custom_certificate_verifier(Arc::new(crate::identity::PinnedHost { pinned: fixada }));
+    let cripto = match id {
+        Some(id) => base.with_client_auth_cert(vec![id.cert], id.key).context("certificado do cliente")?,
+        None => base.with_no_client_auth(),
+    };
     let mut cfg = quinn::ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(cripto)?,
     ));
@@ -246,7 +238,7 @@ mod tests {
     /// de cada vez.
     #[tokio::test]
     async fn datagrama_atravessa_de_verdade() {
-        let srv = servidor("127.0.0.1:0".parse().unwrap()).expect("servidor");
+        let srv = servidor_com("127.0.0.1:0".parse().unwrap(), id_temp("dg-host").1).expect("servidor");
         let addr = srv.local_addr().expect("porta");
 
         let aceita = tokio::spawn(async move {
@@ -260,7 +252,7 @@ mod tests {
             max
         });
 
-        let cli = cliente("127.0.0.1:0".parse().unwrap()).expect("cliente");
+        let cli = cliente_com("127.0.0.1:0".parse().unwrap(), Some(id_temp("dg-cli").1), None).expect("cliente");
         let conexao = cli
             .connect(addr, "logistream")
             .expect("connect")
@@ -285,6 +277,65 @@ mod tests {
         let max = aceita.await.expect("tarefa");
         assert!(max.is_some(), "o par tem de aceitar datagramas");
         assert_eq!(vistos, 5);
+    }
+
+    fn id_temp(nome: &str) -> (std::path::PathBuf, crate::identity::Identity) {
+        let d = std::env::temp_dir().join(format!(
+            "logi-net-{nome}-{}-{:?}",
+            std::process::id(),
+            std::time::Instant::now()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        let id = crate::identity::load_or_create(&d).expect("identidade");
+        (d, id)
+    }
+
+    /// Spec 017, phase A, over a real handshake: the pin decides, and the
+    /// host learns who the client is.
+    #[tokio::test]
+    async fn pareamento_pela_digital() {
+        let (_, host) = id_temp("host");
+        let (_, outro) = id_temp("outro");
+        let (dir_cli, cli) = id_temp("cli");
+        let fp_host = host.fingerprint();
+        let fp_outro = outro.fingerprint();
+        let fp_cli = cli.fingerprint();
+
+        let srv = servidor_com("127.0.0.1:0".parse().unwrap(), host).expect("servidor");
+        let addr = srv.local_addr().unwrap();
+        let visto = tokio::spawn(async move {
+            let mut vistos = Vec::new();
+            // the wrong pin aborts during the handshake; only the good ones arrive
+            while vistos.len() < 2 {
+                let Some(e) = srv.accept().await else { break };
+                if let Ok(c) = e.await {
+                    vistos.push(crate::identity::describe_peer(&c, &[fp_cli.clone()].into_iter().collect()));
+                }
+            }
+            vistos
+        });
+
+        // wrong pin: refused by the client
+        let errado = cliente_com("127.0.0.1:0".parse().unwrap(), None, Some(fp_outro)).unwrap();
+        let r = errado.connect(addr, "logistream").unwrap().await;
+        assert!(r.is_err(), "digital errada tinha de recusar");
+
+        // right pin, with identity: connects, host sees it as authorized
+        let certo = cliente_com("127.0.0.1:0".parse().unwrap(), Some(cli), Some(fp_host.clone())).unwrap();
+        let _c1 = certo.connect(addr, "logistream").unwrap().await.expect("digital certa conecta");
+
+        // no identity (an old client): phase A still lets it in
+        let velho = cliente_com("127.0.0.1:0".parse().unwrap(), None, Some(fp_host)).unwrap();
+        let _c2 = velho.connect(addr, "logistream").unwrap().await.expect("cliente velho entra na fase A");
+
+        let vistos = tokio::time::timeout(std::time::Duration::from_secs(5), visto)
+            .await
+            .expect("prazo")
+            .unwrap();
+        assert_eq!(vistos.len(), 2, "{vistos:?}");
+        assert!(vistos[0].ends_with("autorizado") && !vistos[0].contains("desconhecido"), "{vistos:?}");
+        assert_eq!(vistos[1], "sem certificado");
+        let _ = std::fs::remove_dir_all(dir_cli);
     }
 
     fn cab() -> SliceHeader {
