@@ -25,7 +25,7 @@
   <array>
     <string>/Users/user/.local/bin/logistream-host</string>
     <string>9777</string>
-    <string>1</string>
+    <string>Capture screen 0</string>
   </array>
   <key>RunAtLoad</key><false/>
   <key>KeepAlive</key><false/>

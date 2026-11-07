@@ -137,6 +137,16 @@ Depois repetir o passo 1. Se abrir, sobreviveu.
 isso: trocar o certificado invalida a concessão e cobra outra ida às
 Configurações do Mac. Foi o que me aconteceu no meio deste trabalho.
 
+## Quadro preto com contagem perfeita
+
+Em 07/11 o host mandava 59 fps de preto em 1920×1440. O índice `1` tinha
+virado a câmera do iPhone, porque o `avfoundation` conta câmeras antes
+da tela. Desde então ele abre `Capture screen 0` pelo nome. Confira o
+tamanho e a luminância do quadro, e não só a contagem.
+
+Sobre o wizard dizer "falta" com a chave ligada: filho do `logid` responde
+pelas permissões do `logid`. Por isso a pergunta vai como job do launchd.
+
 ## Veja também
 
 - [[deploy]] — o passo `mac: assinar o host` falha se o binário ficar ad-hoc

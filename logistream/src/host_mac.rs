@@ -35,6 +35,23 @@ const CAPACIDADE: usize = 2;
 /// imagem, vira banda e trabalho de conversao de cor.
 const CADENCIA: Duration = Duration::from_micros(16_667);
 
+/// A tela principal, pelo nome que o `avfoundation` da a ela.
+const TELA: &str = "Capture screen 0";
+
+/// O dispositivo a abrir: um indice vira o nome da tela.
+///
+/// O indice conta cameras, entao ele muda sozinho. Com um iPhone por
+/// perto a tela foi do `1` para o `3`, e o `1` virou a camera do iPhone:
+/// o host servia essa camera, em quadro preto, sem nenhum erro. As
+/// instalacoes antigas ainda passam o `1`, e por isso ele e tratado aqui.
+fn dispositivo(pedido: &str) -> &str {
+    if pedido.parse::<u32>().is_ok() {
+        TELA
+    } else {
+        pedido
+    }
+}
+
 /// Abre a captura de tela do `avfoundation`.
 ///
 /// O indice vem como texto porque e isso que a URL do dispositivo e: no
@@ -74,6 +91,7 @@ fn abrir(indice: &str, fps: u32) -> anyhow::Result<ffmpeg_next::format::context:
 }
 
 pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
+    let indice = dispositivo(indice);
     ffmpeg_next::init()?;
     // Sem isto o nome `avfoundation` nao resolve: os dispositivos de
     // entrada vivem no libavdevice e precisam ser registrados.
@@ -369,5 +387,15 @@ async fn receber_input(conexao: quinn::Connection) {
                 println!("  {n} eventos de input aplicados");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod testes {
+    #[test]
+    fn indice_nunca_abre_camera() {
+        assert_eq!(super::dispositivo("1"), super::TELA);
+        assert_eq!(super::dispositivo("3"), super::TELA);
+        assert_eq!(super::dispositivo("Capture screen 1"), "Capture screen 1");
     }
 }

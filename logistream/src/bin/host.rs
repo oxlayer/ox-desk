@@ -159,9 +159,10 @@ fn main() -> anyhow::Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        // Indice da TELA no avfoundation, nao conector de video: a
-        // numeracao inclui cameras, entao a tela raramente e "0".
-        let indice = pos.get(1).map(|s| s.to_string()).unwrap_or_else(|| "1".into());
+        // Nome do dispositivo no avfoundation. Indice nao serve: a
+        // numeracao inclui cameras e muda sozinha (ver `host_mac`).
+        let indice =
+            pos.get(1).map(|s| s.to_string()).unwrap_or_else(|| "Capture screen 0".into());
         logistream::host_mac::executar(porta, &indice)
     }
 
