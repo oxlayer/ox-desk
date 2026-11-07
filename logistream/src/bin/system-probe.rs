@@ -1,41 +1,42 @@
-//! O que o Windows deixa um processo SYSTEM fazer na tela de bloqueio.
+//! What Windows lets a SYSTEM process do on the lock screen.
 //!
 //! Spec: ../../../specs/014-lock-screen.md
 //!
-//! Mesmo espírito do `mac-probe`: provar as peças antes de montar o
-//! pipeline. Aqui a pergunta que decide o desenho é uma só e **varia
-//! por versão do Windows** -- há relatos de o processo morrer logo
-//! depois do bloqueio no Win 11 e relatos de funcionar bem como
-//! SYSTEM. Não dá para decidir por leitura.
+//! Same spirit as `mac-probe`: prove the pieces before assembling the
+//! pipeline. Here the question that decides the design is a single one and
+//! **varies by Windows version** -- there are reports of the process dying
+//! right after locking on Win 11 and reports of it working fine as SYSTEM.
+//! It cannot be decided by reading.
 //!
-//!   logistream-probe-sistema --quem        quem sou eu, e em que mesa
-//!   logistream-probe-sistema --capturar    consigo duplicar a tela daqui?
-//!   logistream-probe-sistema --lancar      vira SYSTEM na mesa Winlogon
+//!   logistream-probe-sistema --quem        who am I, and on which desktop
+//!   logistream-probe-sistema --capturar    can I duplicate the screen from here?
+//!   logistream-probe-sistema --lancar      become SYSTEM on the Winlogon desktop
 //!
-//! ## O caminho que estamos provando
+//! ## The path we are proving
 //!
-//! A tela de bloqueio e o diálogo de UAC vivem numa **mesa** (desktop)
-//! própria, `Winlogon`, dentro da window station `WinSta0`. O DXGI não
-//! duplica mesa que não seja a de entrada, e só processo LocalSystem
-//! consegue se anexar à `Winlogon`. Um processo de usuário -- que é o
-//! que somos hoje, via tarefa `/IT` -- não tem como nem olhar.
+//! The lock screen and the UAC dialog live on their own **desktop**,
+//! `Winlogon`, inside the `WinSta0` window station. DXGI does not duplicate
+//! any desktop other than the input one, and only a LocalSystem process can
+//! attach to `Winlogon`. A user process -- which is what we are today, via
+//! an `/IT` task -- cannot even look.
 //!
-//! O padrão que Parsec e RustDesk usam, e que `--lancar` exercita:
+//! The pattern Parsec and RustDesk use, and that `--lancar` exercises:
 //!
-//! 1. achar o `winlogon.exe` da sessão do console (`WTSGetActiveConsoleSessionId`)
-//! 2. abrir o token dele e duplicar como token primário
-//! 3. `CreateProcessAsUserW` com `lpDesktop = "winsta0\\Winlogon"`
+//! 1. find the console session's `winlogon.exe` (`WTSGetActiveConsoleSessionId`)
+//! 2. open its token and duplicate it as a primary token
+//! 3. `CreateProcessAsUserW` with `lpDesktop = "winsta0\\Winlogon"`
 //!
-//! O filho nasce SYSTEM, na sessão do console, já na mesa certa.
+//! The child is born SYSTEM, in the console session, already on the right
+//! desktop.
 //!
-//! ## Por que um probe e não já o serviço
+//! ## Why a probe and not the service right away
 //!
-//! Instalar serviço é mexer em `HKLM` e criar um processo SYSTEM
-//! permanente -- e o Defender já apagou o `logid.exe` desta máquina uma
-//! vez (spec 008). Antes de pedir isso, vale saber se o caminho
-//! funciona: `--lancar` consegue o mesmo efeito a partir de uma tarefa
-//! agendada `/ru SYSTEM`, que o administrador cria e apaga sem deixar
-//! resíduo.
+//! Installing a service means touching `HKLM` and creating a permanent
+//! SYSTEM process -- and Defender has already deleted this machine's
+//! `logid.exe` once (spec 008). Before asking for that, it is worth knowing
+//! whether the path works: `--lancar` achieves the same effect from a
+//! `/ru SYSTEM` scheduled task, which the administrator creates and deletes
+//! without leaving residue.
 
 
 #[cfg(windows)]
@@ -63,22 +64,22 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::System::Threading::OpenProcess;
 
-/// Imprime e **grava**.
+/// Prints and **records**.
 ///
-/// O processo lançado por `--lancar` nasce sem console (de propósito:
-/// console novo abriria uma janela preta na tela de bloqueio). Sem
-/// arquivo, a saída dele não iria a lugar nenhum -- e a saída dele é o
-/// resultado inteiro do experimento.
-macro_rules! diga {
+/// The process launched by `--lancar` is born without a console (on
+/// purpose: a new console would open a black window on the lock screen).
+/// Without a file, its output would go nowhere -- and its output is the
+/// entire result of the experiment.
+macro_rules! say {
     ($($a:tt)*) => {{
-        let linha = format!($($a)*);
-        println!("{linha}");
+        let line = format!($($a)*);
+        println!("{line}");
         let _ = std::fs::create_dir_all("C:\\ProgramData\\logid");
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true).append(true).open("C:\\ProgramData\\logid\\probe-sistema.log")
         {
             use std::io::Write;
-            let _ = writeln!(f, "{linha}");
+            let _ = writeln!(f, "{line}");
         }
     }};
 }
@@ -87,18 +88,18 @@ fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// Nome da mesa (desktop) a que esta thread está anexada.
-fn mesa_atual() -> String {
+/// Name of the desktop this thread is attached to.
+fn current_desktop() -> String {
     unsafe {
         let h = windows::Win32::System::StationsAndDesktops::GetThreadDesktop(
             windows::Win32::System::Threading::GetCurrentThreadId(),
         );
         let Ok(h) = h else { return "?".into() };
-        nome_do_objeto(h.0 as *mut c_void)
+        object_name(h.0 as *mut c_void)
     }
 }
 
-fn nome_do_objeto(h: *mut c_void) -> String {
+fn object_name(h: *mut c_void) -> String {
     unsafe {
         let mut buf = [0u16; 256];
         let mut n = 0u32;
@@ -112,21 +113,21 @@ fn nome_do_objeto(h: *mut c_void) -> String {
         if ok.is_err() {
             return "?".into();
         }
-        let fim = buf.iter().position(|c| *c == 0).unwrap_or(0);
-        String::from_utf16_lossy(&buf[..fim])
+        let end = buf.iter().position(|c| *c == 0).unwrap_or(0);
+        String::from_utf16_lossy(&buf[..end])
     }
 }
 
-fn sou_system() -> bool {
-    // Jeito barato e sem SID: SYSTEM tem USERNAME=<maquina>$ ou
-    // SYSTEM dependendo do caminho. O confiavel aqui e o nome de
-    // usuario do token, mas para um probe o que importa e so
-    // distinguir "sou eu" de "sou SYSTEM", e o USERNAME basta.
+fn am_system() -> bool {
+    // Cheap way, without a SID: SYSTEM has USERNAME=<machine>$ or SYSTEM
+    // depending on the path. The reliable answer here is the token's user
+    // name, but for a probe all that matters is telling "it's me" from
+    // "it's SYSTEM", and USERNAME is enough.
     std::env::var("USERNAME").map(|u| u.eq_ignore_ascii_case("SYSTEM") || u.ends_with('$'))
         .unwrap_or(false)
 }
 
-fn sessao_desta() -> u32 {
+fn this_session() -> u32 {
     unsafe {
         let mut s = 0u32;
         let _ = ProcessIdToSessionId(GetCurrentProcessId(), &mut s);
@@ -134,119 +135,118 @@ fn sessao_desta() -> u32 {
     }
 }
 
-fn quem() {
-    diga!("  pid {} sessão {}", unsafe { GetCurrentProcessId() }, sessao_desta());
-    diga!("  sessão do console: {}", unsafe { WTSGetActiveConsoleSessionId() });
-    diga!("  USERNAME={} (SYSTEM? {})", std::env::var("USERNAME").unwrap_or_default(), sou_system());
-    diga!("  mesa desta thread: {}", mesa_atual());
+fn who() {
+    say!("  pid {} session {}", unsafe { GetCurrentProcessId() }, this_session());
+    say!("  console session: {}", unsafe { WTSGetActiveConsoleSessionId() });
+    say!("  USERNAME={} (SYSTEM? {})", std::env::var("USERNAME").unwrap_or_default(), am_system());
+    say!("  this thread's desktop: {}", current_desktop());
     unsafe {
         match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(DESKTOP_READOBJECTS.0 | DESKTOP_SWITCHDESKTOP.0)) {
             Ok(h) => {
-                // A PERGUNTA. Mesa de entrada "Winlogon" = tela
-                // bloqueada ou UAC na frente. "Default" = area de
-                // trabalho normal. Processo de usuario nao consegue
-                // abrir a Winlogon de jeito nenhum -- o proprio erro
-                // aqui ja e resposta.
-                diga!("  mesa de ENTRADA: {}", nome_do_objeto(h.0 as *mut c_void));
+                // THE QUESTION. Input desktop "Winlogon" = screen locked
+                // or UAC in front. "Default" = normal desktop. A user
+                // process cannot open Winlogon at all -- the error here is
+                // already the answer.
+                say!("  INPUT desktop: {}", object_name(h.0 as *mut c_void));
                 let _ = CloseDesktop(h);
             }
-            Err(e) => diga!("  mesa de ENTRADA: não consegui abrir ({e}) -- típico de processo de usuário"),
+            Err(e) => say!("  INPUT desktop: could not open it ({e}) -- typical of a user process"),
         }
     }
 }
 
-/// Anexa esta thread à mesa de entrada e tenta duplicar a saída.
-fn capturar() {
+/// Attaches this thread to the input desktop and tries to duplicate the output.
+fn capture() {
     unsafe {
         match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(DESKTOP_READOBJECTS.0 | DESKTOP_SWITCHDESKTOP.0)) {
             Ok(h) => {
-                let nome = nome_do_objeto(h.0 as *mut c_void);
+                let name = object_name(h.0 as *mut c_void);
                 match SetThreadDesktop(h) {
-                    Ok(()) => diga!("  anexado à mesa de entrada: {nome}"),
-                    Err(e) => diga!("  NÃO anexei a {nome}: {e}"),
+                    Ok(()) => say!("  attached to the input desktop: {name}"),
+                    Err(e) => say!("  did NOT attach to {name}: {e}"),
                 }
             }
-            Err(e) => diga!("  não abri a mesa de entrada: {e}"),
+            Err(e) => say!("  could not open the input desktop: {e}"),
         }
     }
-    diga!("  mesa desta thread agora: {}", mesa_atual());
+    say!("  this thread's desktop now: {}", current_desktop());
 
-    // O teste real: o mesmo caminho do host de verdade.
+    // The real test: the same path as the real host.
     match logistream::capture_win::Monitor::open(0) {
         Ok(m) => match m.duplicate() {
             Ok(t) => {
                 let (lw, lh) = t.size();
-                diga!("  DUPLICOU: {lw}x{lh} -- captura funciona nesta mesa");
+                say!("  DUPLICATED: {lw}x{lh} -- capture works on this desktop");
             }
-            Err(e) => diga!("  duplicar FALHOU: {e}"),
+            Err(e) => say!("  duplicate FAILED: {e}"),
         },
-        Err(e) => diga!("  abrir monitor falhou: {e}"),
+        Err(e) => say!("  opening the monitor failed: {e}"),
     }
 }
 
-/// Acompanha a mesa de entrada por N segundos, capturando a cada volta.
+/// Follows the input desktop for N seconds, capturing on every round.
 ///
-/// Existe porque a primeira medição se contradisse: o `LogonUI` estava
-/// na tela (ou seja, bloqueado) e o probe leu a mesa de entrada como
-/// `Default`. Uma foto só não distingue "a leitura está errada" de "o
-/// bloqueio ainda não tinha trocado a mesa quando eu olhei". Um filme
-/// distingue -- e de quebra mostra QUANTO tempo a troca leva, que é
-/// exatamente o que o serviço vai precisar tolerar.
+/// It exists because the first measurement contradicted itself: `LogonUI`
+/// was on screen (that is, locked) and the probe read the input desktop as
+/// `Default`. A single snapshot cannot tell "the reading is wrong" from "the
+/// lock had not switched the desktop yet when I looked". A film can -- and
+/// as a bonus it shows HOW LONG the switch takes, which is exactly what the
+/// service will need to tolerate.
 #[cfg(windows)]
-fn seguir(segundos: u64) {
-    for i in 0..segundos {
-        let (mesa, dup) = unsafe {
+fn follow(seconds: u64) {
+    for i in 0..seconds {
+        let (desktop, dup) = unsafe {
             match OpenInputDesktop(
                 DESKTOP_CONTROL_FLAGS(0),
                 false,
                 DESKTOP_ACCESS_FLAGS(DESKTOP_READOBJECTS.0 | DESKTOP_SWITCHDESKTOP.0),
             ) {
                 Ok(h) => {
-                    let nome = nome_do_objeto(h.0 as *mut c_void);
-                    // Reanexar A CADA VOLTA: a duplicação do DXGI é
-                    // por mesa, e quem não reanexa continua olhando a
-                    // mesa antiga -- que é como um capturador "funciona"
-                    // e entrega quadro velho.
+                    let name = object_name(h.0 as *mut c_void);
+                    // Re-attach ON EVERY ROUND: DXGI duplication is per
+                    // desktop, and whoever does not re-attach keeps looking
+                    // at the old desktop -- which is how a capturer "works"
+                    // and delivers stale frames.
                     let _ = SetThreadDesktop(h);
                     let r = match logistream::capture_win::Monitor::open(0) {
                         Ok(m) => match m.duplicate() {
                             Ok(t) => {
                                 let (w, h2) = t.size();
-                                format!("duplicou {w}x{h2}")
+                                format!("duplicated {w}x{h2}")
                             }
-                            Err(e) => format!("NAO duplicou: {}", primeira_linha(&e.to_string())),
+                            Err(e) => format!("did NOT duplicate: {}", first_line(&e.to_string())),
                         },
-                        Err(e) => format!("sem monitor: {}", primeira_linha(&e.to_string())),
+                        Err(e) => format!("no monitor: {}", first_line(&e.to_string())),
                     };
-                    (nome, r)
+                    (name, r)
                 }
-                Err(e) => ("<nao abri>".to_string(), format!("OpenInputDesktop: {e}")),
+                Err(e) => ("<not opened>".to_string(), format!("OpenInputDesktop: {e}")),
             }
         };
-        diga!("  [{i:02}s] mesa de entrada={mesa:12} {dup}");
+        say!("  [{i:02}s] input desktop={desktop:12} {dup}");
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }
 
 #[cfg(windows)]
-fn primeira_linha(s: &str) -> String {
+fn first_line(s: &str) -> String {
     s.lines().next().unwrap_or(s).chars().take(90).collect()
 }
 
-/// Acha um processo pelo nome e devolve o pid na sessão pedida.
-fn pid_de(nome: &str, sessao: u32) -> Option<u32> {
+/// Finds a process by name and returns its pid in the requested session.
+fn pid_of(name: &str, session: u32) -> Option<u32> {
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
         let mut e = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
-        let mut achou = None;
+        let mut found = None;
         if Process32FirstW(snap, &mut e).is_ok() {
             loop {
-                let fim = e.szExeFile.iter().position(|c| *c == 0).unwrap_or(0);
-                let exe = String::from_utf16_lossy(&e.szExeFile[..fim]);
-                if exe.eq_ignore_ascii_case(nome) {
+                let end = e.szExeFile.iter().position(|c| *c == 0).unwrap_or(0);
+                let exe = String::from_utf16_lossy(&e.szExeFile[..end]);
+                if exe.eq_ignore_ascii_case(name) {
                     let mut s = 0u32;
-                    if ProcessIdToSessionId(e.th32ProcessID, &mut s).is_ok() && s == sessao {
-                        achou = Some(e.th32ProcessID);
+                    if ProcessIdToSessionId(e.th32ProcessID, &mut s).is_ok() && s == session {
+                        found = Some(e.th32ProcessID);
                         break;
                     }
                 }
@@ -256,19 +256,19 @@ fn pid_de(nome: &str, sessao: u32) -> Option<u32> {
             }
         }
         let _ = CloseHandle(snap);
-        achou
+        found
     }
 }
 
-/// Liga um privilégio no nosso próprio token.
-fn ligar_privilegio(nome: &str) -> bool {
+/// Enables a privilege on our own token.
+fn enable_privilege(name: &str) -> bool {
     unsafe {
         let mut tok = HANDLE::default();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut tok).is_err() {
             return false;
         }
         let mut luid = LUID::default();
-        let n = w(nome);
+        let n = w(name);
         let ok = LookupPrivilegeValueW(None, PWSTR(n.as_ptr() as *mut u16), &mut luid).is_ok();
         if ok {
             let tp = TOKEN_PRIVILEGES {
@@ -282,68 +282,68 @@ fn ligar_privilegio(nome: &str) -> bool {
     }
 }
 
-/// O "service dance": virar SYSTEM na mesa Winlogon da sessão do console.
-fn lancar(resto: &[String]) {
-    let sessao = unsafe { WTSGetActiveConsoleSessionId() };
-    diga!("  sessão do console: {sessao}");
+/// The "service dance": become SYSTEM on the console session's Winlogon desktop.
+fn launch(rest: &[String]) {
+    let session = unsafe { WTSGetActiveConsoleSessionId() };
+    say!("  console session: {session}");
 
-    // `winlogon.exe` é o alvo porque ele SEMPRE existe na sessão
-    // interativa, roda como SYSTEM, e existe mesmo sem usuário logado
-    // -- que é exatamente o estado da tela de bloqueio. O `explorer`
-    // não serve: ele é do usuário e some quando ninguém está logado.
-    let Some(pid) = pid_de("winlogon.exe", sessao) else {
-        diga!("  não achei winlogon.exe na sessão {sessao}");
+    // `winlogon.exe` is the target because it ALWAYS exists in the
+    // interactive session, runs as SYSTEM, and exists even with no user
+    // logged in -- which is exactly the lock screen state. `explorer` will
+    // not do: it belongs to the user and goes away when nobody is logged in.
+    let Some(pid) = pid_of("winlogon.exe", session) else {
+        say!("  did not find winlogon.exe in session {session}");
         return;
     };
-    diga!("  winlogon.exe pid {pid}");
+    say!("  winlogon.exe pid {pid}");
 
-    // Sem estes dois, o CreateProcessAsUser falha com ERROR_PRIVILEGE_NOT_HELD
-    // e a mensagem não menciona privilégio nenhum.
+    // Without these, CreateProcessAsUser fails with ERROR_PRIVILEGE_NOT_HELD
+    // and the message mentions no privilege at all.
     for p in ["SeDebugPrivilege", "SeIncreaseQuotaPrivilege", "SeAssignPrimaryTokenPrivilege"] {
-        diga!("  privilégio {p}: {}", if ligar_privilegio(p) { "ligado" } else { "NÃO" });
+        say!("  privilege {p}: {}", if enable_privilege(p) { "enabled" } else { "NO" });
     }
 
     unsafe {
         let Ok(proc) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-            diga!("  não abri o processo winlogon (preciso ser SYSTEM ou ter SeDebugPrivilege)");
+            say!("  could not open the winlogon process (need to be SYSTEM or have SeDebugPrivilege)");
             return;
         };
         let mut tok = HANDLE::default();
         if OpenProcessToken(proc, TOKEN_DUPLICATE | TOKEN_QUERY, &mut tok).is_err() {
-            diga!("  não abri o token do winlogon");
+            say!("  could not open winlogon's token");
             let _ = CloseHandle(proc);
             return;
         }
-        let mut primario = HANDLE::default();
-        // Token PRIMÁRIO, não de impersonação: o CreateProcessAsUser
-        // recusa o de impersonação, e a documentação é explícita --
-        // "o token criado por DuplicateToken não pode ser usado em
+        let mut primary = HANDLE::default();
+        // PRIMARY token, not an impersonation one: CreateProcessAsUser
+        // refuses the impersonation one, and the documentation is explicit
+        // -- "the token created by DuplicateToken cannot be used in
         // CreateProcessAsUser".
-        if DuplicateTokenEx(tok, TOKEN_ALL_ACCESS, None, SecurityImpersonation, TokenPrimary, &mut primario).is_err() {
-            diga!("  DuplicateTokenEx falhou");
+        if DuplicateTokenEx(tok, TOKEN_ALL_ACCESS, None, SecurityImpersonation, TokenPrimary, &mut primary).is_err() {
+            say!("  DuplicateTokenEx failed");
             let _ = CloseHandle(tok);
             let _ = CloseHandle(proc);
             return;
         }
 
-        let eu = std::env::current_exe().unwrap_or_default();
-        let args: Vec<String> = resto.to_vec();
-        let linha = format!("\"{}\" {}", eu.display(), args.join(" "));
-        let mut linha_w = w(&linha);
-        // `winsta0\Winlogon` é o ponto inteiro: é a mesa do bloqueio e
-        // do UAC. `winsta0\default` daria a área de trabalho normal.
-        let mut mesa = w("winsta0\\Winlogon");
+        let me = std::env::current_exe().unwrap_or_default();
+        let args: Vec<String> = rest.to_vec();
+        let line = format!("\"{}\" {}", me.display(), args.join(" "));
+        let mut line_w = w(&line);
+        // `winsta0\Winlogon` is the whole point: it is the lock and UAC
+        // desktop. `winsta0\default` would give the normal desktop.
+        let mut desktop = w("winsta0\\Winlogon");
 
         let si = STARTUPINFOW {
             cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-            lpDesktop: PWSTR(mesa.as_mut_ptr()),
+            lpDesktop: PWSTR(desktop.as_mut_ptr()),
             ..Default::default()
         };
         let mut pi = PROCESS_INFORMATION::default();
         let r = CreateProcessAsUserW(
-            Some(primario),
+            Some(primary),
             None,
-            Some(PWSTR(linha_w.as_mut_ptr())),
+            Some(PWSTR(line_w.as_mut_ptr())),
             None,
             None,
             false,
@@ -354,41 +354,41 @@ fn lancar(resto: &[String]) {
             &mut pi,
         );
         match r {
-            Ok(()) => diga!("  LANCEI pid {} na mesa winsta0\\Winlogon", pi.dwProcessId),
-            Err(e) => diga!("  CreateProcessAsUser falhou: {e}"),
+            Ok(()) => say!("  LAUNCHED pid {} on desktop winsta0\\Winlogon", pi.dwProcessId),
+            Err(e) => say!("  CreateProcessAsUser failed: {e}"),
         }
-        let _ = CloseHandle(primario);
+        let _ = CloseHandle(primary);
         let _ = CloseHandle(tok);
         let _ = CloseHandle(proc);
     }
 }
 
-pub fn executar() {
+pub fn run() {
     let a: Vec<String> = std::env::args().skip(1).collect();
-    let modo = a.first().map(String::as_str).unwrap_or("--quem");
-    diga!("== logistream-probe-sistema {modo} ==");
-    // Carimbo de hora: este probe roda por tarefa agendada, sem
-    // console, e sem a hora não dá para saber se a saída é desta
-    // execução ou da anterior.
-    diga!("  {}", chrono_simples());
-    match modo {
-        "--quem" => quem(),
+    let mode = a.first().map(String::as_str).unwrap_or("--quem");
+    say!("== logistream-probe-sistema {mode} ==");
+    // Timestamp: this probe runs from a scheduled task, without a console,
+    // and without the time there is no way to tell whether the output is
+    // from this run or the previous one.
+    say!("  {}", simple_clock());
+    match mode {
+        "--quem" => who(),
         "--capturar" => {
-            quem();
-            capturar();
+            who();
+            capture();
         }
-        "--lancar" => lancar(if a.len() > 1 { &a[1..] } else { &[] }),
+        "--lancar" => launch(if a.len() > 1 { &a[1..] } else { &[] }),
         "--seguir" => {
-            quem();
+            who();
             let n = a.get(1).and_then(|v| v.parse().ok()).unwrap_or(15);
-            seguir(n);
+            follow(n);
         }
-        outro => diga!("  modo desconhecido: {outro}"),
+        other => say!("  unknown mode: {other}"),
     }
 }
 
-/// Hora local sem puxar dependência: o probe não merece uma crate.
-fn chrono_simples() -> String {
+/// Local time without pulling a dependency: the probe does not deserve a crate.
+fn simple_clock() -> String {
     use windows::Win32::System::SystemInformation::GetLocalTime;
     let t = unsafe { GetLocalTime() };
     format!("{:02}:{:02}:{:02}", t.wHour, t.wMinute, t.wSecond)
@@ -397,14 +397,14 @@ fn chrono_simples() -> String {
 
 #[cfg(windows)]
 fn main() {
-    win::executar();
+    win::run();
 }
 
-// Mesmo padrao do mac-probe: no SO errado o binario existe e diz o que
-// e, em vez de nao compilar. O deploy constroi TODOS os bins do crate
-// no Ubuntu, entao um bin que so compila no Windows quebraria o deploy
-// inteiro -- foi o que aconteceu.
+// Same pattern as mac-probe: on the wrong OS the binary exists and says what
+// it is, instead of failing to compile. The deploy builds ALL of the crate's
+// bins on Ubuntu, so a bin that only compiles on Windows would break the
+// whole deploy -- which is what happened.
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("este probe e do Windows: ele mede o que um processo SYSTEM alcanca na tela de bloqueio");
+    eprintln!("this probe is for Windows: it measures what a SYSTEM process can reach on the lock screen");
 }
