@@ -1,63 +1,62 @@
-# Um supervisor por daemon — e nunca a GUI
+# One supervisor per daemon — and never the GUI
 
-Custou um dia inteiro. O Mac serviu um binário de dez dias atrás
-enquanto **todo** passo do deploy dizia `ok`, e quem notou foi o
-usuário.
+It cost a whole day. The Mac served a ten-day-old binary while **every**
+deploy step said `ok`, and the one who noticed was the user.
 
-## O que acontecia
+## What was happening
 
-A GUI (`gui/main.js`) subia o daemon por conta própria quando o
-`/healthz` não respondia. Isso parece educado — "se ninguém atende, eu
-subo" — mas cria um **segundo dono da porta 8787**:
+The GUI (`gui/main.js`) started the daemon on its own when `/healthz`
+didn't answer. That seems polite — "if nobody answers, I'll start it" —
+but it creates a **second owner of port 8787**:
 
 ```
-boot → ai.logi.gui sobe primeiro → pinga, ninguém atende → spawn(logid)
-     → ai.logi.logid (LaunchAgent) sobe depois → Address already in use
-     → exit 1 → launchd throttla → state = spawn scheduled, para sempre
+boot → ai.logi.gui starts first → pings, nobody answers → spawn(logid)
+     → ai.logi.logid (LaunchAgent) starts later → Address already in use
+     → exit 1 → launchd throttles → state = spawn scheduled, forever
 ```
 
-O vencedor da corrida é um **órfão**: `launchctl print` não o conhece,
-`launchctl kickstart -k` não o mata, `systemctl restart` não o mata.
-O perdedor é justamente a cópia que o deploy e o OTA sabem reiniciar.
+The winner of the race is an **orphan**: `launchctl print` doesn't know
+it, `launchctl kickstart -k` doesn't kill it, `systemctl restart` doesn't
+kill it. The loser is precisely the copy that the deploy and the OTA
+know how to restart.
 
-Resultado: `install -m755` escrevia o arquivo novo, `kickstart -k`
-reiniciava um job que morria em loop, o órfão seguia respondendo o
-build velho — e cada passo devolvia exit 0.
+Result: `install -m755` wrote the new file, `kickstart -k` restarted a
+job that died in a loop, the orphan kept answering with the old build —
+and every step returned exit 0.
 
-## As três regras
+## The three rules
 
-### 1. Quem supervisiona é o SO
+### 1. The OS is the supervisor
 
-`systemd --user`, `launchd`, `schtasks`. A GUI **pede** (`systemctl
---user start`, `launchctl kickstart`, `schtasks /run`) e só sobe um
-filho avulso se não houver supervisor instalado — caso de máquina nova,
-onde é pela GUI que se chega ao assistente.
+`systemd --user`, `launchd`, `schtasks`. The GUI **asks** (`systemctl
+--user start`, `launchctl kickstart`, `schtasks /run`) and only starts a
+standalone child if there is no supervisor installed — the case of a new
+machine, where the GUI is how you reach the wizard.
 
-### 2. Quem reinicia limpa a porta primeiro
+### 2. Whoever restarts clears the port first
 
-`pkill -x logid` antes do `kickstart -k` / `systemctl restart`. Não é
-brutalidade: o `-k` já mata a cópia supervisionada de qualquer forma,
-então o efeito líquido é exatamente *"também as que o supervisor não
-conhece"*. Está em `plano::Plano::limpar` (OTA) e nos passos do
-`deploy.sh`.
+`pkill -x logid` before `kickstart -k` / `systemctl restart`. It's not
+brutality: `-k` already kills the supervised copy anyway, so the net
+effect is exactly *"also the ones the supervisor doesn't know about"*.
+It is in `plano::Plano::limpar` (OTA) and in the `deploy.sh` steps.
 
-O OTA sem isso é pior que o deploy: ele reinicia, pergunta o
-`/healthz`, ouve o build velho do órfão e **reverte uma atualização que
-estava correta**.
+OTA without this is worse than the deploy: it restarts, asks `/healthz`,
+hears the orphan's old build and **rolls back an update that was
+correct**.
 
-### 3. O painel compara quem serve com o que está no disco
+### 3. The panel compares who serves with what is on disk
 
-`logid versao` imprime o carimbo do **arquivo**; `env!("LOGI_BUILD")` é
-o carimbo de **quem responde**. Divergência vira linha do painel
-(`setup_comum::veredito_do_carimbo`). Existir no disco não é estar no ar.
+`logid versao` prints the stamp of the **file**; `env!("LOGI_BUILD")` is
+the stamp of **who answers**. A divergence becomes a panel line
+(`setup_comum::veredito_do_carimbo`). Being on disk is not being live.
 
-E "job carregado" não é "job rodando": `launchctl print` traz `state` e
-`last exit code`, e ignorá-los aprovava um crash-loop
-(`setup_comum::veredito_do_launchd`). O painel dizia "carregado na
-sessão gráfica" sobre um daemon que não subia desde o boot.
+And "job loaded" is not "job running": `launchctl print` brings `state`
+and `last exit code`, and ignoring them approved a crash loop
+(`setup_comum::veredito_do_launchd`). The panel said "loaded in the
+graphical session" about a daemon that hadn't come up since boot.
 
-## Veja também
+## See also
 
-- [[verify-what-arrived]] — mandar reiniciar não é ter reiniciado
-- [[restart-the-agent]] — a mesma lição no lado do Windows
-- [[graphical-session]] — por que `launchctl` precisa do `gui/<uid>/`
+- [[verify-what-arrived]] — telling it to restart is not having restarted
+- [[restart-the-agent]] — the same lesson on the Windows side
+- [[graphical-session]] — why `launchctl` needs `gui/<uid>/`

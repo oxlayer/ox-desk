@@ -1,11 +1,11 @@
-# Protótipos
+# Prototypes
 
-Código de investigação que **provou** um caminho antes de virar Rust.
-Guardado porque o valor está no que ele estabeleceu, não no código.
+Investigation code that **proved** a path before it became Rust. Kept
+because the value is in what it established, not in the code.
 
-| Arquivo | O que provou |
+| File | What it proved |
 |---|---|
-| [`border-detect.py`](border-detect.py) | `org.gnome.Mutter.InputCapture` entrega evento de borda e devolve o ponteiro, sem libei — enquanto o portal equivalente aceita `CreateSession` e nunca responde. Ver [`../specs/005`](../specs/005-input-switch.md#detecção-de-borda-mutter-direto-não-o-portal). |
+| [`border-detect.py`](border-detect.py) | `org.gnome.Mutter.InputCapture` delivers the edge event and gives the pointer back, without libei — while the equivalent portal accepts `CreateSession` and never answers. See [`../specs/005`](../specs/005-input-switch.md#detecção-de-borda-mutter-direto-não-o-portal). |
 
-Rodar: `/usr/bin/python3 border-detect.py` — precisa do `python3-gi` e do
-python do **sistema** (o do linuxbrew não tem `gi`).
+Run: `/usr/bin/python3 border-detect.py` — needs `python3-gi` and the
+**system** python (the linuxbrew one doesn't have `gi`).

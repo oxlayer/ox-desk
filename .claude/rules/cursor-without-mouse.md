@@ -1,97 +1,100 @@
-# Windows sem mouse não tem cursor — e isso quebra o KVM de duas formas
+# Windows without a mouse has no cursor — and that breaks the KVM in two ways
 
-Máquina Windows sem **nenhum** dispositivo apontador conectado esconde
-o cursor por completo. Medido:
+A Windows machine with **no** pointing device connected hides the cursor
+completely. Measured:
 
 ```powershell
-Get-PnpDevice -Class Mouse | Where-Object Status -eq OK   # NENHUM
-# e, na sessão interativa:
+Get-PnpDevice -Class Mouse | Where-Object Status -eq OK   # NONE
+# and, in the interactive session:
 GetCursorInfo -> ok=True flags=0 hCursor=0 pos=1356,728
 ```
 
-`flags=0` é escondido, `hCursor=0` é "não existe cursor". **A posição
-continua correta** — por isso o hover responde e nada aparece, que é
-exatamente como o sintoma chega: *"vejo o mouse funcionar no hover mas
-o cursor não aparece"*.
+`flags=0` is hidden, `hCursor=0` is "no cursor exists". **The position
+is still correct** — that's why hover responds and nothing shows up,
+which is exactly how the symptom arrives: *"I see the mouse working on
+hover but the cursor doesn't show"*.
 
-É o estado normal de uma máquina dirigida só por KVM: o dongle fica na
-outra ponta.
+It is the normal state of a machine driven only by KVM: the dongle is at
+the other end.
 
-## Consequência 1: o DXGI não tem o que entregar
+## Consequence 1: DXGI has nothing to deliver
 
-`AcquireNextFrame` só reporta ponteiro quando existe um sendo
-desenhado. Sem cursor, `LastMouseUpdateTime`, `PointerShapeBufferSize`
-e `Visible` vêm zerados para sempre. Pedir a forma do cursor a quem não
-tem cursor é circular — não adianta instrumentar o DXGI.
+`AcquireNextFrame` only reports a pointer when one is being drawn.
+Without a cursor, `LastMouseUpdateTime`, `PointerShapeBufferSize` and
+`Visible` come back zeroed forever. Asking the cursor shape from
+something that has no cursor is circular — instrumenting DXGI doesn't
+help.
 
-Resolvido desenhando uma seta própria (`cursor::seta_embutida`), com a
-posição vinda de `GetCursorPos`, que funciona com cursor visível ou
-não.
+Solved by drawing our own arrow (`cursor::seta_embutida`), with the
+position coming from `GetCursorPos`, which works whether the cursor is
+visible or not.
 
-## Consequência 2: desenhar no stream não ajuda quem olha o monitor
+## Consequence 2: drawing in the stream doesn't help whoever looks at the monitor
 
-E aqui mora a armadilha de verificação. A seta composta existe **dentro
-do vídeo**. Quem está assistindo pelo visualizador vê; quem está
-olhando o monitor físico da máquina **não vê nada**, porque ali o
-Windows continua sem cursor.
+And here lies the verification trap. The composited arrow exists
+**inside the video**. Whoever is watching through the viewer sees it;
+whoever is looking at the machine's physical monitor **sees nothing**,
+because there Windows still has no cursor.
 
-Eu confirmei a correção decodificando o h264 e olhando o quadro — a
-seta estava lá, no pixel certo — e reportei resolvido. O usuário estava
-olhando o monitor. Verifiquei a coisa certa no lugar errado.
+I confirmed the fix by decoding the h264 and looking at the frame — the
+arrow was there, at the right pixel — and reported it solved. The user
+was looking at the monitor. I verified the right thing in the wrong
+place.
 
-**Antes de declarar resolvido um problema visual, confira ONDE a pessoa
-está olhando.** O log do host diz: sessão com `input conectado` e sem
-nenhum `conectado:` de vídeo significa KVM sem visualizador — ou seja,
-a pessoa está diante do monitor físico.
+**Before declaring a visual problem solved, check WHERE the person is
+looking.** The host log tells you: a session with `input conectado` and
+no video `conectado:` at all means KVM without a viewer — that is, the
+person is in front of the physical monitor.
 
-## O que o Parsec faz (e o que não funciona)
+## What Parsec does (and what doesn't work)
 
-O Parsec documenta exatamente este problema. A solução deles é um
-**driver de mouse USB virtual** próprio — um mouse que não se move,
-só existe para o Windows voltar a desenhar o ponteiro. Não é genérico:
-depende do driver deles.
+Parsec documents exactly this problem. Their solution is their own
+**virtual USB mouse driver** — a mouse that doesn't move, it only exists
+so Windows goes back to drawing the pointer. It's not generic: it
+depends on their driver.
 
-Revelador: a documentação deles diz que o Parsec *"reproduz o cursor
-escondido fielmente"*, ou seja, o cliente não vê ponteiro nenhum. Nossa
-seta sintética faz mais que isso no visualizador.
+Revealing: their documentation says Parsec *"reproduces the hidden
+cursor faithfully"*, i.e. the client sees no pointer at all. Our
+synthetic arrow does more than that in the viewer.
 
-**Mouse Keys não resolve** — o Parsec sugere, e medimos que não
-funciona nesta máquina (Windows 10):
+**Mouse Keys doesn't solve it** — Parsec suggests it, and we measured
+that it doesn't work on this machine (Windows 10):
 
 ```
 Flags no registro: 63      (MouseKeys LIGADO)
 GetCursorInfo:     flags=0 hCursor=0
 ```
 
-Também não existe chamada de API que resolva: as funções que deveriam
-mostrar o cursor (`ShowCursor`) não têm efeito sem um mouse presente.
-Por isso todo mundo cai em hardware ou driver.
+There is also no API call that solves it: the functions that should show
+the cursor (`ShowCursor`) have no effect without a mouse present. That's
+why everybody ends up in hardware or a driver.
 
-## Correção de verdade: dar um mouse ao Windows
+## The real fix: give Windows a mouse
 
-Qualquer dispositivo HID apontador faz o Windows voltar a desenhar o
-cursor — inclusive um **receptor Unifying sem nada pareado**, que
-enumera interfaces de mouse e teclado por conta própria.
+Any HID pointing device makes Windows go back to drawing the cursor —
+including a **Unifying receiver with nothing paired**, which enumerates
+mouse and keyboard interfaces on its own.
 
-Isso é melhor que a nossa seta em dois sentidos: aparece no monitor
-físico, e o DXGI volta a mandar as formas de verdade (mão, barra de
-texto, redimensionar), que passamos a desenhar no lugar da nossa.
+That is better than our arrow in two ways: it shows up on the physical
+monitor, and DXGI goes back to sending the real shapes (hand, text bar,
+resize), which we now draw instead of ours.
 
-A alternativa em código seria uma janela sobreposta, transparente a
-cliques (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST |
-WS_EX_NOACTIVATE`) seguindo o `GetCursorPos`. Funciona no monitor
-físico e é capturada pelo DXGI junto, mas é Win32 a mais para manter e
-convive mal com jogo em tela cheia exclusiva — que é justamente o caso
-de uso do KVM nessa máquina.
+The alternative in code would be an overlay window, transparent to
+clicks (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST |
+WS_EX_NOACTIVATE`) following `GetCursorPos`. It works on the physical
+monitor and is captured by DXGI along with it, but it is extra Win32 to
+maintain and doesn't get along with exclusive fullscreen games — which
+is precisely the KVM use case on this machine.
 
-## Veja também
+## See also
 
-- [[windows-locked-screen]] — outra família de sintomas do mesmo host
-- [[../../specs/005-input-switch.md]] — o KVM por LAN
+- [[windows-locked-screen]] — another family of symptoms of the same host
+- [[../../specs/005-input-switch.md]] — the LAN KVM
 
-## Desfecho (04/11)
+## Outcome (2026-11-04)
 
-O usuário plugou o dongle reserva no Windows. O resultado, medido:
+The user plugged the spare dongle into the Windows machine. The result,
+measured:
 
 ```
 Get-PnpDevice -Class Mouse  ->  HID-compliant mouse
@@ -99,17 +102,18 @@ host log                    ->  forma de ponteiro: Cor 32x32 pitch=128 (4096 byt
                                 cursor desenhado em 1356,728 (32x32)
 ```
 
-Um receptor Unifying **sem nada pareado** basta: ele enumera interfaces
-de mouse e teclado sozinho. O Windows voltou a desenhar o cursor no
-monitor físico, e o DXGI voltou a mandar a forma de verdade — colorida
-com alfa, 32x32 —, que passamos a compor no lugar da nossa seta.
+A Unifying receiver **with nothing paired** is enough: it enumerates
+mouse and keyboard interfaces by itself. Windows went back to drawing
+the cursor on the physical monitor, and DXGI went back to sending the
+real shape — colored with alpha, 32x32 — which we now composite instead
+of our arrow.
 
-A seta embutida continua no código e continua certa: ela cobre quem
-assiste uma máquina que não tem mouse nenhum. O que mudou é que ela
-deixou de ser o caminho normal desta máquina.
+The built-in arrow stays in the code and is still right: it covers
+whoever watches a machine that has no mouse at all. What changed is that
+it is no longer the normal path for this machine.
 
-Com cursor de sistema presente, `Visible` do DXGI passou a significar
-algo, então voltamos a respeitá-lo — jogo em tela cheia esconde o
-ponteiro de propósito, e desenhar um por cima seria intrometer-se.
-Sem mouse, `Visible` é sempre falso e obedecê-lo apagaria justamente o
+With a system cursor present, DXGI's `Visible` started to mean
+something, so we respect it again — a fullscreen game hides the pointer
+on purpose, and drawing one on top would be intruding. Without a mouse,
+`Visible` is always false and obeying it would erase precisely the
 fallback.

@@ -1,33 +1,34 @@
-# Computador novo
+# New computer
 
-O objetivo é não depender de memória: instalar o `logid`, abrir o wizard
-em `http://127.0.0.1:8787/setup` e apertar os botões na ordem que ele
-mostra. Os instaladores vão dentro do binário, então não precisa do repo.
+The goal is not to depend on memory: install `logid`, open the wizard at
+`http://127.0.0.1:8787/setup` and press the buttons in the order it
+shows. The installers ship inside the binary, so the repo isn't needed.
 
 ## Mac
 
-1. Instale o [Homebrew](https://brew.sh) e o `logid`.
-2. No wizard, aperte os passos em ordem. As permissões vêm depois de
-   `Assinar`.
-3. No passo **Tailscale**, o Terminal abre: digite a senha e abra o link
-   de login. **Não instale o app** ([`specs/012`](../specs/012-outside-the-lan.md)).
+1. Install [Homebrew](https://brew.sh) and `logid`.
+2. In the wizard, press the steps in order. The permissions come after
+   `Assinar` (Sign).
+3. At the **Tailscale** step, Terminal opens: type the password and open
+   the login link. **Do not install the app** ([`specs/012`](../specs/012-outside-the-lan.md)).
 
 ## Windows
 
-1. Instale o `logid` e o Tailscale, e faça o login no Tailscale.
-2. No wizard, aperte os passos em ordem.
-3. No passo **Tela sem monitor ligado**, aceite o pedido de administrador.
+1. Install `logid` and Tailscale, and log in to Tailscale.
+2. In the wizard, press the steps in order.
+3. At the **Tela sem monitor ligado** (Screen with no monitor on) step,
+   accept the administrator prompt.
 
 ## Ubuntu
 
-1. `./install.sh` e `sudo bash scripts/instalar-tailscale.sh`.
-2. No wizard, aperte os passos em ordem. Sem monitor ligado o host usa
-   uma tela virtual sozinho, e não há passo para isso.
+1. `./install.sh` and `sudo bash scripts/instalar-tailscale.sh`.
+2. In the wizard, press the steps in order. With no monitor on, the host
+   uses a virtual screen by itself, and there is no step for that.
 
-## O que continua manual
+## What remains manual
 
-- O login do Tailscale: é o consentimento de quem é dono da conta.
-- As permissões do macOS: a Apple não deixa dar de fora.
-- O token do OTA, que se cria uma vez e se distribui com
+- The Tailscale login: it is the consent of whoever owns the account.
+- The macOS permissions: Apple doesn't allow granting them from outside.
+- The OTA token, which is created once and distributed with
   `scripts/distribuir-token-ota.sh`
   ([skill](../.claude/skills/enable-ota.md)).

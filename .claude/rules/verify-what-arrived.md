@@ -1,43 +1,45 @@
-# Mandar não é ter chegado; e número que ninguém imprime ninguém confere
+# Sent is not arrived; and a number nobody prints, nobody checks
 
-Duas faces da mesma regra, as duas pagas caro.
+Two faces of the same rule, both paid for dearly.
 
-## 1. Todo passo remoto confere o que chegou
+## 1. Every remote step checks what arrived
 
-Um `scp` que "deu certo" não garante o arquivo certo no destino. O
-Defender já **restaurou a cópia em quarentena por cima** do
-`logid-agent.exe` recém-enviado — 402984 bytes onde 458792 tinham sido
-mandados. O deploy dizia ok.
+An `scp` that "worked" doesn't guarantee the right file at the
+destination. Defender once **restored the quarantined copy on top of**
+the freshly sent `logid-agent.exe` — 402984 bytes where 458792 had been
+sent. The deploy said ok.
 
-Por isso cada passo do Windows no `deploy.sh` captura stderr, testa o
-resultado e confere o tamanho do arquivo que aterrissou **no
-PowerShell**, não no bash (onde a expansão aconteceria do lado errado).
+That's why each Windows step in `deploy.sh` captures stderr, tests the
+result and checks the size of the file that landed **in PowerShell**,
+not in bash (where the expansion would happen on the wrong side).
 
-Mesma família: `cargo test` **não** constrói o entregável. Rodar os
-testes e instalar achando que o binário foi atualizado já custou uma
-hora de confusão sobre por que a validação não estava valendo.
+Same family: `cargo test` does **not** build the deliverable. Running
+the tests and installing while thinking the binary had been updated
+already cost an hour of confusion about why the validation wasn't
+taking effect.
 
-## 2. Número que importa tem de aparecer no log
+## 2. A number that matters must appear in the log
 
-O alvo de bitrate do NVENC ficou errado por semanas — a fórmula caía no
-piso de 8 Mbps em qualquer resolução enquanto o comentário prometia 15
-e 34. Sobreviveu porque **só o host do Mac imprimia o alvo**. Quando a
-tela Retina também anunciou "8 Mbps", o número ficou absurdo o bastante
-para alguém refazer a conta.
+The NVENC bitrate target was wrong for weeks — the formula fell to the
+8 Mbps floor at any resolution while the comment promised 15 and 34. It
+survived because **only the Mac host printed the target**. When the
+Retina screen also announced "8 Mbps", the number became absurd enough
+for someone to redo the math.
 
-O host do Windows não imprimia nada. Hoje os três imprimem.
+The Windows host printed nothing. Today all three print it.
 
-Mesma história do custo da conversão NV12→BGRA: 28 ms por quadro, teto
-de 35 fps, segurando o desenho em 27 enquanto a rede entregava 60.
-Ninguém tinha medido porque "é só um laço". Medir custou um teste e
-apontou direto; hoje é teste de orçamento que quebra o build.
+Same story with the cost of the NV12→BGRA conversion: 28 ms per frame,
+a ceiling of 35 fps, holding drawing at 27 while the network delivered
+60. Nobody had measured it because "it's just a loop". Measuring it cost
+one test and pointed straight at it; today it is a budget test that
+breaks the build.
 
-**Se uma proteção, um alvo ou um custo não aparece em lugar nenhum,
-assuma que está errado.** Ver também a flag `dispatch.backfill_gate` no
-outro repo: existia, estava documentada, estava ligada, e não era lida
-por código nenhum.
+**If a protection, a target or a cost doesn't appear anywhere, assume it
+is wrong.** See also the `dispatch.backfill_gate` flag in the other
+repo: it existed, was documented, was turned on, and wasn't read by any
+code.
 
-## Veja também
+## See also
 
-- [[remote-powershell]] — como mandar sem quebrar
-- [[restart-the-agent]] — reiniciar sem conferir é meio trabalho
+- [[remote-powershell]] — how to send without breaking
+- [[restart-the-agent]] — restarting without checking is half the job

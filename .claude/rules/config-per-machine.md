@@ -1,32 +1,33 @@
-# Cada máquina tem a própria config, e nada sincroniza
+# Each machine has its own config, and nothing syncs
 
-Três máquinas, três `config.toml`, **zero sincronização**. O
-`deploy.sh` leva binários; config não. Mudar uma e achar que mudou
-todas é o erro padrão.
+Three machines, three `config.toml` files, **zero synchronization**.
+`deploy.sh` ships binaries; it doesn't ship config. Changing one and
+thinking you changed them all is the standard mistake.
 
-| Máquina | Caminho |
+| Machine | Path |
 |---|---|
 | Ubuntu | `~/.config/logi/config.toml` |
 | macOS | `~/.config/logi/config.toml` (via `ssh mac`) |
 | Windows | `%APPDATA%\logi\config.toml` (`C:/Users/user/AppData/Roaming/logi/`) |
 
-`logid/default-config.toml` é só semente de instalação nova. Editar lá
-**não** muda máquina nenhuma que já roda.
+`logid/default-config.toml` is only the seed for a new installation.
+Editing it does **not** change any machine that is already running.
 
-## Como isso apareceu
+## How this came up
 
-Tiramos o RDP do painel editando a config do Ubuntu e o
-`default-config.toml`. O painel do Ubuntu limpou. O usuário respondeu:
-*"kdp sumiu do ubuntu mas ainda vejo na gui do windows e mac"* — porque
-cada agente lê a config da própria máquina e serve o próprio painel.
+We removed RDP from the panel by editing the Ubuntu config and
+`default-config.toml`. The Ubuntu panel cleared. The user replied:
+*"kdp disappeared from ubuntu but I still see it in the windows and mac
+gui"* — because each agent reads its own machine's config and serves its
+own panel.
 
-## Procedimento
+## Procedure
 
-Ver [[../skills/change-config-on-all-three]]. Em resumo: baixar, transformar
-com o MESMO script nas três, subir, reiniciar o agente de cada uma.
-Nunca editar as três à mão — a divergência entra por digitação.
+See [[../skills/change-config-on-all-three]]. In short: download,
+transform with the SAME script on all three, upload, restart each one's
+agent. Never edit the three by hand — divergence gets in through typing.
 
-## Veja também
+## See also
 
-- [[restart-the-agent]] — os nomes de processo e tarefa diferem por SO
-- [[../skills/change-config-on-all-three]] — a receita
+- [[restart-the-agent]] — process and task names differ per OS
+- [[../skills/change-config-on-all-three]] — the recipe

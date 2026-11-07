@@ -1,10 +1,11 @@
-# PowerShell remoto: sempre `-EncodedCommand` a partir de arquivo
+# Remote PowerShell: always `-EncodedCommand` from a file
 
-Inline quebra. Não "às vezes": quebra toda vez que o comando tem aspas,
-`$`, `` ` `` ou acento. Quebrou tantas vezes neste repo que virou regra.
+Inline breaks. Not "sometimes": it breaks every time the command has
+quotes, `$`, `` ` `` or an accent. It broke so many times in this repo
+that it became a rule.
 
 ```bash
-# ✅ fazer
+# ✅ do
 cat > "$S/tarefa.ps1" <<'PS1'
 $p = Get-Process -Name logid -ErrorAction SilentlyContinue
 if ($p) { "pid " + $p.Id } else { "nao esta rodando" }
@@ -14,72 +15,74 @@ ssh windows-host "powershell -NoProfile -EncodedCommand $ENC"
 ```
 
 ```bash
-# ❌ não fazer
+# ❌ don't
 ssh windows-host 'powershell -NoProfile -Command "if ($p) { \"x\" }"'
 ```
 
-O heredoc tem de ser **quotado** (`<<'PS1'`): sem as aspas o bash
-expande `$p` e executa `` ` `` como substituição de comando. Um
-`` `r`n `` dentro de heredoc expandido já rodou como comando, e o passo
-ainda disse "ok" porque o erro foi para stderr.
+The heredoc must be **quoted** (`<<'PS1'`): without the quotes bash
+expands `$p` and runs `` ` `` as command substitution. A `` `r`n ``
+inside an expanded heredoc once ran as a command, and the step still
+said "ok" because the error went to stderr.
 
-## Três armadilhas específicas
+## Three specific traps
 
-1. **`$args` é variável automática do PowerShell** e não pode ser nome
-   de parâmetro.
-2. **Saída vem com `\r`** — passar por `tr -d '\r'` antes de comparar.
-3. **O cabeçalho CLIXML e os avisos de SSH poluem o stdout.** Filtrar:
+1. **`$args` is a PowerShell automatic variable** and can't be a
+   parameter name.
+2. **Output comes with `\r`** — pass it through `tr -d '\r'` before
+   comparing.
+3. **The CLIXML header and the SSH warnings pollute stdout.** Filter:
    `grep -v "WARNING\|store now\|may need\|openssh\|CLIXML\|^<Objs"`.
 
-## Armadilha #4: o PowerShell não espera executável GUI-subsystem
+## Trap #4: PowerShell doesn't wait for a GUI-subsystem executable
 
-A mais caríssima das quatro, porque ela **não falha — ela sorteia**.
+The most expensive of the four, because it **doesn't fail — it rolls
+the dice**.
 
-O `logid.exe` é `windows_subsystem = "windows"`, sem console, para o
-daemon não piscar janela ao subir pela tarefa agendada. Mas o mesmo
-binário serve de CLI, e o PowerShell **não espera** processo GUI
-terminar. Dois estragos encadeados:
+`logid.exe` is `windows_subsystem = "windows"`, without a console, so
+the daemon doesn't flash a window when started by the scheduled task.
+But the same binary serves as the CLI, and PowerShell **doesn't wait**
+for a GUI process to finish. Two chained harms:
 
-1. `$LASTEXITCODE` nunca é setado, então `; exit $LASTEXITCODE`
-   devolve 0 e o SSH relata **sucesso** qualquer que seja o resultado.
-2. A sessão SSH fecha enquanto o processo ainda está lendo o stdin.
-   Quem ganha a corrida depende do tamanho do payload.
+1. `$LASTEXITCODE` is never set, so `; exit $LASTEXITCODE` returns 0 and
+   SSH reports **success** whatever the result.
+2. The SSH session closes while the process is still reading stdin. Who
+   wins the race depends on the payload size.
 
-Medido em 04/11/2026, três envios de texto para `logid clip-set`:
+Measured on 2026-11-04, three text sends to `logid clip-set`:
 
-| Comando remoto | Chegou |
+| Remote command | Arrived |
 |---|---|
-| `& "...\logid.exe" clip-set` | **2 de 3** |
-| `& "...\logid.exe" clip-set \| Out-String \| Write-Output` | 3 de 3 |
+| `& "...\logid.exe" clip-set` | **2 of 3** |
+| `& "...\logid.exe" clip-set \| Out-String \| Write-Output` | 3 of 3 |
 
-Consumir a saída obriga o PowerShell a esperar o fim do processo. Sem
-isso, o clipboard de texto para o Windows estava **intermitente desde
-sempre** e ninguém notou: uma linha de texto costuma ganhar a corrida,
-e foi um `tar` de 50 KB — que perde sempre — que revelou o problema.
+Consuming the output forces PowerShell to wait for the process to end.
+Without it, the text clipboard to Windows had been **intermittent
+forever** and nobody noticed: a line of text usually wins the race, and
+it was a 50 KB `tar` — which always loses — that revealed the problem.
 
-Use [`remote::comando_logid`](../../logid/src/remote.rs), que já monta
-a linha certa por sistema. Não monte na mão.
+Use [`remote::comando_logid`](../../logid/src/remote.rs), which already
+builds the right line per system. Don't build it by hand.
 
 ```rust
-// ✅ fazer
+// ✅ do
 .arg(crate::remote::comando_logid(&host, "clip-arq-set"))
 
-// ❌ não fazer
+// ❌ don't
 .arg(r#"& "$env:LOCALAPPDATA\logid\logid.exe" clip-arq-set"#)
 ```
 
-### Corolário: stdin binário para um filho não sobrevive
+### Corollary: binary stdin to a child doesn't survive
 
-No mesmo binário sem console, passar o stdin adiante com
-`Stdio::inherit()` entrega **pasta vazia e exit 0**. Ler o stdin
-*dentro* do processo funciona — é o que `clip-set` sempre fez, e por
-isso é o caminho usado também em `clip-arq-set`, que grava um `.tar`
-temporário em vez de deixar o `tar` herdar o descritor.
+In the same console-less binary, passing stdin along with
+`Stdio::inherit()` delivers **an empty folder and exit 0**. Reading
+stdin *inside* the process works — it's what `clip-set` always did, and
+that's why it is also the path used in `clip-arq-set`, which writes a
+temporary `.tar` instead of letting `tar` inherit the descriptor.
 
-Verificação na sessão interativa: `windows/sondas/ler-clipboard.ps1`
-via tarefa `/IT` (pelo SSH se lê o clipboard da sessão 0, sempre
-vazio).
+Verification in the interactive session: `windows/sondas/ler-clipboard.ps1`
+via an `/IT` task (over SSH you read the session 0 clipboard, always
+empty).
 
-## Veja também
+## See also
 
-- [[verify-what-arrived]] — mandar não é ter chegado
+- [[verify-what-arrived]] — sent is not arrived
