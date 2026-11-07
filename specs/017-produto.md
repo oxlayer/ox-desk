@@ -183,6 +183,22 @@ pareamento permanente.
 O que fica grátis é o que não custa para nós. Hospedar o próprio servidor é
 sempre grátis, e é o que mantém o projeto open source de verdade.
 
+### O que mais o Parsec faz, e como fica aqui
+
+Lido em parsec.app/pricing, em 07/11:
+
+| No Parsec | Aqui |
+|---|---|
+| Grátis só para uso pessoal; trabalho exige licença | O código é MIT e não pode ter essa restrição. Ela vale só para **os nossos servidores**, pelos termos de uso. Quem hospeda o próprio servidor usa para o que quiser |
+| Teste de 14 dias de Times e Empresa | Igual |
+| Mensal, ou anual com desconto; Empresa só anual; sem desconto por volume | Igual, para começar |
+| Colaboração por link: o outro observa ou assume o controle | O convite por link do grátis, com dois modos: só ver, ou ver e controlar |
+| Acesso de convidado (Times): créditos comprados à parte, até 5 dias | Convite com prazo e sem pareamento permanente. Créditos à parte, no Times |
+| Computadores da equipe, atribuídos a uma pessoa ou a um grupo | É o "Times" da tabela acima |
+| No Times, membro só conecta em membro | Lista de autorizados vinda da equipe, e não de cada máquina |
+| Bloquear que máquinas da rede da empresa sirvam a tela | Política da equipe que o host obedece |
+| Relay dentro do firewall do cliente (Empresa) | O `logi-encontro` hospedado pelo cliente, que é o mesmo binário open source |
+
 ## O que esta spec não decide
 
 - O preço em reais, e o que entra no limite do relay grátis.
