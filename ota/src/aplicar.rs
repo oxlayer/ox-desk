@@ -466,8 +466,15 @@ fn conferir_ligacoes(s: Sistema, bin: &Path) -> Result<(), String> {
                 .map(|p| p.to_string())
                 .collect();
             if !faltando.is_empty() {
+                // Diagnostico com conserto. O pacote do Mac liga nas
+                // dylibs do ffmpeg do RUNNER (medido no pacote de
+                // #126: libavcodec.63, libavutil.61, libswscale.10,
+                // libavformat.63, libavdevice.63), e major diferente
+                // nao carrega. Sem esta linha o sintoma seria uma
+                // recusa sem causa.
                 return Err(format!(
-                    "{nome} precisa de {} e nao esta aqui (ffmpeg do brew em versao diferente da do runner?)",
+                    "{nome} precisa de {} e nao esta aqui: o pacote veio ligado ao ffmpeg do runner. \
+                     Conserto: `brew upgrade ffmpeg` no Mac, ou rode o deploy, que compila contra o ffmpeg DE CA",
                     faltando.join(", ")
                 ));
             }
