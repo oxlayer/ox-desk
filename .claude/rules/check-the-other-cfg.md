@@ -1,20 +1,20 @@
-# Código de outro sistema compila aqui — troque o `cfg` e confira
+# Code for another OS compiles here — switch the `cfg` and check
 
-`setup_mac.rs` e `setup_win.rs` só entram no build da própria
-plataforma (`#[cfg(target_os = ...)]` em `main.rs`). A consequência é
-que **editar o código do Mac daqui não prova nada**: `cargo build`
-passa verde porque o arquivo nem foi lido.
+`setup_mac.rs` and `setup_win.rs` only enter the build on their own
+platform (`#[cfg(target_os = ...)]` in `main.rs`). The consequence is
+that **editing the Mac code from here proves nothing**: `cargo build`
+passes green because the file wasn't even read.
 
-Para o Windows isso nunca foi problema — existe alvo cruzado:
+For Windows this was never a problem — there is a cross target:
 
 ```bash
 cargo check --target x86_64-pc-windows-gnu --manifest-path logid/Cargo.toml
 ```
 
-Para o Mac não há SDK aqui. Mas a maior parte desses módulos é `std`
-puro: quem fala com o sistema são `Command::new("/usr/bin/security")`,
-`launchctl`, `codesign` — strings, não API nativa. Então dá para
-type-checar trocando o `cfg` por um minuto:
+For the Mac there is no SDK here. But most of these modules are pure
+`std`: what talks to the system is `Command::new("/usr/bin/security")`,
+`launchctl`, `codesign` — strings, not native API. So you can type-check
+by switching the `cfg` for a minute:
 
 ```bash
 cp logid/src/main.rs /tmp/main.rs.bak
@@ -23,25 +23,25 @@ cargo check --manifest-path logid/Cargo.toml
 cp /tmp/main.rs.bak logid/src/main.rs
 ```
 
-Foi assim que o `setup_mac.rs` da [`015`](../../specs/015-ota.md) foi
-verificado com o MacBook fora do ar o dia inteiro: zero erro, zero
-aviso. Se houvesse um `?` no lugar errado ou um argumento a mais numa
-chamada, eu teria descoberto **depois** de mandar o deploy e esperar
-sete minutos de compilação remota — e o deploy diria `FALHOU` numa
-linha que não explica nada.
+That is how the `setup_mac.rs` of [`015`](../../specs/015-ota.md) was
+verified with the MacBook offline the whole day: zero errors, zero
+warnings. Had there been a `?` in the wrong place or an extra argument
+in a call, I would have found out **after** sending the deploy and
+waiting seven minutes of remote compilation — and the deploy would say
+`FALHOU` on a line that explains nothing.
 
-## O que isso NÃO cobre
+## What this does NOT cover
 
-- API nativa de verdade (FFI de `CoreGraphics`, `getuid`): essa não
-  compila aqui, e se o módulo tiver muita, o truque não serve.
-- Comportamento. Type-check diz que a chamada existe, não que o
-  `launchctl` aceita aquele argumento.
+- Real native API (`CoreGraphics` FFI, `getuid`): that doesn't compile
+  here, and if the module has a lot of it, the trick doesn't work.
+- Behavior. Type-checking says the call exists, not that `launchctl`
+  accepts that argument.
 
-Ou seja: continua valendo "não afirme que funciona no Mac sem ter
-rodado lá". O que a troca de `cfg` elimina é a classe mais boba de
-erro, que é justamente a que custa a viagem de ida e volta.
+In other words: "don't claim it works on the Mac without having run it
+there" still holds. What switching the `cfg` eliminates is the silliest
+class of error, which is exactly the one that costs the round trip.
 
-## Veja também
+## See also
 
-- [[verify-what-arrived]] — compilar não é ter chegado
-- [[graphical-session]] — o que não nasce por SSH, e por isso não se testa daqui
+- [[verify-what-arrived]] — compiling is not arriving
+- [[graphical-session]] — what isn't born over SSH, and therefore can't be tested from here
