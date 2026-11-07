@@ -483,12 +483,21 @@ virou o sinal de intenção.
 Medido: rodando por SSH, o agente reporta
 `area virtual (0,0 1024x768)` — a tela falsa da sessão não-interativa,
 não o monitor real. Mesmo isolamento que já invalidou `input-age` por
-SSH. Por isso o atalho vai em `shell:startup`, com
-`WindowStyle = 7` (minimizado), e **não** como serviço:
+SSH. Por isso a vigilância **tem** de nascer na sessão interativa.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File windows-autostart.ps1 -WatchEdge
-```
+> Histórico: isso era um atalho em `shell:startup` apontando para
+> `logid-agent watch-edge`, criado por um `windows-autostart.ps1`. Os
+> dois foram removidos. A vigilância virou **thread do daemon**
+> ([`border_win.rs`](../logid/src/border_win.rs)) quando o `logid` passou
+> a rodar no Windows, porque com os dois vivos seriam dois donos do mesmo
+> receptor HID++ — já aconteceu, três `watch-edge` simultâneos
+> triplicando o tráfego de rádio. A thread reivindica o **mesmo nome de
+> mutex** do modo antigo justamente para que um atalho esquecido nunca
+> polle junto com o daemon.
+>
+> Quem garante a sessão interativa hoje é a tarefa agendada do `logid`,
+> criada com `/it` pelo assistente (`setup_win.rs`), e o script morto
+> ainda mandava criar atalho para um `.exe` que não existe mais.
 
 ## O recuo do ponteiro não existe: o mutter ignora
 

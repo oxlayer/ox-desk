@@ -416,12 +416,39 @@ else
   # maquina podia assistir as outras e nunca ser assistida -- e o
   # painel caia no VNC por nao haver alternativa instalada. O sintoma
   # chegou como "testei mas chamou vnc, nao deveria ser nativo?".
+  #
+  # A conferencia abaixo NAO exige o prefixo `ffmpeg@7`, e isso e
+  # deliberado. Neste Mac o `ffmpeg@7` nao e um keg: e um ALIAS
+  # (`/opt/homebrew/opt/ffmpeg@7 -> ../Cellar/ffmpeg/7.1_4`), e o
+  # `libavcodec.pc` de dentro dele aponta `prefix=.../Cellar/ffmpeg/7.1_4`.
+  # Ou seja: o pkg-config de la responde o prefixo SEM versao por mais
+  # PKG_CONFIG_PATH que se ponha, e o binario compilado aqui vai sempre
+  # dizer `/opt/homebrew/opt/ffmpeg/...`.
+  #
+  # Isso conviver com o pacote da CI (que linka `opt/ffmpeg@7`, onde o
+  # runner tem o keg de verdade) funciona porque os DOIS caminhos existem
+  # nesta maquina e apontam para o mesmo keg -- medido: o host vindo do
+  # OTA capturou. O que precisa ser verdade e mais fraco e mais util: as
+  # dylibs resolvem, e o major e o declarado.
+  #
+  # Ver FFMPEG_SONAME em construir-binarios.sh, que no caminho do PACOTE
+  # e estrito de proposito -- pacote ligado no prefixo sem versao nao
+  # instala numa maquina que so tenha o keg versionado.
   if out=$(timeout 900 ssh -n -o BatchMode=yes mac \
             "cd ~/logi/logistream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig &&
              ~/.cargo/bin/cargo build --release --bin logistream-view --bin logistream-host 2>&1 | tail -3 &&
              mkdir -p ~/.local/bin ~/.local/state &&
              install -m755 target/release/logistream-view ~/.local/bin/ &&
-             install -m755 target/release/logistream-host ~/.local/bin/" 2>&1); then ok; else erro "$out"; fi
+             install -m755 target/release/logistream-host ~/.local/bin/ || exit 1
+             for b in logistream-host logistream-view; do
+               otool -L ~/.local/bin/\$b | grep -q 'libavcodec.61.dylib' ||
+                 echo \"ERRO: \$b nao pede libavcodec.61 -- o major do ffmpeg mudou? ver FFMPEG_SONAME\"
+               for d in \$(otool -L ~/.local/bin/\$b | grep -o '/opt/[^ ]*'); do
+                 [ -f \"\$d\" ] || echo \"ERRO: \$b pede \$d e ela nao existe nesta maquina\"
+               done
+             done" 2>&1); then
+    if ruim "$out"; then erro "$out"; else ok; fi
+  else erro "$out"; fi
 
   passo "mac: assinar o host"
   # Assinatura estavel e o que faz a permissao de Gravacao de Tela
