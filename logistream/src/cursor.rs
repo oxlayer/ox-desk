@@ -9,7 +9,7 @@
 //! Windows, e a suite roda no Linux. Teste que nao executa e
 //! documentacao com aparencia de garantia.
 //!
-//! Mesma decisao que levou `scancode_de_evdev` para `input.rs`.
+//! Mesma decisao que levou `scancode_from_evdev` para `input.rs`.
 
 //// O DXGI entrega a tela **sem** o ponteiro: a posicao vem no
 // `DXGI_OUTDUPL_FRAME_INFO` e o desenho em `GetFramePointerShape`,
@@ -24,19 +24,19 @@
 
 /// Formato do desenho do ponteiro, como o DXGI classifica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TipoForma {
+pub enum ShapeKind {
     /// 1 bpp, mascara AND seguida de mascara XOR; altura e o dobro.
     Mono,
     /// 32 bpp BGRA com alfa de verdade.
-    Cor,
+    Color,
     /// 32 bpp onde o alfa e mascara: 0 = pinta, 0xFF = inverte o fundo.
-    CorMascarada,
+    MaskedColor,
 }
 
 /// Um desenho de ponteiro, como veio do DXGI.
 #[derive(Debug, Clone)]
-pub struct Forma {
-    pub tipo: TipoForma,
+pub struct Shape {
+    pub tipo: ShapeKind,
     pub w: u32,
     pub h: u32,
     pub pitch: usize,
@@ -52,7 +52,7 @@ pub struct Forma {
 /// porque e exatamente o mesmo calculo que o "salvar o que estava
 /// embaixo" precisa, e as duas contas divergirem deixaria rastro de
 /// cursor na tela.
-pub fn recorte(
+pub fn clip(
     tela_w: u32,
     tela_h: u32,
     f_w: u32,
@@ -74,10 +74,10 @@ pub fn recorte(
 ///
 /// `x`/`y` ja descontam o hotspot. Funcao pura sobre o buffer: e aqui
 /// que mora a decisao de cada formato, e e isto que os testes olham.
-pub fn desenhar(px: &mut [u8], stride: usize, tela_w: u32, tela_h: u32, f: &Forma, x: i32, y: i32) {
+pub fn draw(px: &mut [u8], stride: usize, tela_w: u32, tela_h: u32, f: &Shape, x: i32, y: i32) {
     // Mono guarda AND e XOR empilhadas, entao a altura util e metade.
-    let alt = if f.tipo == TipoForma::Mono { f.h / 2 } else { f.h };
-    let Some((rx, ry, rw, rh)) = recorte(tela_w, tela_h, f.w, alt, x, y) else {
+    let alt = if f.tipo == ShapeKind::Mono { f.h / 2 } else { f.h };
+    let Some((rx, ry, rw, rh)) = clip(tela_w, tela_h, f.w, alt, x, y) else {
         return;
     };
 
@@ -91,7 +91,7 @@ pub fn desenhar(px: &mut [u8], stride: usize, tela_w: u32, tela_h: u32, f: &Form
             }
 
             match f.tipo {
-                TipoForma::Mono => {
+                ShapeKind::Mono => {
                     // Um bit por pixel, MSB primeiro. `and` 0 pinta a
                     // cor; `and` 1 com `xor` 1 inverte o que estava
                     // embaixo -- e assim que o cursor de texto fica
@@ -113,7 +113,7 @@ pub fn desenhar(px: &mut [u8], stride: usize, tela_w: u32, tela_h: u32, f: &Form
                         };
                     }
                 }
-                TipoForma::Cor => {
+                ShapeKind::Color => {
                     let o = fy as usize * f.pitch + fx as usize * 4;
                     if o + 3 >= f.bytes.len() {
                         continue;
@@ -131,7 +131,7 @@ pub fn desenhar(px: &mut [u8], stride: usize, tela_w: u32, tela_h: u32, f: &Form
                         px[destino + c] = ((frente * a + fundo * (255 - a)) / 255) as u8;
                     }
                 }
-                TipoForma::CorMascarada => {
+                ShapeKind::MaskedColor => {
                     let o = fy as usize * f.pitch + fx as usize * 4;
                     if o + 3 >= f.bytes.len() {
                         continue;
@@ -162,30 +162,30 @@ mod testes_cursor {
 
     #[test]
     fn fora_da_tela_nao_desenha() {
-        assert_eq!(recorte(100, 100, 32, 32, -40, 10), None);
-        assert_eq!(recorte(100, 100, 32, 32, 10, 200), None);
+        assert_eq!(clip(100, 100, 32, 32, -40, 10), None);
+        assert_eq!(clip(100, 100, 32, 32, 10, 200), None);
     }
 
     #[test]
     fn na_borda_desenha_so_o_pedaco_visivel() {
         // Cursor com metade para fora da direita: sobram 10 colunas.
-        assert_eq!(recorte(100, 100, 32, 32, 90, 50), Some((90, 50, 10, 32)));
+        assert_eq!(clip(100, 100, 32, 32, 90, 50), Some((90, 50, 10, 32)));
         // E para a esquerda, a origem anda junto.
-        assert_eq!(recorte(100, 100, 32, 32, -10, 50), Some((0, 50, 22, 32)));
+        assert_eq!(clip(100, 100, 32, 32, -10, 50), Some((0, 50, 22, 32)));
     }
 
     #[test]
     fn cor_com_alfa_cheio_substitui_o_fundo() {
         let mut px = tela(4, 4);
-        let f = Forma {
-            tipo: TipoForma::Cor,
+        let f = Shape {
+            tipo: ShapeKind::Color,
             w: 1,
             h: 1,
             pitch: 4,
             bytes: vec![10, 20, 30, 255],
             hot: (0, 0),
         };
-        desenhar(&mut px, 16, 4, 4, &f, 1, 1);
+        draw(&mut px, 16, 4, 4, &f, 1, 1);
         let o = 1 * 16 + 1 * 4;
         assert_eq!(&px[o..o + 3], &[10, 20, 30]);
     }
@@ -194,15 +194,15 @@ mod testes_cursor {
     fn cor_com_alfa_zero_nao_toca_no_fundo() {
         let mut px = tela(4, 4);
         px[0] = 99;
-        let f = Forma {
-            tipo: TipoForma::Cor,
+        let f = Shape {
+            tipo: ShapeKind::Color,
             w: 1,
             h: 1,
             pitch: 4,
             bytes: vec![10, 20, 30, 0],
             hot: (0, 0),
         };
-        desenhar(&mut px, 16, 4, 4, &f, 0, 0);
+        draw(&mut px, 16, 4, 4, &f, 0, 0);
         assert_eq!(px[0], 99, "alfa zero tem de deixar o fundo intacto");
     }
 
@@ -219,15 +219,15 @@ mod testes_cursor {
             px[i * 4 + 1] = 100;
             px[i * 4 + 2] = 100;
         }
-        let f = Forma {
-            tipo: TipoForma::Mono,
+        let f = Shape {
+            tipo: ShapeKind::Mono,
             w: 8,
             h: 2, // AND + XOR empilhadas: altura util = 1
             pitch: 1,
             bytes: vec![0b0011_1111, 0b0101_1111],
             hot: (0, 0),
         };
-        desenhar(&mut px, 32, 8, 2, &f, 0, 0);
+        draw(&mut px, 32, 8, 2, &f, 0, 0);
         assert_eq!(px[0], 0x00, "and=0 xor=0 -> preto");
         assert_eq!(px[4], 0xFF, "and=0 xor=1 -> branco");
         assert_eq!(px[8], 100, "and=1 xor=0 -> fundo intacto");
@@ -239,15 +239,15 @@ mod testes_cursor {
         let mut px = tela(2, 1);
         px[0] = 100;
         px[4] = 100;
-        let f = Forma {
-            tipo: TipoForma::CorMascarada,
+        let f = Shape {
+            tipo: ShapeKind::MaskedColor,
             w: 2,
             h: 1,
             pitch: 8,
             bytes: vec![7, 7, 7, 0x00, 0xFF, 0, 0, 0xFF],
             hot: (0, 0),
         };
-        desenhar(&mut px, 8, 2, 1, &f, 0, 0);
+        draw(&mut px, 8, 2, 1, &f, 0, 0);
         assert_eq!(px[0], 7, "mascara 0 copia a cor");
         assert_eq!(px[4], 100 ^ 0xFF, "mascara 0xFF inverte o fundo");
     }
@@ -263,7 +263,7 @@ mod testes_cursor {
 //
 // Nessa situacao nao adianta pedir o desenho ao DXGI: ele reporta
 // `Visible=false` e nunca manda forma nenhuma, porque de fato nao ha
-// nada sendo desenhado. Quem precisa desenhar somos nos.
+// nada sendo desenhado. Quem precisa draw somos nos.
 
 /// Seta padrao, 12x19, no formato de mascaras do cursor monocromatico.
 ///
@@ -298,12 +298,12 @@ const SETA: [&str; 19] = [
     ".......WWW..",
 ];
 
-/// Monta a seta embutida como uma `Forma` monocromatica.
+/// Monta a seta embutida como uma `Shape` monocromatica.
 ///
-/// Reaproveita o caminho `Mono` do `desenhar`, que ja trata AND/XOR --
-/// um segundo caminho de desenho so para este caso seria mais codigo
+/// Reaproveita o caminho `Mono` do `draw`, que ja trata AND/XOR --
+/// um segundo caminho de desenho so para este caso seria mais code
 /// para a mesma figura.
-pub fn seta_embutida() -> Forma {
+pub fn builtin_arrow() -> Shape {
     let w = SETA[0].len() as u32;
     let h = SETA.len() as u32;
     let pitch = w.div_ceil(8) as usize;
@@ -326,7 +326,7 @@ pub fn seta_embutida() -> Forma {
         }
     }
 
-    Forma { tipo: TipoForma::Mono, w, h: h * 2, pitch, bytes, hot: (0, 0) }
+    Shape { tipo: ShapeKind::Mono, w, h: h * 2, pitch, bytes, hot: (0, 0) }
 }
 
 #[cfg(test)]
@@ -335,10 +335,10 @@ mod testes_seta {
 
     #[test]
     fn a_ponta_da_seta_e_branca_e_o_miolo_preto() {
-        let f = seta_embutida();
+        let f = builtin_arrow();
         // Fundo cinza para distinguir "pintou" de "deixou passar".
         let mut px = vec![100u8; 32 * 32 * 4];
-        desenhar(&mut px, 32 * 4, 32, 32, &f, 0, 0);
+        draw(&mut px, 32 * 4, 32, 32, &f, 0, 0);
 
         let em = |x: usize, y: usize| px[y * 32 * 4 + x * 4];
         assert_eq!(em(0, 0), 0xFF, "a ponta e o contorno branco");
@@ -348,7 +348,7 @@ mod testes_seta {
 
     #[test]
     fn a_seta_cabe_no_proprio_buffer() {
-        let f = seta_embutida();
+        let f = builtin_arrow();
         let alt = f.h / 2;
         assert_eq!(f.bytes.len(), f.pitch * alt as usize * 2);
         assert_eq!(alt, 19);
@@ -358,11 +358,11 @@ mod testes_seta {
     /// Desenhar na borda nao pode estourar o buffer.
     #[test]
     fn na_borda_nao_escreve_fora() {
-        let f = seta_embutida();
+        let f = builtin_arrow();
         let mut px = vec![0u8; 16 * 16 * 4];
         // Quatro cantos, todos com a seta parcialmente para fora.
         for (x, y) in [(-5, -5), (14, 14), (-5, 14), (14, -5)] {
-            desenhar(&mut px, 16 * 4, 16, 16, &f, x, y);
+            draw(&mut px, 16 * 4, 16, 16, &f, x, y);
         }
     }
 }

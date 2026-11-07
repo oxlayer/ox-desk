@@ -13,7 +13,7 @@
 pub struct Packet {
     pub data: Vec<u8>,
     /// Quadro-chave: o cliente que entra no meio precisa de um para
-    /// comecar a desenhar.
+    /// comecar a draw.
     pub keyframe: bool,
     pub captured_at_ns: u64,
 }

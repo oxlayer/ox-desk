@@ -43,7 +43,7 @@ mod visual {
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
-    use logistream::input::{evdev_de_winit, Evento, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+    use logistream::input::{evdev_from_winit, Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
     use logistream::net::{self, Reassembler};
     use winit::event::{ElementState, MouseButton, MouseScrollDelta};
     use winit::keyboard::PhysicalKey;
@@ -52,7 +52,7 @@ mod visual {
     use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
     use winit::window::{Window, WindowId};
 
-    /// O quadro pronto para desenhar, com a geometria que o explica.
+    /// O quadro pronto para draw, com a geometria que o explica.
     ///
     /// Tres tamanhos diferentes vivem aqui, e confundi-los foi um bug
     /// visivel: a tela REMOTA (`rw`x`rh`), a IMAGEM desenhada (`w`x`h`,
@@ -214,12 +214,12 @@ mod visual {
         let slot: Arc<Mutex<Slot>> = Arc::new(Mutex::new(Slot::default()));
         let slot_rede = Arc::clone(&slot);
 
-        // Canal do tokio usado de codigo SINCRONO (o laco de janela):
+        // Canal do tokio usado de code SINCRONO (o laco de janela):
         // `try_send` nao bloqueia, e se encher e porque o input esta
         // chegando mais rapido que a rede -- descartar movimento de
         // mouse e aceitavel, e os eventos de tecla sao raros o bastante
         // para nunca encherem isto.
-        let (tx_in, rx_in) = tokio::sync::mpsc::channel::<Evento>(256);
+        let (tx_in, rx_in) = tokio::sync::mpsc::channel::<Event>(256);
 
         // O tamanho da JANELA, compartilhado com quem escala.
         //
@@ -271,7 +271,7 @@ mod visual {
         desenhada: u64,
         n: u64,
         t0: Instant,
-        tx_in: tokio::sync::mpsc::Sender<Evento>,
+        tx_in: tokio::sync::mpsc::Sender<Event>,
         /// Tamanho atual da janela, para converter a posicao do cursor
         /// no espaco do stream.
         tam_janela: (f64, f64),
@@ -297,7 +297,7 @@ mod visual {
         fn window_event(&mut self, ev: &ActiveEventLoop, _: WindowId, evento: WindowEvent) {
             match evento {
                 WindowEvent::CloseRequested => ev.exit(),
-                WindowEvent::RedrawRequested => self.desenhar(),
+                WindowEvent::RedrawRequested => self.draw(),
                 WindowEvent::Resized(t) => {
                     self.tam_janela = (t.width as f64, t.height as f64);
                     if let Ok(mut g) = self.tam.lock() {
@@ -323,18 +323,18 @@ mod visual {
                     else {
                         return;
                     };
-                    self.manda(Evento::Mouse { x, y });
+                    self.manda(Event::Mouse { x, y });
                 }
                 WindowEvent::MouseInput { state, button, .. } => {
-                    let codigo = match button {
+                    let code = match button {
                         MouseButton::Left => BTN_LEFT,
                         MouseButton::Right => BTN_RIGHT,
                         MouseButton::Middle => BTN_MIDDLE,
                         _ => return,
                     };
-                    self.manda(Evento::Botao {
-                        codigo,
-                        apertado: state == ElementState::Pressed,
+                    self.manda(Event::Button {
+                        code,
+                        pressed: state == ElementState::Pressed,
                     });
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
@@ -345,7 +345,7 @@ mod visual {
                         MouseScrollDelta::LineDelta(x, y) => (-x as f64 * 15.0, -y as f64 * 15.0),
                         MouseScrollDelta::PixelDelta(p) => (-p.x, -p.y),
                     };
-                    self.manda(Evento::Rolagem { dx, dy });
+                    self.manda(Event::Scroll { dx, dy });
                 }
                 WindowEvent::KeyboardInput { event, is_synthetic, .. } => {
                     // Sintetico e o que o sistema inventa ao focar a
@@ -355,10 +355,10 @@ mod visual {
                         return;
                     }
                     let PhysicalKey::Code(code) = event.physical_key else { return };
-                    let Some(keycode) = evdev_de_winit(code) else { return };
-                    self.manda(Evento::Tecla {
+                    let Some(keycode) = evdev_from_winit(code) else { return };
+                    self.manda(Event::Key {
                         keycode,
-                        apertado: event.state == ElementState::Pressed,
+                        pressed: event.state == ElementState::Pressed,
                     });
                 }
                 _ => {}
@@ -375,7 +375,7 @@ mod visual {
         /// uma tecla. O usuario descreveu exatamente isso: "congela numa
         /// mensagem do chat ate eu mexer o mouse".
         ///
-        /// Pedir redesenho aqui e nao desenhar direto: desenhar fora do
+        /// Pedir redesenho aqui e nao draw direto: draw fora do
         /// `RedrawRequested` briga com o compositor em algumas
         /// plataformas, e o caminho de pintura ja existe num lugar so.
         fn user_event(&mut self, _: &ActiveEventLoop, _: ()) {
@@ -400,11 +400,11 @@ mod visual {
     impl App {
         /// `try_send` e nao `send`: o laco de janela nao pode bloquear
         /// esperando a rede -- travaria a interface inteira.
-        fn manda(&self, e: Evento) {
+        fn manda(&self, e: Event) {
             let _ = self.tx_in.try_send(e);
         }
 
-        fn desenhar(&mut self) {
+        fn draw(&mut self) {
             let (Some(janela), Some(surface)) = (self.janela.as_ref(), self.surface.as_mut())
             else {
                 return;
@@ -468,7 +468,7 @@ mod visual {
             if self.medir {
                 // Com sinal: entre maquinas o relogio do host pode estar
                 // adiantado, e zerar o negativo escondia isso.
-                let agora = logistream::serve::agora_ns() as i128;
+                let agora = logistream::serve::now_ns() as i128;
                 self.atrasos.push((agora - capturado as i128) as f64 / 1e6);
                 if self.atrasos.len() == 120 {
                     self.atrasos.sort_by(f64::total_cmp);
@@ -501,11 +501,11 @@ mod visual {
     async fn receber(
         alvo: &str,
         slot: Arc<Mutex<Slot>>,
-        mut rx_in: tokio::sync::mpsc::Receiver<Evento>,
+        mut rx_in: tokio::sync::mpsc::Receiver<Event>,
         tam: Arc<Mutex<(u32, u32)>>,
         proxy: winit::event_loop::EventLoopProxy<()>,
     ) -> anyhow::Result<()> {
-        // Decodificador montado ANTES de conectar.
+        // Decoder montado ANTES de conectar.
         //
         // Ele ficava depois da conexao, e isso perdia o primeiro
         // quadro-chave: o host comeca a despejar o IDR no instante do
@@ -513,9 +513,9 @@ mod visual {
         // iam chegando. O que nao cabia na fila era descartado, o IDR
         // chegava incompleto, e o log enchia de `non-existing PPS 0
         // referenced`.
-        let mut dec = logistream::decode::Decodificador::novo()
+        let mut dec = logistream::decode::Decoder::new()
             .map_err(|e| anyhow::anyhow!("sem decodificador: {e}"))?;
-        println!("decodificando por {}", dec.nome());
+        println!("decodificando por {}", dec.name());
 
         let mut enderecos: Vec<std::net::SocketAddr> =
             tokio::net::lookup_host(alvo).await?.collect();
@@ -525,7 +525,7 @@ mod visual {
         let destino = *enderecos.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
         let bind: std::net::SocketAddr =
             if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
-        let ep = net::cliente(bind)?;
+        let ep = net::client(bind)?;
         let conexao = ep.connect(destino, "logistream")?.await?;
         println!("conectado em {destino}");
 
@@ -542,7 +542,7 @@ mod visual {
             let mut buf = bytes::BytesMut::new();
             while let Some(e) = rx_in.recv().await {
                 buf.clear();
-                e.escrever(&mut buf);
+                e.write(&mut buf);
                 if envio.write_all(&buf).await.is_err() {
                     break;
                 }
@@ -575,7 +575,7 @@ mod visual {
                     cab.frame,
                     if cab.keyframe { "CHAVE" } else { "P" },
                     unidade.len(),
-                    r.perdidos
+                    r.lost
                 );
             }
 
@@ -588,7 +588,7 @@ mod visual {
                 let (jw, jh) = tam_agora.lock().map(|g| *g).unwrap_or((rw, rh));
                 encaixa(rw, rh, jw.max(1), jh.max(1))
             };
-            let prontos = match dec.alimentar(&unidade, &mut encaixe) {
+            let prontos = match dec.feed(&unidade, &mut encaixe) {
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("decodificar: {e}");
@@ -612,7 +612,7 @@ mod visual {
                 }
                 // Acorda a interface. `Err` aqui significa que o laco da
                 // janela acabou -- a pessoa fechou -- e ai nao ha mais
-                // para quem desenhar.
+                // para quem draw.
                 if proxy.send_event(()).is_err() {
                     return Ok(());
                 }

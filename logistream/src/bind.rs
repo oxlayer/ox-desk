@@ -40,23 +40,23 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Modo {
+pub enum Mode {
     /// `0.0.0.0` -- o comportamento de sempre. Dentro de casa, na LAN.
-    Todas,
+    All,
     /// Só o endereço do overlay. Para a máquina que sai de casa.
     Overlay,
     /// Um endereço escolhido à mão.
-    Fixo(IpAddr),
+    Fixed(IpAddr),
 }
 
-impl Modo {
-    pub fn parse(s: &str) -> Result<Modo, String> {
+impl Mode {
+    pub fn parse(s: &str) -> Result<Mode, String> {
         match s {
-            "todas" | "all" | "0.0.0.0" => Ok(Modo::Todas),
-            "overlay" | "tailscale" => Ok(Modo::Overlay),
+            "todas" | "all" | "0.0.0.0" => Ok(Mode::All),
+            "overlay" | "tailscale" => Ok(Mode::Overlay),
             outro => outro
                 .parse::<IpAddr>()
-                .map(Modo::Fixo)
+                .map(Mode::Fixed)
                 .map_err(|_| format!("--bind: '{outro}' não é 'todas', 'overlay' nem um endereço")),
         }
     }
@@ -65,7 +65,7 @@ impl Modo {
 /// Endereço do overlay, dentre as interfaces desta máquina.
 ///
 /// `interfaces` é `(nome, endereço)`. Puro para ser testável: a lista
-/// real vem de `locais()`, e os casos que importam -- hotspot com
+/// real vem de `local_addrs()`, e os casos que importam -- hotspot com
 /// CGNAT, Tailscale fora do ar, duas interfaces candidatas -- não
 /// precisam de máquina nenhuma para serem exercitados.
 pub fn achar_overlay(interfaces: &[(String, IpAddr)]) -> Result<IpAddr, String> {
@@ -157,16 +157,16 @@ fn na_faixa_do_tailscale(ip: &IpAddr) -> bool {
 }
 
 /// O endereço final, já resolvido.
-pub fn resolver(modo: &Modo, interfaces: &[(String, IpAddr)]) -> Result<IpAddr, String> {
+pub fn resolve(modo: &Mode, interfaces: &[(String, IpAddr)]) -> Result<IpAddr, String> {
     match modo {
-        Modo::Todas => Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
-        Modo::Fixo(ip) => Ok(*ip),
-        Modo::Overlay => achar_overlay(interfaces),
+        Mode::All => Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+        Mode::Fixed(ip) => Ok(*ip),
+        Mode::Overlay => achar_overlay(interfaces),
     }
 }
 
 /// As interfaces desta máquina, de verdade.
-pub fn locais() -> Vec<(String, IpAddr)> {
+pub fn local_addrs() -> Vec<(String, IpAddr)> {
     match if_addrs::get_if_addrs() {
         Ok(v) => v.into_iter().map(|i| (i.name, i.addr.ip())).collect(),
         Err(e) => {
@@ -214,7 +214,7 @@ mod testes {
         // Overlay e sem overlay tem de ERRAR. Se um dia alguem "melhorar"
         // isto com um fallback, o teste quebra -- e e para quebrar.
         let ifs = [i("en0", "192.168.1.60")];
-        let e = resolver(&Modo::Overlay, &ifs).unwrap_err();
+        let e = resolve(&Mode::Overlay, &ifs).unwrap_err();
         assert!(e.contains("não achei"), "{e}");
         assert!(!e.contains("0.0.0.0") || e.contains("NÃO vou"), "{e}");
     }
@@ -257,15 +257,15 @@ mod testes {
 
     #[test]
     fn modo_parseia_as_tres_formas() {
-        assert_eq!(Modo::parse("todas").unwrap(), Modo::Todas);
-        assert_eq!(Modo::parse("overlay").unwrap(), Modo::Overlay);
-        assert_eq!(Modo::parse("10.0.0.5").unwrap(), Modo::Fixo("10.0.0.5".parse().unwrap()));
-        assert!(Modo::parse("sim").is_err());
+        assert_eq!(Mode::parse("todas").unwrap(), Mode::All);
+        assert_eq!(Mode::parse("overlay").unwrap(), Mode::Overlay);
+        assert_eq!(Mode::parse("10.0.0.5").unwrap(), Mode::Fixed("10.0.0.5".parse().unwrap()));
+        assert!(Mode::parse("sim").is_err());
     }
 
     #[test]
     fn todas_continua_sendo_o_padrao_de_hoje() {
-        assert_eq!(resolver(&Modo::Todas, &[]).unwrap(), "0.0.0.0".parse::<IpAddr>().unwrap());
+        assert_eq!(resolve(&Mode::All, &[]).unwrap(), "0.0.0.0".parse::<IpAddr>().unwrap());
     }
 }
 
@@ -282,12 +282,12 @@ use std::sync::OnceLock;
 static ESCUTA: OnceLock<IpAddr> = OnceLock::new();
 
 /// Fixa o endereço de escuta. Chamar antes de abrir qualquer socket.
-pub fn definir(ip: IpAddr) {
+pub fn set_listen_addr(ip: IpAddr) {
     let _ = ESCUTA.set(ip);
 }
 
 /// O endereço de escuta. `0.0.0.0` quando ninguém escolheu -- que é o
 /// comportamento que o host sempre teve.
-pub fn escuta() -> IpAddr {
+pub fn listen_addr() -> IpAddr {
     *ESCUTA.get().unwrap_or(&IpAddr::V4(Ipv4Addr::UNSPECIFIED))
 }

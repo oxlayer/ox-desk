@@ -17,7 +17,7 @@
 //!   cargo run --release --bin input-send -- <host:porta> [--rajada N]
 
 use bytes::BytesMut;
-use logistream::input::{Evento, BTN_LEFT};
+use logistream::input::{Event, BTN_LEFT};
 use logistream::net;
 
 #[tokio::main(flavor = "current_thread")]
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     let destino = *enderecos.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
     let bind: std::net::SocketAddr =
         if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
-    let ep = net::cliente(bind)?;
+    let ep = net::client(bind)?;
     let conexao = ep.connect(destino, "logistream")?.await?;
     let mut envio = conexao.open_uni().await?;
     println!("  conectado; mandando eventos");
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         let mut buf = BytesMut::new();
         for _ in 0..rel {
             buf.clear();
-            Evento::MouseRel { dx: 10.0, dy: 0.0 }.escrever(&mut buf);
+            Event::MouseRel { dx: 10.0, dy: 0.0 }.write(&mut buf);
             envio.write_all(&buf).await?;
             tokio::time::sleep(std::time::Duration::from_millis(8)).await;
         }
@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
         let x: f64 = std::env::args().nth(i + 1).and_then(|v| v.parse().ok()).unwrap_or(0.0);
         let y: f64 = std::env::args().nth(i + 2).and_then(|v| v.parse().ok()).unwrap_or(0.0);
         let mut buf = BytesMut::new();
-        Evento::Mouse { x, y }.escrever(&mut buf);
+        Event::Mouse { x, y }.write(&mut buf);
         envio.write_all(&buf).await?;
         envio.finish()?;
         println!("  Mouse absoluto para ({x}, {y}) em pixel de quadro");
@@ -95,9 +95,9 @@ async fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--capslock") {
         let mut buf = BytesMut::new();
         // 58 = KEY_CAPSLOCK no evdev, que e o que o protocolo carrega.
-        for apertado in [true, false] {
+        for pressed in [true, false] {
             buf.clear();
-            Evento::Tecla { keycode: 58, apertado }.escrever(&mut buf);
+            Event::Key { keycode: 58, pressed }.write(&mut buf);
             envio.write_all(&buf).await?;
             tokio::time::sleep(std::time::Duration::from_millis(40)).await;
         }
@@ -114,21 +114,21 @@ async fn main() -> anyhow::Result<()> {
     // chegando e sendo traduzido. Com uma tecla comum da para olhar o
     // estado dela enquanto esta apertada, que e medida de verdade.
     if let Some(i) = std::env::args().position(|a| a == "--segurar") {
-        let codigo: u32 = std::env::args()
+        let code: u32 = std::env::args()
             .nth(i + 1)
             .and_then(|v| v.parse().ok())
             .unwrap_or(30); // 30 = A
         let mut buf = BytesMut::new();
         buf.clear();
-        Evento::Tecla { keycode: codigo, apertado: true }.escrever(&mut buf);
+        Event::Key { keycode: code, pressed: true }.write(&mut buf);
         envio.write_all(&buf).await?;
-        println!("  tecla {codigo} APERTADA; segurando 4s");
+        println!("  tecla {code} APERTADA; segurando 4s");
         tokio::time::sleep(std::time::Duration::from_secs(4)).await;
         buf.clear();
-        Evento::Tecla { keycode: codigo, apertado: false }.escrever(&mut buf);
+        Event::Key { keycode: code, pressed: false }.write(&mut buf);
         envio.write_all(&buf).await?;
         envio.finish()?;
-        println!("  tecla {codigo} solta");
+        println!("  tecla {code} solta");
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         return Ok(());
     }
@@ -141,9 +141,9 @@ async fn main() -> anyhow::Result<()> {
         let t0 = std::time::Instant::now();
         for i in 0..rajada {
             let a = (i as f64) * 0.1;
-            let e = Evento::Mouse { x: 1300.0 + 60.0 * a.cos(), y: 750.0 + 60.0 * a.sin() };
+            let e = Event::Mouse { x: 1300.0 + 60.0 * a.cos(), y: 750.0 + 60.0 * a.sin() };
             buf.clear();
-            e.escrever(&mut buf);
+            e.write(&mut buf);
             envio.write_all(&buf).await?;
         }
         envio.finish()?;
@@ -157,21 +157,21 @@ async fn main() -> anyhow::Result<()> {
     // Um quadrado pequeno perto do centro: visivel, sem atravessar a
     // tela nem cair em canto que dispara coisa do sistema.
     for (x, y) in [(1200.0, 700.0), (1400.0, 700.0), (1400.0, 800.0), (1200.0, 800.0)] {
-        eventos.push(Evento::Mouse { x, y });
+        eventos.push(Event::Mouse { x, y });
     }
     // Shift: aperta e solta sem digitar nada.
-    eventos.push(Evento::Tecla { keycode: 42, apertado: true });
-    eventos.push(Evento::Tecla { keycode: 42, apertado: false });
-    // Rolagem de um passo, que nao destroi nada.
-    eventos.push(Evento::Rolagem { dx: 0.0, dy: 15.0 });
-    // Botao NAO e enviado: clicar as cegas na maquina de alguem pode
+    eventos.push(Event::Key { keycode: 42, pressed: true });
+    eventos.push(Event::Key { keycode: 42, pressed: false });
+    // Scroll de um passo, que nao destroi nada.
+    eventos.push(Event::Scroll { dx: 0.0, dy: 15.0 });
+    // Button NAO e enviado: clicar as cegas na maquina de alguem pode
     // apertar qualquer coisa que estiver sob o cursor.
     let _ = BTN_LEFT;
 
     let mut buf = BytesMut::new();
     for e in &eventos {
         buf.clear();
-        e.escrever(&mut buf);
+        e.write(&mut buf);
         envio.write_all(&buf).await?;
         tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     }

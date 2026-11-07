@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
     let bytes = std::fs::read(&caminho)?;
     println!("  {} ({} KB)", caminho, bytes.len() / 1024);
 
-    let mut dec = logistream::decode_nv::Decodificador::novo()
+    let mut dec = logistream::decode_nv::Decoder::new()
         .map_err(|e| anyhow::anyhow!("NVDEC indisponivel: {e}"))?;
     println!("  NVDEC carregado");
 
@@ -36,13 +36,13 @@ fn main() -> anyhow::Result<()> {
     let mut n = 0u64;
     let mut ultimo = None;
     for parte in bytes.chunks(PEDACO) {
-        for q in dec.alimentar(parte).map_err(|e| anyhow::anyhow!(e))? {
+        for q in dec.feed(parte).map_err(|e| anyhow::anyhow!(e))? {
             n += 1;
             ultimo = Some(q);
         }
     }
     let s = t0.elapsed().as_secs_f64();
-    let (w, h) = dec.tamanho();
+    let (w, h) = dec.size();
     println!(
         "  {n} quadros {w}x{h} em {s:.2}s = {:.0} fps  ({:.2} ms por quadro)",
         n as f64 / s,
@@ -56,7 +56,7 @@ fn main() -> anyhow::Result<()> {
     // Estatisticas em vez de "parece certo": media por canal pega imagem
     // preta, invertida ou com a matriz de cor errada sem precisar de olho.
     let mut rgb = vec![0u32; (q.w * q.h) as usize];
-    logistream::decode_nv::nv12_para_bgra(&q, &mut rgb, q.w, q.h);
+    logistream::decode_nv::nv12_to_bgra(&q, &mut rgb, q.w, q.h);
     let (mut sr, mut sg, mut sb) = (0u64, 0u64, 0u64);
     for p in &rgb {
         sr += ((p >> 16) & 0xff) as u64;

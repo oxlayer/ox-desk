@@ -11,7 +11,7 @@
 //! types on the remote machine. So it takes the token AND the panel's Origin.
 //!
 //! Video goes to the page as `[flags u8][captured_at_ns u64 BE][Annex B]`.
-//! Input is the wire format of `Evento`, forwarded without being interpreted.
+//! Input is the wire format of `Event`, forwarded without being interpreted.
 
 use std::time::Duration;
 
@@ -24,7 +24,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 /// Nobody connected in this long: the tab is gone, and so is the reason to run.
 const ESPERA_ABA: Duration = Duration::from_secs(30);
-/// Largest `Evento` on the wire: a tag byte and two `f64`.
+/// Largest `Event` on the wire: a tag byte and two `f64`.
 const MAX_EVENTO: usize = 17;
 const ORIGEM_PADRAO: &str = "http://127.0.0.1:8787";
 
@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
     let destino = *enderecos.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
     let bind: std::net::SocketAddr =
         if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
-    let ep = net::cliente(bind)?;
+    let ep = net::client(bind)?;
     let conexao = ep.connect(destino, "logistream")?.await?;
     // stderr, e nao stdout: quem nos lançou lê só a porta e fecha o pipe, e um
     // `println!` num pipe fechado derruba o processo no meio da sessão.

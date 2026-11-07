@@ -16,7 +16,7 @@
 //!
 //! ## Diferenca visivel em relacao aos outros dois hosts
 //!
-//! O `avfoundation` sabe desenhar o cursor (`capture_cursor`), igual ao
+//! O `avfoundation` sabe draw o cursor (`capture_cursor`), igual ao
 //! Mutter e ao contrario do DXGI. Entao a tela do Mac vai com cursor
 //! embutido, como a do Linux.
 
@@ -25,7 +25,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::serve::{self, agora_ns, Quadro, Sinais};
+use crate::serve::{self, now_ns, EncodedFrame, Signals};
 
 /// Dois quadros de folga. Mais que isso seria fila de coisa velha.
 const CAPACIDADE: usize = 2;
@@ -58,7 +58,7 @@ fn dispositivo(pedido: &str) -> &str {
 /// avfoundation a tela 0 e `"1"` quando ha uma camera na frente dela, e
 /// o unico jeito honesto de saber e listar -- entao o indice e
 /// configuravel e o default e o que funciona nesta maquina.
-fn abrir(indice: &str, fps: u32) -> anyhow::Result<ffmpeg_next::format::context::Input> {
+fn open_screen(indice: &str, fps: u32) -> anyhow::Result<ffmpeg_next::format::context::Input> {
     let nome = std::ffi::CString::new("avfoundation")?;
     // `format::list()` existia e foi removido no ffmpeg 5. Procurar pelo
     // nome e o caminho atual, e e o que o proprio `ffmpeg -f` faz.
@@ -90,7 +90,7 @@ fn abrir(indice: &str, fps: u32) -> anyhow::Result<ffmpeg_next::format::context:
     }
 }
 
-pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
+pub fn run(porta: u16, indice: &str) -> anyhow::Result<()> {
     let indice = dispositivo(indice);
     ffmpeg_next::init()?;
     // Sem isto o nome `avfoundation` nao resolve: os dispositivos de
@@ -102,7 +102,7 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     // Avisar ANTES de tentar: se ficarmos pendurados, pelo menos a
     // ultima linha do log diz onde procurar.
     println!("  abrindo a tela {indice}... (se parar aqui, falta Gravacao de Tela para este binario)");
-    let mut entrada = abrir(indice, 60)?;
+    let mut entrada = open_screen(indice, 60)?;
     let fluxo = entrada
         .streams()
         .best(ffmpeg_next::media::Type::Video)
@@ -126,10 +126,10 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     enc.set_format(ffmpeg_next::format::Pixel::NV12);
     enc.set_time_base(ffmpeg_next::Rational::new(1, 60));
     enc.set_frame_rate(Some(ffmpeg_next::Rational::new(60, 1)));
-    // Mesma escala dos outros dois hosts (ver `nvenc::Codificador::novo`):
+    // Mesma escala dos outros dois hosts (ver `nvenc::NvencEncoder::novo`):
     // 4 bits por pixel por segundo a 60 fps.
     // Mesma formula do NVENC, do mesmo lugar: esta era a SEGUNDA copia.
-    let alvo = crate::qualidade::alvo(w, h) as u64;
+    let alvo = crate::quality::target(w, h) as u64;
     enc.set_bit_rate(alvo as usize);
     enc.set_max_bit_rate((alvo * 2) as usize);
     // IDR a cada 2s: perdeu quadro, o erro cicatriza em 2s em vez de
@@ -166,8 +166,8 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
         )?)
     };
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<Quadro>(CAPACIDADE);
-    let sinais = Arc::new(Sinais::default());
+    let (tx, rx) = tokio::sync::mpsc::channel::<EncodedFrame>(CAPACIDADE);
+    let sinais = Arc::new(Signals::default());
     let origem = Arc::new(Mutex::new((0i32, 0i32)));
 
     let rede = {
@@ -177,7 +177,7 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
             if let Err(e) = servir(porta, rx, Arc::clone(&sinais), origem) {
                 eprintln!("  rede: {e}");
             }
-            sinais.encerrar();
+            sinais.shutdown();
         })
     };
 
@@ -188,13 +188,13 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     // o descarta em silencio -- devolve sucesso e nada acontece. E o
     // mesmo modo de falha da Gravacao de Tela, e foi ele que fez o
     // usuario passar uma tarde achando que o KVM estava quebrado.
-    if crate::input_mac::tem_acessibilidade() {
+    if crate::input_mac::has_accessibility() {
         println!("  acessibilidade concedida: teclado e mouse serao injetados");
         // Dito no log porque "a posicao do cursor nao bateu" e um
         // sintoma que nao da para diagnosticar sem este numero: ele
         // diz em que espaco o ponteiro e injetado contra o espaco em
         // que a tela e capturada.
-        let e = crate::input_mac::escala_do_display();
+        let e = crate::input_mac::display_scale();
         println!("  {e:.0} pixel(s) de captura por ponto de ponteiro");
     } else {
         println!(
@@ -224,7 +224,7 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
     // novo"; o iterador leu isso como fim do fluxo.
     let mut pacote = ffmpeg_next::Packet::empty();
     loop {
-        if sinais.deve_sair() {
+        if sinais.should_exit() {
             break;
         }
         match pacote.read(&mut entrada) {
@@ -248,7 +248,7 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
         while dec.receive_frame(&mut quadro).is_ok() {
             // Sem ninguem assistindo, nao codifica: o quadro iria para um
             // canal que ninguem drena.
-            if !sinais.tem_cliente() {
+            if !sinais.has_client() {
                 continue;
             }
             let agora = Instant::now();
@@ -271,8 +271,8 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
                 None => &mut quadro,
             };
 
-            let capturado = agora_ns();
-            if sinais.pegar_idr() {
+            let capturado = now_ns();
+            if sinais.take_idr() {
                 // Pedido de quadro-chave: o cliente novo nao tem contexto.
                 quadro.set_kind(ffmpeg_next::picture::Type::I);
             } else {
@@ -285,11 +285,11 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
             }
             let mut saida = ffmpeg_next::Packet::empty();
             while enc.receive_packet(&mut saida).is_ok() {
-                let Some(dados) = saida.data() else { continue };
+                let Some(data) = saida.data() else { continue };
                 let keyframe = saida.is_key();
                 if tx
-                    .try_send(Quadro {
-                        dados: dados.to_vec(),
+                    .try_send(EncodedFrame {
+                        data: data.to_vec(),
                         keyframe,
                         captured_at_ns: capturado,
                     })
@@ -316,14 +316,14 @@ pub fn executar(porta: u16, indice: &str) -> anyhow::Result<()> {
 /// conexao D-Bus que a criou.
 fn servir(
     porta: u16,
-    mut rx: tokio::sync::mpsc::Receiver<Quadro>,
-    sinais: Arc<Sinais>,
+    mut rx: tokio::sync::mpsc::Receiver<EncodedFrame>,
+    sinais: Arc<Signals>,
     _origem: Arc<Mutex<(i32, i32)>>,
 ) -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     rt.block_on(async move {
-        let escuta = crate::bind::escuta();
-        let ep = crate::net::servidor((escuta, porta).into())?;
+        let escuta = crate::bind::listen_addr();
+        let ep = crate::net::server((escuta, porta).into())?;
         // O endereco REAL, nao "0.0.0.0" fixo: com --bind overlay o
         // host escuta em outro lugar, e um log que diz 0.0.0.0
         // mandaria quem diagnostica procurar no lugar errado.
@@ -336,12 +336,12 @@ fn servir(
         // timeout. Sem ela, assistir e controlar disputam a vaga unica
         // de cliente de video.
         let porta_input = porta + 1;
-        let ep_in = crate::net::servidor((escuta, porta_input).into())?;
+        let ep_in = crate::net::server((escuta, porta_input).into())?;
         println!("  input em {escuta}:{porta_input}");
         {
             let sinais_in = Arc::clone(&sinais);
             tokio::spawn(async move {
-                serve::atender_input(&ep_in, Arc::clone(&sinais_in), |conexao| {
+                serve::serve_input(&ep_in, Arc::clone(&sinais_in), |conexao| {
                     let conexao = conexao.clone();
                     tokio::spawn(async move { receber_input(conexao).await })
                 })
@@ -349,7 +349,7 @@ fn servir(
             });
         }
 
-        serve::atender(&ep, &mut rx, &sinais, |conexao| {
+        serve::serve_video(&ep, &mut rx, &sinais, |conexao| {
             let conexao = conexao.clone();
             tokio::spawn(async move { receber_input(conexao).await })
         })
@@ -365,14 +365,14 @@ fn servir(
 async fn receber_input(conexao: quinn::Connection) {
     let Ok(mut recv) = conexao.accept_uni().await else { return };
     // Canal por conexao: a thread morre quando o cliente sai, e um
-    // `Teclado` novo comeca com a posicao real do ponteiro.
+    // `Injector` novo comeca com a posicao real do ponteiro.
     let teclado = crate::input_mac::thread();
-    let mut leitor = crate::input::Leitor::default();
+    let mut leitor = crate::input::Reader::default();
     let mut buf = vec![0u8; 4096];
     let mut n = 0u64;
     while let Ok(Some(lidos)) = recv.read(&mut buf).await {
-        leitor.alimentar(&buf[..lidos]);
-        while let Some(e) = leitor.proximo() {
+        leitor.feed(&buf[..lidos]);
+        while let Some(e) = leitor.next_event() {
             if teclado.send(e).is_err() {
                 return; // a thread de injecao saiu
             }

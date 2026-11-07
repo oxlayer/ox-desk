@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
     // recusa com "non-existing PPS 0 referenced". Nao e detalhe de
     // arquivo: um cliente que entra no meio da transmissao -- o caso
     // normal numa tela remota -- precisa dos cabecalhos para comecar a
-    // desenhar. `repeatSPSPPS` os reenvia em cada IDR.
+    // draw. `repeatSPSPPS` os reenvia em cada IDR.
     let tuning = NV_ENC_TUNING_INFO::NV_ENC_TUNING_INFO_LOW_LATENCY;
     let preset = enc
         .get_preset_config(NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_P4_GUID, tuning)
@@ -99,10 +99,10 @@ fn main() -> anyhow::Result<()> {
                 EncodePictureParams { input_timestamp: i, force_idr: i == 0 },
             )
             .map_err(|e| anyhow::anyhow!("encode do quadro {i}: {e}"))?;
-        let (dados, e2, s2) = sub.finish().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let (data, e2, s2) = sub.finish().map_err(|e| anyhow::anyhow!("{e}"))?;
         piores.push(tq.elapsed().as_secs_f64() * 1000.0);
-        bytes += dados.len();
-        arquivo.write_all(&dados)?;
+        bytes += data.len();
+        arquivo.write_all(&data)?;
         entrada = e2;
         saida = s2;
     }

@@ -33,5 +33,5 @@ pub mod input_mac;
 pub mod input_win;
 pub mod net;
 pub mod nvenc;
-pub mod qualidade;
+pub mod quality;
 pub mod serve;

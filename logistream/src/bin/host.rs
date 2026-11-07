@@ -79,7 +79,7 @@ fn main() -> anyhow::Result<()> {
     // que o host nao tem.
     //
     // A saida e de UMA linha por permissao, `chave: ok|falta`, porque
-    // quem le e codigo. Ver logid/src/setup_mac.rs.
+    // quem le e code. Ver logid/src/setup_mac.rs.
     #[cfg(target_os = "macos")]
     if a.first().is_some_and(|v| v == "--conferir" || v == "--pedir") {
         let pedir = a[0] == "--pedir";
@@ -87,7 +87,7 @@ fn main() -> anyhow::Result<()> {
             // Mostra o dialogo do sistema. So funciona lancado da
             // sessao grafica: por SSH nao ha dialogo para mostrar e a
             // chamada volta `false` sem ninguem ter visto nada.
-            let _ = logistream::input_mac::pedir_permissoes();
+            let _ = logistream::input_mac::request_permissions();
         }
         // Medir DEPOIS de pedir, e sempre pelo preflight: o retorno do
         // pedido e o que o usuario acabou de clicar, e no caso comum
@@ -95,11 +95,11 @@ fn main() -> anyhow::Result<()> {
         // a pergunta "da para capturar agora?" e o preflight.
         println!(
             "gravacao-de-tela: {}",
-            if logistream::input_mac::tem_gravacao_de_tela() { "ok" } else { "falta" }
+            if logistream::input_mac::has_screen_recording() { "ok" } else { "falta" }
         );
         println!(
             "acessibilidade: {}",
-            if logistream::input_mac::tem_acessibilidade() { "ok" } else { "falta" }
+            if logistream::input_mac::has_accessibility() { "ok" } else { "falta" }
         );
         return Ok(());
     }
@@ -113,15 +113,15 @@ fn main() -> anyhow::Result<()> {
     // Wi-Fi de hotel ele serve a tela e o teclado para a rede inteira.
     // Ver specs/012.
     let bind = match a.iter().position(|v| v == "--bind") {
-        Some(i) => match a.get(i + 1).map(|v| logistream::bind::Modo::parse(v)) {
+        Some(i) => match a.get(i + 1).map(|v| logistream::bind::Mode::parse(v)) {
             Some(Ok(m)) => m,
             Some(Err(e)) => anyhow::bail!("{e}"),
             None => anyhow::bail!("--bind precisa de um valor: todas | overlay | <endereco>"),
         },
-        None => logistream::bind::Modo::Todas,
+        None => logistream::bind::Mode::All,
     };
-    match logistream::bind::resolver(&bind, &logistream::bind::locais()) {
-        Ok(ip) => logistream::bind::definir(ip),
+    match logistream::bind::resolve(&bind, &logistream::bind::local_addrs()) {
+        Ok(ip) => logistream::bind::set_listen_addr(ip),
         // Falhar aqui e o desenho, nao um acidente: quem pediu overlay
         // prefere host que nao sobe a host aberto para a rede errada.
         Err(e) => anyhow::bail!("{e}"),
@@ -131,8 +131,8 @@ fn main() -> anyhow::Result<()> {
     // deixa de ser a LAN e passa a ser o UPLOAD da casa, e 15 Mbps por
     // um upload de 10 nao da imagem ruim -- da fila no roteador,
     // latencia subindo e tela desmontando. Ver specs/012.
-    match logistream::qualidade::teto_de_args(&a) {
-        Ok(Some(bits)) => logistream::qualidade::limitar(bits),
+    match logistream::quality::cap_from_args(&a) {
+        Ok(Some(bits)) => logistream::quality::set_cap(bits),
         Ok(None) => {}
         Err(e) => anyhow::bail!("{e}"),
     }
@@ -156,13 +156,13 @@ fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
         let conector = pos.get(1).map(|s| s.to_string()).unwrap_or_else(|| "DP-1".into());
-        logistream::host_linux::executar(porta, &conector)
+        logistream::host_linux::run(porta, &conector)
     }
 
     #[cfg(windows)]
     {
         let monitor: u32 = pos.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
-        logistream::host_win::executar(porta, monitor)
+        logistream::host_win::run(porta, monitor)
     }
 
     #[cfg(target_os = "macos")]
@@ -171,7 +171,7 @@ fn main() -> anyhow::Result<()> {
         // numeracao inclui cameras e muda sozinha (ver `host_mac`).
         let indice =
             pos.get(1).map(|s| s.to_string()).unwrap_or_else(|| "Capture screen 0".into());
-        logistream::host_mac::executar(porta, &indice)
+        logistream::host_mac::run(porta, &indice)
     }
 
     #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]

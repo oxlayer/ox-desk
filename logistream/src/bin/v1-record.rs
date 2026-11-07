@@ -151,7 +151,7 @@ fn main() -> anyhow::Result<()> {
                     .map_err(|e| anyhow::anyhow!("preset: {e}"))?;
         let mut cfg = preset.presetCfg;
         // Sem isto, o cliente que entra no meio da transmissao -- o caso
-        // normal -- nao tem cabecalho para comecar a desenhar.
+        // normal -- nao tem cabecalho para comecar a draw.
         unsafe { cfg.encodeCodecConfig.h264Config.set_repeatSPSPPS(1) };
 
         // --- qualidade -------------------------------------------------------
@@ -268,11 +268,11 @@ fn main() -> anyhow::Result<()> {
                 EncodePictureParams { input_timestamp: n, force_idr: n == 0 },
             );
             match r.and_then(|s| s.finish()) {
-                Ok((dados, e2, s2)) => {
+                Ok((data, e2, s2)) => {
                     let enc_ms = t_enc.elapsed().as_secs_f64() * 1000.0;
                     g.sessao = Some(sessao);
-                    let _ = g.arquivo.write_all(&dados);
-                    g.bytes += dados.len() as u64;
+                    let _ = g.arquivo.write_all(&data);
+                    g.bytes += data.len() as u64;
                     g.entrada = Some(e2);
                     g.saida = Some(s2);
                     g.n += 1;

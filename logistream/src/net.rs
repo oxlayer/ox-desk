@@ -98,7 +98,7 @@ pub struct Reassembler {
     cab: Option<SliceHeader>,
     /// Quadros abandonados por chegarem incompletos. E o numero que diz
     /// se vale a pena ligar FEC.
-    pub perdidos: u64,
+    pub lost: u64,
 }
 
 impl Reassembler {
@@ -110,7 +110,7 @@ impl Reassembler {
 
         if cab.frame != self.frame || self.pieces.len() != cab.pieces as usize {
             if self.presentes > 0 && self.presentes < self.pieces.len() {
-                self.perdidos += 1;
+                self.lost += 1;
             }
             self.frame = cab.frame;
             self.pieces = vec![None; cab.pieces as usize];
@@ -146,7 +146,7 @@ fn efemera() -> Result<crate::identity::Identity> {
     })
 }
 
-pub fn servidor(bind: SocketAddr) -> Result<quinn::Endpoint> {
+pub fn server(bind: SocketAddr) -> Result<quinn::Endpoint> {
     // Spec 017, phase A: the persistent identity, and the client is asked
     // for its certificate without being required to send one.
     let id = match crate::identity::load() {
@@ -182,7 +182,7 @@ fn servidor_com(bind: SocketAddr, id: crate::identity::Identity) -> Result<quinn
     quinn::Endpoint::server(cfg, bind).context("abrir servidor")
 }
 
-pub fn cliente(bind: SocketAddr) -> Result<quinn::Endpoint> {
+pub fn client(bind: SocketAddr) -> Result<quinn::Endpoint> {
     let fixada = crate::identity::pinned_from_env();
     if fixada.is_none() {
         eprintln!("  AVISO sem LOGI_PAR: a digital do host nao e conferida (spec 017, fase A)");
@@ -366,11 +366,11 @@ mod tests {
                 saiu = Some(x);
             }
         }
-        let (c, dados) = saiu.expect("remontou");
-        assert_eq!(dados, original);
+        let (c, data) = saiu.expect("remontou");
+        assert_eq!(data, original);
         assert_eq!(c.frame, 7);
         assert!(c.keyframe);
-        assert_eq!(r.perdidos, 0);
+        assert_eq!(r.lost, 0);
     }
 
     #[test]
@@ -397,6 +397,6 @@ mod tests {
         let c8 = SliceHeader { frame: 8, ..cab() };
         let saiu = slice(&b, c8, 1200).iter().find_map(|f| r.push(f));
         assert_eq!(saiu.expect("remontou o 8").1, b);
-        assert_eq!(r.perdidos, 1, "o quadro 7 incompleto tem de ser contado");
+        assert_eq!(r.lost, 1, "o quadro 7 incompleto tem de ser contado");
     }
 }

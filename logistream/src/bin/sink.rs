@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
     let bind: std::net::SocketAddr =
         if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
-    let ep = net::cliente(bind)?;
+    let ep = net::client(bind)?;
     println!("  conectando em {destino}");
     let conexao = ep.connect(destino, "logistream")?.await?;
     println!("  conectado");
@@ -56,17 +56,17 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(0);
     if rajada > 0 {
         use bytes::BytesMut;
-        use logistream::input::Evento;
+        use logistream::input::Event;
         let mut envio = conexao.open_uni().await?;
         let mut buf = BytesMut::new();
         for i in 0..rajada {
             let ang = (i as f64) * 0.1;
-            let e = Evento::Mouse {
+            let e = Event::Mouse {
                 x: 1300.0 + 60.0 * ang.cos(),
                 y: 750.0 + 60.0 * ang.sin(),
             };
             buf.clear();
-            e.escrever(&mut buf);
+            e.write(&mut buf);
             envio.write_all(&buf).await?;
         }
         println!("  {rajada} eventos de input enviados pela mesma conexao");
@@ -115,7 +115,7 @@ async fn main() -> anyhow::Result<()> {
     };
     println!("\n  {quadros} quadros inteiros em {s:.1}s = {:.1} fps", quadros as f64 / s.max(0.001));
     println!("  {datagramas} datagramas, {:.1} Mbps", bytes as f64 * 8.0 / s / 1_000_000.0);
-    println!("  quadros perdidos (chegaram incompletos): {}", r.perdidos);
+    println!("  quadros perdidos (chegaram incompletos): {}", r.lost);
     if !atrasos_ms.is_empty() {
         println!(
             "  captura -> quadro montado: p50 {:.1}ms  p95 {:.1}ms  (so vale em loopback: \

@@ -172,10 +172,10 @@ fn capturar() {
     diga!("  mesa desta thread agora: {}", mesa_atual());
 
     // O teste real: o mesmo caminho do host de verdade.
-    match logistream::capture_win::Monitor::abrir(0) {
-        Ok(m) => match m.duplicar() {
+    match logistream::capture_win::Monitor::open(0) {
+        Ok(m) => match m.duplicate() {
             Ok(t) => {
-                let (lw, lh) = t.tamanho();
+                let (lw, lh) = t.size();
                 diga!("  DUPLICOU: {lw}x{lh} -- captura funciona nesta mesa");
             }
             Err(e) => diga!("  duplicar FALHOU: {e}"),
@@ -208,10 +208,10 @@ fn seguir(segundos: u64) {
                     // mesa antiga -- que é como um capturador "funciona"
                     // e entrega quadro velho.
                     let _ = SetThreadDesktop(h);
-                    let r = match logistream::capture_win::Monitor::abrir(0) {
-                        Ok(m) => match m.duplicar() {
+                    let r = match logistream::capture_win::Monitor::open(0) {
+                        Ok(m) => match m.duplicate() {
                             Ok(t) => {
-                                let (w, h2) = t.tamanho();
+                                let (w, h2) = t.size();
                                 format!("duplicou {w}x{h2}")
                             }
                             Err(e) => format!("NAO duplicou: {}", primeira_linha(&e.to_string())),

@@ -21,11 +21,11 @@
 //!
 //! - **Agarrar e soltar e explicito** (`EVIOCGRAB`), que e a semantica
 //!   do clique na bandeja.
-//! - **Os codigos ja sao os nossos.** `Evento::Tecla` carrega keycode de
+//! - **Os codigos ja sao os nossos.** `Event::Key` carrega keycode de
 //!   evdev porque e o que o `NotifyKeyboardKeycode` do Mutter recebe, e
-//!   `scancode_de_evdev()` ja traduz para o Windows. Nao ha conversao
+//!   `scancode_from_evdev()` ja traduz para o Windows. Nao ha conversao
 //!   nova no caminho.
-//! - **Independe de compositor.** Mesmo codigo em qualquer Linux.
+//! - **Independe de compositor.** Mesmo code em qualquer Linux.
 //!
 //! ## O que EVIOCGRAB faz, e o que ele custa
 //!
@@ -54,7 +54,7 @@ use std::io::Read;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
-use crate::input::{Evento, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use crate::input::{Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 
 /// `_IOW('E', 0x90, int)`.
 const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -81,11 +81,11 @@ const PASSO_RODA: f64 = 120.0;
 /// Um `struct input_event` de 64 bits: 2x i64 de tempo, u16, u16, i32.
 const TAM_EVENTO: usize = 24;
 
-/// Evento cru do kernel, ja desempacotado.
+/// Event cru do kernel, ja desempacotado.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Cru {
+pub struct RawEvent {
     pub tipo: u16,
-    pub codigo: u16,
+    pub code: u16,
     pub valor: i32,
 }
 
@@ -100,14 +100,14 @@ pub struct Cru {
 /// Por isso os eixos somam dentro do lote e saem como UM `MouseRel`.
 /// `repetir`: repassar a auto-repeticao do kernel como novos
 /// key-downs. Ver a nota sobre `valor == 2` dentro da funcao.
-pub fn traduzir(lote: &[Cru], repetir: bool) -> Vec<Evento> {
+pub fn translate(lote: &[RawEvent], repetir: bool) -> Vec<Event> {
     let mut saida = Vec::new();
     let (mut dx, mut dy) = (0.0f64, 0.0f64);
     let (mut rx, mut ry) = (0.0f64, 0.0f64);
 
     for e in lote {
         match e.tipo {
-            EV_REL => match e.codigo {
+            EV_REL => match e.code {
                 REL_X => dx += f64::from(e.valor),
                 REL_Y => dy += f64::from(e.valor),
                 // Sinal invertido: no evdev, roda para CIMA e positivo;
@@ -137,12 +137,12 @@ pub fn traduzir(lote: &[Cru], repetir: bool) -> Vec<Evento> {
                 if e.valor == 2 && !repetir {
                     continue;
                 }
-                let apertado = e.valor != 0;
-                match e.codigo {
-                    EV_BTN_LEFT => saida.push(Evento::Botao { codigo: BTN_LEFT, apertado }),
-                    EV_BTN_RIGHT => saida.push(Evento::Botao { codigo: BTN_RIGHT, apertado }),
-                    EV_BTN_MIDDLE => saida.push(Evento::Botao { codigo: BTN_MIDDLE, apertado }),
-                    cod => saida.push(Evento::Tecla { keycode: u32::from(cod), apertado }),
+                let pressed = e.valor != 0;
+                match e.code {
+                    EV_BTN_LEFT => saida.push(Event::Button { code: BTN_LEFT, pressed }),
+                    EV_BTN_RIGHT => saida.push(Event::Button { code: BTN_RIGHT, pressed }),
+                    EV_BTN_MIDDLE => saida.push(Event::Button { code: BTN_MIDDLE, pressed }),
+                    cod => saida.push(Event::Key { keycode: u32::from(cod), pressed }),
                 }
             }
             _ => {}
@@ -155,30 +155,30 @@ pub fn traduzir(lote: &[Cru], repetir: bool) -> Vec<Evento> {
     // ordem significativa, entao a ordem aqui e estavel: move, depois
     // rola. Os botoes ja sairam na ordem em que chegaram.
     if dx != 0.0 || dy != 0.0 {
-        saida.insert(0, Evento::MouseRel { dx, dy });
+        saida.insert(0, Event::MouseRel { dx, dy });
     }
     if rx != 0.0 || ry != 0.0 {
-        saida.push(Evento::Rolagem { dx: rx, dy: ry });
+        saida.push(Event::Scroll { dx: rx, dy: ry });
     }
     saida
 }
 
 /// Um `/dev/input/eventN` aberto.
-pub struct Dispositivo {
+pub struct Device {
     arquivo: File,
     pub nome: String,
     pub caminho: PathBuf,
     agarrado: bool,
-    lote: Vec<Cru>,
-    /// Repassar a auto-repeticao do kernel. Ver `traduzir`.
+    lote: Vec<RawEvent>,
+    /// Repassar a auto-repeticao do kernel. Ver `translate`.
     repetir: bool,
 }
 
-impl Dispositivo {
-    pub fn abrir(caminho: &Path) -> std::io::Result<Self> {
+impl Device {
+    pub fn open(caminho: &Path) -> std::io::Result<Self> {
         let arquivo = File::open(caminho)?;
-        let nome = nome_de(caminho).unwrap_or_else(|| "?".into());
-        Ok(Dispositivo {
+        let nome = name_of(caminho).unwrap_or_else(|| "?".into());
+        Ok(Device {
             arquivo,
             nome,
             caminho: caminho.to_path_buf(),
@@ -194,7 +194,7 @@ impl Dispositivo {
     /// maquina tem dezenas de nos de input (botao de energia, webcam,
     /// alto-falante) e nenhum deles nos interessa. Quem reclama de
     /// permissao e `exigir()`, com o nome do dispositivo que faltou.
-    pub fn listar() -> Vec<Dispositivo> {
+    pub fn list() -> Vec<Device> {
         let mut v = Vec::new();
         let Ok(dir) = std::fs::read_dir("/dev/input") else {
             return v;
@@ -210,7 +210,7 @@ impl Dispositivo {
             .collect();
         caminhos.sort();
         for c in caminhos {
-            if let Ok(d) = Dispositivo::abrir(&c) {
+            if let Ok(d) = Device::open(&c) {
                 v.push(d);
             }
         }
@@ -218,7 +218,7 @@ impl Dispositivo {
     }
 
     /// O dispositivo para de existir para o desktop local.
-    pub fn agarrar(&mut self) -> std::io::Result<()> {
+    pub fn grab(&mut self) -> std::io::Result<()> {
         if self.agarrado {
             return Ok(());
         }
@@ -230,7 +230,7 @@ impl Dispositivo {
         Ok(())
     }
 
-    pub fn soltar(&mut self) -> std::io::Result<()> {
+    pub fn release(&mut self) -> std::io::Result<()> {
         if !self.agarrado {
             return Ok(());
         }
@@ -243,11 +243,11 @@ impl Dispositivo {
     }
 
     /// Liga ou desliga o repasse da auto-repeticao do kernel.
-    pub fn definir_repeticao(&mut self, r: bool) {
+    pub fn set_repeat(&mut self, r: bool) {
         self.repetir = r;
     }
 
-    pub fn agarrado(&self) -> bool {
+    pub fn is_grabbed(&self) -> bool {
         self.agarrado
     }
 
@@ -256,33 +256,33 @@ impl Dispositivo {
     /// Um lote so fecha no `SYN_REPORT`. Eventos de um lote ainda aberto
     /// ficam guardados para a proxima chamada -- entregar meio lote
     /// mandaria o eixo X sem o Y.
-    pub fn ler(&mut self) -> std::io::Result<Vec<Evento>> {
+    pub fn read(&mut self) -> std::io::Result<Vec<Event>> {
         let mut buf = [0u8; TAM_EVENTO * 64];
         let n = self.arquivo.read(&mut buf)?;
         let mut saida = Vec::new();
         for pedaco in buf[..n].chunks_exact(TAM_EVENTO) {
             let tipo = u16::from_ne_bytes([pedaco[16], pedaco[17]]);
-            let codigo = u16::from_ne_bytes([pedaco[18], pedaco[19]]);
+            let code = u16::from_ne_bytes([pedaco[18], pedaco[19]]);
             let valor = i32::from_ne_bytes([pedaco[20], pedaco[21], pedaco[22], pedaco[23]]);
             if tipo == EV_SYN {
-                saida.extend(traduzir(&self.lote, self.repetir));
+                saida.extend(translate(&self.lote, self.repetir));
                 self.lote.clear();
             } else {
-                self.lote.push(Cru { tipo, codigo, valor });
+                self.lote.push(RawEvent { tipo, code, valor });
             }
         }
         Ok(saida)
     }
 }
 
-impl Drop for Dispositivo {
+impl Drop for Device {
     /// Soltar no `Drop` e cinto de seguranca, nao o mecanismo.
     ///
     /// O kernel ja solta o grab quando o fd fecha, entao teclado travado
     /// para sempre nao e um estado alcancavel nem se o processo for
     /// morto com SIGKILL. Isto so torna a ordem explicita para quem le.
     fn drop(&mut self) {
-        let _ = self.soltar();
+        let _ = self.release();
     }
 }
 
@@ -292,7 +292,7 @@ impl Drop for Dispositivo {
 /// lido sem abrir o no de input, entao da para listar e escolher ANTES
 /// de ter permissao -- que e o que permite dizer "falta ACL no MX Keys"
 /// em vez de "nenhum dispositivo encontrado".
-pub fn nome_de(caminho: &Path) -> Option<String> {
+pub fn name_of(caminho: &Path) -> Option<String> {
     let base = caminho.file_name()?.to_str()?;
     let p = format!("/sys/class/input/{base}/device/name");
     Some(std::fs::read_to_string(p).ok()?.trim().to_string())
@@ -302,23 +302,23 @@ pub fn nome_de(caminho: &Path) -> Option<String> {
 mod testes {
     use super::*;
 
-    fn rel(codigo: u16, valor: i32) -> Cru {
-        Cru { tipo: EV_REL, codigo, valor }
+    fn rel(code: u16, valor: i32) -> RawEvent {
+        RawEvent { tipo: EV_REL, code, valor }
     }
-    fn tecla(codigo: u16, valor: i32) -> Cru {
-        Cru { tipo: EV_KEY, codigo, valor }
+    fn tecla(code: u16, valor: i32) -> RawEvent {
+        RawEvent { tipo: EV_KEY, code, valor }
     }
 
     #[test]
     fn eixos_do_mesmo_lote_viram_um_movimento_so() {
-        let saida = traduzir(&[rel(REL_X, 5), rel(REL_Y, -3)], true);
-        assert_eq!(saida, vec![Evento::MouseRel { dx: 5.0, dy: -3.0 }]);
+        let saida = translate(&[rel(REL_X, 5), rel(REL_Y, -3)], true);
+        assert_eq!(saida, vec![Event::MouseRel { dx: 5.0, dy: -3.0 }]);
     }
 
     #[test]
     fn lote_sem_movimento_nao_manda_movimento() {
-        let saida = traduzir(&[tecla(30, 1)], true);
-        assert_eq!(saida, vec![Evento::Tecla { keycode: 30, apertado: true }]);
+        let saida = translate(&[tecla(30, 1)], true);
+        assert_eq!(saida, vec![Event::Key { keycode: 30, pressed: true }]);
     }
 
     /// Segurar uma tecla tem de apagar varios caracteres.
@@ -329,14 +329,14 @@ mod testes {
     /// usuario encontrou o bug.
     #[test]
     fn repeticao_do_kernel_e_repassada() {
-        let saida = traduzir(&[tecla(14, 1), tecla(14, 2), tecla(14, 2), tecla(14, 0)], true);
+        let saida = translate(&[tecla(14, 1), tecla(14, 2), tecla(14, 2), tecla(14, 0)], true);
         assert_eq!(
             saida,
             vec![
-                Evento::Tecla { keycode: 14, apertado: true },
-                Evento::Tecla { keycode: 14, apertado: true },
-                Evento::Tecla { keycode: 14, apertado: true },
-                Evento::Tecla { keycode: 14, apertado: false },
+                Event::Key { keycode: 14, pressed: true },
+                Event::Key { keycode: 14, pressed: true },
+                Event::Key { keycode: 14, pressed: true },
+                Event::Key { keycode: 14, pressed: false },
             ]
         );
     }
@@ -344,24 +344,24 @@ mod testes {
     /// Alvo que repete sozinho recebe so o comeco e o fim.
     #[test]
     fn com_repeticao_desligada_so_passam_press_e_release() {
-        let saida = traduzir(&[tecla(14, 1), tecla(14, 2), tecla(14, 2), tecla(14, 0)], false);
+        let saida = translate(&[tecla(14, 1), tecla(14, 2), tecla(14, 2), tecla(14, 0)], false);
         assert_eq!(
             saida,
             vec![
-                Evento::Tecla { keycode: 14, apertado: true },
-                Evento::Tecla { keycode: 14, apertado: false },
+                Event::Key { keycode: 14, pressed: true },
+                Event::Key { keycode: 14, pressed: false },
             ]
         );
     }
 
     #[test]
     fn botoes_viram_botao_e_nao_tecla() {
-        let saida = traduzir(&[tecla(EV_BTN_LEFT, 1), tecla(EV_BTN_RIGHT, 0)], true);
+        let saida = translate(&[tecla(EV_BTN_LEFT, 1), tecla(EV_BTN_RIGHT, 0)], true);
         assert_eq!(
             saida,
             vec![
-                Evento::Botao { codigo: BTN_LEFT, apertado: true },
-                Evento::Botao { codigo: BTN_RIGHT, apertado: false },
+                Event::Button { code: BTN_LEFT, pressed: true },
+                Event::Button { code: BTN_RIGHT, pressed: false },
             ]
         );
     }
@@ -372,20 +372,20 @@ mod testes {
         // Wayland) o eixo Y cresce para baixo, entao tem de sair
         // NEGATIVO -- inverter errado faz a pagina andar ao contrario,
         // que e o tipo de coisa que so se descobre usando.
-        let saida = traduzir(&[rel(REL_WHEEL, 1)], true);
-        assert_eq!(saida, vec![Evento::Rolagem { dx: 0.0, dy: -PASSO_RODA }]);
+        let saida = translate(&[rel(REL_WHEEL, 1)], true);
+        assert_eq!(saida, vec![Event::Scroll { dx: 0.0, dy: -PASSO_RODA }]);
     }
 
     #[test]
     fn movimento_sai_antes_dos_cliques_do_lote() {
-        let saida = traduzir(&[tecla(EV_BTN_LEFT, 1), rel(REL_X, 2)], true);
-        assert_eq!(saida[0], Evento::MouseRel { dx: 2.0, dy: 0.0 });
-        assert_eq!(saida[1], Evento::Botao { codigo: BTN_LEFT, apertado: true });
+        let saida = translate(&[tecla(EV_BTN_LEFT, 1), rel(REL_X, 2)], true);
+        assert_eq!(saida[0], Event::MouseRel { dx: 2.0, dy: 0.0 });
+        assert_eq!(saida[1], Event::Button { code: BTN_LEFT, pressed: true });
     }
 
     #[test]
     fn lote_vazio_nao_produz_nada() {
-        assert!(traduzir(&[], true).is_empty());
+        assert!(translate(&[], true).is_empty());
     }
 }
 
@@ -405,7 +405,7 @@ pub const KEY_RIGHTCTRL: u32 = 97;
 /// Os dois Ctrl porque nenhum programa usa a combinacao e nenhum texto a
 /// produz: nao da para disparar sem querer digitando. E o mesmo gesto
 /// que switch KVM de hardware usa, pelo mesmo motivo.
-pub fn e_socorro(pressionadas: &std::collections::HashSet<u32>) -> bool {
+pub fn is_rescue(pressionadas: &std::collections::HashSet<u32>) -> bool {
     pressionadas.contains(&KEY_LEFTCTRL) && pressionadas.contains(&KEY_RIGHTCTRL)
 }
 
@@ -420,25 +420,25 @@ mod testes_socorro {
 
     #[test]
     fn os_dois_ctrl_pedem_socorro() {
-        assert!(e_socorro(&conj(&[KEY_LEFTCTRL, KEY_RIGHTCTRL])));
+        assert!(is_rescue(&conj(&[KEY_LEFTCTRL, KEY_RIGHTCTRL])));
     }
 
     #[test]
     fn um_ctrl_so_nao_pede() {
-        assert!(!e_socorro(&conj(&[KEY_LEFTCTRL])));
-        assert!(!e_socorro(&conj(&[KEY_RIGHTCTRL])));
+        assert!(!is_rescue(&conj(&[KEY_LEFTCTRL])));
+        assert!(!is_rescue(&conj(&[KEY_RIGHTCTRL])));
     }
 
     #[test]
     fn ctrl_c_nao_pede() {
         // 46 = KEY_C. Atalho comum nao pode soltar o KVM.
-        assert!(!e_socorro(&conj(&[KEY_LEFTCTRL, 46])));
+        assert!(!is_rescue(&conj(&[KEY_LEFTCTRL, 46])));
     }
 
     #[test]
     fn os_dois_ctrl_com_mais_teclas_ainda_pedem() {
         // A pessoa em panico aperta tudo. Exigir exclusividade faria o
         // socorro falhar exatamente quando ele e preciso.
-        assert!(e_socorro(&conj(&[KEY_LEFTCTRL, KEY_RIGHTCTRL, 42, 56])));
+        assert!(is_rescue(&conj(&[KEY_LEFTCTRL, KEY_RIGHTCTRL, 42, 56])));
     }
 }

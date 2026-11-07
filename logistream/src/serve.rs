@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use crate::net::{self, SliceHeader};
 
 /// Quanto esperar por outro cliente antes de encerrar o host.
-pub const OCIOSO_S: u64 = 20;
+pub const IDLE_S: u64 = 20;
 
 /// Quanto esperar pelo PRIMEIRO cliente antes de desistir.
 ///
@@ -28,14 +28,14 @@ pub const OCIOSO_S: u64 = 20;
 /// este limite, uma tentativa que falhou do lado do cliente deixava a
 /// captura e o NVENC rodando na maquina de outra pessoa indefinidamente,
 /// porque `accept()` sozinho espera para sempre.
-pub const ESPERA_PRIMEIRO_S: u64 = 30;
+pub const FIRST_CLIENT_WAIT_S: u64 = 30;
 
 /// Nanossegundos do relogio de parede.
 ///
 /// De parede e nao monotonico de proposito: o carimbo viaja para a outra
 /// maquina, e so da para medir latencia fim-a-fim se os dois lados
 /// falarem da mesma origem. Com NTP na LAN o erro e de milissegundos.
-pub fn agora_ns() -> u64 {
+pub fn now_ns() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
@@ -58,7 +58,7 @@ pub fn agora_ns() -> u64 {
 /// decodifica. Sao algumas escritas por segundo; a ordem vale mais que
 /// os nanossegundos.
 #[derive(Default)]
-pub struct Sinais {
+pub struct Signals {
     /// A rede decidiu encerrar; quem para de verdade e a captura, que e
     /// a dona do NVENC. Matar do outro lado travava no meio da
     /// destruicao dos recursos de CUDA.
@@ -76,8 +76,8 @@ pub struct Sinais {
     entradas: AtomicUsize,
 }
 
-impl Sinais {
-    pub fn deve_sair(&self) -> bool {
+impl Signals {
+    pub fn should_exit(&self) -> bool {
         self.sair.load(Ordering::SeqCst)
     }
 
@@ -86,27 +86,27 @@ impl Sinais {
     /// Publico porque quem descobre que nao ha mais o que fazer e a
     /// REDE, e quem pode parar com seguranca e a captura -- ela e dona
     /// do NVENC e do CUDA, e destruir isso do outro lado travava.
-    pub fn encerrar(&self) {
+    pub fn shutdown(&self) {
         self.sair.store(true, Ordering::SeqCst);
     }
 
     /// Alguem conectou na porta de input.
-    pub fn entrou_input(&self) {
+    pub fn input_joined(&self) {
         self.entradas.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Alguem saiu da porta de input.
-    pub fn saiu_input(&self) {
+    pub fn input_left(&self) {
         self.entradas.fetch_sub(1, Ordering::SeqCst);
     }
 
-    pub fn tem_input(&self) -> bool {
+    pub fn has_input(&self) -> bool {
         self.entradas.load(Ordering::SeqCst) > 0
     }
 
     /// Consome o pedido de quadro-chave. Devolve `true` uma vez por
     /// pedido -- quem chama repassa ao codificador.
-    pub fn pegar_idr(&self) -> bool {
+    pub fn take_idr(&self) -> bool {
         self.idr.swap(false, Ordering::SeqCst)
     }
 
@@ -116,14 +116,14 @@ impl Sinais {
     /// outra pessoa: o quadro iria para um canal que ninguem drena e
     /// seria descartado. Medido no Windows -- 120 quadros descartados
     /// antes de o primeiro cliente conectar.
-    pub fn tem_cliente(&self) -> bool {
+    pub fn has_client(&self) -> bool {
         self.cliente.load(Ordering::SeqCst)
     }
 }
 
 /// Um quadro ja codificado, esperando a rede.
-pub struct Quadro {
-    pub dados: Vec<u8>,
+pub struct EncodedFrame {
+    pub data: Vec<u8>,
     pub keyframe: bool,
     pub captured_at_ns: u64,
 }
@@ -135,10 +135,10 @@ pub struct Quadro {
 /// capturar uma conexao D-Bus que **nao e Send** (roda em `LocalSet`,
 /// com `spawn_local`) enquanto o do Windows usa `tokio::spawn` normal --
 /// e as duas devolvem o mesmo `JoinHandle`.
-pub async fn atender(
+pub async fn serve_video(
     ep: &quinn::Endpoint,
-    rx: &mut tokio::sync::mpsc::Receiver<Quadro>,
-    sinais: &Sinais,
+    rx: &mut tokio::sync::mpsc::Receiver<EncodedFrame>,
+    sinais: &Signals,
     mut abrir_input: impl FnMut(&quinn::Connection) -> tokio::task::JoinHandle<()>,
 ) -> anyhow::Result<()> {
     // UM laco para o primeiro cliente e para os que voltam, com prazos
@@ -155,7 +155,7 @@ pub async fn atender(
         // Ate o primeiro cliente, o prazo e generoso: o painel acorda o
         // host e abre o visualizador em seguida. Depois dele, o prazo e
         // curto -- quem fechou a janela provavelmente acabou.
-        let prazo = if houve_cliente { OCIOSO_S } else { ESPERA_PRIMEIRO_S };
+        let prazo = if houve_cliente { IDLE_S } else { FIRST_CLIENT_WAIT_S };
         let entrando = match tokio::time::timeout(Duration::from_secs(prazo), ep.accept()).await {
             Ok(Some(e)) => e,
             // Endpoint fechado: nao ha mais o que aceitar.
@@ -168,7 +168,7 @@ pub async fn atender(
                 // outra maquina. Encerrar aqui mataria o processo que
                 // esta recebendo as teclas dela, e o teclado voltaria
                 // sozinho no meio do uso.
-                if sinais.tem_input() {
+                if sinais.has_input() {
                     continue;
                 }
                 if houve_cliente {
@@ -284,7 +284,7 @@ pub async fn atender(
                 println!(
                     "  enviando quadro {quadro} {} {} bytes",
                     if c.keyframe { "CHAVE" } else { "P" },
-                    c.dados.len()
+                    c.data.len()
                 );
             }
             let cab = SliceHeader {
@@ -294,7 +294,7 @@ pub async fn atender(
                 keyframe: c.keyframe,
                 captured_at_ns: c.captured_at_ns,
             };
-            for fatia in net::slice(&c.dados, cab, max) {
+            for fatia in net::slice(&c.data, cab, max) {
                 bytes += fatia.len() as u64;
                 if let Err(err) = conexao.send_datagram(fatia) {
                     if !matches!(err, quinn::SendDatagramError::TooLarge) {
@@ -324,11 +324,11 @@ pub async fn atender(
 
         // Volta ao topo do laco: sem ninguem assistindo, capturar e
         // codificar so queima GPU na maquina de outra pessoa, e o
-        // `tem_cliente` ja desligou o encoder. O prazo curto decide se
+        // `has_client` ja desligou o encoder. O prazo curto decide se
         // vale continuar de pe -- cair o wifi por dois segundos nao
         // deveria exigir voltar ao painel, e fechar a janela de verdade
         // nao deveria deixar processo esquecido.
-        println!("  aguardando {OCIOSO_S}s por outro cliente antes de sair");
+        println!("  aguardando {IDLE_S}s por outro cliente antes de sair");
     }
     // Endpoint fechado por fora. Pedir parada mesmo assim: a captura e
     // quem encerra na ordem certa, e matar do lado da rede travava no
@@ -355,19 +355,19 @@ pub async fn atender(
 ///
 /// - assistir e controlar deixam de competir;
 /// - a maquina alvo para de codificar video para um cliente que nunca
-///   vai desenhar nada. Para jogar no Windows com o KVM, isso era GPU
+///   vai draw nada. Para jogar no Windows com o KVM, isso era GPU
 ///   queimada em nome de ninguem.
 ///
 /// Varios clientes de input ao mesmo tempo sao permitidos e inofensivos
 /// -- os eventos se intercalam, que e o mesmo que acontece com dois
 /// teclados fisicos na mesma maquina.
-pub async fn atender_input(
+pub async fn serve_input(
     ep: &quinn::Endpoint,
-    sinais: std::sync::Arc<Sinais>,
+    sinais: std::sync::Arc<Signals>,
     mut abrir_input: impl FnMut(&quinn::Connection) -> tokio::task::JoinHandle<()>,
 ) {
     while let Some(entrando) = ep.accept().await {
-        if sinais.deve_sair() {
+        if sinais.should_exit() {
             break;
         }
         let conexao = match entrando.await {
@@ -384,12 +384,12 @@ pub async fn atender_input(
             conexao.remote_address(),
             crate::identity::describe_peer(&conexao, &crate::identity::authorized(&crate::identity::dir()))
         );
-        sinais.entrou_input();
+        sinais.input_joined();
         let tarefa = abrir_input(&conexao);
 
         // Descontar na SAIDA, e por um vigia proprio.
         //
-        // Sem isto a contagem so sobe, e `tem_input()` fica verdadeiro
+        // Sem isto a contagem so sobe, e `has_input()` fica verdadeiro
         // para sempre -- o host nunca mais encerraria por ociosidade e
         // ficaria de pe segurando a GPU depois que todo mundo foi
         // embora. O vigia espera a tarefa de leitura terminar, que e
@@ -401,7 +401,7 @@ pub async fn atender_input(
         let s = std::sync::Arc::clone(&sinais);
         tokio::spawn(async move {
             let _ = tarefa.await;
-            s.saiu_input();
+            s.input_left();
             println!("  input desconectado");
         });
     }

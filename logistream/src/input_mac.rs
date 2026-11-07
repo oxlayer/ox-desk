@@ -21,7 +21,7 @@
 
 #![cfg(target_os = "macos")]
 
-use crate::input::{tecla_mac_de_evdev, Evento, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use crate::input::{mac_key_from_evdev, Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 
 type CFTypeRef = *const std::ffi::c_void;
 type CGEventRef = *mut std::ffi::c_void;
@@ -71,7 +71,7 @@ extern "C" {
     fn CGEventCreateKeyboardEvent(
         source: CGEventSourceRef,
         tecla: u16,
-        apertado: bool,
+        pressed: bool,
     ) -> CGEventRef;
     fn CGEventCreateScrollWheelEvent(
         source: CGEventSourceRef,
@@ -110,7 +110,7 @@ extern "C" {
 ///
 /// Publico porque quem avisa e o host, na partida: um KVM que aceita
 /// eventos e os descarta em silencio e pior que um que recusa.
-pub fn tem_acessibilidade() -> bool {
+pub fn has_accessibility() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
@@ -122,8 +122,8 @@ pub fn tem_acessibilidade() -> bool {
 /// passar: o clamp de borda usa a funcao certa por acidente, e so o
 /// caminho absoluto quebrou.
 ///
-/// Devolve 1.0 quando nao da para saber. Ver `ponto_de_pixel`.
-pub fn escala_do_display() -> f64 {
+/// Devolve 1.0 quando nao da para saber. Ver `point_from_pixel`.
+pub fn display_scale() -> f64 {
     unsafe {
         let modo = CGDisplayCopyDisplayMode(CGMainDisplayID());
         if modo.is_null() {
@@ -140,7 +140,7 @@ pub fn escala_do_display() -> f64 {
     }
 }
 
-pub struct Teclado {
+pub struct Injector {
     fonte: CGEventSourceRef,
     /// Ultima posicao conhecida do ponteiro.
     ///
@@ -159,8 +159,8 @@ pub struct Teclado {
     escala: f64,
 }
 
-impl Teclado {
-    pub fn novo() -> Self {
+impl Injector {
+    pub fn new() -> Self {
         // 1 = kCGEventSourceStateHIDSystemState: o estado dos
         // modificadores vem do teclado real, entao um Shift que o
         // usuario esteja segurando localmente nao se perde.
@@ -175,16 +175,16 @@ impl Teclado {
                 p
             }
         };
-        Teclado { fonte, pos, esq: false, dir: false, escala: escala_do_display() }
+        Injector { fonte, pos, esq: false, dir: false, escala: display_scale() }
     }
 
-    pub fn aplicar(&mut self, e: Evento) {
+    pub fn apply(&mut self, e: Event) {
         match e {
-            Evento::MouseRel { dx, dy } => self.mover_relativo(dx, dy),
-            Evento::Mouse { x, y } => self.mover_absoluto(x, y),
-            Evento::Botao { codigo, apertado } => self.botao(codigo, apertado),
-            Evento::Rolagem { dx, dy } => self.rolar(dx, dy),
-            Evento::Tecla { keycode, apertado } => self.tecla(keycode, apertado),
+            Event::MouseRel { dx, dy } => self.move_relative(dx, dy),
+            Event::Mouse { x, y } => self.mover_absoluto(x, y),
+            Event::Button { code, pressed } => self.botao(code, pressed),
+            Event::Scroll { dx, dy } => self.rolar(dx, dy),
+            Event::Key { keycode, pressed } => self.tecla(keycode, pressed),
         }
     }
 
@@ -199,7 +199,7 @@ impl Teclado {
         }
     }
 
-    fn mover_relativo(&mut self, dx: f64, dy: f64) {
+    fn move_relative(&mut self, dx: f64, dy: f64) {
         let (w, h) = unsafe {
             let d = CGMainDisplayID();
             (CGDisplayPixelsWide(d) as f64, CGDisplayPixelsHigh(d) as f64)
@@ -211,7 +211,7 @@ impl Teclado {
         self.pos.y = (self.pos.y + dy).clamp(0.0, h - 1.0);
 
         // Arrastando? O tipo do evento muda, senao o sistema entende
-        // "mover com botao apertado" como mover simples e o arraste nao
+        // "mover com botao pressed" como mover simples e o arraste nao
         // acontece.
         let tipo = if self.esq {
             L_DRAG
@@ -235,15 +235,15 @@ impl Teclado {
 
     fn mover_absoluto(&mut self, x: f64, y: f64) {
         // O quadro vem em pixel; o CGEvent quer ponto. Ver
-        // `ponto_de_pixel` e o porque em logistream/src/input.rs.
-        let (x, y) = crate::input::ponto_de_pixel(x, y, self.escala);
+        // `point_from_pixel` e o porque em logistream/src/input.rs.
+        let (x, y) = crate::input::point_from_pixel(x, y, self.escala);
         self.pos = CGPoint { x, y };
         let ev = unsafe { CGEventCreateMouseEvent(self.fonte, MOUSE_MOVED, self.pos, BTN_ESQ) };
         self.postar(ev);
     }
 
-    fn botao(&mut self, codigo: i32, apertado: bool) {
-        let (tipo, botao) = match (codigo, apertado) {
+    fn botao(&mut self, code: i32, pressed: bool) {
+        let (tipo, botao) = match (code, pressed) {
             (c, true) if c == BTN_LEFT => {
                 self.esq = true;
                 (L_DOWN, BTN_ESQ)
@@ -280,21 +280,21 @@ impl Teclado {
         self.postar(ev);
     }
 
-    fn tecla(&self, keycode: u32, apertado: bool) {
+    fn tecla(&self, keycode: u32, pressed: bool) {
         // Sem traducao, nao manda nada: postar um keycode qualquer
         // digitaria uma letra ERRADA na maquina de outra pessoa, que e
         // pior que nao digitar.
-        let Some(mac) = tecla_mac_de_evdev(keycode) else { return };
-        let ev = unsafe { CGEventCreateKeyboardEvent(self.fonte, mac, apertado) };
+        let Some(mac) = mac_key_from_evdev(keycode) else { return };
+        let ev = unsafe { CGEventCreateKeyboardEvent(self.fonte, mac, pressed) };
         self.postar(ev);
     }
 }
 
 // A fonte de eventos vive enquanto o host viver; nao ha caminho em que
-// um `Teclado` seja descartado e recriado, entao nao ha Drop. Se um dia
+// um `Injector` seja descartado e recriado, entao nao ha Drop. Se um dia
 // houver, ele precisa de `CFRelease(self.fonte)`.
 
-/// Thread dona do `Teclado`, alimentada por canal.
+/// Thread dona do `Injector`, alimentada por canal.
 ///
 /// Os tipos do CoreGraphics sao ponteiros crus e portanto `!Send`, e a
 /// tarefa de rede do host e `tokio::spawn` -- que exige `Send`. Daria
@@ -305,12 +305,12 @@ impl Teclado {
 /// host do Linux ja usa para a conexao D-Bus (que tambem e `!Send` e
 /// cuja sessao pertence a conexao que a criou). O custo e um salto de
 /// canal por evento -- microssegundos, contra ~300 ms de rede.
-pub fn thread() -> std::sync::mpsc::Sender<Evento> {
-    let (tx, rx) = std::sync::mpsc::channel::<Evento>();
+pub fn thread() -> std::sync::mpsc::Sender<Event> {
+    let (tx, rx) = std::sync::mpsc::channel::<Event>();
     std::thread::spawn(move || {
-        let mut t = Teclado::novo();
+        let mut t = Injector::new();
         while let Ok(e) = rx.recv() {
-            t.aplicar(e);
+            t.apply(e);
         }
     });
     tx
@@ -334,7 +334,7 @@ extern "C" {
     fn CGRequestScreenCaptureAccess() -> bool;
 }
 
-pub fn tem_gravacao_de_tela() -> bool {
+pub fn has_screen_recording() -> bool {
     unsafe { CGPreflightScreenCaptureAccess() }
 }
 
@@ -349,7 +349,7 @@ pub fn tem_gravacao_de_tela() -> bool {
 /// que é o que faz o macOS abrir o painel certo em vez de só responder
 /// "não". Sem o prompt a pessoa teria de encontrar o item na lista à
 /// mão, e o nome que aparece lá é `logistream-host`, não "logi".
-pub fn pedir_permissoes() -> (bool, bool) {
+pub fn request_permissions() -> (bool, bool) {
     let tela = unsafe { CGRequestScreenCaptureAccess() };
     let input = unsafe {
         // Byte string com NUL explícito, e não o literal `c"..."`: o

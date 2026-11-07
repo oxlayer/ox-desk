@@ -22,7 +22,7 @@ use moq_nvenc::{EncodePictureParams, Encoder, EncoderInitParams};
 /// `encode_picture` e os devolve no `finish` -- esta struct e o lugar
 /// onde esse vai-e-volta fica escondido, em vez de aparecer no laco de
 /// captura de cada plataforma.
-pub struct Codificador {
+pub struct NvencEncoder {
     sessao: Option<moq_nvenc::Session>,
     entrada: Option<moq_nvenc::Buffer>,
     saida: Option<moq_nvenc::Bitstream>,
@@ -33,7 +33,7 @@ pub struct Codificador {
     /// Proximo quadro sai IDR custe o que custar.
     idr: bool,
     /// O que saiu da ultima codificacao foi IDR.
-    ultimo_foi_idr: bool,
+    last_was_idr: bool,
     /// Bitrate medio pedido, em bits/s. Guardado so para o host poder
     /// anuncia-lo no log -- o alvo errado de 8 Mbps sobreviveu semanas
     /// porque o host Windows nunca o imprimiu, e so apareceu no Mac,
@@ -41,13 +41,13 @@ pub struct Codificador {
     alvo: u32,
 }
 
-impl Codificador {
+impl NvencEncoder {
     /// Bitrate medio pedido, em Mbps.
-    pub fn alvo_mbps(&self) -> f64 {
+    pub fn target_mbps(&self) -> f64 {
         self.alvo as f64 / 1_000_000.0
     }
 
-    pub fn novo(w: u32, h: u32) -> anyhow::Result<Self> {
+    pub fn new(w: u32, h: u32) -> anyhow::Result<Self> {
         Encoder::load().map_err(|e| anyhow::anyhow!("NVENC: {e:?}"))?;
         let ctx = CudaContext::new(0).map_err(|e| anyhow::anyhow!("CUDA: {e:?}"))?;
         let enc =
@@ -58,7 +58,7 @@ impl Codificador {
             .map_err(|e| anyhow::anyhow!("preset: {e}"))?;
         let mut cfg = preset.presetCfg;
         // Sem isto, o cliente que entra no meio da transmissao -- o caso
-        // normal -- nao tem cabecalho para comecar a desenhar.
+        // normal -- nao tem cabecalho para comecar a draw.
         unsafe { cfg.encodeCodecConfig.h264Config.set_repeatSPSPPS(1) };
 
         // --- qualidade ---------------------------------------------------
@@ -69,7 +69,7 @@ impl Codificador {
         // A conta mora em `qualidade.rs`, nao aqui: ela estava
         // duplicada no host do Mac e duas copias da mesma formula e
         // como o alvo errado de 8 Mbps sobreviveu semanas.
-        let alvo = crate::qualidade::alvo(w, h);
+        let alvo = crate::quality::target(w, h);
         // ~8 Mbps em 1080p, ~15 em 1440p, ~33 em 4K: escala com a area,
         // porque 1440p e 4K nao cabem no mesmo teto.
         //
@@ -134,7 +134,7 @@ impl Codificador {
             .map_err(|e| anyhow::anyhow!("start: {e}"))?;
         let entrada = s.create_input_buffer().map_err(|e| anyhow::anyhow!("{e}"))?;
         let saida = s.create_output_bitstream().map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(Codificador {
+        Ok(NvencEncoder {
             sessao: Some(s),
             entrada: Some(entrada),
             saida: Some(saida),
@@ -142,19 +142,19 @@ impl Codificador {
             h,
             n: 0,
             idr: false,
-            ultimo_foi_idr: false,
+            last_was_idr: false,
             alvo,
         })
     }
 
-    pub fn tamanho(&self) -> (u32, u32) {
+    pub fn size(&self) -> (u32, u32) {
         (self.w, self.h)
     }
 
     /// Codifica um quadro BGRA. `stride` e o passo de linha da ORIGEM --
     /// tanto o PipeWire quanto o DXGI entregam linhas com folga no fim, e
     /// quase nunca igual ao passo que o NVENC quer.
-    pub fn codificar(&mut self, px: &[u8], stride: usize) -> anyhow::Result<Vec<u8>> {
+    pub fn encode(&mut self, px: &[u8], stride: usize) -> anyhow::Result<Vec<u8>> {
         let (sessao, mut entrada, saida) = match (
             self.sessao.take(),
             self.entrada.take(),
@@ -193,7 +193,7 @@ impl Codificador {
 
         let n = self.n;
         // O primeiro quadro, e todo quadro pedido: sem IDR o cliente que
-        // acabou de entrar nao tem como comecar a desenhar, e com GOP de
+        // acabou de entrar nao tem como comecar a draw, e com GOP de
         // 2s ele ficaria preto esse tempo todo.
         let forcar = n == 0 || self.idr;
         self.idr = false;
@@ -204,12 +204,12 @@ impl Codificador {
         );
         self.sessao = Some(sessao);
         match r.and_then(|s| s.finish()) {
-            Ok((dados, i2, s2)) => {
+            Ok((data, i2, s2)) => {
                 self.entrada = Some(i2);
                 self.saida = Some(s2);
                 self.n += 1;
-                self.ultimo_foi_idr = forcar;
-                Ok(dados)
+                self.last_was_idr = forcar;
+                Ok(data)
             }
             Err(e) => Err(anyhow::anyhow!("encode: {e}")),
         }
@@ -220,16 +220,16 @@ impl Codificador {
     /// Quem chama e a rede, quando um cliente conecta: ele nao tem
     /// contexto nenhum, e um quadro P sem referencia nao decodifica. Sem
     /// isto a janela abria preta ate o IDR seguinte do GOP -- ate 2s.
-    pub fn pedir_idr(&mut self) {
+    pub fn request_idr(&mut self) {
         self.idr = true;
     }
 
     /// O ultimo quadro codificado era quadro-chave.
     ///
     /// E o que vai no cabecalho da fatia, e o cliente usa para saber se
-    /// pode comecar a desenhar dali.
-    pub fn ultimo_foi_idr(&self) -> bool {
-        self.ultimo_foi_idr
+    /// pode comecar a draw dali.
+    pub fn last_was_idr(&self) -> bool {
+        self.last_was_idr
     }
 }
 

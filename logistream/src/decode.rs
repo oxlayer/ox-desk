@@ -20,7 +20,7 @@
 //! sem isso a conta nao fecha.
 
 /// Um quadro pronto para o `Slot` do visualizador.
-pub struct Pronto {
+pub struct DecodedFrame {
     pub rgb: Vec<u32>,
     /// Canto onde a imagem comeca dentro da janela.
     pub ox: u32,
@@ -34,14 +34,14 @@ pub struct Pronto {
 }
 
 /// Dado o tamanho da ORIGEM, devolve `(ox, oy, w, h)` do destino.
-pub type Encaixe<'a> = &'a mut dyn FnMut(u32, u32) -> (u32, u32, u32, u32);
+pub type Fit<'a> = &'a mut dyn FnMut(u32, u32) -> (u32, u32, u32, u32);
 
 #[cfg(target_os = "macos")]
 mod interno {
-    use super::{Encaixe, Pronto};
+    use super::{Fit, DecodedFrame};
 
     /// Caminho do Mac: libavcodec decodifica, swscale converte e escala.
-    pub struct Decodificador {
+    pub struct Decoder {
         dec: ffmpeg_next::decoder::Video,
         escalador: Option<ffmpeg_next::software::scaling::Context>,
         /// (origem_w, origem_h, destino_w, destino_h) do escalador atual.
@@ -49,21 +49,21 @@ mod interno {
         chave: (u32, u32, u32, u32),
     }
 
-    impl Decodificador {
-        pub fn novo() -> Result<Self, String> {
+    impl Decoder {
+        pub fn new() -> Result<Self, String> {
             ffmpeg_next::init().map_err(|e| format!("ffmpeg: {e}"))?;
             let codec = ffmpeg_next::decoder::find(ffmpeg_next::codec::Id::H264)
                 .ok_or("sem decoder H.264")?;
             let ctx = ffmpeg_next::codec::context::Context::new_with_codec(codec);
             let dec = ctx.decoder().video().map_err(|e| format!("decoder: {e}"))?;
-            Ok(Decodificador { dec, escalador: None, chave: (0, 0, 0, 0) })
+            Ok(Decoder { dec, escalador: None, chave: (0, 0, 0, 0) })
         }
 
-        pub fn nome(&self) -> &'static str {
+        pub fn name(&self) -> &'static str {
             "ffmpeg"
         }
 
-        pub fn alimentar(&mut self, bytes: &[u8], encaixe: Encaixe) -> Result<Vec<Pronto>, String> {
+        pub fn feed(&mut self, bytes: &[u8], encaixe: Fit) -> Result<Vec<DecodedFrame>, String> {
             let pacote = ffmpeg_next::Packet::copy(bytes);
             if self.dec.send_packet(&pacote).is_err() {
                 // Quadro sem referencia (entrou no meio do fluxo): nao e
@@ -115,7 +115,7 @@ mod interno {
                 // big-endian isto inverteria os canais -- barulhento o
                 // bastante para alguem notar na primeira imagem.
                 let linha = bgra.stride(0);
-                let dados = bgra.data(0);
+                let data = bgra.data(0);
                 let largura_bytes = dw as usize * 4;
                 let mut rgb = vec![0u32; (dw * dh) as usize];
                 {
@@ -128,14 +128,14 @@ mod interno {
                     for y in 0..dh as usize {
                         let o = y * linha;
                         let d = y * largura_bytes;
-                        if o + largura_bytes > dados.len() || d + largura_bytes > destino.len() {
+                        if o + largura_bytes > data.len() || d + largura_bytes > destino.len() {
                             break;
                         }
                         destino[d..d + largura_bytes]
-                            .copy_from_slice(&dados[o..o + largura_bytes]);
+                            .copy_from_slice(&data[o..o + largura_bytes]);
                     }
                 }
-                saida.push(Pronto { rgb, ox, oy, w: dw, h: dh, rw, rh });
+                saida.push(DecodedFrame { rgb, ox, oy, w: dw, h: dh, rw, rh });
             }
             Ok(saida)
         }
@@ -144,38 +144,38 @@ mod interno {
 
 #[cfg(any(target_os = "linux", windows))]
 mod interno {
-    use super::{Encaixe, Pronto};
+    use super::{Fit, DecodedFrame};
     use crate::decode_nv;
 
     /// Caminho das maquinas NVIDIA: NVDEC decodifica, e a conversao de
     /// cor ja escala no mesmo passo.
-    pub struct Decodificador {
-        dec: decode_nv::Decodificador,
+    pub struct Decoder {
+        dec: decode_nv::Decoder,
     }
 
-    impl Decodificador {
-        pub fn novo() -> Result<Self, String> {
-            Ok(Decodificador { dec: decode_nv::Decodificador::novo()? })
+    impl Decoder {
+        pub fn new() -> Result<Self, String> {
+            Ok(Decoder { dec: decode_nv::Decoder::new()? })
         }
 
-        pub fn nome(&self) -> &'static str {
+        pub fn name(&self) -> &'static str {
             "nvdec"
         }
 
-        pub fn alimentar(&mut self, bytes: &[u8], encaixe: Encaixe) -> Result<Vec<Pronto>, String> {
+        pub fn feed(&mut self, bytes: &[u8], encaixe: Fit) -> Result<Vec<DecodedFrame>, String> {
             let mut saida = Vec::new();
-            for q in self.dec.alimentar(bytes)? {
+            for q in self.dec.feed(bytes)? {
                 let (ox, oy, dw, dh) = encaixe(q.w, q.h);
                 if dw == 0 || dh == 0 {
                     continue;
                 }
                 let mut rgb = vec![0u32; (dw * dh) as usize];
-                decode_nv::nv12_para_bgra(&q, &mut rgb, dw, dh);
-                saida.push(Pronto { rgb, ox, oy, w: dw, h: dh, rw: q.w, rh: q.h });
+                decode_nv::nv12_to_bgra(&q, &mut rgb, dw, dh);
+                saida.push(DecodedFrame { rgb, ox, oy, w: dw, h: dh, rw: q.w, rh: q.h });
             }
             Ok(saida)
         }
     }
 }
 
-pub use interno::Decodificador;
+pub use interno::Decoder;

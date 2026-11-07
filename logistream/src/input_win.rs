@@ -5,14 +5,14 @@
 //! ## Tecla vai por SCANCODE, nao por tecla virtual
 //!
 //! O protocolo carrega keycode do evdev, que e a POSICAO fisica da tecla
-//! (ver `input::evdev_de_winit`). Aqui ela e traduzida para scancode do
+//! (ver `input::evdev_from_winit`). Aqui ela e traduzida para scancode do
 //! Set 1 e injetada com `KEYEVENTF_SCANCODE` -- com `wVk = 0`, o Windows
 //! resolve o scancode pelo layout da janela em foco. E o que mantem a
 //! promessa: cada maquina aplica o PROPRIO layout, como um teclado de
 //! verdade ligado nela. Mandar tecla virtual faria o layout do Mac
 //! decidir o que aparece no Windows.
 //!
-//! A tabela em si fica em `input::scancode_de_evdev`, junto do seu
+//! A tabela em si fica em `input::scancode_from_evdev`, junto do seu
 //! inverso e dos testes que a cobrem.
 //!
 //! ## Mouse vai por posicao normalizada do DESKTOP VIRTUAL
@@ -24,7 +24,7 @@
 
 #![cfg(windows)]
 
-use crate::input::{scancode_de_evdev, Evento, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use crate::input::{scancode_from_evdev, Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOUSEEVENTF_ABSOLUTE,
@@ -51,7 +51,7 @@ const PX_POR_LINHA: f64 = 15.0;
 ///
 /// Guarda estado (resto da rolagem e a origem do monitor capturado), por
 /// isso e struct e nao funcao solta.
-pub struct Teclado {
+pub struct Injector {
     /// Canto do monitor capturado dentro do desktop virtual.
     ///
     /// Compartilhado e nao copiado: se a pessoa rearranjar os monitores
@@ -63,18 +63,18 @@ pub struct Teclado {
     resto_y: f64,
 }
 
-impl Teclado {
-    pub fn novo(origem: std::sync::Arc<std::sync::Mutex<(i32, i32)>>) -> Self {
-        Teclado { origem, resto_x: 0.0, resto_y: 0.0 }
+impl Injector {
+    pub fn new(origem: std::sync::Arc<std::sync::Mutex<(i32, i32)>>) -> Self {
+        Injector { origem, resto_x: 0.0, resto_y: 0.0 }
     }
 
-    pub fn aplicar(&mut self, e: Evento) {
+    pub fn apply(&mut self, e: Event) {
         match e {
-            Evento::Mouse { x, y } => self.mover(x, y),
-            Evento::MouseRel { dx, dy } => self.mover_relativo(dx, dy),
-            Evento::Botao { codigo, apertado } => self.botao(codigo, apertado),
-            Evento::Rolagem { dx, dy } => self.rolar(dx, dy),
-            Evento::Tecla { keycode, apertado } => self.tecla(keycode, apertado),
+            Event::Mouse { x, y } => self.mover(x, y),
+            Event::MouseRel { dx, dy } => self.move_relative(dx, dy),
+            Event::Button { code, pressed } => self.botao(code, pressed),
+            Event::Scroll { dx, dy } => self.rolar(dx, dy),
+            Event::Key { keycode, pressed } => self.tecla(keycode, pressed),
         }
     }
 
@@ -104,8 +104,8 @@ impl Teclado {
         }]);
     }
 
-    fn botao(&self, codigo: i32, apertado: bool) {
-        let flag: MOUSE_EVENT_FLAGS = match (codigo, apertado) {
+    fn botao(&self, code: i32, pressed: bool) {
+        let flag: MOUSE_EVENT_FLAGS = match (code, pressed) {
             (BTN_LEFT, true) => MOUSEEVENTF_LEFTDOWN,
             (BTN_LEFT, false) => MOUSEEVENTF_LEFTUP,
             (BTN_RIGHT, true) => MOUSEEVENTF_RIGHTDOWN,
@@ -152,14 +152,14 @@ impl Teclado {
                 },
             }]);
         }
-        // Rolagem horizontal fica de fora por enquanto: exige
+        // Scroll horizontal fica de fora por enquanto: exige
         // MOUSEEVENTF_HWHEEL e poucas janelas a honram.
         self.resto_x = self.resto_x.clamp(-WHEEL_DELTA, WHEEL_DELTA);
     }
 
-    fn tecla(&self, keycode: u32, apertado: bool) {
+    fn tecla(&self, keycode: u32, pressed: bool) {
         let mut flags = KEYBD_EVENT_FLAGS(0);
-        let (vk, scan) = match scancode_de_evdev(keycode) {
+        let (vk, scan) = match scancode_from_evdev(keycode) {
             Some((scan, estendida)) => {
                 flags |= KEYEVENTF_SCANCODE;
                 if estendida {
@@ -171,7 +171,7 @@ impl Teclado {
             None if keycode == 119 => (VK_PAUSE, 0),
             None => return,
         };
-        if !apertado {
+        if !pressed {
             flags |= KEYEVENTF_KEYUP;
         }
         envia(&[INPUT {
@@ -211,7 +211,7 @@ fn virtual_screen() -> (i32, i32, i32, i32) {
     }
 }
 
-impl Teclado {
+impl Injector {
     /// Deslocamento relativo, sem passar por coordenada de tela.
     ///
     /// O KVM manda isto. Nao da para reaproveitar `mover()`: aquele
@@ -223,7 +223,7 @@ impl Teclado {
     /// Sem `MOUSEEVENTF_ABSOLUTE`, o Windows aplica a propria aceleracao
     /// de ponteiro, que e o que a pessoa espera sentir. Jogo que le
     /// entrada bruta recebe o deslocamento direto.
-    pub fn mover_relativo(&self, dx: f64, dy: f64) {
+    pub fn move_relative(&self, dx: f64, dy: f64) {
         // Por `envia()`, e nao `SendInput` na mao: aquele confere o
         // retorno e grita quando o UIPI recusa (janela elevada em
         // foco). Chamar direto, como esta funcao fazia, engolia
@@ -270,7 +270,7 @@ impl Teclado {
 ///
 /// NAO resolve sessao realmente bloqueada: ali o desktop seguro esta na
 /// frente e o DXGI nao o captura por desenho. Limite conhecido.
-pub fn acordar_tela() {
+pub fn wake_screen() {
     let passo = |dx: i32| INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
@@ -296,18 +296,18 @@ pub fn acordar_tela() {
 /// estado volta ao normal, e o Windows retoma a contagem de ociosidade
 /// de onde estava -- nao prendemos a maquina acordada depois que o host
 /// sai.
-pub struct TelaAcesa;
+pub struct ScreenAwake;
 
-impl TelaAcesa {
-    pub fn nova() -> Self {
+impl ScreenAwake {
+    pub fn new() -> Self {
         unsafe {
             SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
         };
-        TelaAcesa
+        ScreenAwake
     }
 }
 
-impl Drop for TelaAcesa {
+impl Drop for ScreenAwake {
     fn drop(&mut self) {
         unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
     }
@@ -320,14 +320,14 @@ impl Drop for TelaAcesa {
 /// O protetor de tela roda num desktop proprio ("Screen-saver"), e o
 /// DXGI recusa duplicar para um processo que nao esta no desktop de
 /// input corrente: `DuplicateOutput` devolve `E_ACCESSDENIED`, o mesmo
-/// codigo da tela bloqueada e do driver pela metade. Diagnostiquei as
+/// code da tela bloqueada e do driver pela metade. Diagnostiquei as
 /// duas causas erradas antes de olhar a lista de processos e achar o
 /// `Bubbles.scr` rodando, com o `LogonUI` ausente e o adaptador de
 /// video OK.
 ///
 /// Nao da para dispensar por `SendInput`: a injecao vai para o desktop
 /// da THREAD que chama, que e o `Default` -- o protetor, noutro
-/// desktop, nem fica sabendo. Por isso `acordar_tela()` resolve tela
+/// desktop, nem fica sabendo. Por isso `wake_screen()` resolve tela
 /// apagada e nao resolve esta.
 ///
 /// `SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, FALSE)` tambem nao
@@ -337,7 +337,7 @@ impl Drop for TelaAcesa {
 /// acesso remoto fazem. O risco e baixo: um protetor de tela nao tem
 /// estado para perder, e o proprio Windows o mata a qualquer movimento
 /// de mouse.
-pub fn encerrar_protetor_de_tela() -> usize {
+pub fn end_screensaver() -> usize {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,

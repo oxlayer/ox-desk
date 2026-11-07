@@ -46,7 +46,7 @@ use moq_nvenc::sys::nvcuvid::{
 
 /// Um quadro decodificado, ainda em NV12, ja na memoria da CPU.
 pub struct Nv12 {
-    pub dados: Vec<u8>,
+    pub data: Vec<u8>,
     /// Passo de linha. O NVDEC alinha, entao quase nunca e igual a largura.
     pub pitch: usize,
     pub w: u32,
@@ -71,7 +71,7 @@ struct Estado {
     erro: Option<String>,
 }
 
-pub struct Decodificador {
+pub struct Decoder {
     parser: CUvideoparser,
     estado: Box<Estado>,
     /// Mantem o contexto vivo enquanto o decodificador existir.
@@ -88,8 +88,8 @@ fn checa(nome: &str, r: cudarc::driver::sys::CUresult) -> Result<(), String> {
     }
 }
 
-impl Decodificador {
-    pub fn novo() -> Result<Self, String> {
+impl Decoder {
+    pub fn new() -> Result<Self, String> {
         let api = cuvid::Api::get()?;
         let ctx = CudaContext::new(0).map_err(|e| format!("CUDA: {e:?}"))?;
 
@@ -121,11 +121,11 @@ impl Decodificador {
             (api.create_video_parser)(&mut parser, &mut p)
         })?;
 
-        Ok(Decodificador { parser, estado, _ctx: ctx })
+        Ok(Decoder { parser, estado, _ctx: ctx })
     }
 
     /// Tamanho do quadro, zero antes do primeiro cabecalho de sequencia.
-    pub fn tamanho(&self) -> (u32, u32) {
+    pub fn size(&self) -> (u32, u32) {
         (self.estado.w, self.estado.h)
     }
 
@@ -133,7 +133,7 @@ impl Decodificador {
     ///
     /// Os callbacks rodam DENTRO desta chamada, entao os quadros aparecem
     /// antes de ela retornar -- nao ha nada para esperar depois.
-    pub fn alimentar(&mut self, bytes: &[u8]) -> Result<Vec<Nv12>, String> {
+    pub fn feed(&mut self, bytes: &[u8]) -> Result<Vec<Nv12>, String> {
         let api = cuvid::Api::get()?;
         let mut pkt: CUVIDSOURCEDATAPACKET = unsafe { std::mem::zeroed() };
         pkt.payload = bytes.as_ptr();
@@ -148,7 +148,7 @@ impl Decodificador {
     }
 }
 
-impl Drop for Decodificador {
+impl Drop for Decoder {
     fn drop(&mut self) {
         // Ordem importa: o parser chama os callbacks, que usam o
         // decodificador. Primeiro para de chamar, depois destroi.
@@ -239,7 +239,7 @@ extern "C" fn cb_sequencia(user: *mut c_void, fmt: *mut CUVIDEOFORMAT) -> i32 {
     st.decoder = dec;
     st.w = w;
     st.h = h;
-    // Chroma 4:2:0 significa UV com metade das linhas; o resto do codigo
+    // Chroma 4:2:0 significa UV com metade das linhas; o resto do code
     // assume isso ao copiar `h * 3 / 2` linhas.
     if f.chroma_format != cudaVideoChromaFormat_enum::cudaVideoChromaFormat_420 {
         st.erro = Some(format!("chroma {:?} nao suportado", f.chroma_format));
@@ -304,10 +304,10 @@ fn copia_quadro(st: &mut Estado, info: *mut CUVIDPARSERDISPINFO) -> Result<(), S
     // com o MESMO pitch -- dai uma copia so em vez de duas.
     let linhas = (st.h as usize) * 3 / 2;
     let bytes = pitch as usize * linhas;
-    let mut dados = vec![0u8; bytes];
+    let mut data = vec![0u8; bytes];
     let copia = unsafe {
         cudarc::driver::sys::cuMemcpyDtoH_v2(
-            dados.as_mut_ptr() as *mut c_void,
+            data.as_mut_ptr() as *mut c_void,
             dptr as cudarc::driver::sys::CUdeviceptr,
             bytes,
         )
@@ -317,7 +317,7 @@ fn copia_quadro(st: &mut Estado, info: *mut CUVIDPARSERDISPINFO) -> Result<(), S
     let _ = unsafe { (api.unmap_video_frame)(st.decoder, dptr) };
     checa("cuMemcpyDtoH", copia)?;
 
-    st.prontos.push(Nv12 { dados, pitch: pitch as usize, w: st.w, h: st.h });
+    st.prontos.push(Nv12 { data, pitch: pitch as usize, w: st.w, h: st.h });
     Ok(())
 }
 
@@ -342,7 +342,7 @@ fn copia_quadro(st: &mut Estado, info: *mut CUVIDPARSERDISPINFO) -> Result<(), S
 /// BT.709 de faixa limitada: e o que um desktop de 1440p e, e o
 /// codificador nao escreve a descricao de cor no fluxo. Conferido contra
 /// o ffmpeg no mesmo quadro -- um ponto de diferenca no verde.
-pub fn nv12_para_bgra(q: &Nv12, dst: &mut [u32], dw: u32, dh: u32) {
+pub fn nv12_to_bgra(q: &Nv12, dst: &mut [u32], dw: u32, dh: u32) {
     if dw == 0 || dh == 0 || q.w == 0 || q.h == 0 {
         return;
     }
@@ -373,7 +373,7 @@ pub fn nv12_para_bgra(q: &Nv12, dst: &mut [u32], dw: u32, dh: u32) {
         .clamp(1, 16)
         .min(dh as usize);
     let por_fatia = (dh as usize).div_ceil(fatias);
-    let dados = &q.dados;
+    let data = &q.data;
     let pitch = q.pitch;
     let colunas = &colunas;
 
@@ -400,17 +400,17 @@ pub fn nv12_para_bgra(q: &Nv12, dst: &mut [u32], dw: u32, dh: u32) {
                         // croma pela metade -- interpolar os dois
                         // dobraria o laco quente para melhorar o que
                         // ninguem enxerga.
-                        let a = dados[l0 + x0] as i32;
-                        let b = dados[l0 + x1] as i32;
-                        let c = dados[l1 + x0] as i32;
-                        let d = dados[l1 + x1] as i32;
+                        let a = data[l0 + x0] as i32;
+                        let b = data[l0 + x1] as i32;
+                        let c = data[l1 + x0] as i32;
+                        let d = data[l1 + x1] as i32;
                         let topo = a * (256 - wx) + b * wx;
                         let base = c * (256 - wx) + d * wx;
                         let yy = (topo * (256 - wy) + base * wy) >> 16;
 
                         let i_uv = linha_uv + (x0 & !1);
-                        let u = dados[i_uv] as i32;
-                        let v = dados[i_uv + 1] as i32;
+                        let u = data[i_uv] as i32;
+                        let v = data[i_uv + 1] as i32;
 
                         let cc = (yy - 16) * 298;
                         let du = u - 128;
@@ -445,25 +445,25 @@ mod testes {
     /// **So em release.** Em `cargo test` sem `--release` o mesmo laco
     /// mede 24 ms e o teste falha sempre -- um alarme falso que custa
     /// tempo de quem for investigar (custou o meu). O que ele vigia e o
-    /// codigo otimizado, que e o unico que o usuario roda.
+    /// code otimizado, que e o unico que o usuario roda.
     #[test]
     #[cfg_attr(debug_assertions, ignore = "orcamento de tempo so vale em --release")]
     fn conversao_cabe_no_orcamento() {
         use std::time::Instant;
         let (sw, sh) = (2560usize, 1440usize);
-        let mut dados = vec![128u8; sw * sh + sw * sh / 2];
-        for (i, b) in dados.iter_mut().enumerate() {
+        let mut data = vec![128u8; sw * sh + sw * sh / 2];
+        for (i, b) in data.iter_mut().enumerate() {
             *b = (i % 255) as u8;
         }
-        let q = Nv12 { w: sw as u32, h: sh as u32, pitch: sw, dados };
+        let q = Nv12 { w: sw as u32, h: sh as u32, pitch: sw, data };
         let (dw, dh) = (1451u32, 1232u32);
         let mut dst = vec![0u32; (dw * dh) as usize];
-        nv12_para_bgra(&q, &mut dst, dw, dh); // aquece cache e paginas
+        nv12_to_bgra(&q, &mut dst, dw, dh); // aquece cache e paginas
 
         let t = Instant::now();
         let n = 30;
         for _ in 0..n {
-            nv12_para_bgra(&q, &mut dst, dw, dh);
+            nv12_to_bgra(&q, &mut dst, dw, dh);
         }
         let ms = t.elapsed().as_secs_f64() * 1000.0 / n as f64;
         println!("conversao {sw}x{sh} -> {dw}x{dh}: {ms:.2} ms ({:.0} fps)", 1000.0 / ms);
@@ -475,20 +475,20 @@ mod testes {
     /// Monta um NV12 de cor constante.
     fn solido(w: u32, h: u32, y: u8, u: u8, v: u8) -> Nv12 {
         let pitch = w as usize + 32; // pitch > largura, como o NVDEC faz
-        let mut dados = vec![0u8; pitch * (h as usize) * 3 / 2];
+        let mut data = vec![0u8; pitch * (h as usize) * 3 / 2];
         for linha in 0..h as usize {
             for x in 0..w as usize {
-                dados[linha * pitch + x] = y;
+                data[linha * pitch + x] = y;
             }
         }
         let base = pitch * h as usize;
         for linha in 0..(h as usize / 2) {
             for x in (0..w as usize).step_by(2) {
-                dados[base + linha * pitch + x] = u;
-                dados[base + linha * pitch + x + 1] = v;
+                data[base + linha * pitch + x] = u;
+                data[base + linha * pitch + x + 1] = v;
             }
         }
-        Nv12 { dados, pitch, w, h }
+        Nv12 { data, pitch, w, h }
     }
 
     fn canais(px: u32) -> (u8, u8, u8) {
@@ -500,10 +500,10 @@ mod testes {
         // Faixa limitada: 16 e preto, 235 e branco. Tratar como faixa
         // cheia daria cinza em vez de preto, que e o erro classico.
         let mut dst = vec![0u32; 4];
-        nv12_para_bgra(&solido(2, 2, 16, 128, 128), &mut dst, 2, 2);
+        nv12_to_bgra(&solido(2, 2, 16, 128, 128), &mut dst, 2, 2);
         assert_eq!(canais(dst[0]), (0, 0, 0), "16 tem de virar preto");
 
-        nv12_para_bgra(&solido(2, 2, 235, 128, 128), &mut dst, 2, 2);
+        nv12_to_bgra(&solido(2, 2, 235, 128, 128), &mut dst, 2, 2);
         let (r, g, b) = canais(dst[0]);
         assert!(r > 250 && g > 250 && b > 250, "235 virou {r},{g},{b}");
     }
@@ -511,7 +511,7 @@ mod testes {
     #[test]
     fn cinza_medio_fica_cinza() {
         let mut dst = vec![0u32; 4];
-        nv12_para_bgra(&solido(2, 2, 126, 128, 128), &mut dst, 2, 2);
+        nv12_to_bgra(&solido(2, 2, 126, 128, 128), &mut dst, 2, 2);
         let (r, g, b) = canais(dst[0]);
         assert!(r == g && g == b, "cinza saiu colorido: {r},{g},{b}");
         assert!((100..=140).contains(&r), "cinza medio virou {r}");
@@ -527,10 +527,10 @@ mod testes {
         let mut q = solido(w, h, 16, 128, 128);
         // Marca o primeiro pixel de cada linha com branco.
         for linha in 0..h as usize {
-            q.dados[linha * q.pitch] = 235;
+            q.data[linha * q.pitch] = 235;
         }
         let mut dst = vec![0u32; (w * h) as usize];
-        nv12_para_bgra(&q, &mut dst, w, h);
+        nv12_to_bgra(&q, &mut dst, w, h);
         for linha in 0..h as usize {
             let (r, _, _) = canais(dst[linha * w as usize]);
             assert!(r > 250, "linha {linha} perdeu a marca -- pitch ignorado");
@@ -545,7 +545,7 @@ mod testes {
         // nenhuma escrita pode passar do fim.
         let q = solido(64, 64, 100, 128, 128);
         let mut dst = vec![0u32; 7 * 5];
-        nv12_para_bgra(&q, &mut dst, 7, 5);
+        nv12_to_bgra(&q, &mut dst, 7, 5);
         assert!(dst.iter().all(|p| *p != 0), "sobrou pixel nao escrito");
     }
 
@@ -553,7 +553,7 @@ mod testes {
     fn tamanho_zero_nao_faz_nada() {
         let q = solido(4, 4, 100, 128, 128);
         let mut dst = vec![0u32; 1];
-        nv12_para_bgra(&q, &mut dst, 0, 0);
+        nv12_to_bgra(&q, &mut dst, 0, 0);
         assert_eq!(dst[0], 0);
     }
 }

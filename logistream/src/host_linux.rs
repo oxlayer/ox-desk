@@ -30,9 +30,9 @@ use pipewire::spa::pod::{self, Pod};
 use pipewire::spa::utils::{Direction, Rectangle, SpaTypes};
 use pipewire::stream::{Stream, StreamFlags};
 
-use crate::input::{Evento, Leitor};
-use crate::nvenc::Codificador;
-use crate::serve::{self, agora_ns, Quadro, Sinais};
+use crate::input::{Event, Reader};
+use crate::nvenc::NvencEncoder;
+use crate::serve::{self, now_ns, EncodedFrame, Signals};
 
 const SC: &str = "org.gnome.Mutter.ScreenCast";
 const SC_OBJ: &str = "/org/gnome/Mutter/ScreenCast";
@@ -101,7 +101,7 @@ const CAPACIDADE: usize = 2;
 /// avanca, medido: 60,0 fps e 4,5 Mbps, contra 80 fps e 6,2 Mbps antes.
 const CADENCIA: Duration = Duration::from_micros(16_667);
 
-pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
+pub fn run(porta: u16, conector: &str) -> anyhow::Result<()> {
     // Canal do TOKIO, nao `std::sync::mpsc`.
     //
     // Com o canal da std, o laco de rede bloqueava a thread em
@@ -109,7 +109,7 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
     // driver da conexao de rodar. `send_datagram` so ENFILEIRA; quem poe
     // no fio e o driver. Resultado medido: host anunciando 80 fps e "0
     // recusados" com o receptor em zero, porque nada era transmitido.
-    let (tx, rx) = tokio::sync::mpsc::channel::<Quadro>(CAPACIDADE);
+    let (tx, rx) = tokio::sync::mpsc::channel::<EncodedFrame>(CAPACIDADE);
 
     // --- coreografia entre as duas threads -------------------------------
     //
@@ -138,7 +138,7 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
     // o exit comeca a destruir os estaticos enquanto a captura ainda
     // esta codificando, e o log mostrou `encode: InvalidParam` seguido de
     // nada. Bandeira + timer no proprio laco resolve na ordem certa.
-    let sinais = std::sync::Arc::new(Sinais::default());
+    let sinais = std::sync::Arc::new(Signals::default());
     let sinais_rede = std::sync::Arc::clone(&sinais);
 
     let rede = std::thread::spawn(move || {
@@ -149,7 +149,7 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
         // ha mais para quem mandar quadro, e quem encerra na ordem certa
         // e a captura. Sem esta linha, um erro na rede deixava o processo
         // vivo para sempre, capturando para ninguem.
-        sinais_rede.encerrar();
+        sinais_rede.shutdown();
     });
 
     let rd_id = rx_id
@@ -200,7 +200,7 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
         },
     )?;
 
-    let cod = Rc::new(RefCell::new(None::<Codificador>));
+    let cod = Rc::new(RefCell::new(None::<NvencEncoder>));
     let descartados = Rc::new(Cell::new(0u64));
     let proximo_quadro = Rc::new(Cell::new(Instant::now()));
     let proximo_proc = Rc::clone(&proximo_quadro);
@@ -235,9 +235,9 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
             if cod_fmt.borrow().is_some() && tam_fmt.get() == (w, h) {
                 return;
             }
-            match Codificador::novo(w, h) {
+            match NvencEncoder::new(w, h) {
                 Ok(c) => {
-                    println!("  capturando {w}x{h}, NVENC a {:.1} Mbps", c.alvo_mbps());
+                    println!("  capturando {w}x{h}, NVENC a {:.1} Mbps", c.target_mbps());
                     *cod_fmt.borrow_mut() = Some(c);
                     tam_fmt.set((w, h));
                 }
@@ -254,12 +254,12 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
                 return;
             }
             let Some(px) = d.data() else { return };
-            let capturado = agora_ns();
+            let capturado = now_ns();
 
             // Sem ninguem assistindo, nao codifica: o quadro iria para
             // um canal que ninguem drena. O buffer do PipeWire ja foi
             // devolvido acima, entao a captura segue saudavel.
-            if !sinais_proc.tem_cliente() {
+            if !sinais_proc.has_client() {
                 return;
             }
             // Teto de taxa: descartar aqui e de graca (o buffer ja
@@ -274,16 +274,16 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
             proximo_proc.set((proximo_proc.get() + CADENCIA).max(agora));
             let mut g = cod_proc.borrow_mut();
             let Some(c) = g.as_mut() else { return };
-            if sinais_proc.pegar_idr() {
-                c.pedir_idr();
+            if sinais_proc.take_idr() {
+                c.request_idr();
             }
-            match c.codificar(px, stride) {
+            match c.encode(px, stride) {
                 // `try_send`: se a rede nao acompanha, o quadro novo e
-                // descartado AQUI em vez de virar fila. Quadro atrasado
+                // descartado AQUI em vez de virar fila. EncodedFrame atrasado
                 // nao tem valor numa tela remota.
-                Ok(dados) => {
-                    let keyframe = c.ultimo_foi_idr();
-                    if tx.try_send(Quadro { dados, keyframe, captured_at_ns: capturado }).is_err() {
+                Ok(data) => {
+                    let keyframe = c.last_was_idr();
+                    if tx.try_send(EncodedFrame { data, keyframe, captured_at_ns: capturado }).is_err() {
                         desc_proc.set(desc_proc.get() + 1);
                     }
                 }
@@ -339,7 +339,7 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
     let ml = mainloop.clone();
     let sinais_timer = std::sync::Arc::clone(&sinais);
     let timer = mainloop.loop_().add_timer(move |_| {
-        if sinais_timer.deve_sair() {
+        if sinais_timer.should_exit() {
             ml.quit();
         }
     });
@@ -384,8 +384,8 @@ pub fn executar(porta: u16, conector: &str) -> anyhow::Result<()> {
 /// O preco e real e aceito: erro de injecao deixa de ser visivel por
 /// evento. O que sobra e o erro de ESCRITA, que e o que indica sessao
 /// morta -- o caso que importa.
-fn aplicar(conn: &Connection, rd: &Path, stream: &str, e: Evento) -> Result<(), String> {
-    use crate::input::Evento as E;
+fn apply_event(conn: &Connection, rd: &Path, stream: &str, e: Event) -> Result<(), String> {
+    use crate::input::Event as E;
     let m = |membro: &str| {
         dbus::Message::new_method_call(RD, rd.clone(), RD_SESSION, membro)
     };
@@ -395,14 +395,14 @@ fn aplicar(conn: &Connection, rd: &Path, stream: &str, e: Evento) -> Result<(), 
         // conta feita: `NotifyPointerMotion` respeita aceleracao e os
         // limites de tela do lado de ca, que e o que o KVM quer.
         E::MouseRel { dx, dy } => m("NotifyPointerMotion").map(|z| z.append2(dx, dy)),
-        E::Botao { codigo, apertado } => {
-            m("NotifyPointerButton").map(|z| z.append2(codigo, apertado))
+        E::Button { code, pressed } => {
+            m("NotifyPointerButton").map(|z| z.append2(code, pressed))
         }
         // flags 0 = rolagem continua. O `AxisDiscrete` seria para roda
         // com clique, mas o trackpad do Mac nao tem passo.
-        E::Rolagem { dx, dy } => m("NotifyPointerAxis").map(|z| z.append3(dx, dy, 0u32)),
-        E::Tecla { keycode, apertado } => {
-            m("NotifyKeyboardKeycode").map(|z| z.append2(keycode, apertado))
+        E::Scroll { dx, dy } => m("NotifyPointerAxis").map(|z| z.append3(dx, dy, 0u32)),
+        E::Key { keycode, pressed } => {
+            m("NotifyKeyboardKeycode").map(|z| z.append2(keycode, pressed))
         }
     };
     let mut msg = msg.map_err(|e| format!("montar mensagem: {e}"))?;
@@ -419,10 +419,10 @@ fn aplicar(conn: &Connection, rd: &Path, stream: &str, e: Evento) -> Result<(), 
 /// Entao tudo roda nesta thread e o `Rc` compartilha.
 fn servir(
     porta: u16,
-    mut rx: tokio::sync::mpsc::Receiver<Quadro>,
+    mut rx: tokio::sync::mpsc::Receiver<EncodedFrame>,
     tx_id: std::sync::mpsc::Sender<String>,
     rx_pronto: std::sync::mpsc::Receiver<String>,
-    sinais: std::sync::Arc<Sinais>,
+    sinais: std::sync::Arc<Signals>,
 ) -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let local = tokio::task::LocalSet::new();
@@ -441,8 +441,8 @@ fn servir(
             .method_call::<(), _, _, _>(RD_SESSION, "Start", ())?;
         println!("  input ligado (stream {caminho_stream})");
 
-        let escuta = crate::bind::escuta();
-        let ep = crate::net::servidor((escuta, porta).into())?;
+        let escuta = crate::bind::listen_addr();
+        let ep = crate::net::server((escuta, porta).into())?;
         // O endereco REAL, nao "0.0.0.0" fixo: com --bind overlay o
         // host escuta em outro lugar, e um log que diz 0.0.0.0
         // mandaria quem diagnostica procurar no lugar errado.
@@ -455,7 +455,7 @@ fn servir(
         // input para a outra maquina e via a tela dela congelada,
         // concluindo (com razao, pelo que via) que nada tinha mexido.
         let porta_input = porta + 1;
-        let ep_in = crate::net::servidor((escuta, porta_input).into())?;
+        let ep_in = crate::net::server((escuta, porta_input).into())?;
         println!("  input em {escuta}:{porta_input}");
         {
             let sinais_in = std::sync::Arc::clone(&sinais);
@@ -463,7 +463,7 @@ fn servir(
             let rd_i = rd_path.clone();
             let st_i = caminho_stream.clone();
             tokio::task::spawn_local(async move {
-                serve::atender_input(&ep_in, std::sync::Arc::clone(&sinais_in), |conexao| {
+                serve::serve_input(&ep_in, std::sync::Arc::clone(&sinais_in), |conexao| {
                     let conexao = conexao.clone();
                     let dbus = Rc::clone(&dbus_in);
                     let rd = rd_i.clone();
@@ -476,7 +476,7 @@ fn servir(
             });
         }
 
-        serve::atender(&ep, &mut rx, &sinais, |conexao| {
+        serve::serve_video(&ep, &mut rx, &sinais, |conexao| {
             let conexao = conexao.clone();
             let dbus = Rc::clone(&dbus);
             let rd_in = rd_path.clone();
@@ -502,15 +502,15 @@ async fn receber_input(
     stream_in: String,
 ) {
     let Ok(mut recv) = conexao.accept_uni().await else { return };
-    let mut leitor = Leitor::default();
+    let mut leitor = Reader::default();
     let mut buf = vec![0u8; 4096];
     let mut n = 0u64;
     let mut falhas = 0u64;
     while let Ok(Some(lidos)) = recv.read(&mut buf).await {
-        leitor.alimentar(&buf[..lidos]);
+        leitor.feed(&buf[..lidos]);
         let mut aplicados_agora = 0u32;
-        while let Some(e) = leitor.proximo() {
-            if let Err(err) = aplicar(&dbus, &rd_in, &stream_in, e) {
+        while let Some(e) = leitor.next_event() {
+            if let Err(err) = apply_event(&dbus, &rd_in, &stream_in, e) {
                 falhas += 1;
                 // Uma vez e as potencias de dez: injecao a 60 Hz
                 // transformaria log em ruido, e o numero que

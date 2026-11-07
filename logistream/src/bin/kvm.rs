@@ -32,11 +32,11 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use bytes::BytesMut;
-use logistream::input::Evento;
+use logistream::input::Event;
 use logistream::net;
 
 #[cfg(target_os = "linux")]
-use logistream::capture_input::{e_socorro, Dispositivo};
+use logistream::capture_input::{is_rescue, Device};
 
 /// Nomes padrao, se ninguem passar `--dispositivo`.
 const PADRAO: [&str; 2] = ["MX Keys", "MX Anywhere"];
@@ -88,18 +88,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // --- escolher dispositivos -------------------------------------
-    let todos = Dispositivo::listar();
-    let mut escolhidos: Vec<Dispositivo> = Vec::new();
+    let todos = Device::list();
+    let mut escolhidos: Vec<Device> = Vec::new();
     for mut d in todos {
         if filtros.iter().any(|f| d.nome.contains(f.as_str())) {
             println!("  {} -> {}", d.caminho.display(), d.nome);
-            d.definir_repeticao(repetir);
+            d.set_repeat(repetir);
             escolhidos.push(d);
         }
     }
     // Dizer qual filtro nao achou nada.
     //
-    // Dispositivo Logitech some do receptor quando dorme ou e
+    // Device Logitech some do receptor quando dorme ou e
     // desligado, e o no de /dev/input some junto. Sem este aviso, o KVM
     // levaria so o teclado e o mouse continuaria aqui -- e o sintoma
     // seria "metade funciona", que e pior de entender que "nada
@@ -132,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
             *enderecos.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
         let bind: std::net::SocketAddr =
             if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
-        let ep = net::cliente(bind)?;
+        let ep = net::client(bind)?;
         // Falhar aqui e o caso BOM: ninguem agarrou nada ainda.
         let c = ep
             .connect(destino, "logistream")?
@@ -150,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
     // --- agarrar ----------------------------------------------------
     if !observar && autoteste == 0 {
         for d in &mut escolhidos {
-            d.agarrar().map_err(|e| {
+            d.grab().map_err(|e| {
                 anyhow::anyhow!("nao agarrei {}: {e}", d.nome)
             })?;
         }
@@ -177,13 +177,13 @@ async fn main() -> anyhow::Result<()> {
     // As threads de dispositivo continuam sendo threads de verdade
     // (`read` em evdev bloqueia mesmo) e falam com o laco por
     // `blocking_send`, que e a ponte correta entre as duas metades.
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Evento>(1024);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(1024);
 
     if autoteste > 0 {
         let tx = tx.clone();
         std::thread::spawn(move || {
             for _ in 0..autoteste {
-                if tx.blocking_send(Evento::MouseRel { dx: 10.0, dy: 0.0 }).is_err() {
+                if tx.blocking_send(Event::MouseRel { dx: 10.0, dy: 0.0 }).is_err() {
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(8));
@@ -198,7 +198,7 @@ async fn main() -> anyhow::Result<()> {
         }
         let tx = tx.clone();
         std::thread::spawn(move || loop {
-            match d.ler() {
+            match d.read() {
                 Ok(eventos) => {
                     for e in eventos {
                         if tx.blocking_send(e).is_err() {
@@ -243,15 +243,15 @@ async fn main() -> anyhow::Result<()> {
         // Contabilidade de teclas presas. Tem de valer TAMBEM em
         // `--observar`, senao o primeiro uso real comeca com o conjunto
         // mentindo.
-        if let Evento::Tecla { keycode, apertado } = e {
-            if apertado {
+        if let Event::Key { keycode, pressed } = e {
+            if pressed {
                 pressionadas.insert(keycode);
             } else {
                 pressionadas.remove(&keycode);
             }
         }
 
-        if e_socorro(&pressionadas) {
+        if is_rescue(&pressionadas) {
             motivo = "socorro: os dois Ctrl".into();
             break;
         }
@@ -262,7 +262,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         buf.clear();
-        e.escrever(&mut buf);
+        e.write(&mut buf);
         if let Some(s) = &mut envio {
             if let Err(err) = s.write_all(&buf).await {
                 motivo = format!("escrita falhou: {err}");
@@ -271,15 +271,15 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // --- soltar o que ficou apertado do outro lado ------------------
+    // --- soltar o que ficou pressed do outro lado ------------------
     //
-    // Sem isto, encerrar com Shift apertado deixa a outra maquina
+    // Sem isto, encerrar com Shift pressed deixa a outra maquina
     // digitando em maiuscula para sempre. Ja aconteceu no caminho do
     // visualizador (Mac -> Ubuntu) e custou um reinicio de sessao.
     if let Some(s) = &mut envio {
         for k in &pressionadas {
             buf.clear();
-            Evento::Tecla { keycode: *k, apertado: false }.escrever(&mut buf);
+            Event::Key { keycode: *k, pressed: false }.write(&mut buf);
             let _ = s.write_all(&buf).await;
         }
         let _ = s.finish();

@@ -34,7 +34,7 @@
 
 #![cfg(windows)]
 
-use crate::cursor::{desenhar, recorte, Forma, TipoForma};
+use crate::cursor::{draw, clip, Shape, ShapeKind};
 use windows::core::Interface;
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
@@ -55,28 +55,28 @@ use windows::Win32::Graphics::Dxgi::{
 
 /// O que saiu de uma tentativa de pegar quadro.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Estado {
+pub enum CaptureState {
     /// Imagem nova na textura de staging; da para mapear e codificar.
-    Novo,
-    /// Nada mudou dentro do prazo. Tela parada e o caso comum, nao erro.
-    Parado,
+    New,
+    /// Nada mudou dentro do prazo. Screen parada e o caso comum, nao erro.
+    Idle,
     /// A duplicacao morreu -- mudanca de resolucao, tela de UAC, jogo em
     /// tela cheia assumindo o display. Tem de recriar.
-    Perdido,
+    Lost,
 }
 
 /// Pixels mapeados da textura de staging. Desmapeia ao sair de escopo.
 ///
 /// Guard e nao `(ponteiro, tamanho)` porque esquecer o `Unmap` trava a
 /// textura para sempre e o proximo `CopyResource` falha calado.
-pub struct Mapeado<'a> {
+pub struct Mapped<'a> {
     contexto: &'a ID3D11DeviceContext,
     recurso: ID3D11Resource,
     pub px: &'a [u8],
     pub stride: usize,
 }
 
-impl Drop for Mapeado<'_> {
+impl Drop for Mapped<'_> {
     fn drop(&mut self) {
         unsafe { self.contexto.Unmap(&self.recurso, 0) };
     }
@@ -84,7 +84,7 @@ impl Drop for Mapeado<'_> {
 
 /// O monitor, antes de a duplicacao comecar.
 ///
-/// Separado de `Tela` por uma razao medida: segurar a duplicacao do DXGI
+/// Separado de `Screen` por uma razao medida: segurar a duplicacao do DXGI
 /// enquanto o CUDA inicializa **travava o processo**. O log parava em
 /// "DXGI: monitor 0, 2560x1440" com 0,2 s de CPU e ficava ali -- a mesma
 /// sonda de NVENC, sozinha, rodava a 111 fps na mesma sessao. Entao a
@@ -107,7 +107,7 @@ pub struct Monitor {
 
 impl Monitor {
     /// Abre o monitor `indice` (0 = primario) sem comecar a capturar.
-    pub fn abrir(indice: u32) -> anyhow::Result<Self> {
+    pub fn open(indice: u32) -> anyhow::Result<Self> {
         unsafe {
             let mut dispositivo: Option<ID3D11Device> = None;
             let mut contexto: Option<ID3D11DeviceContext> = None;
@@ -146,12 +146,12 @@ impl Monitor {
         }
     }
 
-    pub fn tamanho(&self) -> (u32, u32) {
+    pub fn size(&self) -> (u32, u32) {
         (self.w, self.h)
     }
 
     /// Canto superior esquerdo do monitor dentro do desktop virtual.
-    pub fn origem(&self) -> (i32, i32) {
+    pub fn origin(&self) -> (i32, i32) {
         (self.x, self.y)
     }
 
@@ -162,7 +162,7 @@ impl Monitor {
     /// por motivos TEMPORARIOS (tela de UAC na frente, sessao trocando)
     /// e morrer na primeira faria o botao "Ver a tela" falhar por causa
     /// de um dialogo que sai sozinho em dois segundos.
-    pub fn duplicar(self) -> anyhow::Result<Tela> {
+    pub fn duplicate(self) -> anyhow::Result<Screen> {
         const TENTATIVAS: u32 = 5;
         let mut ultimo = String::new();
         for i in 0..TENTATIVAS {
@@ -172,7 +172,7 @@ impl Monitor {
             match unsafe { self.saida.DuplicateOutput(&self.dispositivo) } {
                 Ok(dup) => {
                     let staging = cria_staging(&self.dispositivo, self.w, self.h)?;
-                    return Ok(Tela {
+                    return Ok(Screen {
                         m: self,
                         dup,
                         staging,
@@ -193,7 +193,7 @@ impl Monitor {
         }
         // "Acesso negado" sozinho manda a pessoa procurar permissao de
         // usuario, que NUNCA e o problema. Sao quatro causas com o
-        // mesmo codigo, e ja diagnostiquei a errada tres vezes num dia
+        // mesmo code, e ja diagnostiquei a errada tres vezes num dia
         // -- por isso a ordem aqui e por frequencia MEDIDA, nao por
         // intuicao:
         //
@@ -203,7 +203,7 @@ impl Monitor {
         //    LogonUI ausente e adaptador de video OK -- os dois sinais
         //    que me fizeram descartar as outras hipoteses. O host ja
         //    tenta encerra-lo na partida.
-        // 2. Tela bloqueada de verdade (LogonUI na frente).
+        // 2. Screen bloqueada de verdade (LogonUI na frente).
         // 3. Dialogo de UAC no desktop seguro.
         // 4. Pilha de display meio instalada -- foi real quando o
         //    driver virtual do Parsec saiu e deixou um `Microsoft Basic
@@ -224,7 +224,7 @@ impl Monitor {
     }
 }
 
-pub struct Tela {
+pub struct Screen {
     m: Monitor,
     dup: IDXGIOutputDuplication,
     staging: ID3D11Texture2D,
@@ -233,7 +233,7 @@ pub struct Tela {
     /// Ultimo desenho de ponteiro que o DXGI mandou. Ele so reenvia
     /// quando a forma MUDA, entao guardar e obrigatorio -- sem isto o
     /// cursor apareceria num quadro e sumiria no seguinte.
-    forma: Option<Forma>,
+    forma: Option<Shape>,
     ponteiro: (i32, i32),
     visivel: bool,
     /// O que estava sob o cursor antes de desenharmos, e onde.
@@ -249,16 +249,16 @@ pub struct Tela {
     visivel_sistema: bool,
 }
 
-impl Tela {
-    pub fn tamanho(&self) -> (u32, u32) {
-        self.m.tamanho()
+impl Screen {
+    pub fn size(&self) -> (u32, u32) {
+        self.m.size()
     }
 
-    pub fn origem(&self) -> (i32, i32) {
-        self.m.origem()
+    pub fn origin(&self) -> (i32, i32) {
+        self.m.origin()
     }
 
-    pub fn tem_imagem(&self) -> bool {
+    pub fn has_image(&self) -> bool {
         self.tem_imagem
     }
 
@@ -268,14 +268,14 @@ impl Tela {
     /// `mapear`. A separacao existe para o `ReleaseFrame` acontecer
     /// **antes** do `Map`: enquanto o quadro nao e devolvido, o
     /// compositor espera por nos.
-    pub fn proximo(&mut self, espera_ms: u32) -> anyhow::Result<Estado> {
+    pub fn next_frame(&mut self, espera_ms: u32) -> anyhow::Result<CaptureState> {
         unsafe {
             let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
             let mut recurso: Option<IDXGIResource> = None;
             match self.dup.AcquireNextFrame(espera_ms, &mut info, &mut recurso) {
                 Ok(()) => {}
-                Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => return Ok(Estado::Parado),
-                Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => return Ok(Estado::Perdido),
+                Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => return Ok(CaptureState::Idle),
+                Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => return Ok(CaptureState::Lost),
                 Err(e) => return Err(anyhow::anyhow!("AcquireNextFrame: {e}")),
             }
 
@@ -309,16 +309,16 @@ impl Tela {
             // obedecer isso apagaria a seta embutida -- que existe
             // justamente para esse caso. Com mouse, `Visible` passa a
             // significar algo: jogo em tela cheia esconde o ponteiro de
-            // proposito, e desenhar um por cima seria nos intrometendo.
+            // proposito, e draw um por cima seria nos intrometendo.
             if info.LastMouseUpdateTime != 0 {
                 self.visivel_sistema = info.PointerPosition.Visible.as_bool();
             }
             self.visivel = self.forma.is_none() || self.visivel_sistema;
 
             // Se o sistema TEM um cursor, ele manda a forma quando ela
-            // muda, e desenhar a dele e melhor que a nossa (mao, barra
+            // muda, e draw a dele e melhor que a nossa (mao, barra
             // de texto, redimensionar). Quando nunca vem nada, usamos a
-            // seta embutida -- ver `cursor::seta_embutida`.
+            // seta embutida -- ver `cursor::builtin_arrow`.
             if info.PointerShapeBufferSize > 0 {
                 self.ler_forma(info.PointerShapeBufferSize);
             }
@@ -334,9 +334,9 @@ impl Tela {
             // re-encode e barato -- a cena e identica fora do cursor, e
             // sai um P-frame de poucos bytes.
             let estado = if !so_ponteiro || (mexeu && self.tem_imagem) {
-                Estado::Novo
+                CaptureState::New
             } else {
-                Estado::Parado
+                CaptureState::Idle
             };
 
             if !so_ponteiro {
@@ -374,9 +374,9 @@ impl Tela {
             return;
         }
         let tipo = match info.Type {
-            1 => TipoForma::Mono,
-            2 => TipoForma::Cor,
-            4 => TipoForma::CorMascarada,
+            1 => ShapeKind::Mono,
+            2 => ShapeKind::Color,
+            4 => ShapeKind::MaskedColor,
             // Tipo que nao conhecemos: melhor NENHUM cursor que um
             // retangulo de lixo no meio da tela de alguem.
             outro => {
@@ -390,7 +390,7 @@ impl Tela {
             "  forma de ponteiro: {:?} {}x{} pitch={} ({} bytes)",
             tipo, info.Width, info.Height, info.Pitch, usado
         );
-        self.forma = Some(Forma {
+        self.forma = Some(Shape {
             tipo,
             w: info.Width,
             h: info.Height,
@@ -405,7 +405,7 @@ impl Tela {
     /// Serve tanto para o quadro que acabou de chegar quanto para
     /// reenviar o ultimo com a tela parada -- o staging guarda a imagem,
     /// entao reenviar nao custa copia nova.
-    pub fn mapear(&mut self) -> anyhow::Result<Mapeado<'_>> {
+    pub fn map_frame(&mut self) -> anyhow::Result<Mapped<'_>> {
         unsafe {
             let recurso: ID3D11Resource = self.staging.cast()?;
             let mut m = D3D11_MAPPED_SUBRESOURCE::default();
@@ -417,30 +417,30 @@ impl Tela {
 
             // 1. Desfazer o cursor anterior. So existe quando nenhuma
             //    copia nova passou por cima dele.
-            if let Some((rx, ry, rw, rh, dados)) = self.salvo.take() {
+            if let Some((rx, ry, rw, rh, data)) = self.salvo.take() {
                 for ly in 0..rh as usize {
                     let o = (ry as usize + ly) * stride + rx as usize * 4;
                     let largura = rw as usize * 4;
                     let fonte = ly * largura;
-                    if o + largura <= total && fonte + largura <= dados.len() {
-                        mut_px[o..o + largura].copy_from_slice(&dados[fonte..fonte + largura]);
+                    if o + largura <= total && fonte + largura <= data.len() {
+                        mut_px[o..o + largura].copy_from_slice(&data[fonte..fonte + largura]);
                     }
                 }
             }
 
-            // 2. Guardar o que esta sob o cursor novo e desenhar.
+            // 2. Guardar o que esta sob o cursor novo e draw.
             if self.visivel {
                 let embutida;
                 let forma = match &self.forma {
                     Some(f) => f,
                     None => {
-                        embutida = crate::cursor::seta_embutida();
+                        embutida = crate::cursor::builtin_arrow();
                         &embutida
                     }
                 };
                 {
                     let f = forma;
-                    let alt = if f.tipo == TipoForma::Mono { f.h / 2 } else { f.h };
+                    let alt = if f.tipo == ShapeKind::Mono { f.h / 2 } else { f.h };
                     // Descontar o hotspot aqui esta CERTO porque a
                     // posicao vem do `GetCursorPos`, que devolve o
                     // ponto quente (a pontinha da seta).
@@ -454,17 +454,17 @@ impl Tela {
                     // desenha deslocado pelo tamanho do hotspot.
                     let x = self.ponteiro.0 - f.hot.0;
                     let y = self.ponteiro.1 - f.hot.1;
-                    if let Some((rx, ry, rw, rh)) = recorte(w, h, f.w, alt, x, y) {
+                    if let Some((rx, ry, rw, rh)) = clip(w, h, f.w, alt, x, y) {
                         let largura = rw as usize * 4;
-                        let mut dados = Vec::with_capacity(largura * rh as usize);
+                        let mut data = Vec::with_capacity(largura * rh as usize);
                         for ly in 0..rh as usize {
                             let o = (ry as usize + ly) * stride + rx as usize * 4;
                             if o + largura <= total {
-                                dados.extend_from_slice(&mut_px[o..o + largura]);
+                                data.extend_from_slice(&mut_px[o..o + largura]);
                             }
                         }
-                        self.salvo = Some((rx, ry, rw, rh, dados));
-                        desenhar(mut_px, stride, w, h, f, x, y);
+                        self.salvo = Some((rx, ry, rw, rh, data));
+                        draw(mut_px, stride, w, h, f, x, y);
                         if !self.desenhou_uma_vez {
                             self.desenhou_uma_vez = true;
                             println!("  cursor desenhado em {x},{y} ({rw}x{rh})");
@@ -474,7 +474,7 @@ impl Tela {
             }
 
             let px = std::slice::from_raw_parts(m.pData as *const u8, total);
-            Ok(Mapeado { contexto: &self.m.contexto, recurso, px, stride })
+            Ok(Mapped { contexto: &self.m.contexto, recurso, px, stride })
         }
     }
 
@@ -483,7 +483,7 @@ impl Tela {
     /// A resolucao pode ter mudado junto (foi o que derrubou a anterior),
     /// entao a textura de staging e o tamanho sao refeitos tambem --
     /// devolve `true` quando quem chama precisa refazer o codificador.
-    pub fn recriar(&mut self) -> anyhow::Result<bool> {
+    pub fn recreate(&mut self) -> anyhow::Result<bool> {
         unsafe {
             let desc = self.m.saida.GetDesc()?;
             let r = desc.DesktopCoordinates;

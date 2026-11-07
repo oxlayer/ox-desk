@@ -41,7 +41,7 @@ pub const TETO: u64 = 60_000_000;
 static LIMITE: OnceLock<u64> = OnceLock::new();
 
 /// Fixa um teto em bits/s. Chamar na partida, antes de criar encoder.
-pub fn limitar(bits: u64) {
+pub fn set_cap(bits: u64) {
     let _ = LIMITE.set(bits);
 }
 
@@ -61,7 +61,7 @@ pub fn alvo_bits(w: u32, h: u32, teto: Option<u64>) -> u32 {
     // Se ele disse "meu upload tem 5 Mbps", entregar 8 porque "é o
     // mínimo para ficar bonito" é entregar uma imagem que não chega.
     // Piso existe para a LAN, onde o custo de errar para baixo é só
-    // qualidade; aqui o custo de errar para cima é a sessão inteira.
+    // quality; aqui o custo de errar para cima é a sessão inteira.
     match teto {
         Some(t) if t > 0 => por_area.min(t) as u32,
         _ => por_area as u32,
@@ -69,12 +69,12 @@ pub fn alvo_bits(w: u32, h: u32, teto: Option<u64>) -> u32 {
 }
 
 /// O alvo desta máquina, já com o teto do processo aplicado.
-pub fn alvo(w: u32, h: u32) -> u32 {
+pub fn target(w: u32, h: u32) -> u32 {
     alvo_bits(w, h, limite())
 }
 
 /// Lê `--mbps N` da linha de comando. `None` = sem teto.
-pub fn teto_de_args(a: &[String]) -> Result<Option<u64>, String> {
+pub fn cap_from_args(a: &[String]) -> Result<Option<u64>, String> {
     let Some(i) = a.iter().position(|v| v == "--mbps") else { return Ok(None) };
     let Some(v) = a.get(i + 1) else {
         return Err("--mbps precisa de um número (ex: --mbps 6)".into());
@@ -133,11 +133,11 @@ mod testes {
     #[test]
     fn args_parseia_e_recusa() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(teto_de_args(&a(&["9777"])).unwrap(), None);
-        assert_eq!(teto_de_args(&a(&["--mbps", "6"])).unwrap(), Some(6_000_000));
-        assert_eq!(teto_de_args(&a(&["--mbps", "2.5"])).unwrap(), Some(2_500_000));
-        assert!(teto_de_args(&a(&["--mbps"])).is_err());
-        assert!(teto_de_args(&a(&["--mbps", "muito"])).is_err());
-        assert!(teto_de_args(&a(&["--mbps", "0"])).is_err());
+        assert_eq!(cap_from_args(&a(&["9777"])).unwrap(), None);
+        assert_eq!(cap_from_args(&a(&["--mbps", "6"])).unwrap(), Some(6_000_000));
+        assert_eq!(cap_from_args(&a(&["--mbps", "2.5"])).unwrap(), Some(2_500_000));
+        assert!(cap_from_args(&a(&["--mbps"])).is_err());
+        assert!(cap_from_args(&a(&["--mbps", "muito"])).is_err());
+        assert!(cap_from_args(&a(&["--mbps", "0"])).is_err());
     }
 }

@@ -23,7 +23,7 @@ pub const BTN_RIGHT: i32 = 0x111;
 pub const BTN_MIDDLE: i32 = 0x112;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Evento {
+pub enum Event {
     /// Posicao absoluta no espaco do stream capturado (pixels).
     ///
     /// Absoluto e nao relativo porque o cliente sabe exatamente onde o
@@ -42,13 +42,13 @@ pub enum Evento {
     ///   KVM nao tem janela nenhuma, e perguntar a resolucao remota so
     ///   para converter seria handshake a mais para piorar o resultado.
     MouseRel { dx: f64, dy: f64 },
-    Botao { codigo: i32, apertado: bool },
-    Rolagem { dx: f64, dy: f64 },
+    Button { code: i32, pressed: bool },
+    Scroll { dx: f64, dy: f64 },
     /// Keycode do evdev (o que o `NotifyKeyboardKeycode` recebe).
-    Tecla { keycode: u32, apertado: bool },
+    Key { keycode: u32, pressed: bool },
 }
 
-impl Evento {
+impl Event {
     const T_MOUSE: u8 = 1;
     const T_BOTAO: u8 = 2;
     const T_ROLAGEM: u8 = 3;
@@ -67,29 +67,29 @@ impl Evento {
         })
     }
 
-    pub fn escrever(&self, b: &mut BytesMut) {
+    pub fn write(&self, b: &mut BytesMut) {
         match *self {
-            Evento::Mouse { x, y } => {
+            Event::Mouse { x, y } => {
                 b.put_u8(Self::T_MOUSE);
                 b.put_f64(x);
                 b.put_f64(y);
             }
-            Evento::Botao { codigo, apertado } => {
+            Event::Button { code, pressed } => {
                 b.put_u8(Self::T_BOTAO);
-                b.put_i32(codigo);
-                b.put_u8(u8::from(apertado));
+                b.put_i32(code);
+                b.put_u8(u8::from(pressed));
             }
-            Evento::Rolagem { dx, dy } => {
+            Event::Scroll { dx, dy } => {
                 b.put_u8(Self::T_ROLAGEM);
                 b.put_f64(dx);
                 b.put_f64(dy);
             }
-            Evento::Tecla { keycode, apertado } => {
+            Event::Key { keycode, pressed } => {
                 b.put_u8(Self::T_TECLA);
                 b.put_u32(keycode);
-                b.put_u8(u8::from(apertado));
+                b.put_u8(u8::from(pressed));
             }
-            Evento::MouseRel { dx, dy } => {
+            Event::MouseRel { dx, dy } => {
                 b.put_u8(Self::T_MOUSE_REL);
                 b.put_f64(dx);
                 b.put_f64(dy);
@@ -104,29 +104,29 @@ impl Evento {
 /// evento ou tres e meio. Sem este acumulador, meio evento viraria
 /// comando errado -- e comando errado aqui mexe no computador de alguem.
 #[derive(Default)]
-pub struct Leitor {
+pub struct Reader {
     buf: BytesMut,
     /// Bytes descartados por tipo desconhecido. Se isto cresce, as duas
     /// pontas estao em versoes diferentes do protocolo.
-    pub desconhecidos: u64,
+    pub unknown: u64,
 }
 
-impl Leitor {
-    pub fn alimentar(&mut self, dados: &[u8]) {
-        self.buf.extend_from_slice(dados);
+impl Reader {
+    pub fn feed(&mut self, data: &[u8]) {
+        self.buf.extend_from_slice(data);
     }
 
-    pub fn proximo(&mut self) -> Option<Evento> {
+    pub fn next_event(&mut self) -> Option<Event> {
         loop {
             if self.buf.is_empty() {
                 return None;
             }
             let tag = self.buf[0];
-            let Some(n) = Evento::tamanho(tag) else {
+            let Some(n) = Event::tamanho(tag) else {
                 // Tipo que nao conhecemos: pular 1 byte e tentar de novo
                 // e melhor que travar o stream para sempre.
                 self.buf.advance(1);
-                self.desconhecidos += 1;
+                self.unknown += 1;
                 continue;
             };
             if self.buf.len() < 1 + n {
@@ -134,22 +134,22 @@ impl Leitor {
             }
             self.buf.advance(1);
             let e = match tag {
-                Evento::T_MOUSE => {
-                    Evento::Mouse { x: self.buf.get_f64(), y: self.buf.get_f64() }
+                Event::T_MOUSE => {
+                    Event::Mouse { x: self.buf.get_f64(), y: self.buf.get_f64() }
                 }
-                Evento::T_BOTAO => Evento::Botao {
-                    codigo: self.buf.get_i32(),
-                    apertado: self.buf.get_u8() != 0,
+                Event::T_BOTAO => Event::Button {
+                    code: self.buf.get_i32(),
+                    pressed: self.buf.get_u8() != 0,
                 },
-                Evento::T_ROLAGEM => {
-                    Evento::Rolagem { dx: self.buf.get_f64(), dy: self.buf.get_f64() }
+                Event::T_ROLAGEM => {
+                    Event::Scroll { dx: self.buf.get_f64(), dy: self.buf.get_f64() }
                 }
-                Evento::T_MOUSE_REL => {
-                    Evento::MouseRel { dx: self.buf.get_f64(), dy: self.buf.get_f64() }
+                Event::T_MOUSE_REL => {
+                    Event::MouseRel { dx: self.buf.get_f64(), dy: self.buf.get_f64() }
                 }
-                Evento::T_TECLA => Evento::Tecla {
+                Event::T_TECLA => Event::Key {
                     keycode: self.buf.get_u32(),
-                    apertado: self.buf.get_u8() != 0,
+                    pressed: self.buf.get_u8() != 0,
                 },
                 // Inalcancavel: `tamanho()` ja recusou qualquer tag fora
                 // da lista, e so chegamos aqui com os bytes completos.
@@ -162,7 +162,7 @@ impl Leitor {
                 // payload inteiro e a unica saida segura.
                 outra => {
                     self.buf.advance(n);
-                    self.desconhecidos += 1;
+                    self.unknown += 1;
                     debug_assert!(false, "tag {outra} passou por tamanho() sem arm");
                     continue;
                 }
@@ -180,21 +180,21 @@ mod testes_codec {
     #[test]
     fn todo_evento_volta_igual() {
         let amostras = [
-            Evento::Mouse { x: 12.5, y: -3.25 },
-            Evento::MouseRel { dx: -4.0, dy: 7.5 },
-            Evento::Botao { codigo: BTN_LEFT, apertado: true },
-            Evento::Rolagem { dx: 0.0, dy: -120.0 },
-            Evento::Tecla { keycode: 30, apertado: false },
+            Event::Mouse { x: 12.5, y: -3.25 },
+            Event::MouseRel { dx: -4.0, dy: 7.5 },
+            Event::Button { code: BTN_LEFT, pressed: true },
+            Event::Scroll { dx: 0.0, dy: -120.0 },
+            Event::Key { keycode: 30, pressed: false },
         ];
         let mut b = BytesMut::new();
         for e in &amostras {
-            e.escrever(&mut b);
+            e.write(&mut b);
         }
-        let mut l = Leitor::default();
-        l.alimentar(&b);
-        let lidos: Vec<_> = std::iter::from_fn(|| l.proximo()).collect();
+        let mut l = Reader::default();
+        l.feed(&b);
+        let lidos: Vec<_> = std::iter::from_fn(|| l.next_event()).collect();
         assert_eq!(lidos, amostras, "o codec nao fechou a volta");
-        assert_eq!(l.desconhecidos, 0);
+        assert_eq!(l.unknown, 0);
     }
 
     /// Um tipo novo NAO pode ser lido como outro.
@@ -207,13 +207,13 @@ mod testes_codec {
     #[test]
     fn tag_de_16_bytes_nao_desalinha_o_que_vem_depois() {
         let mut b = BytesMut::new();
-        Evento::MouseRel { dx: 1.0, dy: 2.0 }.escrever(&mut b);
-        Evento::Tecla { keycode: 57, apertado: true }.escrever(&mut b);
-        let mut l = Leitor::default();
-        l.alimentar(&b);
-        assert_eq!(l.proximo(), Some(Evento::MouseRel { dx: 1.0, dy: 2.0 }));
-        assert_eq!(l.proximo(), Some(Evento::Tecla { keycode: 57, apertado: true }));
-        assert_eq!(l.proximo(), None);
+        Event::MouseRel { dx: 1.0, dy: 2.0 }.write(&mut b);
+        Event::Key { keycode: 57, pressed: true }.write(&mut b);
+        let mut l = Reader::default();
+        l.feed(&b);
+        assert_eq!(l.next_event(), Some(Event::MouseRel { dx: 1.0, dy: 2.0 }));
+        assert_eq!(l.next_event(), Some(Event::Key { keycode: 57, pressed: true }));
+        assert_eq!(l.next_event(), None);
     }
 
     /// Tag de verdade desconhecida some sem levar o resto junto.
@@ -221,11 +221,11 @@ mod testes_codec {
     fn tag_desconhecida_e_pulada() {
         let mut b = BytesMut::new();
         b.put_u8(200); // nao existe
-        Evento::Tecla { keycode: 1, apertado: true }.escrever(&mut b);
-        let mut l = Leitor::default();
-        l.alimentar(&b);
-        assert_eq!(l.proximo(), Some(Evento::Tecla { keycode: 1, apertado: true }));
-        assert_eq!(l.desconhecidos, 1);
+        Event::Key { keycode: 1, pressed: true }.write(&mut b);
+        let mut l = Reader::default();
+        l.feed(&b);
+        assert_eq!(l.next_event(), Some(Event::Key { keycode: 1, pressed: true }));
+        assert_eq!(l.unknown, 1);
     }
 }
 
@@ -234,13 +234,13 @@ mod testes_codec {
 mod tests {
     use super::*;
 
-    fn todos() -> Vec<Evento> {
+    fn todos() -> Vec<Event> {
         vec![
-            Evento::Mouse { x: 1280.5, y: 720.25 },
-            Evento::Botao { codigo: BTN_LEFT, apertado: true },
-            Evento::Botao { codigo: BTN_LEFT, apertado: false },
-            Evento::Rolagem { dx: 0.0, dy: -3.5 },
-            Evento::Tecla { keycode: 30, apertado: true },
+            Event::Mouse { x: 1280.5, y: 720.25 },
+            Event::Button { code: BTN_LEFT, pressed: true },
+            Event::Button { code: BTN_LEFT, pressed: false },
+            Event::Scroll { dx: 0.0, dy: -3.5 },
+            Event::Key { keycode: 30, pressed: true },
         ]
     }
 
@@ -248,13 +248,13 @@ mod tests {
     fn vai_e_volta() {
         let mut b = BytesMut::new();
         for e in todos() {
-            e.escrever(&mut b);
+            e.write(&mut b);
         }
-        let mut l = Leitor::default();
-        l.alimentar(&b);
-        let lidos: Vec<_> = std::iter::from_fn(|| l.proximo()).collect();
+        let mut l = Reader::default();
+        l.feed(&b);
+        let lidos: Vec<_> = std::iter::from_fn(|| l.next_event()).collect();
         assert_eq!(lidos, todos());
-        assert_eq!(l.desconhecidos, 0);
+        assert_eq!(l.unknown, 0);
     }
 
     #[test]
@@ -264,15 +264,15 @@ mod tests {
         // maquina de alguem.
         let mut b = BytesMut::new();
         for e in todos() {
-            e.escrever(&mut b);
+            e.write(&mut b);
         }
         let bytes = b.to_vec();
-        let mut l = Leitor::default();
+        let mut l = Reader::default();
         let mut lidos = Vec::new();
         // Um byte por vez: o pior fatiamento possivel.
         for byte in &bytes {
-            l.alimentar(&[*byte]);
-            while let Some(e) = l.proximo() {
+            l.feed(&[*byte]);
+            while let Some(e) = l.next_event() {
                 lidos.push(e);
             }
         }
@@ -285,11 +285,11 @@ mod tests {
         // pulado, e o que vem depois continua valendo.
         let mut b = BytesMut::new();
         b.put_u8(99); // tipo do futuro
-        Evento::Tecla { keycode: 57, apertado: true }.escrever(&mut b);
-        let mut l = Leitor::default();
-        l.alimentar(&b);
-        assert_eq!(l.proximo(), Some(Evento::Tecla { keycode: 57, apertado: true }));
-        assert_eq!(l.desconhecidos, 1);
+        Event::Key { keycode: 57, pressed: true }.write(&mut b);
+        let mut l = Reader::default();
+        l.feed(&b);
+        assert_eq!(l.next_event(), Some(Event::Key { keycode: 57, pressed: true }));
+        assert_eq!(l.unknown, 1);
     }
 }
 
@@ -304,7 +304,7 @@ mod tests {
 /// POSICAO da tecla, cada maquina aplica o proprio layout, que e como um
 /// teclado de verdade se comporta.
 #[cfg(feature = "winit-keys")]
-pub fn evdev_de_winit(code: winit::keyboard::KeyCode) -> Option<u32> {
+pub fn evdev_from_winit(code: winit::keyboard::KeyCode) -> Option<u32> {
     use winit::keyboard::KeyCode as K;
     Some(match code {
         K::Escape => 1,
@@ -348,7 +348,7 @@ pub fn evdev_de_winit(code: winit::keyboard::KeyCode) -> Option<u32> {
 ///
 /// Devolve `(scancode, precisa do prefixo E0)`. Quem usa hoje e o host
 /// do Windows, que injeta por `KEYEVENTF_SCANCODE` -- mas a tabela mora
-/// AQUI, junto do seu inverso (`evdev_de_winit`), e nao no modulo de
+/// AQUI, junto do seu inverso (`evdev_from_winit`), e nao no modulo de
 /// plataforma: ela e tabela pura, e no modulo `cfg(windows)` os testes
 /// dela nunca rodariam na maquina onde ela e escrita. Tabela sem teste
 /// que roda e tabela que erra uma tecla em silencio.
@@ -357,7 +357,7 @@ pub fn evdev_de_winit(code: winit::keyboard::KeyCode) -> Option<u32> {
 /// evdev foram COPIADOS do Set 1 (evdev 30 = `A` = 0x1E = 30). O que a
 /// tabela trata e o que fugiu disso -- as teclas de prefixo `E0` (setas,
 /// Home, Ctrl direito, as duas de Windows) e as de layout ABNT2.
-pub fn scancode_de_evdev(keycode: u32) -> Option<(u16, bool)> {
+pub fn scancode_from_evdev(keycode: u32) -> Option<(u16, bool)> {
     Some(match keycode {
         // Identidade: os codigos do evdev ate 88 sao os do Set 1.
         // 84 e 85 nao existem em teclado comum e o cliente nao os manda.
@@ -411,15 +411,15 @@ mod testes_teclas {
             (K::F5, 63),
             (K::Escape, 1),
         ] {
-            assert_eq!(evdev_de_winit(k), Some(esperado), "{k:?}");
+            assert_eq!(evdev_from_winit(k), Some(esperado), "{k:?}");
         }
     }
 
     #[test]
     fn tecla_sem_mapeamento_devolve_nada() {
-        // Melhor ignorar que mandar codigo errado: codigo errado aperta
+        // Melhor ignorar que mandar code errado: code errado aperta
         // OUTRA tecla na maquina de alguem.
-        assert_eq!(evdev_de_winit(K::Fn), None);
+        assert_eq!(evdev_from_winit(K::Fn), None);
     }
 }
 
@@ -430,20 +430,20 @@ mod testes_scancode {
     #[test]
     fn letras_e_digitos_sao_identidade() {
         // O acidente historico que a tabela depende: evdev 1..83 == Set 1.
-        assert_eq!(scancode_de_evdev(30), Some((0x1E, false))); // A
-        assert_eq!(scancode_de_evdev(2), Some((0x02, false))); // 1
-        assert_eq!(scancode_de_evdev(57), Some((0x39, false))); // espaco
-        assert_eq!(scancode_de_evdev(28), Some((0x1C, false))); // Enter
+        assert_eq!(scancode_from_evdev(30), Some((0x1E, false))); // A
+        assert_eq!(scancode_from_evdev(2), Some((0x02, false))); // 1
+        assert_eq!(scancode_from_evdev(57), Some((0x39, false))); // espaco
+        assert_eq!(scancode_from_evdev(28), Some((0x1C, false))); // Enter
     }
 
     #[test]
     fn teclas_estendidas_pedem_prefixo() {
         // Sem o E0, `seta cima` viraria `8` do numerico -- mesmo
         // scancode, significado diferente.
-        assert_eq!(scancode_de_evdev(103), Some((0x48, true)));
-        assert_eq!(scancode_de_evdev(72), Some((0x48, false)));
-        assert_eq!(scancode_de_evdev(97), Some((0x1D, true))); // Ctrl dir
-        assert_eq!(scancode_de_evdev(29), Some((0x1D, false))); // Ctrl esq
+        assert_eq!(scancode_from_evdev(103), Some((0x48, true)));
+        assert_eq!(scancode_from_evdev(72), Some((0x48, false)));
+        assert_eq!(scancode_from_evdev(97), Some((0x1D, true))); // Ctrl dir
+        assert_eq!(scancode_from_evdev(29), Some((0x1D, false))); // Ctrl esq
     }
 
 
@@ -477,12 +477,12 @@ mod testes_scancode {
     #[test]
     fn toda_tecla_que_o_cliente_manda_tem_traducao() {
         // A invariante que importa: se o visualizador consegue mandar um
-        // codigo, o host do Windows tem de saber o que fazer com ele.
+        // code, o host do Windows tem de saber o que fazer com ele.
         // Um buraco aqui nao da erro -- a tecla simplesmente nao faz
         // nada, e descobrir isso e no teclado de alguem.
         for c in 1u32..=127 {
             let excecao = SEM_TRADUCAO.iter().find(|(k, _)| *k == c);
-            match (scancode_de_evdev(c), excecao) {
+            match (scancode_from_evdev(c), excecao) {
                 (Some(_), None) => {}
                 (None, Some(_)) => {}
                 (Some(_), Some((_, motivo))) => {
@@ -502,7 +502,7 @@ mod testes_scancode {
         // tecla na maquina de alguem, e o sintoma nao aponta para aqui.
         let mut visto: std::collections::BTreeMap<(u16, bool), u32> = Default::default();
         for c in 1u32..=127 {
-            if let Some(par) = scancode_de_evdev(c) {
+            if let Some(par) = scancode_from_evdev(c) {
                 if let Some(antes) = visto.insert(par, c) {
                     panic!("evdev {antes} e {c} geram o mesmo scancode {par:?}");
                 }
@@ -513,7 +513,7 @@ mod testes_scancode {
     #[test]
     fn pause_nao_tem_scancode() {
         // Tratada por tecla virtual; devolver Some aqui injetaria outra.
-        assert_eq!(scancode_de_evdev(119), None);
+        assert_eq!(scancode_from_evdev(119), None);
     }
 }
 
@@ -522,7 +522,7 @@ mod testes_scancode {
 /// Converte posicao ABSOLUTA do quadro para o espaco em que o sistema
 /// de destino injeta input.
 ///
-/// O protocolo carrega `Evento::Mouse` em **pixel do quadro**: o
+/// O protocolo carrega `Event::Mouse` em **pixel do quadro**: o
 /// visualizador sabe o tamanho do que recebe e mapeia a janela para
 /// ele (`ponto_remoto`, em bin/view.rs). Mas nem todo sistema injeta
 /// nesse mesmo espaco.
@@ -535,13 +535,13 @@ mod testes_scancode {
 /// bateu".
 ///
 /// Fica aqui, neutra de plataforma, pelo mesmo motivo de
-/// `tecla_mac_de_evdev`: em `input_mac.rs` o teste nunca rodaria na
+/// `mac_key_from_evdev`: em `input_mac.rs` o teste nunca rodaria na
 /// maquina que roda a suite.
 ///
 /// `escala` = pixels de captura por ponto. `1.0` em tela comum, `2.0`
 /// num Retina. Zero ou negativo nao converte nada: devolve o ponto
 /// como veio, porque chutar um fator seria pior que nao escalar.
-pub fn ponto_de_pixel(x: f64, y: f64, escala: f64) -> (f64, f64) {
+pub fn point_from_pixel(x: f64, y: f64, escala: f64) -> (f64, f64) {
     if escala <= 0.0 {
         return (x, y);
     }
@@ -555,16 +555,16 @@ pub fn ponto_de_pixel(x: f64, y: f64, escala: f64) -> (f64, f64) {
 /// Terceira tabela do projeto, pelo mesmo motivo das outras duas: o
 /// protocolo carrega **evdev** em todos os caminhos (e o que o
 /// `NotifyKeyboardKeycode` do Mutter recebe), e cada sistema tem a sua
-/// numeracao. O Windows precisa de Set-1 (`scancode_de_evdev`); o
+/// numeracao. O Windows precisa de Set-1 (`scancode_from_evdev`); o
 /// macOS precisa de `kVK`, que nao tem relacao nenhuma com nenhum dos
 /// dois -- `A` e 30 no evdev, 0x1E no Set-1 e 0x00 no macOS.
 ///
 /// Fica aqui, neutra de plataforma, e nao em `input_mac.rs`, porque
 /// aquele arquivo e `cfg(target_os = "macos")` e os testes desta
 /// tabela nunca rodariam na maquina que roda a suite. Mesma decisao
-/// que ja tirou `scancode_de_evdev` do `input_win.rs` e a composicao
+/// que ja tirou `scancode_from_evdev` do `input_win.rs` e a composicao
 /// do cursor do `capture_win.rs`.
-pub fn tecla_mac_de_evdev(evdev: u32) -> Option<u16> {
+pub fn mac_key_from_evdev(evdev: u32) -> Option<u16> {
     Some(match evdev {
         // Letras. A ordem do macOS nao e alfabetica nem de teclado --
         // e a do hardware do Apple II em diante, entao a tabela e
@@ -688,7 +688,7 @@ mod testes_tecla_mac {
             (63, 0x60, "F5"),
         ];
         for (evdev, mac, nome) in casos {
-            assert_eq!(tecla_mac_de_evdev(evdev), Some(mac), "{nome}");
+            assert_eq!(mac_key_from_evdev(evdev), Some(mac), "{nome}");
         }
     }
 
@@ -701,7 +701,7 @@ mod testes_tecla_mac {
     fn nenhuma_colisao_na_tabela() {
         let mut visto: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
         for evdev in 0u32..=130 {
-            let Some(mac) = tecla_mac_de_evdev(evdev) else { continue };
+            let Some(mac) = mac_key_from_evdev(evdev) else { continue };
             if let Some(antes) = visto.insert(mac, evdev) {
                 panic!("evdev {antes} e {evdev} caem no mesmo kVK {mac:#04x}");
             }
@@ -711,14 +711,14 @@ mod testes_tecla_mac {
     /// Codigo que nao existe nao vira tecla.
     #[test]
     fn desconhecido_devolve_none() {
-        assert_eq!(tecla_mac_de_evdev(9999), None);
+        assert_eq!(mac_key_from_evdev(9999), None);
     }
 
     /// O socorro do KVM tem de ser traduzivel nos dois lados.
     #[test]
     fn os_dois_ctrl_existem() {
-        assert!(tecla_mac_de_evdev(29).is_some(), "ctrl esquerdo");
-        assert!(tecla_mac_de_evdev(97).is_some(), "ctrl direito");
+        assert!(mac_key_from_evdev(29).is_some(), "ctrl esquerdo");
+        assert!(mac_key_from_evdev(97).is_some(), "ctrl direito");
     }
 }
 
@@ -730,15 +730,15 @@ mod testes_ponto_de_pixel {
     fn retina_divide_por_dois() {
         // O caso real: MacBook Air capturado em 3360x2100, injetando
         // num espaco de 1680x1050 pontos. O canto tem de virar canto.
-        assert_eq!(ponto_de_pixel(3359.0, 2099.0, 2.0), (1679.5, 1049.5));
+        assert_eq!(point_from_pixel(3359.0, 2099.0, 2.0), (1679.5, 1049.5));
         // E o meio tem de virar meio -- era aqui que o cursor ia para o
         // canto inferior direito.
-        assert_eq!(ponto_de_pixel(1680.0, 1050.0, 2.0), (840.0, 525.0));
+        assert_eq!(point_from_pixel(1680.0, 1050.0, 2.0), (840.0, 525.0));
     }
 
     #[test]
     fn tela_comum_nao_mexe() {
-        assert_eq!(ponto_de_pixel(1920.0, 1080.0, 1.0), (1920.0, 1080.0));
+        assert_eq!(point_from_pixel(1920.0, 1080.0, 1.0), (1920.0, 1080.0));
     }
 
     #[test]
@@ -746,7 +746,7 @@ mod testes_ponto_de_pixel {
         // Se a consulta ao display falhar, escalar por 0 mandaria o
         // ponteiro para o infinito (ou para NaN). Passar reto e pior
         // num Retina, mas e previsivel e nao quebra tela comum.
-        assert_eq!(ponto_de_pixel(100.0, 200.0, 0.0), (100.0, 200.0));
-        assert_eq!(ponto_de_pixel(100.0, 200.0, -2.0), (100.0, 200.0));
+        assert_eq!(point_from_pixel(100.0, 200.0, 0.0), (100.0, 200.0));
+        assert_eq!(point_from_pixel(100.0, 200.0, -2.0), (100.0, 200.0));
     }
 }
