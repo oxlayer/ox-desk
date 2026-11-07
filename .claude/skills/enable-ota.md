@@ -1,84 +1,86 @@
-# Ligar e operar a atualização automática (OTA)
+# Enable and operate automatic updates (OTA)
 
-O que faz a máquina baixar o build publicado e se trocar sozinha, sem
-ninguém rodar o deploy. Desenho e justificativas:
+What makes the machine download the published build and swap itself,
+without anyone running the deploy. Design and rationale:
 [`specs/015`](../../specs/015-ota.md).
 
-## 1. O token (uma vez, e é a única parte manual)
+## 1. The token (once, and it's the only manual part)
 
-O repo é privado, então sem token a API responde `200` com
-`{"message":"Not Found"}` e nada funciona.
+The repo is private, so without a token the API answers `200` with
+`{"message":"Not Found"}` and nothing works.
 
-Crie um **fine-grained PAT** em
+Create a **fine-grained PAT** at
 <https://github.com/settings/personal-access-tokens/new>:
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
 | Resource owner | `oxlayer` |
 | Repository access | Only select repositories → `ox-desk` |
 | Permissions → Repository | **Contents: Read-only** |
-| Expiration | o que você aceitar renovar |
+| Expiration | whatever you are willing to renew |
 
-Nada além de `Contents: Read-only`. **Não** use o token do `gh`: ele
-tem `repo` e `workflow`, ou seja, escrita em tudo — e este arquivo vai
-para um laptop que sai de casa.
+Nothing beyond `Contents: Read-only`. Do **not** use the `gh` token: it
+has `repo` and `workflow`, i.e. write access to everything — and this
+file goes to a laptop that leaves the house.
 
 ```bash
 install -m600 /dev/null ~/.config/logi/ota-token
 printf '%s' 'github_pat_...' > ~/.config/logi/ota-token
 ```
 
-O `deploy.sh` distribui para o Windows e o Mac a partir daqui (e dá
-`chmod 600` do lado de lá). O wizard **recusa** um token legível por
-outros.
+`deploy.sh` distributes it to Windows and the Mac from here (and does
+`chmod 600` on the other side). The wizard **refuses** a token readable
+by others.
 
-## 2. Ligar o relógio em cada máquina
+## 2. Turn on the clock on each machine
 
-No wizard (`/setup` no painel, ou o app abre nele sozinho quando falta
-algo essencial), o passo **Atualização automática (OTA)** tem botão. Ele
-instala o agendador do sistema — timer do systemd, LaunchAgent,
-tarefa agendada — e faz uma primeira checagem em modo `--conferir`.
+In the wizard (`/setup` in the panel, or the app opens on it by itself
+when something essential is missing), the **Atualização automática
+(OTA)** (Automatic update) step has a button. It installs the system
+scheduler — systemd timer, LaunchAgent, scheduled task — and does a
+first check in `--conferir` mode.
 
-## 3. Publicar uma versão para as máquinas consumirem
+## 3. Publish a version for the machines to consume
 
 ```bash
 git tag v0.3.0 && git push origin v0.3.0
 ```
 
-Sem tag não há Release, e sem Release o OTA não tem o que baixar — ele
-diz `igual` para sempre. Receita e custo em
+Without a tag there is no Release, and without a Release the OTA has
+nothing to download — it says `igual` (same) forever. Recipe and cost in
 [`specs/013`](../../specs/013-ci-cd.md#publicar-uma-versão).
 
-## Perguntar à mão
+## Asking by hand
 
 ```bash
-logi-ota --conferir   # só olha, não troca nada
-logi-ota --estado     # o JSON da última checagem
-logi-ota              # confere e aplica, se houver novidade
-logi-ota --forcar     # reinstala o publicado mesmo sendo o mesmo build
+logi-ota --conferir   # only looks, changes nothing
+logi-ota --estado     # the JSON of the last check
+logi-ota              # checks and applies, if there is something new
+logi-ota --forcar     # reinstalls the published one even if it's the same build
 ```
 
-No **Windows** nenhum deles troca binário: a chave do Authenticode não
-sai do Ubuntu, então lá o OTA só confere e relata. É esperado, e o
-painel mostra "há o build #N publicado" como pendência permanente até
-alguém rodar o deploy.
+On **Windows** none of them swaps the binary: the Authenticode key
+doesn't leave the Ubuntu machine, so there the OTA only checks and
+reports. That's expected, and the panel shows "há o build #N publicado"
+(build #N is published) as a permanent pending item until someone runs
+the deploy.
 
-## Quando der errado
+## When it goes wrong
 
-| Sintoma | O que é |
+| Symptom | What it is |
 |---|---|
-| `o GitHub respondeu: Not Found` | falta o token, ou ele não dá `Contents: read` neste repo |
-| `o GitHub respondeu: Bad credentials` | token inválido ou expirado |
-| `nenhum pacote comecando com logi-mac-...` | a Release saiu sem aquele pacote (job de Mac sem runner?) |
-| `o pacote nao confere` | download corrompido; a próxima rodada tenta de novo |
-| `revertido` | o build novo não respondeu ao `/healthz`; o anterior voltou. A cópia fica em `~/.local/state/logi-ota/anterior/` |
-| `o relógio não está acordando` | a última checagem foi há mais de 6 h — o agendador caiu |
+| `o GitHub respondeu: Not Found` | the token is missing, or it doesn't grant `Contents: read` on this repo |
+| `o GitHub respondeu: Bad credentials` | invalid or expired token |
+| `nenhum pacote comecando com logi-mac-...` | the Release went out without that package (Mac job without a runner?) |
+| `o pacote nao confere` | corrupted download; the next round tries again |
+| `revertido` | the new build didn't answer `/healthz`; the previous one came back. The copy stays in `~/.local/state/logi-ota/anterior/` |
+| `o relógio não está acordando` | the last check was more than 6 h ago — the scheduler went down |
 
-Depois de um boot, o Mac pode levar **até uma hora** para olhar: o
-LaunchAgent é `RunAtLoad false` de propósito, porque instalá-lo não pode
-aplicar um update no meio da requisição que o instalou.
+After a boot, the Mac may take **up to an hour** to look: the
+LaunchAgent is `RunAtLoad false` on purpose, because installing it must
+not apply an update in the middle of the request that installed it.
 
-## Veja também
+## See also
 
-- [[deploy]] — o caminho de dentro de casa, que assina e troca tudo
-- [[configure-a-machine]] — o wizard onde o passo vive
+- [[deploy]] — the in-house path, which signs and swaps everything
+- [[configure-a-machine]] — the wizard where the step lives

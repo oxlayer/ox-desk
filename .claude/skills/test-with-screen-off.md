@@ -1,19 +1,21 @@
-# Testar o host de tela com a tela apagada
+# Test the screen host with the screen off
 
-Regressão que já quebrou: com a saída de vídeo desligada por economia
-de energia, o host subia, aceitava cliente e **nunca mandava quadro**.
-Ver [[../rules/windows-locked-screen]].
+A regression that has already broken: with the video output turned off
+by power saving, the host started, accepted a client and **never sent a
+frame**. See [[../rules/windows-locked-screen]].
 
-O caso só aparece quando a máquina ficou sozinha um tempo — que é
-justamente quando você quer alcançá-la. Por isso vale forçar.
+The case only shows up when the machine has been left alone for a while
+— which is exactly when you want to reach it. That's why it's worth
+forcing it.
 
-## 1. Instalar a tarefa que apaga a tela
+## 1. Install the task that turns off the screen
 
-Tem de rodar **na sessão interativa**: pelo SSH cai na sessão 0, onde
-não há desktop para apagar. Daí a tarefa com `/it`.
+It must run **in the interactive session**: over SSH it lands in
+session 0, where there is no desktop to turn off. Hence the task with
+`/it`.
 
 ```powershell
-# apagar-tela.ps1, em %LOCALAPPDATA%\logid\
+# apagar-tela.ps1, in %LOCALAPPDATA%\logid\
 $src = @"
 using System;
 using System.Runtime.InteropServices;
@@ -23,7 +25,7 @@ public class Tela {
 }
 "@
 Add-Type -TypeDefinition $src
-# HWND_BROADCAST=0xffff, WM_SYSCOMMAND=0x0112, SC_MONITORPOWER=0xF170, 2=desligar
+# HWND_BROADCAST=0xffff, WM_SYSCOMMAND=0x0112, SC_MONITORPOWER=0xF170, 2=turn off
 [Tela]::SendMessage([IntPtr]0xffff, 0x0112, [IntPtr]0xF170, [IntPtr]2) | Out-Null
 ```
 
@@ -31,31 +33,32 @@ Add-Type -TypeDefinition $src
 schtasks /create /tn apagar-tela /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ps`"" /sc once /st 00:00 /it /f
 ```
 
-## 2. Rodar o teste
+## 2. Run the test
 
 ```bash
-ssh windows-host 'taskkill /F /IM logistream-host.exe'      # NAO Stop-Process
+ssh windows-host 'taskkill /F /IM logistream-host.exe'      # NOT Stop-Process
 sleep 2
 ssh windows-host 'powershell -NoProfile -Command "schtasks /run /tn apagar-tela | Out-Null"'
-sleep 25                                              # tempo de verdade apagada
+sleep 25                                              # time for it to really go off
 ssh windows-host 'powershell -NoProfile -Command "schtasks /run /tn logistream-host | Out-Null"'
 sleep 4
 cargo run --release --bin logistream-sink -- windows-host.local:9777 14
 ```
 
-## 3. O que é passar
+## 3. What passing looks like
 
-O `sink` tem de reportar quadros (dezenas em 14 s). E no log do host,
-`enviando quadro 0 CHAVE` logo após `NVENC pronto` — **sem** nenhuma
-linha `DuplicateOutput recusou` e **sem** `nenhum quadro em Ns`.
+The `sink` must report frames (dozens in 14 s). And in the host log,
+`enviando quadro 0 CHAVE` right after `NVENC pronto` — **without** any
+`DuplicateOutput recusou` line and **without** `nenhum quadro em Ns`.
 
-Se aparecer `nenhum quadro em 3s; acordando a tela`, o vigia salvou a
-sessão mas o despertar da partida falhou — vale investigar, porque o
-vigia é rede de segurança, não o mecanismo.
+If `nenhum quadro em 3s; acordando a tela` shows up, the watchdog saved
+the session but the startup wake-up failed — worth investigating,
+because the watchdog is a safety net, not the mechanism.
 
-## 4. Limpar
+## 4. Clean up
 
-Deixar uma tarefa que apaga a tela na máquina de alguém confunde depois:
+Leaving a task that turns off the screen on someone's machine causes
+confusion later:
 
 ```powershell
 schtasks /delete /tn apagar-tela /f

@@ -1,9 +1,10 @@
-# Dar acesso aos dispositivos de input (KVM por LAN)
+# Grant access to the input devices (LAN KVM)
 
-O KVM lê `/dev/input/event*` e chama `EVIOCGRAB`. Por padrão esses nós
-pertencem ao grupo `input`, do qual o usuário de desktop não faz parte.
+The KVM reads `/dev/input/event*` and calls `EVIOCGRAB`. By default
+these nodes belong to the `input` group, which the desktop user is not
+part of.
 
-## Rodar (uma vez, precisa de sudo)
+## Run (once, needs sudo)
 
 ```bash
 sudo install -m644 ~/dev/logi/logid/udev/70-logid-input.rules /etc/udev/rules.d/
@@ -11,32 +12,32 @@ sudo udevadm control --reload
 sudo udevadm trigger --subsystem-match=input
 ```
 
-## Conferir
+## Check
 
 ```bash
 test -r /dev/input/event17 && echo ok || echo "sem acesso"
 getfacl -p /dev/input/event17 | grep '^user:'
-# tem de aparecer uma linha `user:<voce>:rw-` além de `user::rw-`
+# a line `user:<you>:rw-` must appear besides `user::rw-`
 ```
 
-## Por que `uaccess` e não o grupo `input`
+## Why `uaccess` and not the `input` group
 
-A regra é `SUBSYSTEM=="input", ATTRS{idVendor}=="046d", TAG+="uaccess"`.
+The rule is `SUBSYSTEM=="input", ATTRS{idVendor}=="046d", TAG+="uaccess"`.
 
-`uaccess` faz o systemd-logind dar ACL ao usuário da **sessão ativa**:
-o acesso segue quem está de fato na máquina e some quando a sessão
-acaba. Entrar no grupo `input` daria acesso permanente a **todos** os
-dispositivos de entrada, para qualquer processo da conta, inclusive com
-a sessão encerrada — um keylogger passivo de graça.
+`uaccess` makes systemd-logind grant an ACL to the user of the **active
+session**: access follows whoever is actually at the machine and goes
+away when the session ends. Joining the `input` group would give
+permanent access to **all** input devices, to any process of the
+account, even with the session closed — a free passive keylogger.
 
-Bônus prático: `uaccess` vale na hora do `udevadm trigger`; grupo novo
-só entra em vigor em sessão nova (precisa deslogar).
+Practical bonus: `uaccess` takes effect at `udevadm trigger` time; a new
+group only takes effect in a new session (you have to log out).
 
-O filtro `046d` é a Logitech, de propósito: não é para abrir o teclado
-do laptop nem a webcam. Dispositivo novo no KVM = acrescentar o
-`idVendor` dele explicitamente.
+The `046d` filter is Logitech, on purpose: it's not meant to open the
+laptop keyboard or the webcam. A new device in the KVM = add its
+`idVendor` explicitly.
 
-## Achar os dispositivos
+## Find the devices
 
 ```bash
 for d in /dev/input/event*; do
