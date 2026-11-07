@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Host de tela do Mac.
+  The Mac's screen host.
 
-  LaunchAgent e nao lancamento por SSH, e a razao e dura: a captura de
-  tela do macOS depende de permissao TCC (Gravacao de Tela), que e
-  concedida a quem LANCOU o processo. Um processo vindo do SSH nao tem
-  concessao nenhuma -- e o AVFoundation, em vez de falhar, **trava**.
-  Medido: o proprio `ffmpeg -f avfoundation -i 1` pendura para sempre
-  quando chamado por SSH, e o mesmo comando na sessao grafica roda.
+  A LaunchAgent and not a launch over SSH, and the reason is hard: macOS
+  screen capture depends on a TCC permission (Screen Recording), which is
+  granted to whoever LAUNCHED the process. A process coming from SSH has no
+  grant at all -- and AVFoundation, instead of failing, **hangs**.
+  Measured: `ffmpeg -f avfoundation -i 1` itself hangs forever when called
+  over SSH, and the same command runs in the graphical session.
 
-  E a mesma fronteira que obriga o Windows a usar tarefa agendada com
-  /IT em vez de servico: o que depende da sessao do usuario nao enxerga
-  nada de fora dela.
+  It is the same boundary that forces Windows to use a scheduled task with
+  /IT instead of a service: what depends on the user's session sees
+  nothing from outside it.
 
-  RunAtLoad false: sobe so quando alguem pede a tela, por
-  `launchctl kickstart`. Capturar e codificar sem ninguem assistindo
-  gastaria bateria do laptop a toa.
+  RunAtLoad false: it only starts when someone asks for the screen, via
+  `launchctl kickstart`. Capturing and encoding with nobody watching would
+  waste the laptop's battery.
 -->
 <plist version="1.0">
 <dict>

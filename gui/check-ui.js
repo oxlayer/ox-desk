@@ -1,85 +1,85 @@
-// Teste de fumaca do painel: carrega a pagina numa janela OCULTA, clica
-// no que e clicavel e relata o que o console disser.
+// Smoke test of the panel: loads the page in a HIDDEN window, clicks what
+// is clickable and reports whatever the console says.
 //
-// Existe porque "o JS compila" nao e "a pagina funciona": um id errado,
-// um seletor que devolve null ou uma secao que nunca aparece so se
-// manifestam em runtime -- e eu nao vejo a tela do usuario.
+// It exists because "the JS compiles" is not "the page works": a wrong id,
+// a selector that returns null or a section that never shows up only
+// surface at runtime -- and I do not see the user's screen.
 //
 //   cd gui && env -u ELECTRON_RUN_AS_NODE \
 //     ./node_modules/electron/dist/electron check-ui.js
 //
-// O `env -u` importa: com `ELECTRON_RUN_AS_NODE=1` no ambiente (o caso
-// aqui), o binario do Electron roda como Node puro e `require('electron')`
-// devolve undefined.
-// Carrega o painel numa janela OCULTA e relata o que o console disser.
-// Existe porque "o JS compila" nao e "a pagina funciona": um id errado
-// ou um seletor nulo so aparece em runtime.
+// The `env -u` matters: with `ELECTRON_RUN_AS_NODE=1` in the environment
+// (the case here), the Electron binary runs as plain Node and
+// `require('electron')` returns undefined.
+//
+// The output markers (`ESTADO`, `APOS_CLICAR_LOG`, `FAVORITO`, `ESTREITO`,
+// `ERROS`) are kept as they are: the docs tell people to look for them.
 const { app, BrowserWindow } = require('electron');
-const erros = [];
+const errors = [];
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 1200, height: 820,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
-  // A assinatura mudou entre versoes do Electron: a nova passa um
-  // objeto, a antiga passa (evento, nivel, mensagem). Tratar as duas
-  // evita que o teste fique cego justamente quando atualizarmos.
+  // The signature changed between Electron versions: the new one passes an
+  // object, the old one passes (event, level, message). Handling both keeps
+  // the test from going blind exactly when we upgrade.
   win.webContents.on('console-message', (a, b, c) => {
-    const nivel = (a && a.level !== undefined) ? a.level : b;
+    const level = (a && a.level !== undefined) ? a.level : b;
     const msg = (a && a.message !== undefined) ? a.message : c;
-    const ruim = nivel === 'error' || nivel === 'warning' || Number(nivel) >= 2;
-    if (ruim) erros.push(nivel + ': ' + msg);
+    const bad = level === 'error' || level === 'warning' || Number(level) >= 2;
+    if (bad) errors.push(level + ': ' + msg);
   });
-  win.webContents.on('render-process-gone', (_e, d) => erros.push('processo morreu: ' + JSON.stringify(d)));
+  win.webContents.on('render-process-gone', (_e, d) => errors.push('render process died: ' + JSON.stringify(d)));
   await win.loadURL('http://127.0.0.1:8787/');
-  // Tempo para os fetches iniciais e os renders acontecerem.
+  // Time for the initial fetches and renders to happen.
   await new Promise(r => setTimeout(r, 6000));
-  const estado = () => win.webContents.executeJavaScript(`(() => ({
-    secoes: document.querySelectorAll('.sec').length,
-    visiveis: [...document.querySelectorAll('.sec')].filter(s => s.classList.contains('on')).map(s => s.dataset.sec),
-    maquinas: document.querySelectorAll('#maqlist .navit').length,
-    cartoes: document.querySelectorAll('#grid .card').length,
-    botoesTela: document.querySelectorAll('button[data-open]').length,
-    navAtiva: [...document.querySelectorAll('.navit.on')].map(n => n.dataset.sec).filter(Boolean),
-    larguraLateral: Math.round(document.querySelector('.side').getBoundingClientRect().width),
+  const state = () => win.webContents.executeJavaScript(`(() => ({
+    sections: document.querySelectorAll('.sec').length,
+    visible: [...document.querySelectorAll('.sec')].filter(s => s.classList.contains('on')).map(s => s.dataset.sec),
+    machines: document.querySelectorAll('#maqlist .navit').length,
+    cards: document.querySelectorAll('#grid .card').length,
+    screenButtons: document.querySelectorAll('button[data-open]').length,
+    activeNav: [...document.querySelectorAll('.navit.on')].map(n => n.dataset.sec).filter(Boolean),
+    sidebarWidth: Math.round(document.querySelector('.side').getBoundingClientRect().width),
     kvmPills: document.querySelectorAll('.u.warn, .units .u').length
   }))()`);
 
-  const r = await estado();
+  const r = await state();
   console.log('ESTADO ' + JSON.stringify(r));
 
-  // --- trocar de painel ------------------------------------------------
+  // --- switch panel ----------------------------------------------------
   await win.webContents.executeJavaScript(
     `document.querySelector('.navit[data-sec="log"]').click()`);
-  const noLog = await estado();
+  const onLog = await state();
   console.log('APOS_CLICAR_LOG ' + JSON.stringify(
-    { visiveis: noLog.visiveis, navAtiva: noLog.navAtiva }));
+    { visible: onLog.visible, activeNav: onLog.activeNav }));
 
-  // --- favoritar uma maquina -------------------------------------------
-  // Fixa, espera o `tick` redesenhar, confere que entrou em Favoritos.
-  const nome = await win.webContents.executeJavaScript(
+  // --- favorite a machine ----------------------------------------------
+  // Pin it, wait for `tick` to redraw, check it landed in Favorites.
+  const name = await win.webContents.executeJavaScript(
     `document.querySelector('#maqlist .navit').dataset.maq`);
   await win.webContents.executeJavaScript(
     `document.querySelector('#maqlist button[data-fav]').click()`);
   await new Promise(r => setTimeout(r, 2500));
   const fav = await win.webContents.executeJavaScript(`(() => ({
-    favoritos: [...document.querySelectorAll('#favlist .navit')].map(n => n.dataset.maq),
-    guardado: JSON.parse(localStorage.getItem('favs') || '[]')
+    favorites: [...document.querySelectorAll('#favlist .navit')].map(n => n.dataset.maq),
+    stored: JSON.parse(localStorage.getItem('favs') || '[]')
   }))()`);
-  console.log('FAVORITO ' + JSON.stringify({ fixei: nome, ...fav }));
-  // Desfaz, para a proxima rodada comecar limpa.
+  console.log('FAVORITO ' + JSON.stringify({ pinned: name, ...fav }));
+  // Undo, so the next run starts clean.
   await win.webContents.executeJavaScript(`localStorage.removeItem('favs')`);
 
-  // --- janela estreita --------------------------------------------------
-  // A lateral tem de virar fila horizontal, nao sumir nem empurrar o
-  // conteudo para fora: a janela do Electron abre pequena.
+  // --- narrow window ----------------------------------------------------
+  // The sidebar has to become a horizontal row, not disappear nor push the
+  // content out: the Electron window opens small.
   win.setSize(700, 760);
   await new Promise(r => setTimeout(r, 600));
-  const estreito = await win.webContents.executeJavaScript(`(() => {
+  const narrow = await win.webContents.executeJavaScript(`(() => {
     const s = document.querySelector('.side').getBoundingClientRect();
-    return { lateralLargura: Math.round(s.width), lateralAltura: Math.round(s.height),
-             rolagemHorizontal: document.documentElement.scrollWidth > window.innerWidth + 1 };
+    return { sidebarWidth: Math.round(s.width), sidebarHeight: Math.round(s.height),
+             horizontalScroll: document.documentElement.scrollWidth > window.innerWidth + 1 };
   })()`);
-  console.log('ESTREITO ' + JSON.stringify(estreito));
+  console.log('ESTREITO ' + JSON.stringify(narrow));
 
-  console.log('ERROS ' + JSON.stringify(erros));
-  app.exit(erros.length ? 1 : 0);
+  console.log('ERROS ' + JSON.stringify(errors));
+  app.exit(errors.length ? 1 : 0);
 });

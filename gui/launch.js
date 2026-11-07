@@ -1,10 +1,10 @@
-// Lancador do Electron.
+// Electron launcher.
 //
-// Existe por causa de uma pegadinha paga: o host de extensoes do VS Code
-// exporta ELECTRON_RUN_AS_NODE=1, e com essa variavel no ambiente o
-// electron sobe como node e a janela nunca aparece. O `npm start` fazia
-// `env -u ELECTRON_RUN_AS_NODE electron .`, que e POSIX e nao roda no
-// Windows -- e a GUI precisa rodar nos dois lados.
+// It exists because of a gotcha we paid for: VS Code's extension host
+// exports ELECTRON_RUN_AS_NODE=1, and with that variable in the environment
+// electron starts as node and the window never appears. `npm start` used
+// to run `env -u ELECTRON_RUN_AS_NODE electron .`, which is POSIX and does
+// not run on Windows -- and the GUI has to run on both sides.
 const { spawn } = require('node:child_process');
 
 const env = { ...process.env };

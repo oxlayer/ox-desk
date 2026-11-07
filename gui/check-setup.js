@@ -1,20 +1,23 @@
-// Teste de fumaca da pagina de configuracao (`/setup`).
+// Smoke test of the setup page (`/setup`).
 //
-// Mesmo motivo do check-ui.js: "o JS compila" nao e "a pagina funciona".
-// Esta pagina em especial desenha a lista inteira por JS, a partir de um
-// JSON que muda de forma por sistema operacional -- um campo com outro
-// nome nao da erro de sintaxe, da uma linha em branco na tela de quem
-// esta tentando montar a maquina.
+// Same reason as check-ui.js: "the JS compiles" is not "the page works".
+// This page in particular draws the whole list in JS, from a JSON whose
+// shape changes per operating system -- a field with a different name is
+// not a syntax error, it is a blank line on the screen of someone trying
+// to set up the machine.
 //
 //   cd gui && env -u ELECTRON_RUN_AS_NODE \
 //     ./node_modules/electron/dist/electron check-setup.js
 //
-// O `env -u` importa: com `ELECTRON_RUN_AS_NODE=1` no ambiente, o
-// binario do Electron roda como Node puro e `require('electron')`
-// devolve undefined.
+// The `env -u` matters: with `ELECTRON_RUN_AS_NODE=1` in the environment,
+// the Electron binary runs as plain Node and `require('electron')`
+// returns undefined.
+//
+// The output markers (`ESTADO`, `APOS_CLICAR`, `ESTREITO`, `ERROS`) are
+// kept as they are: the docs say "it passes when it prints `ERROS []`".
 const { app, BrowserWindow } = require('electron');
 const http = require('node:http');
-const erros = [];
+const errors = [];
 
 function getJson(path) {
   return new Promise((resolve) => {
@@ -30,86 +33,86 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 1100, height: 900,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
   win.webContents.on('console-message', (a, b, c) => {
-    const nivel = (a && a.level !== undefined) ? a.level : b;
+    const level = (a && a.level !== undefined) ? a.level : b;
     const msg = (a && a.message !== undefined) ? a.message : c;
-    if (nivel === 'error' || nivel === 'warning' || Number(nivel) >= 2) erros.push(nivel + ': ' + msg);
+    if (level === 'error' || level === 'warning' || Number(level) >= 2) errors.push(level + ': ' + msg);
   });
-  win.webContents.on('render-process-gone', (_e, d) => erros.push('processo morreu: ' + JSON.stringify(d)));
+  win.webContents.on('render-process-gone', (_e, d) => errors.push('render process died: ' + JSON.stringify(d)));
 
-  // A VERDADE vem da API, nao da pagina: o teste compara o que o
-  // daemon mediu com o que a tela mostra. Sem isso ele diria "10
-  // linhas, otimo" sobre dez linhas erradas.
+  // The TRUTH comes from the API, not from the page: the test compares what
+  // the daemon measured with what the screen shows. Without that it would
+  // say "10 lines, great" about ten wrong lines.
   const api = await getJson('/api/setup');
-  if (!api) { console.log('ERROS ["/api/setup nao respondeu"]'); app.exit(1); return; }
+  if (!api) { console.log('ERROS ["/api/setup did not respond"]'); app.exit(1); return; }
 
   await win.loadURL('http://127.0.0.1:8787/setup');
-  // A medicao do lado do daemon abre SSH para cada par: pode levar
-  // segundos, e a pagina so desenha quando ela volta.
+  // The daemon-side measurement opens SSH to every peer: it can take
+  // seconds, and the page only draws when it comes back.
   await new Promise((r) => setTimeout(r, 45000));
 
-  const estado = () => win.webContents.executeJavaScript(`(() => ({
-    titulo: document.querySelector('#maquina').textContent,
+  const state = () => win.webContents.executeJavaScript(`(() => ({
+    title: document.querySelector('#maquina').textContent,
     lead: document.querySelector('#lead').textContent,
-    linhas: document.querySelectorAll('#lista li').length,
+    rows: document.querySelectorAll('#lista li').length,
     ids: [...document.querySelectorAll('#lista li')].map(li =>
       li.querySelector('.tit .n') ? li.querySelector('.tit .n').textContent : '?'),
-    vazias: [...document.querySelectorAll('#lista li .tit .d')].filter(d => !d.textContent.trim()).length,
+    empty: [...document.querySelectorAll('#lista li .tit .d')].filter(d => !d.textContent.trim()).length,
     ok: document.querySelectorAll('#lista li.ok').length,
-    agora: document.querySelectorAll('#lista li.agora').length,
-    abertos: document.querySelectorAll('#lista li.aberto').length,
-    botoes: document.querySelectorAll('#lista button').length,
-    barra: document.querySelector('#barra').style.width,
-    prontos: document.querySelector('#prontos').textContent,
+    now: document.querySelectorAll('#lista li.agora').length,
+    open: document.querySelectorAll('#lista li.aberto').length,
+    buttons: document.querySelectorAll('#lista button').length,
+    bar: document.querySelector('#barra').style.width,
+    ready: document.querySelector('#prontos').textContent,
     total: document.querySelector('#total').textContent,
-    hora: document.querySelector('#hora').textContent,
-    rolagemHorizontal: document.documentElement.scrollWidth > window.innerWidth + 1
+    time: document.querySelector('#hora').textContent,
+    horizontalScroll: document.documentElement.scrollWidth > window.innerWidth + 1
   }))()`);
 
-  const r = await estado();
+  const r = await state();
   console.log('ESTADO ' + JSON.stringify(r));
 
-  // --- conferencias contra a API ---------------------------------------
-  const esperado = api.passos.length;
-  if (r.linhas !== esperado) erros.push(`a pagina desenhou ${r.linhas} passos e a API mandou ${esperado}`);
-  if (r.vazias) erros.push(`${r.vazias} passo(s) sem detalhe na tela`);
-  if (Number(r.prontos) !== api.resumo.prontos) erros.push('contador de prontos divergente');
-  if (Number(r.total) !== api.resumo.total) erros.push('contador de total divergente');
-  // A hora e so plausibilidade, NAO igualdade: o teste mede uma vez e a
-  // pagina mede de novo segundos depois, entao os relogios diferem de
-  // direito. A primeira versao desta linha comparava as duas e acusava
-  // um defeito que nao existia.
-  if (!/^\d{2}:\d{2}:\d{2}$/.test(r.hora)) erros.push('a hora da medicao nao chegou na tela: ' + r.hora);
-  // Os contadores saem da mesma medicao da pagina, entao ESSES tem de
-  // bater com a API a menos que algo tenha mudado no meio.
+  // --- checks against the API ------------------------------------------
+  const expected = api.passos.length;
+  if (r.rows !== expected) errors.push(`the page drew ${r.rows} steps and the API sent ${expected}`);
+  if (r.empty) errors.push(`${r.empty} step(s) with no detail on screen`);
+  if (Number(r.ready) !== api.resumo.prontos) errors.push('ready counter diverges');
+  if (Number(r.total) !== api.resumo.total) errors.push('total counter diverges');
+  // The time is only a plausibility check, NOT equality: the test measures
+  // once and the page measures again seconds later, so the clocks rightly
+  // differ. The first version of this line compared the two and reported a
+  // defect that did not exist.
+  if (!/^\d{2}:\d{2}:\d{2}$/.test(r.time)) errors.push('the measurement time did not reach the screen: ' + r.time);
+  // The counters come from the page's own measurement, so THOSE must match
+  // the API unless something changed in between.
 
-  // Um passo pendente SEM destaque nem acao e uma tela sem saida: a
-  // pessoa le "falta isso" e nao tem o que clicar.
-  if (api.resumo.proximo && r.agora !== 1) erros.push(`a API aponta ${api.resumo.proximo} e a tela destacou ${r.agora}`);
-  if (api.resumo.proximo && r.abertos !== 1) erros.push('o proximo passo nao abriu sozinho');
-  if (api.resumo.proximo && !r.botoes) erros.push('passo pendente aberto e nenhum botao na tela');
-  if (r.rolagemHorizontal) erros.push('rolagem horizontal na largura cheia');
+  // A pending step with NO highlight and no action is a dead-end screen:
+  // the person reads "this is missing" and has nothing to click.
+  if (api.resumo.proximo && r.now !== 1) errors.push(`the API points to ${api.resumo.proximo} and the screen highlighted ${r.now}`);
+  if (api.resumo.proximo && r.open !== 1) errors.push('the next step did not open by itself');
+  if (api.resumo.proximo && !r.buttons) errors.push('pending step open and no button on screen');
+  if (r.horizontalScroll) errors.push('horizontal scroll at full width');
 
-  // --- abrir e fechar na mao -------------------------------------------
-  // Abrir um passo na mao tem de FECHAR o anterior: dois corpos abertos
-  // ao mesmo tempo empurram a lista e tiram do campo de visao o passo
-  // que o wizard estava indicando.
+  // --- open and close by hand ------------------------------------------
+  // Opening a step by hand must CLOSE the previous one: two bodies open at
+  // once push the list and take the step the wizard was pointing at out of
+  // view.
   await win.webContents.executeJavaScript(`document.querySelector('#lista li .head').click()`);
   await new Promise((r) => setTimeout(r, 300));
-  const clicado = await win.webContents.executeJavaScript(
+  const clicked = await win.webContents.executeJavaScript(
     `document.querySelectorAll('#lista li.aberto').length`);
-  console.log('APOS_CLICAR ' + JSON.stringify({ abertos: clicado }));
-  if (clicado > 1) erros.push(`${clicado} passos abertos ao mesmo tempo`);
+  console.log('APOS_CLICAR ' + JSON.stringify({ open: clicked }));
+  if (clicked > 1) errors.push(`${clicked} steps open at the same time`);
 
-  // --- janela estreita --------------------------------------------------
+  // --- narrow window ----------------------------------------------------
   win.setSize(420, 820);
   await new Promise((r) => setTimeout(r, 600));
-  const estreito = await win.webContents.executeJavaScript(`(() => ({
-    rolagemHorizontal: document.documentElement.scrollWidth > window.innerWidth + 1,
-    largura: Math.round(document.querySelector('.wrap').getBoundingClientRect().width)
+  const narrow = await win.webContents.executeJavaScript(`(() => ({
+    horizontalScroll: document.documentElement.scrollWidth > window.innerWidth + 1,
+    width: Math.round(document.querySelector('.wrap').getBoundingClientRect().width)
   }))()`);
-  console.log('ESTREITO ' + JSON.stringify(estreito));
-  if (estreito.rolagemHorizontal) erros.push('rolagem horizontal em 420 px');
+  console.log('ESTREITO ' + JSON.stringify(narrow));
+  if (narrow.horizontalScroll) errors.push('horizontal scroll at 420 px');
 
-  console.log('ERROS ' + JSON.stringify(erros));
-  app.exit(erros.length ? 1 : 0);
+  console.log('ERROS ' + JSON.stringify(errors));
+  app.exit(errors.length ? 1 : 0);
 });

@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Assina o host de tela com a identidade local.
+  Signs the screen host with the local identity.
 
-  LaunchAgent pelo MESMO motivo do host: o `codesign` precisa do
-  chaveiro de LOGIN destrancado, e numa sessao SSH ele esta trancado --
-  a chamada falha com `errSecInternalComponent`, que nao diz nada sobre
-  chaveiro. Na sessao grafica o chaveiro ja esta aberto.
+  A LaunchAgent for the SAME reason as the host: `codesign` needs the
+  LOGIN keychain unlocked, and in an SSH session it is locked -- the call
+  fails with `errSecInternalComponent`, which says nothing about the
+  keychain. In the graphical session the keychain is already open.
 
-  Terceira vez que a mesma fronteira aparece hoje: Gravacao de Tela,
-  Acessibilidade e agora o chaveiro. O que depende da sessao do usuario
-  nao nasce por SSH.
+  Third time the same boundary showed up today: Screen Recording,
+  Accessibility and now the keychain. What depends on the user's session
+  is not born over SSH.
 -->
 <plist version="1.0">
 <dict>

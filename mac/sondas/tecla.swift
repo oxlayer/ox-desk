@@ -1,19 +1,23 @@
-// A tecla A esta apertada? Observa por 4s e responde.
+// Is the A key pressed? Watches for 4s and answers.
 //
-// O Caps Lock NAO serve de teste no macOS: o sistema o trata na camada
-// HID e um evento sintetico nao o alterna, mesmo chegando e sendo
-// traduzido. Ja mediu "nao funciona" com o caminho inteiro funcionando.
-// Uma tecla comum, olhada enquanto esta segurada, e medida de verdade.
+// Caps Lock is NOT a valid test on macOS: the system handles it in the HID
+// layer and a synthetic event does not toggle it, even when it arrives and
+// gets translated. It has already measured "does not work" with the whole
+// path working. An ordinary key, watched while it is held, is a real
+// measurement.
 //
-// kVK_ANSI_A = 0, que e o codigo do macOS -- o protocolo carrega evdev,
-// onde A = 30. Tres numeracoes convivem neste projeto; ver
-// `tecla_mac_de_evdev` em logistream/src/input.rs.
+// kVK_ANSI_A = 0, which is the macOS code -- the protocol carries evdev,
+// where A = 30. Three numberings coexist in this project; see
+// `tecla_mac_de_evdev` in logistream/src/input.rs.
+//
+// The printed answer (`A: PRESSIONADA` / `A: nunca apertada`) stays as is:
+// the verify-the-mac skill tells people to look for it.
 import CoreGraphics
 import Foundation
 
-var vista = false
+var seen = false
 for _ in 0..<400 {
-    if CGEventSource.keyState(.combinedSessionState, key: 0) { vista = true; break }
+    if CGEventSource.keyState(.combinedSessionState, key: 0) { seen = true; break }
     usleep(10_000)
 }
-print(vista ? "A: PRESSIONADA" : "A: nunca apertada")
+print(seen ? "A: PRESSIONADA" : "A: nunca apertada")
