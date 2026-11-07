@@ -102,7 +102,7 @@ pub fn registrar(texto: &str) -> bool {
 ///
 /// Entao: o caminho que o proprio deploy instala, por sistema.
 fn comando_remoto(h: &crate::config::HostCfg) -> String {
-    crate::remote::comando_logid(h, "clip-set")
+    crate::remote::logid_command(h, "clip-set")
 }
 
 /// Empurra o texto para os outros hosts, por SSH.

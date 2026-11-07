@@ -1,7 +1,7 @@
-//! Sondagem: portas TCP, estado dos `units` e detalhe por SSH.
+//! Probing: TCP ports, `units` state and details over SSH.
 //!
-//! O que `units` significa muda por plataforma -- unit do systemd no
-//! Linux, servico ou processo no Windows. Ver `sys::unit_state`.
+//! What `units` means changes per platform -- a systemd unit on Linux, a
+//! service or process on Windows. See `sys::unit_state`.
 
 use crate::config::{Config, Expect, HostCfg, HostOs};
 use serde::Serialize;
@@ -18,7 +18,7 @@ pub struct ServiceState {
     pub port: u16,
     pub up: bool,
     pub ms: Option<f64>,
-    /// Esta como deveria para ESTE papel (ver Expect).
+    /// Is as it should be for THIS role (see Expect).
     pub ok: bool,
     pub expect: Expect,
 }
@@ -37,26 +37,26 @@ pub struct Detail {
     pub ram_free_gb: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ram_total_gb: Option<f64>,
-    /// Uso de CPU, 0-100.
+    /// CPU usage, 0-100.
     ///
-    /// A JANELA de amostragem difere por SO, e isso e deliberado: no
-    /// Linux sao duas leituras do `/proc/stat` 200 ms apart (percentual
-    /// exato), no macOS a soma do `%cpu` dos processos dividida pelos
-    /// nucleos (media que decai em ~1 min) e no Windows o
-    /// `LoadPercentage` do WMI (~1 s). Nenhuma e comparavel ao decimal
-    /// com as outras -- todas respondem "esta maquina esta ocupada?",
-    /// que e a pergunta que o cartao faz.
+    /// The sampling WINDOW differs per OS, and that is deliberate: on
+    /// Linux it is two reads of `/proc/stat` 200 ms apart (exact
+    /// percentage), on macOS the sum of the processes' `%cpu` divided by
+    /// the cores (an average that decays over ~1 min) and on Windows WMI's
+    /// `LoadPercentage` (~1 s). None is comparable to the others to the
+    /// decimal -- all of them answer "is this machine busy?", which is the
+    /// question the card asks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_pct: Option<f64>,
 }
 
-/// Estado de KVM **daquele** host: borda e reconciliador.
+/// KVM state of **that** host: border and reconciler.
 ///
-/// Existe porque o painel mostrava so os interruptores desta maquina, e
-/// a borda e um comportamento de PAR: a do Windows apontada para ca
-/// devolvia tudo a cada encostada enquanto esta tela dizia, com razao,
-/// que a borda daqui estava desligada. O usuario nao tinha como ver isso
-/// de lugar nenhum -- precisava abrir o painel da outra maquina.
+/// It exists because the panel only showed this machine's switches, and
+/// the border is a PAIR behavior: the Windows one, pointed here, sent
+/// everything back on every touch while this screen said, rightly, that
+/// the border here was off. The user had no way to see that from
+/// anywhere -- they had to open the other machine's panel.
 #[derive(Debug, Default, Serialize)]
 pub struct Kvm {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,11 +65,11 @@ pub struct Kvm {
     pub follow: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub leader: Option<String>,
-    /// As bordas ativas la, como "left -> ubuntu-host".
+    /// The active edges there, like "left -> ubuntu-host".
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<String>,
-    /// Por que nao sabemos. Melhor dizer que nao sabemos do que mostrar
-    /// "desligado" sobre um host que nao respondeu.
+    /// Why we do not know. Better to say we do not know than to show
+    /// "off" for a host that did not answer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -92,16 +92,17 @@ pub struct Snapshot {
     pub hosts: Vec<HostState>,
 }
 
-/// Todos os enderecos de um nome, sem link-local, IPv4 na frente.
+/// All the addresses of a name, without link-local, IPv4 first.
 ///
-/// Devolve LISTA porque um nome pode ter familias que nao se comportam
-/// igual. Medido: visto do Mac, `windows-host.local` resolve em IPv4 **e**
-/// IPv6, o IPv4 conecta na 3389 e o IPv6 da timeout -- porque a regra de
-/// firewall do Windows estava escrita como `192.168.1.0/24`, que e IPv4.
-/// Pegando so o primeiro endereco, o painel do Mac dizia "RDP fechado"
-/// sobre um servico que estava aberto.
+/// Returns a LIST because a name can have families that do not behave
+/// the same. Measured: seen from the Mac, `windows-host.local` resolves to
+/// IPv4 **and** IPv6, IPv4 connects on 3389 and IPv6 times out -- because
+/// the Windows firewall rule was written as `192.168.1.0/24`, which is
+/// IPv4. Taking only the first address, the Mac's panel said "RDP closed"
+/// about a service that was open.
 ///
-/// Link-local sai por ser inutil sem o escopo certo (ver `resolve_for_ssh`).
+/// Link-local is dropped because it is useless without the right scope
+/// (see `resolve_for_ssh`).
 fn resolve_all(addr: &str, port: u16) -> Vec<SocketAddr> {
     fn link_local(a: &SocketAddr) -> bool {
         match a {
@@ -115,36 +116,37 @@ fn resolve_all(addr: &str, port: u16) -> Vec<SocketAddr> {
         all = crate::sys::resolve_fallback(addr, port).into_iter().collect();
     }
     all.retain(|a| !link_local(a));
-    // IPv4 primeiro: nesta LAN e o caminho que sempre funciona, e tentar
-    // o que funciona antes economiza o timeout do que nao funciona.
+    // IPv4 first: on this LAN it is the path that always works, and trying
+    // what works first saves the timeout of what does not.
     all.sort_by_key(|a| !a.is_ipv4());
     all.truncate(3);
     all
 }
 
-/// Opcoes de ssh/sftp que contornam o resolvedor do PROPRIO ssh.
+/// ssh/sftp options that bypass ssh's OWN resolver.
 ///
-/// ## Por que isto existe
+/// ## Why this exists
 ///
-/// No Windows, o `ssh` lancado **pelo daemon** falha com "Could not
-/// resolve hostname ubuntu-host" -- enquanto, no mesmo contexto de
-/// tarefa agendada, `ping` resolve, `[System.Net.Dns]::GetHostAddresses`
-/// resolve os dois nomes (curto e `.local`), e o mesmo `ssh` lancado por
-/// um `cmd.exe` da mesma tarefa funciona. Ou seja: o resolvedor do SO
-/// enxerga o nome; o do `ssh`, naquele processo, nao.
+/// On Windows, `ssh` launched **by the daemon** fails with "Could not
+/// resolve hostname ubuntu-host" -- while, in the same scheduled-task
+/// context, `ping` resolves, `[System.Net.Dns]::GetHostAddresses`
+/// resolves both names (short and `.local`), and the same `ssh` launched
+/// from a `cmd.exe` in the same task works. That is: the OS resolver sees
+/// the name; `ssh`'s, in that process, does not.
 ///
-/// Isso ia doer calado: o teste manual passa e o daemon falha. E a mesma
-/// familia do buraco de mDNS no Linux, onde `getaddrinfo` com AF_UNSPEC
-/// desiste de `.local` e so `getent` resolve (ver `resolve`).
+/// That would have hurt silently: the manual test passes and the daemon
+/// fails. It is the same family as the mDNS hole on Linux, where
+/// `getaddrinfo` with AF_UNSPEC gives up on `.local` and only `getent`
+/// resolves (see `resolve`).
 ///
-/// A saida e resolver **aqui**, onde funciona, e entregar o endereco
-/// pronto. Nao fere a regra de nunca escrever IP (spec 007): a config
-/// continua com nome, a resolucao acontece a cada chamada, e troca de IP
-/// e absorvida. `HostKeyAlias` mantem a identidade da chave amarrada ao
-/// NOME, nao ao endereco -- sem isso, cada IP novo pareceria um host
-/// desconhecido.
+/// The way out is resolving **here**, where it works, and handing over
+/// the ready address. It does not break the never-write-an-IP rule (spec
+/// 007): the config keeps the name, resolution happens on every call, and
+/// an IP change is absorbed. `HostKeyAlias` keeps the key's identity tied
+/// to the NAME, not the address -- without it, every new IP would look
+/// like an unknown host.
 pub fn ssh_addr_opts(addr: &str) -> Vec<String> {
-    // Porta 22 so para a resolucao; nao conectamos aqui.
+    // Port 22 only for resolution; we do not connect here.
     let Some(sa) = resolve_for_ssh(addr, 22) else { return Vec::new() };
     vec![
         "-o".into(),
@@ -154,68 +156,72 @@ pub fn ssh_addr_opts(addr: &str) -> Vec<String> {
     ]
 }
 
-/// Endereco para entregar ao `ssh`: o primeiro de `resolve_all`.
+/// Address to hand to `ssh`: the first from `resolve_all`.
 ///
-/// O link-local foi o que fez o SFTP para o Mac morrer com "Connection
-/// closed": visto do Windows, `mac-host.local` resolve **so em
-/// IPv6**, e o primeiro endereco e `fe80::...%11`, que sem o escopo
-/// correto nao leva a lugar nenhum. `None` significa deixar o `ssh`
-/// tentar sozinho -- melhor que entregar endereco que nao conecta.
+/// Link-local is what made SFTP to the Mac die with "Connection closed":
+/// seen from Windows, `mac-host.local` resolves **only to
+/// IPv6**, and the first address is `fe80::...%11`, which without the
+/// right scope leads nowhere. `None` means letting `ssh` try on its own
+/// -- better than handing over an address that does not connect.
 fn resolve_for_ssh(addr: &str, port: u16) -> Option<SocketAddr> {
     resolve_all(addr, port).into_iter().next()
 }
 
-/// (aberta, latencia_ms) -- tenta cada endereco ate um conectar.
+/// (open, latency_ms) -- tries each address until one connects.
 pub fn tcp_probe(addr: &str, port: u16) -> (bool, Option<f64>) {
-    let alvos = resolve_all(addr, port);
-    if alvos.is_empty() {
-        anotar_falha(addr, port, Some("o nome nao resolveu".into()));
+    let targets = resolve_all(addr, port);
+    if targets.is_empty() {
+        note_failure(addr, port, Some("the name did not resolve".into()));
         return (false, None);
     }
-    // Divide o orcamento: com tres enderecos mortos, um timeout cheio por
-    // endereco seria 4,5 s num unico servico do snapshot.
-    let por_alvo = TCP_TIMEOUT / alvos.len() as u32;
-    // Duas rodadas: pelo tailnet um pacote perdido fazia a maquina piscar
-    // offline no painel, com ping e SSH de pe. Maquina morta custa o dobro.
+    // Splits the budget: with three dead addresses, a full timeout per
+    // address would be 4.5 s for a single service in the snapshot.
+    let per_target = TCP_TIMEOUT / targets.len() as u32;
+    // Two rounds: over the tailnet a lost packet made the machine blink
+    // offline on the panel, with ping and SSH up. A dead machine costs
+    // twice as much.
     for _ in 0..2 {
-        for sa in &alvos {
+        for sa in &targets {
             let t0 = Instant::now();
-            if TcpStream::connect_timeout(sa, por_alvo).is_ok() {
-                anotar_falha(addr, port, None);
+            if TcpStream::connect_timeout(sa, per_target).is_ok() {
+                note_failure(addr, port, None);
                 return (true, Some(t0.elapsed().as_secs_f64() * 1000.0));
             }
         }
     }
-    anotar_falha(addr, port, Some(format!("sem resposta em {alvos:?}")));
+    note_failure(addr, port, Some(format!("no answer from {targets:?}")));
     (false, None)
 }
 
-/// Registra quando uma porta para de responder e quando volta, com o motivo.
+/// Logs when a port stops answering and when it comes back, with the
+/// reason.
 ///
-/// So na mudanca de estado, senao maquina desligada encheria o log. Existe
-/// porque o painel mostrou uma maquina viva como offline e nada dizia por
-/// que: nao havia como separar nome que nao resolveu de conexao sem resposta.
-fn anotar_falha(addr: &str, port: u16, motivo: Option<String>) {
-    static FALHANDO: Mutex<Option<HashSet<String>>> = Mutex::new(None);
-    let chave = format!("{addr}:{port}");
-    let Ok(mut g) = FALHANDO.lock() else { return };
+/// Only on a state change, otherwise a machine that is off would fill the
+/// log. It exists because the panel showed a live machine as offline and
+/// nothing said why: there was no way to tell a name that did not resolve
+/// from a connection with no answer.
+fn note_failure(addr: &str, port: u16, reason: Option<String>) {
+    static FAILING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+    let key = format!("{addr}:{port}");
+    let Ok(mut g) = FAILING.lock() else { return };
     let set = g.get_or_insert_with(HashSet::new);
-    match motivo {
-        Some(m) if set.insert(chave.clone()) => say!("sonda: {chave} parou: {m}"),
-        None if set.remove(&chave) => say!("sonda: {chave} voltou"),
+    match reason {
+        Some(m) if set.insert(key.clone()) => say!("probe: {key} stopped: {m}"),
+        None if set.remove(&key) => say!("probe: {key} is back"),
         _ => {}
     }
 }
 
-/// Uptime e RAM do par por SSH. Silencioso em qualquer falha: detalhe e
-/// enfeite, nao pode derrubar o snapshot.
+/// The peer's uptime and RAM over SSH. Silent on any failure: the detail
+/// is decoration, it must not take the snapshot down.
 ///
-/// O comando e por SO. A primeira versao rodava PowerShell com CIM
-/// sempre, porque o par era sempre Windows; contra Ubuntu ou macOS isso
-/// falharia em silencio e o card ficaria sem detalhe para sempre, sem
-/// nada dizendo por que.
+/// The command is per OS. The first version always ran PowerShell with
+/// CIM, because the peer was always Windows; against Ubuntu or macOS that
+/// would fail silently and the card would have no detail forever, with
+/// nothing saying why.
 ///
-/// Contrato de saida, igual nos tres: `<minutos>|<livre_gb>|<total_gb>`.
+/// Output contract, the same on all three:
+/// `<minutes>|<free_gb>|<total_gb>`.
 fn detail_cmd(os: HostOs) -> Option<&'static str> {
     Some(match os {
         HostOs::Windows => concat!(
@@ -228,49 +234,49 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
             "Measure-Object -Property LoadPercentage -Average).Average;",
             "\"$up|$free|$tot|$cpu\""
         ),
-        // MemAvailable e nao MemFree: o kernel usa RAM livre como cache, e
-        // MemFree num Linux saudavel e quase zero -- mostrar isso daria a
-        // impressao de maquina afogada.
+        // MemAvailable and not MemFree: the kernel uses free RAM as cache,
+        // and MemFree on a healthy Linux is almost zero -- showing it would
+        // give the impression of a drowning machine.
         //
-        // Os valores sao guardados e impressos no END, e nao na hora em
-        // que a linha aparece. Imprimir na hora amarrava a saida a ORDEM
-        // do /proc/meminfo, onde `MemTotal` vem ANTES de `MemAvailable`:
-        // os dois numeros sairam colados (`31.315.6`) e os dois campos
-        // viravam `None`. O bug sobreviveu porque esta e a unica maquina
-        // Linux e o detalhe dela nunca era consultado -- ninguem roda
-        // isto contra si mesmo por SSH. Apareceu no instante em que o
-        // cartao local passou a buscar detalhe.
+        // The values are stored and printed at END, not when the line
+        // appears. Printing right away tied the output to the ORDER of
+        // /proc/meminfo, where `MemTotal` comes BEFORE `MemAvailable`: the
+        // two numbers came out glued together (`31.315.6`) and both fields
+        // became `None`. The bug survived because this is the only Linux
+        // machine and its detail was never queried -- nobody runs this
+        // against itself over SSH. It showed up the moment the local card
+        // started fetching details.
         HostOs::Linux => concat!(
             "awk '{printf \"%d|\", $1/60}' /proc/uptime; ",
             "awk '/^MemAvailable:/{a=$2} /^MemTotal:/{t=$2} ",
             "END{printf \"%.1f|%.1f|\", a/1048576, t/1048576}' /proc/meminfo; ",
-            // Duas amostras: o /proc/stat conta TEMPO acumulado desde o
-            // boot, nao uso atual. Uma leitura so daria a media da vida
-            // da maquina, que nunca muda e nao serve para nada.
+            // Two samples: /proc/stat counts TIME accumulated since boot,
+            // not current usage. A single read would give the machine's
+            // lifetime average, which never changes and is useless.
             "s() { awk '/^cpu /{t=0;for(i=2;i<=NF;i++)t+=$i;print t\" \"($5+$6)}' /proc/stat; }; ",
             "a=$(s); sleep 0.2; b=$(s); ",
             "echo \"$a $b\" | awk '{d=$3-$1; i=$4-$2; ",
             "if(d>0) printf \"%.0f\", (d-i)*100/d; else printf \"0\"}'"
         ),
-        // macOS nao tem /proc. `kern.boottime` da a epoca do boot, e as
-        // paginas livres saem do vm_stat (free + inactive, que e o que de
-        // fato esta disponivel).
+        // macOS has no /proc. `kern.boottime` gives the boot epoch, and
+        // the free pages come from vm_stat (free + inactive, which is what
+        // is actually available).
         HostOs::Macos => concat!(
-            // ANCORADO no inicio. A saida e
+            // ANCHORED at the start. The output is
             //   `{ sec = 1793736815, usec = 137720 } Tue Nov  3 ...`
-            // e um `.*sec = ` guloso casa ate o `usec = `, capturando
-            // 137720 -- o uptime virava 56 anos, numero grande o
-            // suficiente para parecer bug de unidade e nao de parse.
+            // and a greedy `.*sec = ` matches up to `usec = `, capturing
+            // 137720 -- the uptime became 56 years, a number big enough to
+            // look like a unit bug and not a parsing one.
             "b=$(sysctl -n kern.boottime | sed -n 's/^{ sec = \\([0-9]*\\).*/\\1/p'); ",
             "up=$(( ( $(date +%s) - b ) / 60 )); ",
             "ps=$(sysctl -n hw.pagesize); ",
             "fr=$(vm_stat | awk -v p=$ps '/Pages free/{f=$3} /Pages inactive/{i=$3} ",
             "END{gsub(/\\./,\"\",f); gsub(/\\./,\"\",i); printf \"%.1f\", (f+i)*p/1073741824}'); ",
             "tot=$(echo $(sysctl -n hw.memsize) | awk '{printf \"%.1f\", $1/1073741824}'); ",
-            // Sem `top -l 2`: ele espera ~1 s pela segunda amostra e o
-            // cartao do Mac ficaria sempre um segundo atrasado. A soma do
-            // %cpu dos processos dividida pelos nucleos ja responde "esta
-            // ocupada?" sem custo nenhum.
+            // No `top -l 2`: it waits ~1 s for the second sample and the
+            // Mac's card would always be a second late. The sum of the
+            // processes' %cpu divided by the cores already answers "is it
+            // busy?" at no cost.
             "n=$(sysctl -n hw.ncpu); ",
             "cpu=$(ps -A -o %cpu | awk -v n=$n 'NR>1{s+=$1} ",
             "END{v=s/n; if(v>100)v=100; printf \"%.0f\", v}'); ",
@@ -280,21 +286,22 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
     })
 }
 
-/// Uptime e RAM de um host -- inclusive DESTE.
+/// A host's uptime and RAM -- including THIS one.
 ///
-/// Era `ssh_detail` e exigia `h.ssh`, entao a maquina local ficava sem:
-/// ela nao tem SSH para si mesma. O cartao de quem estava olhando o
-/// painel aparecia sem uptime nem RAM, que e justamente o cartao mais
-/// facil de conferir -- e o usuario notou.
+/// It was `ssh_detail` and required `h.ssh`, so the local machine went
+/// without: it has no SSH to itself. The card of whoever was looking at
+/// the panel showed no uptime or RAM, which is precisely the easiest card
+/// to check -- and the user noticed.
 ///
-/// Quem resolve local x remoto e o `remote::run`, que ja existia para
-/// isso. Um caminho para os dois casos: o comando e escolhido pelo SO do
-/// ALVO, e rodar PowerShell contra o Ubuntu falharia calado.
-pub fn detalhe(h: &HostCfg) -> Detail {
+/// What resolves local vs. remote is `remote::run`, which already existed
+/// for that. One path for both cases: the command is picked by the
+/// TARGET's OS, and running PowerShell against Ubuntu would fail
+/// silently.
+pub fn host_detail(h: &HostCfg) -> Detail {
     let Some(cmd) = detail_cmd(h.os()) else {
         return Detail::default();
     };
-    // Host remoto sem `ssh` na config nao tem por onde ser consultado.
+    // A remote host without `ssh` in the config cannot be queried.
     if !h.is_local() && h.ssh.is_none() {
         return Detail::default();
     }
@@ -305,8 +312,9 @@ pub fn detalhe(h: &HostCfg) -> Detail {
         return Detail::default();
     };
     let parts: Vec<&str> = line.trim().split('|').collect();
-    // Tres campos ou mais: a CPU entrou depois, e aceitar a linha curta
-    // faz um campo novo degradar em vez de apagar os que ja funcionavam.
+    // Three fields or more: CPU came later, and accepting the short line
+    // makes a new field degrade instead of wiping the ones that already
+    // worked.
     if parts.len() < 3 {
         return Detail::default();
     }
@@ -348,20 +356,20 @@ fn check_host(h: &HostCfg, cfg: &Config) -> HostState {
         v
     });
 
-    // A maquina local esta online por construcao: este codigo esta
-    // rodando NELA. Sem esta linha, um host sem nenhum servico listado
-    // aparece "off" para sempre, porque a unica evidencia de vida era
-    // "alguma porta respondeu". Foi o que aconteceu quando o KDE
-    // Connect saiu da config: o card do Ubuntu ficou sem servicos e a
-    // propria maquina que serve o painel apareceu desligada.
+    // The local machine is online by construction: this code is running
+    // ON it. Without this line, a host with no listed service shows "off"
+    // forever, because the only evidence of life was "some port
+    // answered". That is what happened when KDE Connect left the config:
+    // the Ubuntu card had no services and the very machine serving the
+    // panel showed up as off.
     //
-    // Para host REMOTO sem servicos a resposta continua sendo "off", e
-    // esta certa: nao temos evidencia nenhuma de que ele existe.
+    // For a REMOTE host without services the answer is still "off", and
+    // that is right: we have no evidence at all that it exists.
     let online = h.is_local() || services.iter().any(|s| s.up);
-    // Units SO da maquina local. `unit_state` consulta o gerenciador
-    // daqui: fazer isso por um host remoto devolveria o estado da maquina
-    // errada com cara de verdade. Hoje nenhuma config remota lista units,
-    // mas a primeira que listasse mentiria sem avisar.
+    // Units ONLY for the local machine. `unit_state` queries the manager
+    // here: doing that for a remote host would return the wrong machine's
+    // state looking like the truth. Today no remote config lists units,
+    // but the first one that did would lie without warning.
     let units = if h.is_local() {
         h.units
             .iter()
@@ -373,13 +381,13 @@ fn check_host(h: &HostCfg, cfg: &Config) -> HostState {
             .map(|u| UnitState { unit: u.clone(), state: "remoto".into() })
             .collect()
     };
-    // A propria maquina responde sempre; as outras, so quando estao no ar
-    // -- consultar host desligado custa o timeout inteiro para devolver o
-    // que ja sabemos.
-    let detail = if h.is_local() || online { detalhe(h) } else { Detail::default() };
+    // This machine always answers; the others, only when they are up --
+    // querying a host that is off costs the whole timeout to return what
+    // we already know.
+    let detail = if h.is_local() || online { host_detail(h) } else { Detail::default() };
 
-    // So quando esta no ar: uma chamada SSH para host desligado custa o
-    // timeout inteiro e devolve o que ja sabemos.
+    // Only when it is up: an SSH call to a host that is off costs the
+    // whole timeout and returns what we already know.
     let kvm = if h.is_local() || online { kvm_state(h, cfg) } else { Kvm::default() };
 
     HostState {
@@ -394,12 +402,12 @@ fn check_host(h: &HostCfg, cfg: &Config) -> HostState {
     }
 }
 
-/// Le borda e reconciliador de um host.
+/// Reads a host's border and reconciler.
 ///
-/// Local: direto da config em memoria, que e a verdade corrente.
-/// Remoto: pelo `/api/layout` do daemon DELE, por SSH. O daemon escuta
-/// so em 127.0.0.1 -- de proposito -- entao o tunel do SSH e o caminho,
-/// e nao abrir a porta na LAN.
+/// Local: straight from the in-memory config, which is the current
+/// truth. Remote: through ITS daemon's `/api/layout`, over SSH. The
+/// daemon listens only on 127.0.0.1 -- on purpose -- so the SSH tunnel is
+/// the way, not opening the port on the LAN.
 fn kvm_state(h: &HostCfg, cfg: &Config) -> Kvm {
     if h.is_local() {
         let b = &cfg.input.border;
@@ -419,22 +427,23 @@ fn kvm_state(h: &HostCfg, cfg: &Config) -> Kvm {
     if h.ssh.is_none() {
         return Kvm::default();
     }
-    // `curl` no Unix, `curl.exe` no Windows: la o shell do SSH e o
-    // PowerShell, e `curl` e APELIDO de `Invoke-WebRequest`, que rejeita
-    // a URL como argumento posicional. Medido -- o apelido engana.
+    // `curl` on Unix, `curl.exe` on Windows: there the SSH shell is
+    // PowerShell, and `curl` is an ALIAS of `Invoke-WebRequest`, which
+    // rejects the URL as a positional argument. Measured -- the alias
+    // deceives.
     let prog = if crate::remote::is_powershell(h) { "curl.exe" } else { "curl" };
     let cmd = format!(
         "{prog} -s --max-time 4 http://127.0.0.1:{}/api/layout",
         cfg.port
     );
-    let texto = match crate::remote::run(h, &cmd, 6) {
+    let text = match crate::remote::run(h, &cmd, 6) {
         Ok(t) => t,
         Err(e) => return Kvm { error: Some(e), ..Default::default() },
     };
-    let Some(linha) = texto.lines().find(|l| l.trim_start().starts_with('{')) else {
+    let Some(line) = text.lines().find(|l| l.trim_start().starts_with('{')) else {
         return Kvm { error: Some("o daemon de la nao respondeu JSON".into()), ..Default::default() };
     };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(linha) else {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
         return Kvm { error: Some("JSON ilegivel".into()), ..Default::default() };
     };
     Kvm {
@@ -475,9 +484,9 @@ mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
-    /// Reimplementa o criterio do filtro para fixa-lo em teste -- a
-    /// funcao real depende de resolucao de nome, que nao cabe em teste
-    /// unitario.
+    /// Reimplements the filter's criterion to pin it in a test -- the real
+    /// function depends on name resolution, which does not fit in a unit
+    /// test.
     fn link_local(a: &SocketAddr) -> bool {
         match a {
             SocketAddr::V4(v) => v.ip().octets()[..2] == [169, 254],
@@ -486,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn link_local_e_descartavel() {
+    fn link_local_is_discarded() {
         let v6_ll = SocketAddr::V6(SocketAddrV6::new(
             "fe80::cb7:7431:1bea:d882".parse::<Ipv6Addr>().unwrap(), 22, 0, 11));
         let v6_glob = SocketAddr::V6(SocketAddrV6::new(
@@ -494,10 +503,11 @@ mod tests {
         let v4_ll = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(169, 254, 3, 7), 22));
         let v4 = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 168, 1, 147), 22));
 
-        // O endereco que quebrou o SFTP para o Mac.
-        assert!(link_local(&v6_ll), "fe80::/10 e link-local");
-        assert!(link_local(&v4_ll), "169.254/16 e link-local");
-        assert!(!link_local(&v6_glob), "IPv6 global serve -- medido com o Mac");
+        // The address that broke SFTP to the Mac.
+        assert!(link_local(&v6_ll), "fe80::/10 is link-local");
+        assert!(link_local(&v4_ll), "169.254/16 is link-local");
+        assert!(!link_local(&v6_glob), "global IPv6 works -- measured with the Mac");
+
         assert!(!link_local(&v4));
     }
 }

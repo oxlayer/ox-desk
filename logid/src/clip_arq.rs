@@ -885,7 +885,7 @@ fn mandar_tar(p: &Par, caminhos: &[String]) -> Result<(), String> {
     let saida = tar.stdout.take().ok_or("tar sem stdout")?;
     let ssh = crate::sys::child("ssh")
         .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", &p.ssh])
-        .arg(crate::remote::comando_logid(&p.cfg, "clip-arq-set"))
+        .arg(crate::remote::logid_command(&p.cfg, "clip-arq-set"))
         .stdin(Stdio::from(saida))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -943,7 +943,7 @@ fn mandar_rsync(p: &Par, caminhos: &[String]) -> Result<(), String> {
     let destino = &p.ssh;
     let o = crate::sys::child("ssh")
         .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", destino])
-        .arg(crate::remote::comando_logid(&p.cfg, "clip-arq-dir"))
+        .arg(crate::remote::logid_command(&p.cfg, "clip-arq-dir"))
         .output()
         .map_err(|e| format!("ssh: {e}"))?;
     if !o.status.success() {
@@ -966,7 +966,7 @@ fn mandar_rsync(p: &Par, caminhos: &[String]) -> Result<(), String> {
 
     let o = crate::sys::child("ssh")
         .args(["-o", "BatchMode=yes", destino])
-        .arg(crate::remote::comando_logid(&p.cfg, &format!("clip-arq-prontos {dir}")))
+        .arg(crate::remote::logid_command(&p.cfg, &format!("clip-arq-prontos {dir}")))
         .output()
         .map_err(|e| format!("ssh: {e}"))?;
     if o.status.success() {

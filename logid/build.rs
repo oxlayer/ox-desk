@@ -1,9 +1,9 @@
-//! Carimba o build com o commit, para o deploy conferir sincronia.
+//! Stamps the build with the commit, so the deploy can check sync.
 //!
-//! Vem de variavel de ambiente e nao de `git` direto porque o Mac compila
-//! a partir de uma copia rsync SEM o `.git` -- chamar git la daria
-//! "desconhecido" justamente na maquina que ficou para tras uma vez.
-//! Quem sabe o commit e quem dispara o deploy; ele passa adiante.
+//! It comes from an environment variable and not from `git` directly
+//! because the Mac builds from an rsync copy WITHOUT `.git` -- calling git
+//! there would give "desconhecido" precisely on the machine that once fell
+//! behind. Whoever triggers the deploy knows the commit; it passes it on.
 fn main() {
     println!("cargo:rerun-if-env-changed=LOGI_BUILD");
     println!("cargo:rerun-if-env-changed=LOGI_BUILD_N");
@@ -18,9 +18,10 @@ fn main() {
     });
     println!("cargo:rustc-env=LOGI_BUILD={v}");
 
-    // Numero incremental alem do hash: hash diz que duas maquinas estao
-    // DIFERENTES, nao qual esta atras. `rev-list --count` cresce sempre e
-    // e igual nas tres para o mesmo commit.
+    // An incremental number besides the hash: the hash says two machines
+    // are DIFFERENT, not which one is behind. `rev-list --count` always
+    // grows and is the same on all three for the same commit.
+
     let n = std::env::var("LOGI_BUILD_N").unwrap_or_else(|_| {
         std::process::Command::new("git")
             .args(["rev-list", "--count", "HEAD"])

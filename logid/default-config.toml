@@ -1,7 +1,7 @@
-# Config do logid. Editavel a mao -- o daemon revalida ao ler.
+# logid config. Editable by hand -- the daemon revalidates on read.
 #
-# REGRA: nunca escrever IP aqui. Ver specs/007-device-routing.md --
-# o IP do Windows ja mudou uma vez e quebrou tudo que estava fixado.
+# RULE: never write an IP here. See specs/007-device-routing.md --
+# the Windows IP already changed once and broke everything pinned to it.
 
 port = 8787
 refresh_seconds = 10
@@ -11,22 +11,21 @@ name = "ubuntu-host"
 addr = "127.0.0.1"
 role = "Ubuntu 26.04 - este PC"
 layout = { col = 1, row = 1 }
-# O gnome-remote-desktop saiu junto com o RDP: nossa tela usa as APIs
-# privadas do Mutter (ScreenCast/RemoteDesktop), servidas pelo proprio
-# gnome-shell, e nao aquele daemon.
+# gnome-remote-desktop left along with RDP: our screen uses Mutter's
+# private APIs (ScreenCast/RemoteDesktop), served by gnome-shell itself,
+# not by that daemon.
 units = ["logid.service"]
 
-  # Sem NENHUM servico o host fica "off" para sempre: o painel decide
-  # online por `services.iter().any(up)`. Quando o KDE Connect saiu,
-  # este card ficou vazio e a maquina em que o painel roda apareceu
-  # desligada.
+  # With NO service the host stays "off" forever: the panel decides
+  # online by `services.iter().any(up)`. When KDE Connect left, this card
+  # went empty and the machine the panel runs on showed up as off.
   [[hosts.services]]
   label = "SSH"
   port = 22
 
 [[hosts]]
 name = "windows-host"
-addr = "windows-host.local"  # mDNS, nunca IP
+addr = "windows-host.local"  # mDNS, never an IP
 role = "Windows 10 Pro"
 ssh = "windows-host"
 agent = "%LOCALAPPDATA%\\logid\\logid-agent.exe"
@@ -36,20 +35,20 @@ layout = { col = 2, row = 1 }
   label = "SSH"
   port = 22
 
-  # Tela NOSSA (DXGI -> NVENC -> QUIC), nao RDP. O host sobe por tarefa
-  # agendada com /IT: servico cairia na sessao 0, onde nao ha desktop
-  # para duplicar.
+  # OUR screen (DXGI -> NVENC -> QUIC), not RDP. The host starts from a
+  # scheduled task with /IT: a service would land in session 0, where
+  # there is no desktop to duplicate.
   [hosts.screen]
   kind = "logistream"
   port = 9777
 
-# O MacBook ficou de FORA deste arquivo por meses, e so as tres configs
-# vivas o tinham. Quem escrevesse a config padrao -- inclusive o botao
-# "Escrever a config padrao" do wizard -- perdia a terceira maquina sem
-# aviso nenhum.
+# The MacBook was left OUT of this file for months, and only the three
+# live configs had it. Whoever wrote the default config -- including the
+# wizard's "Escrever a config padrão" button -- lost the third machine
+# without any warning.
 [[hosts]]
 name = "mac-host"
-addr = "mac-host.local"   # mDNS, nunca IP
+addr = "mac-host.local"   # mDNS, never an IP
 os = "macos"
 role = "macOS - MacBook Air"
 ssh = "mac"
@@ -59,31 +58,32 @@ layout = { col = 0, row = 1 }
   label = "SSH"
   port = 22
 
-  # Sobe por LaunchAgent (`ai.logi.logistream-host`), nunca por SSH: a
-  # captura depende de permissao TCC dada a quem lancou, e por SSH o
-  # AVFoundation trava em vez de falhar.
+  # Starts from a LaunchAgent (`ai.logi.logistream-host`), never over
+  # SSH: capture depends on a TCC permission given to whoever launched
+  # it, and over SSH AVFoundation hangs instead of failing.
   [hosts.screen]
   kind = "logistream"
   port = 9777
 
 
-# Canal Easy-Switch de cada dispositivo em cada host.
+# Easy-Switch channel of each device on each host.
 #
-# ATENCAO ao nome: tem de ser o que o HID++ reporta (feature 0x0005), nao
-# o que o solaar mostrava. Medido: o solaar dizia "MX Keys Keyboard", o
-# dispositivo se chama "MX Keys Wireless Keyboard". Confira com
-#   cargo run --release --bin probe   (no crate hidpp/)
+# MIND the name: it has to be what HID++ reports (feature 0x0005), not
+# what solaar showed. Measured: solaar said "MX Keys Keyboard", the
+# device is called "MX Keys Wireless Keyboard". Check with
+#   cargo run --release --bin probe   (in the hidpp/ crate)
 #
-# LIDO DO HARDWARE em 03/11, nao chutado. Fonte:
+# READ FROM THE HARDWARE on 03/11, not guessed. Source:
 #   solaar config 2 change-host
 #   -> possible values: [ 1:ubuntu-host, 2:windows-host, 3:ASSET-TAG-0001 ]
 #
-# Existe um terceiro host pareado (ASSET-TAG-0001) que nao esta nesta
-# config porque nao esta em [[hosts]]. Para incluir, basta adicionar o
-# bloco de host e a linha de canal.
+# There is a third paired host (ASSET-TAG-0001) that is not in this
+# config because it is not in [[hosts]]. To include it, just add the host
+# block and the channel line.
 #
-# Os nomes de canal ficam no TECLADO: ele tem HOSTS INFO {1815}, o mouse
-# nao. Ler 0x1815 do mouse devolve lixo -- e a feature nao existe nele.
+# The channel names live on the KEYBOARD: it has HOSTS INFO {1815}, the
+# mouse does not. Reading 0x1815 from the mouse returns garbage -- the
+# feature does not exist on it.
 
 [[devices]]
 name = "MX Anywhere 3"
@@ -97,37 +97,38 @@ name = "MX Keys Wireless Keyboard"
   "ubuntu-host" = 1
   "windows-host" = 2
 
-# Vigilancia de borda (modo B): atravessar a borda da tela manda os
-# dispositivos para o canal do host alvo, via HID++.
+# Border watch (mode B): crossing the screen edge sends the devices to
+# the target host's channel, via HID++.
 #
-# DESLIGADA por padrao: dispara acao IRREVERSIVEL do lado de origem.
-# O pre-flight completo roda antes de cada troca, entao config ruim nao
-# te deixa sem teclado -- mas leia specs/005 antes de ligar.
+# OFF by default: it triggers an IRREVERSIBLE action on the origin side.
+# The full pre-flight runs before every switch, so a bad config does not
+# leave you without a keyboard -- but read specs/005 before turning it on.
 #
-# A deteccao usa org.gnome.Mutter.InputCapture direto. O portal
-# equivalente aceita CreateSession e nunca responde.
+# Detection uses org.gnome.Mutter.InputCapture directly. The equivalent
+# portal accepts CreateSession and never answers.
 
 [input.border]
 enabled = false
 edge = "right"          # left | right | top | bottom
 target = "windows-host"
 
-# Fazer os demais dispositivos seguirem o canal do lider.
+# Make the other devices follow the leader's channel.
 #
-# Resolve o estado dividido na raiz -- mouse numa maquina, teclado em
-# outra -- e funciona inclusive quando a troca foi MANUAL, no botao
-# Easy-Switch, que a vigilancia de borda nao ve.
+# Solves the split state at the root -- mouse on one machine, keyboard on
+# another -- and works even when the switch was MANUAL, with the
+# Easy-Switch button, which the border watch does not see.
 #
-# DESLIGADO por padrao: mover dispositivo e irreversivel do lado de
-# origem, e um reconciliador que erra te deixa sem teclado. Ele nunca age
-# sem saber onde o lider esta.
+# OFF by default: moving a device is irreversible on the origin side, and
+# a reconciler that gets it wrong leaves you without a keyboard. It never
+# acts without knowing where the leader is.
 
 [input.follow]
 enabled = false
-leader = "MX Anywhere 3"     # nome HID++; confira com o bin `probe`
+leader = "MX Anywhere 3"     # HID++ name; check with the `probe` bin
 interval_seconds = 5
 
-# Permanencia na borda antes de trocar. hold_hits = 1 troca no primeiro
-# toque (mais imediato, mais chance de troca por raspao).
+# Dwell on the edge before switching. hold_hits = 1 switches on the first
+# touch (more immediate, more chance of switching on a graze).
+
 # hold_hits = 2
 # hold_window_ms = 300

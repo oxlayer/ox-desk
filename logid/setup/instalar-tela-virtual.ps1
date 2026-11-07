@@ -19,11 +19,11 @@ function Get-VirtualDisplay {
 }
 
 $d = Get-VirtualDisplay
-if ($d -and $d.Status -eq 'OK') { "tela virtual ja instalada: $($d.FriendlyName)"; exit 0 }
+if ($d -and $d.Status -eq 'OK') { "virtual display already installed: $($d.FriendlyName)"; exit 0 }
 
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).
   IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $admin) { throw 'precisa de administrador' }
+if (-not $admin) { throw 'needs administrator' }
 
 $tmp = Join-Path $env:TEMP ('vdd-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -33,16 +33,16 @@ try {
   $zip = Join-Path $tmp 'vdd.zip'
   Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $zip
   $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
-  if ($got -ne $Sha) { throw "hash do pacote nao confere: $got" }
+  if ($got -ne $Sha) { throw "package hash does not match: $got" }
   Expand-Archive -Path $zip -DestinationPath $tmp
   $dir = Join-Path $tmp 'VirtualDisplayDriver'
   $inf = Join-Path $dir 'MttVDD.inf'
 
   $sig = Get-AuthenticodeSignature (Join-Path $dir 'mttvdd.cat')
   if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notlike "*$Signer*") {
-    throw "assinatura do catalogo recusada: $($sig.Status) $($sig.SignerCertificate.Subject)"
+    throw "catalog signature rejected: $($sig.Status) $($sig.SignerCertificate.Subject)"
   }
-  "assinatura ok: $($sig.SignerCertificate.Subject)"
+  "signature ok: $($sig.SignerCertificate.Subject)"
 
   # Without the publisher in this store, Windows asks on a dialog that nobody
   # sees over SSH. It stays only for the install: see `finally`.
@@ -82,22 +82,22 @@ public static class Vdd {
   [DllImport("newdev.dll", SetLastError=true, CharSet=CharSet.Unicode)]
   static extern bool UpdateDriverForPlugAndPlayDevicesW(IntPtr h, string id, string inf, uint f, out bool reboot);
   static void Must(bool ok, string step) {
-    if (!ok) throw new Exception(step + " falhou: " + Marshal.GetLastWin32Error());
+    if (!ok) throw new Exception(step + " failed: " + Marshal.GetLastWin32Error());
   }
   public static void CreateNode(string hwid) {
     Guid g = new Guid("4d36e968-e325-11ce-bfc1-08002be10318");
     IntPtr s = SetupDiCreateDeviceInfoList(ref g, IntPtr.Zero);
     try {
       Info i = new Info(); i.cb = Marshal.SizeOf(typeof(Info));
-      Must(SetupDiCreateDeviceInfoW(s, "Display", ref g, null, IntPtr.Zero, 1, ref i), "criar no");
+      Must(SetupDiCreateDeviceInfoW(s, "Display", ref g, null, IntPtr.Zero, 1, ref i), "create node");
       byte[] id = Encoding.Unicode.GetBytes(hwid + "\0\0");
       Must(SetupDiSetDeviceRegistryPropertyW(s, ref i, 1, id, (uint)id.Length), "hardware id");
-      Must(SetupDiCallClassInstaller(0x19, s, ref i), "registrar");
+      Must(SetupDiCallClassInstaller(0x19, s, ref i), "register");
     } finally { SetupDiDestroyDeviceInfoList(s); }
   }
   public static bool Install(string hwid, string inf) {
     bool reboot;
-    Must(UpdateDriverForPlugAndPlayDevicesW(IntPtr.Zero, hwid, inf, 1, out reboot), "instalar driver");
+    Must(UpdateDriverForPlugAndPlayDevicesW(IntPtr.Zero, hwid, inf, 1, out reboot), "install driver");
     return reboot;
   }
 }
@@ -106,7 +106,7 @@ public static class Vdd {
     [Vdd]::CreateNode($HwId)
   }
   $reboot = [Vdd]::Install($HwId, $inf)
-  if ($reboot) { 'o Windows pediu reinicio para concluir' }
+  if ($reboot) { 'Windows asked for a reboot to finish' }
 } finally {
   if ($trusted) {
     $store = New-Object Security.Cryptography.X509Certificates.X509Store('TrustedPublisher', 'LocalMachine')
@@ -117,5 +117,5 @@ public static class Vdd {
 
 Start-Sleep 4
 $d = Get-VirtualDisplay
-if (-not $d -or $d.Status -ne 'OK') { throw "tela virtual nao ficou OK: $($d.Status)" }
-"tela virtual instalada: $($d.FriendlyName) [$($d.Status)]"
+if (-not $d -or $d.Status -ne 'OK') { throw "virtual display did not become OK: $($d.Status)" }
+"virtual display installed: $($d.FriendlyName) [$($d.Status)]"

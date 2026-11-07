@@ -1,26 +1,26 @@
-//! Medição e reparo do setup, no Windows.
+//! Setup measurement and repair, on Windows.
 //!
 //! Spec: ../../specs/011-onboarding.md
 //!
-//! Quase tudo aqui gira em volta de **uma** fronteira: a sessão. Serviço
-//! nasce na sessão 0, e de lá não se vê desktop para duplicar, não se
-//! alcança `SendInput` e a área de transferência está sempre vazia. Por
-//! isso o daemon e o host de tela sobem por tarefa agendada com `/IT`, e
-//! por isso o wizard não se contenta em ver que a tarefa existe --
-//! confere o `LogonType` dela.
+//! Almost everything here revolves around **one** boundary: the session.
+//! A service is born in session 0, and from there there is no desktop to
+//! duplicate, `SendInput` is out of reach and the clipboard is always
+//! empty. That is why the daemon and the screen host start through a
+//! scheduled task with `/IT`, and why the wizard is not satisfied with
+//! seeing that the task exists -- it checks its `LogonType`.
 //!
-//! ## Por que XML e não `schtasks /query /v`
+//! ## Why XML and not `schtasks /query /v`
 //!
-//! A saída tabular do `schtasks` é **traduzida**: num Windows pt-BR o
-//! campo é "Modo de logon: Somente interativo". Procurar "Interactive"
-//! ali funcionaria nesta máquina e falharia na próxima. O `/xml` devolve
-//! `<LogonType>InteractiveToken</LogonType>`, que é nome de esquema e
-//! não muda com o idioma. Mesma lição que `unit_state` aprendeu lendo
-//! "ESTADO" em vez de "STATE".
+//! The tabular output of `schtasks` is **localized**: on a pt-BR Windows
+//! the field is "Modo de logon: Somente interativo". Searching for
+//! "Interactive" there would work on this machine and fail on the next.
+//! `/xml` returns `<LogonType>InteractiveToken</LogonType>`, which is a
+//! schema name and does not change with the language. Same lesson
+//! `unit_state` learned reading "ESTADO" instead of "STATE".
 
 use crate::config::Config;
-use crate::setup::{Estado, Medida};
-use crate::setup_comum::rodar;
+use crate::setup::{State, Check};
+use crate::setup_common::run_timed;
 use std::path::PathBuf;
 
 const BINS: [&str; 6] = [
@@ -37,129 +37,130 @@ fn bin_dir() -> PathBuf {
     PathBuf::from(base).join("logid")
 }
 
-pub fn medir(cfg: &Config) -> Vec<Medida> {
+pub fn measure(cfg: &Config) -> Vec<Check> {
     vec![
-        binarios(),
-        crate::setup_comum::config_desta_maquina(cfg),
-        tarefa("daemon", "logid"),
-        tarefa("tarefa-tela", "logistream-host"),
-        crate::setup_comum::clipboard(),
+        binaries(),
+        crate::setup_common::this_machine_config(cfg),
+        task("daemon", "logid"),
+        task("tarefa-tela", "logistream-host"),
+        crate::setup_common::clipboard(),
         sshd(),
-        chave_admin(),
-        crate::setup_comum::pares(cfg),
-        tela_virtual(),
-        protetor_de_tela(),
+        admin_key(),
+        crate::setup_common::peers(cfg),
+        virtual_display(),
+        screen_saver(),
         ota(),
     ]
 }
 
-fn token_ota() -> PathBuf {
+fn ota_token() -> PathBuf {
     bin_dir().join("ota-token")
 }
 
-fn ota() -> Medida {
-    crate::setup_comum::ota(&bin_dir().join("logi-ota.exe"), &token_ota(), relogio())
+fn ota() -> Check {
+    crate::setup_common::ota(&bin_dir().join("logi-ota.exe"), &ota_token(), clock())
 }
 
-/// A tarefa agendada que acorda o `logi-ota`.
-fn relogio() -> Result<String, String> {
-    let m = tarefa("ota", "logi-ota");
-    if m.estado == crate::setup::Estado::Ok {
-        Ok(m.detalhe)
+/// The scheduled task that wakes `logi-ota` up.
+fn clock() -> Result<String, String> {
+    let m = task("ota", "logi-ota");
+    if m.state == crate::setup::State::Ok {
+        Ok(m.detail)
     } else {
-        Err(m.detalhe)
+        Err(m.detail)
     }
 }
 
-fn binarios() -> Medida {
+fn binaries() -> Check {
     let dir = bin_dir();
-    let faltam: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
-    if !faltam.is_empty() {
-        return Medida::falta("binarios", format!("faltam: {}", faltam.join(", ")));
+    let absent: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
+    if !absent.is_empty() {
+        return Check::missing("binarios", format!("faltam: {}", absent.join(", ")));
     }
-    // Existir no disco não é estar no ar. Ver
-    // `setup_comum::veredito_do_carimbo`: um deploy pode instalar o
-    // arquivo novo e ninguém executá-lo.
-    if let Some(p) = crate::setup_comum::daemon_do_disco(&dir.join("logid.exe")) {
-        return Medida::falta("binarios", p);
+    // Existing on disk is not being live. See
+    // `setup_common::stamp_verdict`: a deploy can install the new file
+    // and nobody runs it.
+    if let Some(p) = crate::setup_common::daemon_on_disk(&dir.join("logid.exe")) {
+        return Check::missing("binarios", p);
     }
-    Medida::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
+    Check::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
 }
 
-/// A tarefa existe E roda na sessão interativa?
-fn tarefa(id: &str, nome: &str) -> Medida {
-    // Falhar aqui é "não existe", e não "não sei".
+/// Does the task exist AND run in the interactive session?
+fn task(id: &str, name: &str) -> Check {
+    // Failing here means "does not exist", not "I don't know".
     //
-    // A primeira versão tentava distinguir pelo TEXTO do erro
-    // ("annot find" / "ão foi poss") e eu teria descoberto tarde que
-    // este Windows é pt-BR: a mensagem real é "ERRO: O sistema não pode
-    // encontrar o arquivo especificado", e a acentuação ainda chega
-    // escapada pelo caminho do SSH. Tratar qualquer falha como ausência
-    // é certo na prática -- `schtasks /query` numa tarefa que existe
-    // não falha -- e a mensagem do SO vai junto para o caso raro.
-    let xml = match rodar("schtasks", &["/query", "/tn", nome, "/xml", "ONE"], 10) {
+    // The first version tried to tell them apart by the error TEXT
+    // ("annot find" / "ão foi poss") and I would have found out late that
+    // this Windows is pt-BR: the real message is "ERRO: O sistema não
+    // pode encontrar o arquivo especificado", and the accents even arrive
+    // escaped through the SSH path. Treating any failure as absence is
+    // right in practice -- `schtasks /query` on a task that exists does
+    // not fail -- and the OS message goes along for the rare case.
+    let xml = match run_timed("schtasks", &["/query", "/tn", name, "/xml", "ONE"], 10) {
         Ok(x) => x,
-        Err(e) => return Medida::falta(id, format!("não achei a tarefa \"{nome}\" ({e})")),
+        Err(e) => return Check::missing(id, format!("não achei a tarefa \"{name}\" ({e})")),
     };
-    // O `/xml` sai em UTF-16 e o `rodar` o lê como UTF-8 lossy, então o
-    // texto vem salpicado de NULs. Tirar os zeros é mais barato (e mais
-    // robusto) que decodificar: o que queremos é uma busca de substring.
-    let limpo: String = xml.chars().filter(|c| *c != '\0').collect();
-    if !limpo.contains("InteractiveToken") {
-        return Medida::falta(
+    // `/xml` comes out in UTF-16 and `run_timed` reads it as lossy UTF-8,
+    // so the text arrives sprinkled with NULs. Stripping the zeros is
+    // cheaper (and more robust) than decoding: what we want is a
+    // substring search.
+    let clean: String = xml.chars().filter(|c| *c != '\0').collect();
+    if !clean.contains("InteractiveToken") {
+        return Check::missing(
             id,
-            format!("\"{nome}\" existe mas NÃO é interativa: cairia na sessão 0"),
+            format!("\"{name}\" existe mas NÃO é interativa: cairia na sessão 0"),
         );
     }
-    Medida::ok(id, format!("\"{nome}\" existe e roda na sessão interativa"))
+    Check::ok(id, format!("\"{name}\" existe e roda na sessão interativa"))
 }
 
-fn sshd() -> Medida {
+fn sshd() -> Check {
     match crate::sys::unit_state("sshd").as_str() {
-        "active" => Medida::ok("sshd", "serviço sshd rodando"),
-        "inactive" => Medida::falta("sshd", "o serviço sshd existe e está parado"),
-        outro => Medida::falta("sshd", format!("sshd: {outro}")),
+        "active" => Check::ok("sshd", "serviço sshd rodando"),
+        "inactive" => Check::missing("sshd", "o serviço sshd existe e está parado"),
+        other => Check::missing("sshd", format!("sshd: {other}")),
     }
 }
 
-fn chave_admin() -> Medida {
-    // O OpenSSH do Windows ignora o ~/.ssh/authorized_keys de quem é
-    // administrador e lê SÓ este arquivo. Pôr a chave no lugar
-    // "óbvio" falha com "Permission denied" e nenhuma pista.
+fn admin_key() -> Check {
+    // Windows OpenSSH ignores an administrator's ~/.ssh/authorized_keys
+    // and reads ONLY this file. Putting the key in the "obvious" place
+    // fails with "Permission denied" and no clue.
     let base = std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".into());
     let p = PathBuf::from(base).join("ssh").join("administrators_authorized_keys");
 
-    // Existir e CONSEGUIR LER são perguntas diferentes aqui, e a
-    // diferença me mordeu na primeira medição: o arquivo tem 221 bytes
-    // e o wizard anunciou "não achei".
+    // Existing and BEING ABLE TO READ are different questions here, and
+    // the difference bit me on the first measurement: the file has 221
+    // bytes and the wizard announced "not found".
     //
-    // A ACL correta deste arquivo é SYSTEM + Administradores e mais
-    // ninguém -- o sshd **recusa** o arquivo se for mais frouxa. O
-    // daemon sobe por tarefa `/IT` no logon, com o token filtrado pelo
-    // UAC, onde o SID de Administradores é deny-only: a leitura falha.
-    // (Pelo SSH a mesma conta lê, porque o OpenSSH entrega token
-    // cheio. Foi essa assimetria que escondeu o erro.)
+    // The correct ACL for this file is SYSTEM + Administrators and no one
+    // else -- sshd **refuses** the file if it is looser. The daemon
+    // starts through an `/IT` task at logon, with the UAC-filtered token,
+    // where the Administrators SID is deny-only: the read fails. (Over
+    // SSH the same account reads it, because OpenSSH hands out a full
+    // token. That asymmetry is what hid the error.)
     //
-    // Então: `metadata` responde "existe" sem precisar ler o conteúdo,
-    // e a contagem de chaves só sai quando dá.
-    let existe = std::fs::metadata(&p);
-    match (existe, std::fs::read_to_string(&p)) {
-        (Ok(_), Ok(texto)) => {
-            let n = texto.lines().filter(|l| l.trim_start().starts_with("ssh-")).count();
-            Medida::se(
+    // So: `metadata` answers "exists" without reading the content, and
+    // the key count only comes out when it can.
+    let exists = std::fs::metadata(&p);
+    match (exists, std::fs::read_to_string(&p)) {
+        (Ok(_), Ok(text)) => {
+            let n = text.lines().filter(|l| l.trim_start().starts_with("ssh-")).count();
+            Check::when(
                 "chave-admin",
                 n > 0,
                 format!("{n} chave(s) em {}", p.display()),
                 format!("{} existe e não tem chave nenhuma", p.display()),
             )
         }
-        // Existe e não podemos ler: é o estado ESPERADO numa máquina
-        // configurada certo. Marcar falta aqui acusaria defeito justo
-        // na configuração correta -- e um wizard que erra no caso bom
-        // é um wizard que a pessoa aprende a ignorar. Quem confere o
-        // conteúdo de verdade é o passo `pares` das OUTRAS máquinas,
-        // que entram por aqui.
-        (Ok(m), Err(_)) => Medida::ok(
+        // Exists and we cannot read it: that is the EXPECTED state on a
+        // correctly configured machine. Marking it missing here would
+        // flag a defect precisely in the correct configuration -- and a
+        // wizard that gets the good case wrong is a wizard the person
+        // learns to ignore. What really checks the content is the
+        // `pares` step of the OTHER machines, which come in through here.
+        (Ok(m), Err(_)) => Check::ok(
             "chave-admin",
             format!(
                 "existe ({} bytes); só administradores leem, então as chaves não se contam daqui",
@@ -167,137 +168,141 @@ fn chave_admin() -> Medida {
             ),
         ),
         (Err(e), _) if e.kind() == std::io::ErrorKind::NotFound => {
-            Medida::falta("chave-admin", format!("não achei {}", p.display()))
+            Check::missing("chave-admin", format!("não achei {}", p.display()))
         }
-        (Err(e), _) => Medida::erro("chave-admin", format!("{}: {e}", p.display())),
+        (Err(e), _) => Check::error("chave-admin", format!("{}: {e}", p.display())),
     }
 }
 
-fn tela_virtual() -> Medida {
-    let contar = "@(Get-PnpDevice -Class Monitor | Where-Object Present).Count";
-    match rodar("powershell", &["-NoProfile", "-Command", contar], 15) {
-        Ok(saida) => crate::setup_comum::veredito_monitores(&saida),
-        Err(e) => Medida::erro("tela-virtual", format!("não consegui contar os monitores: {e}")),
+fn virtual_display() -> Check {
+    let count_cmd = "@(Get-PnpDevice -Class Monitor | Where-Object Present).Count";
+    match run_timed("powershell", &["-NoProfile", "-Command", count_cmd], 15) {
+        Ok(output) => crate::setup_common::monitors_verdict(&output),
+        Err(e) => Check::error("tela-virtual", format!("não consegui contar os monitores: {e}")),
     }
 }
 
-/// Grava o instalador que vem dentro do binário e o roda como
-/// administrador. Máquina nova não tem clone do repo.
-fn instalar_tela_virtual() -> Result<String, String> {
+/// Writes the installer embedded in the binary and runs it as
+/// administrator. A new machine has no clone of the repo.
+fn install_virtual_display() -> Result<String, String> {
     const SCRIPT: &str = include_str!("../setup/instalar-tela-virtual.ps1");
-    let alvo = bin_dir().join("instalar-tela-virtual.ps1");
-    std::fs::write(&alvo, SCRIPT).map_err(|e| format!("gravar {alvo:?}: {e}"))?;
-    let elevar = format!(
+    let target = bin_dir().join("instalar-tela-virtual.ps1");
+    std::fs::write(&target, SCRIPT).map_err(|e| format!("gravar {target:?}: {e}"))?;
+    let elevate = format!(
         "Start-Process powershell -Verb RunAs -Wait -ArgumentList \
          '-NoProfile','-ExecutionPolicy','Bypass','-File','\"{}\"'",
-        alvo.display()
+        target.display()
     );
-    let _ = rodar("powershell", &["-NoProfile", "-Command", &elevar], 180);
-    let m = tela_virtual();
-    match m.estado {
-        Estado::Ok => Ok(m.detalhe),
-        _ => Err(format!("{} -- aceite o pedido de administrador e meça de novo", m.detalhe)),
+    let _ = run_timed("powershell", &["-NoProfile", "-Command", &elevate], 180);
+    let m = virtual_display();
+    match m.state {
+        State::Ok => Ok(m.detail),
+        _ => Err(format!("{} -- aceite o pedido de administrador e meça de novo", m.detail)),
     }
 }
 
-fn protetor_de_tela() -> Medida {
-    // Nomes de valor do registro não são traduzidos, a saída do `reg
-    // query` é estável, e a pergunta é pequena: o protetor vai entrar e
-    // levar a tela remota com ele?
-    let chave = "HKCU\\Control Panel\\Desktop";
-    let ler = |valor: &str| -> Option<String> {
-        let t = rodar("reg", &["query", chave, "/v", valor], 5).ok()?;
+fn screen_saver() -> Check {
+    // Registry value names are not localized, the `reg query` output is
+    // stable, and the question is small: will the screen saver kick in
+    // and take the remote screen with it?
+    let key = "HKCU\\Control Panel\\Desktop";
+    let read = |value: &str| -> Option<String> {
+        let t = run_timed("reg", &["query", key, "/v", value], 5).ok()?;
         t.lines()
-            .find(|l| l.contains(valor))
+            .find(|l| l.contains(value))
             .and_then(|l| l.split_whitespace().last())
             .map(str::to_string)
     };
-    let ativo = ler("ScreenSaveActive").unwrap_or_else(|| "?".into());
-    let seguro = ler("ScreenSaverIsSecure").unwrap_or_else(|| "0".into());
-    let tempo: u64 = ler("ScreenSaveTimeOut").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let active = read("ScreenSaveActive").unwrap_or_else(|| "?".into());
+    let secure = read("ScreenSaverIsSecure").unwrap_or_else(|| "0".into());
+    let timeout: u64 = read("ScreenSaveTimeOut").and_then(|v| v.parse().ok()).unwrap_or(0);
 
-    if ativo == "0" || tempo == 0 {
-        return Medida::ok("protetor-de-tela", "protetor desligado: a tela remota não cai sozinha");
+    if active == "0" || timeout == 0 {
+        return Check::ok("protetor-de-tela", "protetor desligado: a tela remota não cai sozinha");
     }
-    if seguro == "0" {
-        // Protetor sem senha não bloqueia a sessão, e é o bloqueio --
-        // não o protetor -- que tira o DXGI do ar.
-        return Medida::ok(
+    if secure == "0" {
+        // A screen saver without a password does not lock the session,
+        // and it is the lock -- not the screen saver -- that takes DXGI
+        // down.
+        return Check::ok(
             "protetor-de-tela",
-            format!("protetor em {}min, sem bloqueio: o DXGI continua", tempo / 60),
+            format!("protetor em {}min, sem bloqueio: o DXGI continua", timeout / 60),
         );
     }
-    Medida::falta(
+    Check::missing(
         "protetor-de-tela",
-        format!("bloqueia em {}min: a tela remota morre com E_ACCESSDENIED", tempo / 60),
+        format!("bloqueia em {}min: a tela remota morre com E_ACCESSDENIED", timeout / 60),
     )
 }
 
-// ------------------------------------------------------------------ reparos
+// ------------------------------------------------------------------ repairs
 
-pub fn arrumar(id: &str, _cfg: &Config) -> Result<String, String> {
+pub fn repair(id: &str, _cfg: &Config) -> Result<String, String> {
     match id {
-        "config" => crate::setup_comum::escrever_config(),
-        "clipboard" => crate::setup_comum::testar_clipboard(),
-        "daemon" => criar_tarefa(
+        "config" => crate::setup_common::write_config(),
+        "clipboard" => crate::setup_common::test_clipboard(),
+        "daemon" => create_task(
             "daemon",
             "logid",
             &bin_dir().join("logid.exe").to_string_lossy(),
             &["/sc", "onlogon"],
         ),
-        // `once` às 00:00 já passou: a tarefa não roda sozinha, só
-        // quando alguém pede a tela (`schtasks /run`). O host capturando
-        // sem ninguém assistindo seria GPU e energia à toa.
-        "tarefa-tela" => criar_tarefa(
+        // `once` at 00:00 has already passed: the task does not run on
+        // its own, only when someone asks for the screen (`schtasks
+        // /run`). The host capturing with nobody watching would waste GPU
+        // and power.
+        "tarefa-tela" => create_task(
             "tarefa-tela",
             "logistream-host",
             &bin_dir().join("logistream-host.exe").to_string_lossy(),
             &["/sc", "once", "/st", "00:00"],
         ),
-        "ota" => instalar_relogio(),
-        "tela-virtual" => instalar_tela_virtual(),
+        "ota" => install_clock(),
+        "tela-virtual" => install_virtual_display(),
         _ => Err(format!("'{id}' não se arruma sozinho nesta máquina")),
     }
 }
 
-/// Cria a tarefa de hora em hora e confere uma vez.
+/// Creates the hourly task and checks once.
 ///
-/// A tarefa roda o `.exe` **sem argumento**. Não é descuido: aqui o
-/// `logi-ota` já recusa trocar binário por conta própria (a chave do
-/// Authenticode não sai do Ubuntu -- specs/008), então o modo padrão já
-/// é "conferir e relatar". E passar argumento no `/tr` exigiria aninhar
-/// aspas, que já quebrou esta ponte três vezes.
-fn instalar_relogio() -> Result<String, String> {
+/// The task runs the `.exe` **without arguments**. It is not sloppiness:
+/// here `logi-ota` already refuses to swap binaries on its own (the
+/// Authenticode key does not leave the Ubuntu box -- specs/008), so the
+/// default mode is already "check and report". And passing an argument
+/// in `/tr` would require nested quotes, which have already broken this
+/// bridge three times.
+fn install_clock() -> Result<String, String> {
     let exe = bin_dir().join("logi-ota.exe");
-    criar_tarefa("ota", "logi-ota", &exe.to_string_lossy(), &["/sc", "hourly"])?;
-    let primeira = rodar(&exe.to_string_lossy(), &["--conferir"], 60);
-    Ok(match primeira {
+    create_task("ota", "logi-ota", &exe.to_string_lossy(), &["/sc", "hourly"])?;
+    let first = run_timed(&exe.to_string_lossy(), &["--conferir"], 60);
+    Ok(match first {
         Ok(s) => format!("tarefa criada; primeira checagem: {}", s.trim()),
         Err(e) => format!("tarefa criada, mas a primeira checagem falhou: {e}"),
     })
 }
 
-fn criar_tarefa(id: &str, nome: &str, exe: &str, quando: &[&str]) -> Result<String, String> {
+fn create_task(id: &str, name: &str, exe: &str, when: &[&str]) -> Result<String, String> {
     if !std::path::Path::new(exe).exists() {
         return Err(format!("não achei {exe}: rode o deploy primeiro"));
     }
-    let mut args: Vec<&str> = vec!["/create", "/tn", nome, "/tr", exe];
-    args.extend_from_slice(quando);
-    // `/it` é o ponto inteiro desta função. `/f` sobrescreve uma tarefa
-    // anterior -- inclusive uma criada sem `/it`, que é o caso que
-    // estamos consertando.
+    let mut args: Vec<&str> = vec!["/create", "/tn", name, "/tr", exe];
+    args.extend_from_slice(when);
+    // `/it` is the whole point of this function. `/f` overwrites a
+    // previous task -- including one created without `/it`, which is the
+    // case we are fixing.
     args.extend_from_slice(&["/it", "/f"]);
-    // O exit code é 0 com AVISO quando o /ST está no passado: esperado e
-    // desejado. Erro de verdade vem com código != 0, e o `rodar` já o
-    // transforma em Err.
-    rodar("schtasks", &args, 20)?;
-    // Medir depois, não confiar no código: já vi `schtasks` devolver 0
-    // criando a tarefa sem o token interativo quando a política da
-    // máquina não permite.
-    let m = tarefa(id, nome);
-    if m.estado == crate::setup::Estado::Ok {
-        Ok(m.detalhe)
+    // The exit code is 0 with a WARNING when /ST is in the past: expected
+    // and wanted. A real error comes with code != 0, and `run_timed`
+    // already turns it into Err.
+    run_timed("schtasks", &args, 20)?;
+    // Measure afterwards, do not trust the code: I have seen `schtasks`
+    // return 0 while creating the task without the interactive token when
+    // the machine's policy does not allow it.
+
+    let m = task(id, name);
+    if m.state == crate::setup::State::Ok {
+        Ok(m.detail)
     } else {
-        Err(format!("criei e a conferência diz: {}", m.detalhe))
+        Err(format!("criei e a conferência diz: {}", m.detail))
     }
 }

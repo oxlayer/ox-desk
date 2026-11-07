@@ -252,7 +252,7 @@ fn no_access() -> Survey {
     // outro -- e foi o que aconteceu quando o receptor mudou de maquina.
     #[cfg(target_os = "linux")]
     let erro = {
-        let (total, abriveis) = crate::sys::hidraw_contagem();
+        let (total, abriveis) = crate::sys::hidraw_count();
         if total == 0 {
             "nenhum no `/dev/hidraw*` neste sistema: nao ha receptor \
              Logitech conectado aqui (ou o kernel nao o enumerou)"

@@ -1,4 +1,4 @@
-//! Implementacao Windows do contrato em `mod.rs`.
+//! Windows implementation of the contract in `mod.rs`.
 
 use crate::config::Config;
 use crate::logs::Raw;
@@ -7,19 +7,19 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-/// O resolver do Windows ja fala mDNS desde o 10, entao nao existe o
-/// buraco que o `getent` tapa no Linux: `to_socket_addrs` basta.
+/// The Windows resolver has spoken mDNS since 10, so the hole `getent`
+/// plugs on Linux does not exist: `to_socket_addrs` is enough.
 pub fn resolve_fallback(_addr: &str, _port: u16) -> Option<SocketAddr> {
     None
 }
 
-/// Estado de um `units` da config, que no Windows nao e unit nenhum.
+/// State of a config `units` entry, which on Windows is no unit at all.
 ///
-/// O nome do campo fica (a config e a mesma nas duas maquinas), mas a
-/// leitura e outra: primeiro tentamos um servico de verdade, e so se ele
-/// nao existir caimos para "existe processo com esse nome". Os dois casos
-/// aparecem na pratica -- `sshd` e servico, `logid` e processo solto na
-/// sessao do usuario.
+/// The field name stays (the config is the same on both machines), but
+/// the reading is different: first we try a real service, and only if it
+/// does not exist do we fall back to "a process with that name exists".
+/// Both cases show up in practice -- `sshd` is a service, `logid` is a
+/// loose process in the user's session.
 pub fn unit_state(unit: &str) -> String {
     match service_state(unit) {
         Some(s) => s,
@@ -33,16 +33,17 @@ pub fn unit_state(unit: &str) -> String {
     }
 }
 
-/// `None` = nao existe servico com esse nome (ERROR_SERVICE_DOES_NOT_EXIST).
+/// `None` = no service with that name exists
+/// (ERROR_SERVICE_DOES_NOT_EXIST).
 fn service_state(name: &str) -> Option<String> {
     let out = child("sc").args(["query", name]).output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() {
         return None;
     }
-    // O rotulo da linha e traduzido ("ESTADO" num Windows pt-BR), mas o
-    // nome do estado vem do SCM como constante em ingles. Mesmo assim
-    // casamos tambem pelo codigo numerico, que nao depende de locale.
+    // The line's label is localized ("ESTADO" on a pt-BR Windows), but
+    // the state name comes from the SCM as an English constant. Even so
+    // we also match on the numeric code, which does not depend on locale.
     let up = text.to_ascii_uppercase();
     let by_name = [
         ("RUNNING", "active"),
@@ -75,8 +76,9 @@ fn process_running(name: &str) -> bool {
         .args(["/FO", "CSV", "/NH", "/FI", &format!("IMAGENAME eq {exe}")])
         .output();
     let Ok(out) = out else { return false };
-    // Quando nao casa, o tasklist escreve "INFO: nenhuma tarefa..." --
-    // mensagem traduzida. Procurar o nome do exe evita depender disso.
+    // When nothing matches, tasklist writes "INFO: nenhuma tarefa..." --
+    // a localized message. Looking for the exe name avoids depending on
+    // it.
     String::from_utf8_lossy(&out.stdout)
         .to_ascii_lowercase()
         .contains(&exe.to_ascii_lowercase())
@@ -100,8 +102,9 @@ extern "system" {
     fn GetLocalTime(st: *mut SysTime);
 }
 
-/// Hora local direto do Win32 -- sem `date +%z` nem aritmetica de fuso,
-/// porque aqui o SO ja entrega o relogio de parede local.
+/// Local time straight from Win32 -- no `date +%z` nor timezone
+/// arithmetic, because here the OS already hands over the local wall
+/// clock.
 pub fn hhmmss() -> String {
     let mut st = SysTime::default();
     unsafe { GetLocalTime(&mut st) };
@@ -116,11 +119,11 @@ pub fn log_path() -> PathBuf {
     PathBuf::from(base).join("logid").join("logid.log")
 }
 
-/// Sem journal, o daemon timbra e persiste as proprias linhas.
+/// Without a journal, the daemon timestamps and persists its own lines.
 ///
-/// Rotaciona por tamanho: um daemon residente que escreve borda e
-/// bateria enche arquivo, e um log que cresce sem limite deixa de ser log
-/// e passa a ser problema de disco.
+/// Rotates by size: a resident daemon that writes border and battery
+/// events fills a file, and a log that grows without bound stops being a
+/// log and becomes a disk problem.
 pub fn log_sink(line: &str) {
     let p = log_path();
     if let Some(dir) = p.parent() {
@@ -163,13 +166,13 @@ pub fn spawn_border(cfg: Arc<RwLock<Config>>) {
     crate::border_win::spawn(cfg);
 }
 
-/// Conseguimos falar com o receptor?
+/// Can we talk to the receiver?
 ///
-/// No Windows nao existe `/dev/hidraw` nem ACL de `uaccess`: o acesso a
-/// colecao do fabricante (usage page 0xFF00) e liberado por padrao, e o
-/// que resta e abrir e ver. Checar a coisa certa importa -- a versao
-/// Linux deste check procura arquivo em `/dev`, e aqui ela responderia
-/// "sem acesso" para sempre, bloqueando todo plano de troca.
+/// On Windows there is no `/dev/hidraw` nor `uaccess` ACL: access to the
+/// vendor collection (usage page 0xFF00) is allowed by default, and what
+/// is left is opening it and seeing. Checking the right thing matters --
+/// the Linux version of this check looks for a file in `/dev`, and here it
+/// would answer "no access" forever, blocking every switch plan.
 pub fn device_access() -> bool {
     hidpp::hidapi::HidApi::new()
         .ok()
@@ -177,11 +180,11 @@ pub fn device_access() -> bool {
         .unwrap_or(false)
 }
 
-/// Onde mora a config: `%APPDATA%\logi`.
+/// Where the config lives: `%APPDATA%\logi`.
 ///
-/// `HOME` nao existe no Windows. A versao Linux cai para `/tmp` quando
-/// nao a encontra -- aqui isso significaria gravar a config num caminho
-/// sem sentido e perde-la no proximo boot.
+/// `HOME` does not exist on Windows. The Linux version falls back to
+/// `/tmp` when it cannot find it -- here that would mean writing the
+/// config to a meaningless path and losing it on the next boot.
 pub fn config_dir() -> PathBuf {
     let base = std::env::var("APPDATA")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -189,10 +192,10 @@ pub fn config_dir() -> PathBuf {
     PathBuf::from(base).join("logi")
 }
 
-/// Onde ficam logs de processos que lancamos.
+/// Where the logs of processes we launch live.
 ///
-/// `%LOCALAPPDATA%\logid`, que e onde o `logistream-host` ja escreve o
-/// dele -- um diretorio so para investigar.
+/// `%LOCALAPPDATA%\logid`, which is where `logistream-host` already
+/// writes its own -- a single directory to investigate.
 pub fn state_dir() -> PathBuf {
     let base = std::env::var("LOCALAPPDATA")
         .or_else(|_| std::env::var("APPDATA"))
@@ -202,7 +205,7 @@ pub fn state_dir() -> PathBuf {
     d
 }
 
-/// Ponto de partida do navegador de arquivos.
+/// Starting point of the file browser.
 pub fn home_dir() -> PathBuf {
     std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("APPDATA"))
@@ -210,18 +213,18 @@ pub fn home_dir() -> PathBuf {
         .unwrap_or_else(|_| "C:\\".into())
 }
 
-/// Clientes de tela conhecidos, em ordem de preferencia.
+/// Known screen clients, in order of preference.
 ///
-/// RDP ja vem no Windows (`mstsc`), mas ele nao aceita som nem microfone
-/// por linha de comando -- isso exige gerar um arquivo `.rdp`, o que nao
-/// vale a complexidade por enquanto. VNC nao vem nenhum: e o que falta
-/// para alcancar o Mac daqui.
+/// RDP comes with Windows (`mstsc`), but it does not take sound or
+/// microphone on the command line -- that requires generating an `.rdp`
+/// file, which is not worth the complexity for now. No VNC comes at all:
+/// it is what is missing to reach the Mac from here.
 pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
     use super::ClientSpec;
     match kind {
-        // Pelo ARQUIVO e nao por `/v:`: o `mstsc` aceita os dois, mas so
-        // o arquivo carrega som e microfone -- a linha de comando dele
-        // nao tem essas opcoes.
+        // Through the FILE and not `/v:`: `mstsc` accepts both, but only
+        // the file carries sound and microphone -- its command line does
+        // not have those options.
         "rdp" => vec![ClientSpec {
             prog: "mstsc.exe",
             args: &["{file}"],
@@ -248,14 +251,14 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 file: None,
             },
         ],
-        // O NOSSO. Mesmo binario em qualquer plataforma, e o unico
-        // que fala o protocolo do `logistream` -- H.264 por QUIC com
-        // input de volta. Ver specs/010.
+        // OURS. The same binary on every platform, and the only one that
+        // speaks the `logistream` protocol -- H.264 over QUIC with input
+        // coming back. See specs/010.
         "logistream" => vec![ClientSpec {
             prog: "logistream-view.exe",
             args: &["{host}:{port}"],
-            // Ainda nao tem audio nem modo so-leitura; quando tiver,
-            // muda aqui e a UI acende sozinha.
+            // No audio or view-only mode yet; when there is, it changes
+            // here and the UI lights up on its own.
             audio: None,
             mic: None,
             view_only: None,
@@ -265,11 +268,11 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
     }
 }
 
-/// Instaladores nao poem viewer de VNC no PATH; estes sao os lugares
-/// onde o RealVNC e o TightVNC caem por padrao.
+/// Installers do not put a VNC viewer on PATH; these are the places where
+/// RealVNC and TightVNC land by default.
 pub fn screen_client_dirs() -> Vec<PathBuf> {
     let mut v = Vec::new();
-    // Onde os NOSSOS binarios ficam, ao lado do daemon.
+    // Where OUR binaries live, next to the daemon.
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         v.push(PathBuf::from(local).join("logid"));
     }
@@ -283,18 +286,19 @@ pub fn screen_client_dirs() -> Vec<PathBuf> {
     v
 }
 
-/// Cria processo sem alocar console.
+/// Creates a process without allocating a console.
 ///
-/// O daemon e subsistema `windows` (sem console proprio, para nao abrir
-/// janela preta a cada login). A consequencia e que **cada** filho de
-/// console que ele cria ganha um console NOVO -- e o refresher de pares
-/// chama `ssh` a cada 6 s, o que virava uma janela de cmd piscando sem
-/// parar na tela do usuario. Reclamado, e com razao: parece coisa
-/// quebrada.
+/// The daemon is a `windows` subsystem binary (no console of its own, so
+/// it does not open a black window at every login). The consequence is
+/// that **every** console child it creates gets a NEW console -- and the
+/// peers refresher calls `ssh` every 6 s, which became a cmd window
+/// flashing nonstop on the user's screen. Complained about, and rightly:
+/// it looks broken.
 ///
-/// `CREATE_NO_WINDOW` resolve na origem. Nao atrapalha o que de fato tem
-/// interface: em app grafico (o `mstsc`, por exemplo) a flag so impede o
-/// console, nao as janelas dele.
+/// `CREATE_NO_WINDOW` solves it at the source. It does not get in the way
+/// of what actually has a UI: for a graphical app (`mstsc`, for example)
+/// the flag only prevents the console, not its windows.
+
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn child(prog: &str) -> std::process::Command {

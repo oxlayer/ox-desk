@@ -152,7 +152,7 @@ pub fn mandar(cfg: &Config, host: &str) -> Result<String, String> {
     // stream de input; sem ele de pe o `logistream-kvm` recusa conectar
     // -- e recusar e o comportamento certo, porque agarrar o teclado
     // sem destino deixaria a pessoa sem teclado E sem para onde ir.
-    crate::screen::acordar_host(h, sc.port)
+    crate::screen::wake_host(h, sc.port)
         .map_err(|e| format!("nao consegui levantar o host de {host}: {e}"))?;
 
     // `porta + 1`: a porta de INPUT do host, nao a de video.
