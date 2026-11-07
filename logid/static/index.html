@@ -8,7 +8,7 @@
      pagina e um arquivo unico embutido no binario do daemon.
      `connect-src 'self'` limita o fetch a 127.0.0.1:porta, que e o unico
      lugar de onde ela le. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:*; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Maquinas</title>
 <style>
@@ -354,6 +354,30 @@
 
   /* Uma secao por vez. O conteudo e o MESMO de antes -- so deixou de
      estar todo visivel ao mesmo tempo. */
+  /* A sessao e uma aba: o painel some e a tela remota ocupa o lugar dele. */
+  .abas{display:flex;gap:4px;margin:-12px 0 16px;padding-bottom:8px;overflow-x:auto;
+    border-bottom:1px solid var(--line)}
+  .aba{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:9px;
+    font:inherit;font-size:13px;color:var(--dim);background:none;border:0;cursor:pointer;
+    white-space:nowrap}
+  .aba:hover{background:var(--selbg)}
+  .aba.on{color:var(--fg);background:var(--selbg);font-weight:600}
+  .aba .x{font-size:15px;line-height:1;opacity:.6;padding:0 2px}
+  .aba .x:hover{opacity:1}
+  .palco{position:relative;height:calc(100vh - 92px);background:#000;border-radius:12px;
+    overflow:hidden}
+  .palco canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+    outline:0;display:none;cursor:default}
+  .palco canvas.on{display:block}
+  .palco .aviso{position:absolute;inset:0;display:grid;place-items:center;color:#aeb4bd;
+    font-size:14px;pointer-events:none;text-align:center;padding:20px}
+  .palco .medida{position:absolute;right:10px;bottom:8px;font:11px var(--mono);
+    color:#c9ced6;background:rgba(0,0,0,.55);padding:3px 7px;border-radius:6px;
+    pointer-events:none}
+  .emsessao header,.emsessao .sec,.emsessao footer{display:none !important}
+  .scr button.alt{width:auto;background:none;color:var(--dim);font-weight:400;
+    font-size:12px;padding:2px 0;border:0}
+  .scr button.alt:hover:not(:disabled){background:none;color:var(--fg)}
   .sec{display:none}
   .sec.on{display:block}
 
@@ -394,6 +418,8 @@
     Favoritos; o &#9654; abre a tela dela direto.</div>
 </aside>
 <main class="wrap">
+<nav class="abas" id="abas" hidden></nav>
+<div class="palco" id="palco" hidden></div>
 <header>
   <h1>Maquinas</h1>
   <div class="summary" id="sum"></div>
@@ -780,14 +806,21 @@ async function screens(){
     const via = p.ready ? `${p.kind} ${p.port}${lat} via ${p.client}` : '';
     box.innerHTML =
       `<button data-open="${esc(p.host)}" title="${esc(via)}"` +
-      `${p.ready ? '' : ' disabled'}>Conectar</button>` + opcoes +
+      `${p.ready ? '' : ' disabled'}>Conectar</button>` +
+      (p.kind === 'logistream' && p.ready
+        ? `<button class="alt" data-janela="${esc(p.host)}">Abrir em janela separada</button>` : '') +
+      opcoes +
       `<span class="why${p.ready ? '' : ' er'}">` +
       (p.ready ? '' : esc(p.blocker || 'indisponivel')) + `</span>`;
   }
 }
 
 document.getElementById('grid').addEventListener('click', async ev => {
-  const b = ev.target.closest('button[data-open]');
+  const aba = ev.target.closest('button[data-open]');
+  if (aba && !aba.disabled && !ev.shiftKey){
+    if (await abrirAba(aba.dataset.open)) return;
+  }
+  const b = aba || ev.target.closest('button[data-janela]');
   if (!b || b.disabled) return;
   const box = b.parentElement;
   const why = box.querySelector('.why');
@@ -801,7 +834,7 @@ document.getElementById('grid').addEventListener('click', async ev => {
     const r = await fetch('/api/screen', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
-        host: b.dataset.open,
+        host: b.dataset.open || b.dataset.janela,
         control: marcado('control', true),
         audio: marcado('audio', false),
         mic: marcado('mic', false),
@@ -816,6 +849,220 @@ document.getElementById('grid').addEventListener('click', async ev => {
     why.classList.add('er');
   }
   setTimeout(screens, 2500);
+});
+
+// --- sessao em aba -----------------------------------------------------
+// A ponte entrega H.264 Annex B e recebe os eventos no formato do host.
+// Ver specs/016-sessao-e-visual.md.
+const SESSOES = new Map();
+let abaAtual = null;
+const T_MOUSE = 1, T_BOTAO = 2, T_ROLAGEM = 3, T_TECLA = 4;
+const BOTOES = {0: 0x110, 1: 0x112, 2: 0x111};
+// KeyboardEvent.code para keycode do evdev: a mesma tabela de
+// `evdev_de_winit`, em logistream/src/input.rs.
+const TECLAS = (() => {
+  const t = {Escape:1, Minus:12, Equal:13, Backspace:14, Tab:15, BracketLeft:26,
+    BracketRight:27, Enter:28, ControlLeft:29, Semicolon:39, Quote:40, Backquote:41,
+    ShiftLeft:42, Backslash:43, Comma:51, Period:52, Slash:53, ShiftRight:54,
+    NumpadMultiply:55, AltLeft:56, Space:57, CapsLock:58, NumLock:69, ScrollLock:70,
+    NumpadSubtract:74, NumpadAdd:78, NumpadDecimal:83, IntlBackslash:86, F11:87, F12:88,
+    IntlRo:89, NumpadEnter:96, ControlRight:97, NumpadDivide:98, PrintScreen:99,
+    AltRight:100, Home:102, ArrowUp:103, PageUp:104, ArrowLeft:105, ArrowRight:106,
+    End:107, ArrowDown:108, PageDown:109, Insert:110, Delete:111, AudioVolumeMute:113,
+    AudioVolumeDown:114, AudioVolumeUp:115, Pause:119, MetaLeft:125, MetaRight:126,
+    ContextMenu:127};
+  '1234567890'.split('').forEach((c, i) => t['Digit' + c] = i + 2);
+  [['QWERTYUIOP', 16], ['ASDFGHJKL', 30], ['ZXCVBNM', 44]].forEach(([s, b]) =>
+    s.split('').forEach((c, i) => t['Key' + c] = b + i));
+  for (let i = 1; i <= 10; i++) t['F' + i] = 58 + i;
+  [[7,71],[8,72],[9,73],[4,75],[5,76],[6,77],[1,79],[2,80],[3,81],[0,82]]
+    .forEach(([n, k]) => t['Numpad' + n] = k);
+  return t;
+})();
+
+function evento(tipo, a, b){
+  const curto = tipo === T_BOTAO || tipo === T_TECLA;
+  const v = new DataView(new ArrayBuffer(curto ? 6 : 17));
+  v.setUint8(0, tipo);
+  if (curto){ v.setUint32(1, a); v.setUint8(5, b ? 1 : 0); }
+  else { v.setFloat64(1, a); v.setFloat64(9, b); }
+  return v.buffer;
+}
+
+// O codec sai do SPS do proprio fluxo, e nao de um valor fixo: perfil e
+// nivel mudam com a resolucao e o codificador de cada maquina.
+function codecDe(u){
+  for (let i = 0; i + 7 < u.length; i++){
+    if (u[i] === 0 && u[i+1] === 0 && u[i+2] === 1 && (u[i+3] & 31) === 7){
+      const h = n => n.toString(16).padStart(2, '0');
+      return 'avc1.' + h(u[i+4]) + h(u[i+5]) + h(u[i+6]);
+    }
+  }
+  return null;
+}
+
+// Canvas com `object-fit:contain`: o ponto da janela vira pixel do quadro,
+// descontadas as barras. Fora da imagem nao ha evento.
+function pontoRemoto(ev, c){
+  const r = c.getBoundingClientRect();
+  const e = Math.min(r.width / c.width, r.height / c.height);
+  const w = c.width * e, h = c.height * e;
+  const x = (ev.clientX - r.left - (r.width - w) / 2) / e;
+  const y = (ev.clientY - r.top - (r.height - h) / 2) / e;
+  return (x < 0 || y < 0 || x >= c.width || y >= c.height) ? null : [x, y];
+}
+
+function ligarInput(s){
+  const c = s.canvas;
+  const manda = b => { if (s.ws.readyState === 1) s.ws.send(b); };
+  const presas = new Set();
+  // Sai na hora: esperar o proximo quadro somaria ate 16 ms a cada movimento.
+  c.addEventListener('pointermove', ev => {
+    const p = pontoRemoto(ev, c);
+    if (p) manda(evento(T_MOUSE, p[0], p[1]));
+  });
+  const botao = apertado => ev => {
+    const k = BOTOES[ev.button]; if (k == null) return;
+    ev.preventDefault(); c.focus();
+    const p = pontoRemoto(ev, c);
+    if (p) manda(evento(T_MOUSE, p[0], p[1]));
+    manda(evento(T_BOTAO, k, apertado));
+  };
+  c.addEventListener('pointerdown', botao(true));
+  c.addEventListener('pointerup', botao(false));
+  c.addEventListener('contextmenu', ev => ev.preventDefault());
+  c.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    const f = ev.deltaMode === 1 ? 15 : 1;
+    manda(evento(T_ROLAGEM, ev.deltaX * f, ev.deltaY * f));
+  }, {passive:false});
+  const tecla = apertado => ev => {
+    const k = TECLAS[ev.code]; if (k == null) return;
+    ev.preventDefault();
+    if (apertado) presas.add(k); else presas.delete(k);
+    manda(evento(T_TECLA, k, apertado));
+  };
+  c.addEventListener('keydown', tecla(true));
+  c.addEventListener('keyup', tecla(false));
+  // Sair da aba com a tecla apertada a deixaria presa na outra maquina.
+  s.soltar = () => { presas.forEach(k => manda(evento(T_TECLA, k, false))); presas.clear(); };
+  c.addEventListener('blur', s.soltar);
+}
+
+function ligarVideo(s){
+  const c = s.canvas, ctx = c.getContext('2d', {alpha:false, desynchronized:true});
+  let pronto = false, n = 0;
+  const chegada = new Map();
+  const dec = new VideoDecoder({
+    output: f => {
+      if (c.width !== f.displayWidth || c.height !== f.displayHeight){
+        c.width = f.displayWidth; c.height = f.displayHeight;
+      }
+      ctx.drawImage(f, 0, 0);
+      const t0 = chegada.get(f.timestamp);
+      chegada.delete(f.timestamp);
+      if (t0 != null) s.decodMs = performance.now() - t0;
+      f.close();
+      s.quadros++;
+      s.aviso.hidden = true;
+    },
+    error: e => { s.aviso.hidden = false; s.aviso.textContent = 'decodificador: ' + e.message; }
+  });
+  s.dec = dec;
+  s.ws.onmessage = ev => {
+    const b = new Uint8Array(ev.data), chave = (b[0] & 1) === 1, u = b.subarray(9);
+    if (!pronto){
+      if (!chave) return;
+      const codec = codecDe(u);
+      if (!codec) return;
+      // Por software, e nao por hardware: o fluxo nao declara que nao
+      // reordena, e o decodificador de hardware segura ~4 quadros. Medido
+      // no Mac em 1080p: 172 ms contra 1,9 ms, com a mesma imagem.
+      dec.configure({codec, optimizeForLatency:true, hardwareAcceleration:'prefer-software'});
+      s.codec = codec; pronto = true;
+    }
+    const ts = ++n * 1000;
+    chegada.set(ts, performance.now());
+    dec.decode(new EncodedVideoChunk({type: chave ? 'key' : 'delta', timestamp: ts, data: u}));
+  };
+}
+
+function pintaAbas(){
+  const barra = document.getElementById('abas');
+  barra.hidden = SESSOES.size === 0;
+  barra.innerHTML = `<button class="aba${abaAtual ? '' : ' on'}" data-aba="">Maquinas</button>` +
+    [...SESSOES.keys()].map(h =>
+      `<button class="aba${abaAtual === h ? ' on' : ''}" data-aba="${esc(h)}">${esc(h)}` +
+      `<span class="x" data-fecha="${esc(h)}" title="encerrar sessao">&times;</span></button>`).join('');
+  document.querySelector('.wrap').classList.toggle('emsessao', !!abaAtual);
+  document.getElementById('palco').hidden = !abaAtual;
+  SESSOES.forEach((s, h) => {
+    const on = h === abaAtual;
+    s.canvas.classList.toggle('on', on);
+    s.medida.hidden = !on;
+    s.aviso.style.display = on ? '' : 'none';
+    if (on) s.canvas.focus(); else s.soltar && s.soltar();
+  });
+}
+
+function fechaAba(h){
+  const s = SESSOES.get(h);
+  if (!s) return;
+  if (s.soltar) s.soltar();
+  clearInterval(s.relogio);
+  s.ws.close();
+  if (s.dec && s.dec.state !== 'closed') s.dec.close();
+  s.canvas.remove(); s.aviso.remove(); s.medida.remove();
+  SESSOES.delete(h);
+  if (abaAtual === h) abaAtual = null;
+  pintaAbas();
+}
+
+// Devolve `false` quando a aba nao da, e quem chamou usa a janela nativa.
+async function abrirAba(host){
+  if (SESSOES.has(host)){ abaAtual = host; pintaAbas(); return true; }
+  if (typeof VideoDecoder === 'undefined') return false;
+  let d;
+  try{
+    const r = await fetch('/api/sessao', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({host})});
+    if (!r.ok) return false;
+    d = await r.json();
+  }catch(e){ return false; }
+  const palco = document.getElementById('palco');
+  const s = {host, quadros:0, decodMs:null};
+  s.canvas = document.createElement('canvas');
+  s.canvas.tabIndex = 0; s.canvas.width = 1280; s.canvas.height = 720;
+  s.aviso = document.createElement('div'); s.aviso.className = 'aviso';
+  s.aviso.textContent = 'Conectando em ' + host + '...';
+  s.medida = document.createElement('div'); s.medida.className = 'medida';
+  palco.append(s.canvas, s.aviso, s.medida);
+  s.ws = new WebSocket(`ws://127.0.0.1:${d.porta}/${d.token}`);
+  s.ws.binaryType = 'arraybuffer';
+  ligarVideo(s); ligarInput(s);
+  s.ws.onclose = () => {
+    if (!SESSOES.has(host)) return;
+    s.aviso.hidden = false; s.aviso.textContent = 'Sessao encerrada';
+  };
+  let antes = 0;
+  s.relogio = setInterval(() => {
+    const fps = s.quadros - antes; antes = s.quadros;
+    s.medida.textContent = `${s.canvas.width}x${s.canvas.height} · ${fps} fps` +
+      (s.decodMs != null ? ` · decodifica ${s.decodMs.toFixed(1)} ms` : '');
+  }, 1000);
+  SESSOES.set(host, s);
+  abaAtual = host;
+  pintaAbas();
+  return true;
+}
+
+document.getElementById('abas').addEventListener('click', ev => {
+  const x = ev.target.closest('[data-fecha]');
+  if (x){ fechaAba(x.dataset.fecha); return; }
+  const a = ev.target.closest('[data-aba]');
+  if (!a) return;
+  abaAtual = a.dataset.aba || null;
+  pintaAbas();
 });
 
 // --- novidades ---------------------------------------------------------

@@ -48,8 +48,13 @@ receber mostram progresso e erro por arquivo.
 **O vídeo é decodificado na página.** O `logistream-view` é outro processo
 com janela nativa, e isso não se embute numa aba. Uma ponte local fala QUIC
 com o host e entrega H.264 à página por WebSocket em `127.0.0.1`, com um
-token por sessão. A página decodifica com WebCodecs, por hardware, e desenha
+token e checagem de `Origin`. A página decodifica com WebCodecs e desenha
 num `<canvas>`; teclado e mouse fazem o caminho inverso.
+
+**A decodificação é por software.** O fluxo não declara que não reordena, e o
+decodificador de hardware segura cerca de 4 quadros: 172 ms contra 1,9 ms
+(p50, 1080p, no Mac). Para voltar ao hardware, o host precisa mandar
+`max_num_reorder_frames=0` no VUI do H.264.
 
 Com isso aba, barra e arquivos são a mesma página, e a barra é HTML. O
 `logistream-view` fica como alternativa até a latência da aba estar medida:

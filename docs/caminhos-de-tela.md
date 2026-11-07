@@ -81,3 +81,6 @@ O driver nasce em 800×600, e foi isso que mostrou o defeito do passo de
 linha em `nvenc.rs`: o quadro chegava embaralhado em horizontal, com
 faixa preta embaixo, e o `sink` contava 243 quadros perfeitos. Contar
 quadro não prova imagem: decodifique um com `ffmpeg` e olhe.
+
+A tela virtual nasce em 30 Hz, e isso segurava o stream em ~24 fps. O
+instalador pede 60 Hz.

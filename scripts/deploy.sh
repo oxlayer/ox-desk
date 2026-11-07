@@ -97,6 +97,7 @@ passo "ubuntu: tela e KVM (logistream)"
 if out=$(cargo build --release --manifest-path logistream/Cargo.toml 2>&1 &&
          install -m755 logistream/target/release/logistream-host ~/.local/bin/ 2>&1 &&
          install -m755 logistream/target/release/logistream-view ~/.local/bin/ 2>&1 &&
+         install -m755 logistream/target/release/logistream-ponte ~/.local/bin/ 2>&1 &&
          install -m755 logistream/target/release/logistream-kvm ~/.local/bin/ 2>&1 &&
          mkdir -p ~/.local/state 2>&1); then ok; else erro "$out"; fi
 
@@ -443,9 +444,10 @@ else
   # instala numa maquina que so tenha o keg versionado.
   if out=$(timeout 900 ssh -n -o BatchMode=yes mac \
             "cd ~/logi/logistream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig &&
-             ~/.cargo/bin/cargo build --release --bin logistream-view --bin logistream-host 2>&1 | tail -3 &&
+             ~/.cargo/bin/cargo build --release --bin logistream-view --bin logistream-ponte --bin logistream-host 2>&1 | tail -3 &&
              mkdir -p ~/.local/bin ~/.local/state &&
              install -m755 target/release/logistream-view ~/.local/bin/ &&
+             install -m755 target/release/logistream-ponte ~/.local/bin/ &&
              install -m755 target/release/logistream-host ~/.local/bin/ || exit 1
              for b in logistream-host logistream-view; do
                otool -L ~/.local/bin/\$b | grep -q 'libavcodec.61.dylib' ||

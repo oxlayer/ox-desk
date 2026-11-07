@@ -305,6 +305,63 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
     Ok(linha)
 }
 
+/// O que a aba precisa para falar com a ponte.
+#[derive(serde::Serialize)]
+pub struct Sessao {
+    pub porta: u16,
+    pub token: String,
+}
+
+/// Abre uma sessao em aba: acorda o host e sobe a `logistream-ponte`.
+///
+/// Sem a ponte instalada devolve erro, e a pagina cai no visualizador
+/// nativo. Ver specs/016-sessao-e-visual.md.
+pub fn abrir_sessao(cfg: &Config, host: &str) -> Result<Sessao, String> {
+    let plan = plan_for(cfg, host, Opts::default())
+        .ok_or_else(|| format!("host '{host}' nao tem `[hosts.screen]` na config"))?;
+    if let Some(b) = &plan.blocker {
+        return Err(b.clone());
+    }
+    if plan.kind != "logistream" {
+        return Err(format!("'{host}' nao usa logistream"));
+    }
+    let h = cfg
+        .hosts
+        .iter()
+        .find(|x| x.name == host)
+        .ok_or_else(|| format!("host '{host}' nao esta na config"))?;
+    let ponte = find_program("logistream-ponte").ok_or("logistream-ponte nao instalada")?;
+    acordar_host(h, plan.port).map_err(|e| format!("nao consegui levantar o host de tela: {e}"))?;
+
+    let mut bytes = [0u8; 24];
+    getrandom::getrandom(&mut bytes).map_err(|e| format!("token: {e}"))?;
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+
+    let mut filho = crate::sys::child(&ponte.to_string_lossy())
+        .arg(format!("{}:{}", h.addr, plan.port))
+        .env("LOGI_PONTE_TOKEN", &token)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("nao consegui executar a ponte: {e}"))?;
+    let saida = filho.stdout.take().ok_or("a ponte nao tem saida")?;
+    let mut linha = String::new();
+    std::io::BufRead::read_line(&mut std::io::BufReader::new(saida), &mut linha)
+        .map_err(|e| format!("ler a ponte: {e}"))?;
+    let porta = linha
+        .trim()
+        .strip_prefix("porta ")
+        .and_then(|p| p.parse().ok())
+        .ok_or("a ponte nao disse a porta")?;
+    // A ponte sai sozinha quando a aba fecha; esta thread so colhe o filho.
+    std::thread::spawn(move || {
+        let _ = filho.wait();
+    });
+    say!("screen: aba de {host} pela ponte na porta {porta}");
+    Ok(Sessao { porta, token })
+}
+
 /// Garante que o `logistream-host` esta rodando na outra maquina.
 ///
 /// Idempotente de proposito: o botao pode ser clicado duas vezes, e uma

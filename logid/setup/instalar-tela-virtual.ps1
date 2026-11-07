@@ -58,7 +58,7 @@ try {
   # for a remote desktop. Windows keeps whatever mode it took first.
   $xml = [xml](Get-Content -Raw (Join-Path $dir 'vdd_settings.xml'))
   foreach ($r in @($xml.SelectNodes('//resolutions/resolution'))) {
-    if ([int]$r.width -lt 1920) { [void]$r.ParentNode.RemoveChild($r) }
+    if ([int]$r.width -lt 1920) { [void]$r.ParentNode.RemoveChild($r) } else { $r.refresh_rate = '60' }
   }
   $xml.Save((Join-Path $Settings 'vdd_settings.xml'))
 
