@@ -1,32 +1,33 @@
 #!/usr/bin/env bash
-# Clientes de tela que de fato expoem as opcoes da GUI.
+# Screen clients that actually expose the GUI's options.
 #
-# Rode:  sudo bash scripts/install-clients.sh
+# Run:  sudo bash scripts/install-clients.sh
 #
-# Por que: o `gnome-connections` ja instalado fala RDP e VNC, mas nao
-# expoe som, microfone nem modo so-leitura por linha de comando -- e sao
-# exatamente as opcoes que o painel oferece. Sem estes dois, os checks
-# aparecem desabilitados (com o motivo escrito do lado, mas desabilitados).
+# Why: the already-installed `gnome-connections` speaks RDP and VNC, but
+# does not expose sound, microphone or view-only mode on the command line
+# -- and those are exactly the options the panel offers. Without these
+# two, the checkboxes show up disabled (with the reason written next to
+# them, but disabled).
 #
-#   freerdp3-x11     -> xfreerdp3: `/sound` e `/microphone`
+#   freerdp3-x11     -> xfreerdp3: `/sound` and `/microphone`
 #   tigervnc-viewer  -> vncviewer: `-ViewOnly`
 #
-# O daemon escolhe sozinho: a tabela em sys/linux.rs ja poe estes dois na
-# frente, e o gnome-connections vira queda.
+# The daemon picks on its own: the table in sys/linux.rs already puts
+# these two first, and gnome-connections becomes the fallback.
 set -euo pipefail
-[ "$(id -u)" -eq 0 ] || { echo "rode com sudo: sudo bash $0" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || { echo "run with sudo: sudo bash $0" >&2; exit 1; }
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq freerdp3-x11 tigervnc-viewer
 
-echo "== instalados =="
+echo "== installed =="
 for c in xfreerdp3 vncviewer gnome-connections; do
   p=$(command -v "$c" 2>/dev/null || true)
-  printf '  %-18s %s\n' "$c" "${p:-ausente}"
+  printf '  %-18s %s\n' "$c" "${p:-missing}"
 done
 cat <<'EOF'
 
-Recarregue o painel: os checks de som, microfone e "so olhar" devem
-deixar de aparecer apagados.
+Reload the panel: the sound, microphone and "so olhar" (view only)
+checkboxes should no longer appear greyed out.
 EOF

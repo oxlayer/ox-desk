@@ -9,12 +9,12 @@ public class C {
 }
 "@
 Add-Type -TypeDefinition $src
-# Primeiro SEM declarar DPI: e o que o logistream-host e hoje.
+# First WITHOUT declaring DPI awareness: that is what logistream-host is today.
 $p = New-Object C+POINT
 [C]::GetCursorPos([ref]$p) | Out-Null
 $a = "sem-dpi-aware: cursor=$($p.X),$($p.Y) virtual=$([C]::GetSystemMetrics(78))x$([C]::GetSystemMetrics(79))"
-# Agora declarando. Mesma maquina, mesmo instante, numeros diferentes
-# = a escala esta em jogo e o host esta lendo o espaco errado.
+# Now declaring it. Same machine, same instant, different numbers
+# = scaling is in play and the host is reading the wrong space.
 [C]::SetProcessDPIAware() | Out-Null
 $q = New-Object C+POINT
 [C]::GetCursorPos([ref]$q) | Out-Null

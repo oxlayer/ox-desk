@@ -1,26 +1,26 @@
-# Electron: 299 MB de Chromium, reinstalavel com npm ci
+# Electron: 299 MB of Chromium, reinstallable with npm ci
 node_modules/
 
-# o .deb do Deskflow: 1.4 MB de binario, baixavel do GitHub Releases
+# the Deskflow .deb: a 1.4 MB binary, downloadable from GitHub Releases
 *.deb
 
 __pycache__/
 *.pyc
 *.log
 
-# Rust: `target/` em QUALQUER crate, nao um por nome.
+# Rust: `target/` in ANY crate, not one per name.
 #
-# A lista por nome ficou defasada: `logistream`, `hidpp` e `winput`
-# nasceram depois e nao estavam nela, entao 3.893 arquivos de build
-# entraram no repo e todo `cargo build` passou a sujar a arvore -- o
-# proprio deploy marcava os binarios como `-sujo` por isso. Padrao sem
-# barra inicial casa em qualquer nivel.
+# The per-name list went stale: `logistream`, `hidpp` and `winput` were
+# born later and were not on it, so 3,893 build files got into the repo
+# and every `cargo build` started dirtying the tree -- the deploy itself
+# stamped the binaries as `-sujo` (dirty) because of it. A pattern without
+# a leading slash matches at any level.
 target/
 
-# Saida do scripts/construir-binarios.sh
+# Output of scripts/construir-binarios.sh
 dist/
 
-# Chaves de assinatura ficam em ~/.config/logi/signing, nunca aqui.
+# Signing keys live in ~/.config/logi/signing, never here.
 *.pem
 *.pfx
 *.cer
@@ -28,11 +28,11 @@ dist/
 # macOS
 .DS_Store
 
-# Segredos
+# Secrets
 .env
 .env.*
 *.key
 *.p12
 
-# Config pessoal do Claude Code
+# Personal Claude Code config
 .claude/settings.local.json

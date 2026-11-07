@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Abre o MacBook para o resto da infra: SSH de entrada, tela e a chave.
+# Opens the MacBook to the rest of the infra: inbound SSH, screen and the key.
 #
-# Rode NO MAC, no Terminal. Pede sudo em alguns passos; cada um falha
-# sozinho sem derrubar os outros, porque num Mac corporativo com MDM
-# alguns podem ser bloqueados -- e saber QUAL foi bloqueado vale mais que
-# abortar no primeiro.
+# Run it ON THE MAC, in Terminal. It asks for sudo in some steps; each one
+# fails on its own without taking the others down, because on a corporate
+# Mac with MDM some may be blocked -- and knowing WHICH one was blocked is
+# worth more than aborting on the first.
 #
 #   bash enable-mac.sh
 set -uo pipefail
@@ -12,71 +12,72 @@ set -uo pipefail
 PUB='ssh-ed25519 <your-public-key> -> mac (logi)'
 
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-nao()  { printf '  \033[31mfalhou\033[0m %s\n' "$1"; }
+nao()  { printf '  \033[31mfailed\033[0m %s\n' "$1"; }
 nota() { printf '  ..    %s\n' "$1"; }
 
-echo "== 1. Login Remoto (SSH de entrada) =="
+echo "== 1. Remote Login (inbound SSH) =="
 if sudo systemsetup -f -setremotelogin on >/dev/null 2>&1; then
-  ok "ligado"
+  ok "on"
 else
-  nao "systemsetup recusou"
-  nota "em macOS recente ele exige Acesso Total ao Disco para o Terminal."
-  nota "caminho manual: Ajustes > Geral > Compartilhamento > Login Remoto"
+  nao "systemsetup refused"
+  nota "on recent macOS it requires Full Disk Access for Terminal."
+  nota "manual path: Settings > General > Sharing > Remote Login"
 fi
 sudo systemsetup -getremotelogin 2>/dev/null | sed 's/^/        /'
 
-echo "== 2. Firewall: nao bloquear tudo, sem modo furtivo =="
-# Modo furtivo descarta ICMP e TCP sem listener SEM mandar RST -- e o que
-# fazia o Mac dar timeout em vez de "recusado" visto do Ubuntu.
+echo "== 2. Firewall: do not block everything, no stealth mode =="
+# Stealth mode drops ICMP and TCP with no listener WITHOUT sending RST --
+# that is what made the Mac time out instead of "refused" as seen from
+# Ubuntu.
 FW=/usr/libexec/ApplicationFirewall/socketfilterfw
 if [ -x "$FW" ]; then
   sudo "$FW" --setblockall off    >/dev/null 2>&1 && ok "blockall off"    || nao "blockall"
   sudo "$FW" --setstealthmode off >/dev/null 2>&1 && ok "stealth off"     || nao "stealth"
   sudo "$FW" --getglobalstate --getstealthmode --getblockall 2>/dev/null | sed 's/^/        /'
 else
-  nota "socketfilterfw nao existe neste sistema"
+  nota "socketfilterfw does not exist on this system"
 fi
 
-echo "== 3. Compartilhamento de Tela (VNC) =="
+echo "== 3. Screen Sharing (VNC) =="
 if sudo launchctl enable system/com.apple.screensharing >/dev/null 2>&1 &&
    sudo launchctl kickstart -k system/com.apple.screensharing >/dev/null 2>&1; then
-  ok "servico habilitado"
+  ok "service enabled"
 else
-  nao "launchctl recusou"
-  nota "caminho manual: Ajustes > Geral > Compartilhamento > Compartilhamento de Tela"
+  nao "launchctl refused"
+  nota "manual path: Settings > General > Sharing > Screen Sharing"
 fi
-nota "FALTA UM PASSO NA INTERFACE, e ele e obrigatorio para cliente comum:"
-nota "  Compartilhamento de Tela > (i) > Ajustes do Computador >"
-nota "  marcar 'Visualizadores VNC podem controlar a tela com senha' + definir senha."
-nota "  Sem isso o macOS exige a autenticacao propria da Apple (tipo 30),"
-nota "  que o gnome-connections e a maioria dos clientes nao falam."
+nota "ONE STEP IS MISSING IN THE UI, and it is required for ordinary clients:"
+nota "  Screen Sharing > (i) > Computer Settings >"
+nota "  tick 'VNC viewers may control screen with password' + set a password."
+nota "  Without it macOS requires Apple's own authentication (type 30),"
+nota "  which gnome-connections and most clients do not speak."
 
-echo "== 4. Autorizando a chave do Ubuntu =="
+echo "== 4. Authorizing the Ubuntu key =="
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
 if grep -qF "$PUB" ~/.ssh/authorized_keys 2>/dev/null; then
-  ok "chave ja estava autorizada"
+  ok "key was already authorized"
 else
-  printf '%s\n' "$PUB" >> ~/.ssh/authorized_keys && ok "chave adicionada"
+  printf '%s\n' "$PUB" >> ~/.ssh/authorized_keys && ok "key added"
 fi
-nota "$(wc -l < ~/.ssh/authorized_keys | tr -d ' ') chave(s) em ~/.ssh/authorized_keys"
+nota "$(wc -l < ~/.ssh/authorized_keys | tr -d ' ') key(s) in ~/.ssh/authorized_keys"
 
-echo "== 5. O que esta aqui =="
-printf '  usuario: %s@%s\n' "$(whoami)" "$(hostname)"
+echo "== 5. What is here =="
+printf '  user:    %s@%s\n' "$(whoami)" "$(hostname)"
 printf '  macOS:   %s (%s)\n' "$(sw_vers -productVersion)" "$(uname -m)"
 for c in brew rustc cargo git; do
   p=$(command -v "$c" 2>/dev/null)
-  printf '  %-7s %s\n' "$c:" "${p:-ausente}"
+  printf '  %-7s %s\n' "$c:" "${p:-missing}"
 done
 
 cat <<'EOF'
 
-== pronto ==
+== done ==
 
-Me avise. Eu entro por SSH, instalo o Rust se faltar, compilo o logid
-aqui (cross-compile de Linux para macOS exige o SDK da Apple, entao o
-build tem de acontecer nesta maquina) e ponho o Mac nas tres configs.
+Let me know. I will SSH in, install Rust if it is missing, build logid
+here (cross-compiling from Linux to macOS needs Apple's SDK, so the build
+has to happen on this machine) and add the Mac to the three configs.
 
-A chave que eu uso esta sem passphrase. Se quiser poe a sua la no Ubuntu,
-e o mesmo 'ssh-keygen -p' de sempre -- me diga que eu ajusto o agent.
+The key I use has no passphrase. If you want, put yours on the Ubuntu
+box; it is the usual 'ssh-keygen -p' -- tell me and I will adjust the agent.
 EOF

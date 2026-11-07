@@ -1,50 +1,50 @@
 #!/usr/bin/env bash
-# Assina um .exe com Authenticode, daqui, antes de ele chegar ao Windows.
+# Signs an .exe with Authenticode, from here, before it reaches Windows.
 #
-# Por que daqui e nao la: o Defender removeu o `logid.exe` cru no momento
-# em que ele foi escrito, DUAS vezes -- nao deu tempo de assinar do outro
-# lado. Assinar antes de copiar tira a corrida da jogada.
+# Why here and not there: Defender removed the raw `logid.exe` the moment
+# it was written, TWICE -- there was no time to sign it on the other side.
+# Signing before copying takes the race out of the picture.
 #
-# Por que ele implicou, honestamente: executavel sem assinatura e sem
-# reputacao, recem-criado, que cria tarefa agendada no login, executa
-# comandos remotos e le dispositivo de entrada em modo bruto. Detectado
-# como `Trojan:Win32/Bearfoos.A!ml` -- o sufixo `!ml` e palpite de modelo,
-# nao assinatura de malware conhecido. A silhueta e parecida mesmo.
+# Why it objected, honestly: an unsigned executable with no reputation,
+# freshly created, that creates a scheduled task at logon, runs remote
+# commands and reads an input device in raw mode. Detected as
+# `Trojan:Win32/Bearfoos.A!ml` -- the `!ml` suffix is a model's guess, not
+# a known-malware signature. The silhouette really is similar.
 #
-#   uso:  bash scripts/sign-windows.sh caminho/para/logid.exe
+#   usage:  bash scripts/sign-windows.sh path/to/logid.exe
 #
-# A chave privada mora em ~/.config/logi/signing (nao versionada, 600).
-# O certificado publico e importado nas lojas Raiz Confiavel e Editores
-# Confiaveis do Windows -- vale so naquela maquina.
+# The private key lives in ~/.config/logi/signing (not versioned, 600).
+# The public certificate is imported into Windows' Trusted Root and
+# Trusted Publishers stores -- it is valid only on that machine.
 set -euo pipefail
 export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
 
-EXE="${1:?uso: sign-windows.sh <arquivo.exe>}"
+EXE="${1:?usage: sign-windows.sh <file.exe>}"
 DIR="$HOME/.config/logi/signing"
-[ -f "$DIR/key.pem" ] || { echo "sem chave em $DIR -- veja specs/008" >&2; exit 1; }
+[ -f "$DIR/key.pem" ] || { echo "no key in $DIR -- see specs/008" >&2; exit 1; }
 
 TMP="$(mktemp -u "${EXE%.exe}.assinado.XXXX.exe")"
-# `-t` carimba a hora: a assinatura sobrevive ao vencimento do
-# certificado, e e o que um binario normal tem. Se a TSA nao responder,
-# assina sem carimbo em vez de falhar o build.
+# `-t` timestamps it: the signature survives the certificate's expiry,
+# and it is what a normal binary has. If the TSA does not answer, sign
+# without a timestamp instead of failing the build.
 #
-# `timeout 25` e OBRIGATORIO, nao zelo. O fallback abaixo so dispara
-# quando a primeira tentativa FALHA -- e uma TSA que nao responde nao
-# falha, ela pendura. Sem o timeout o deploy ficou 13 minutos parado em
-# `osslsigncode` esperando o timestamp.digicert.com, sem uma linha de
-# log dizendo o que estava acontecendo.
+# `timeout 25` is MANDATORY, not zeal. The fallback below only fires when
+# the first attempt FAILS -- and a TSA that does not answer does not fail,
+# it hangs. Without the timeout the deploy sat 13 minutes in
+# `osslsigncode` waiting for timestamp.digicert.com, with not one log line
+# saying what was happening.
 if timeout 25 osslsigncode sign \
       -certs "$DIR/cert.pem" -key "$DIR/key.pem" \
       -h sha256 -n "logi control plane" \
       -t http://timestamp.digicert.com \
       -in "$EXE" -out "$TMP" >/dev/null 2>&1; then
-  echo "  assinado com carimbo de tempo"
+  echo "  signed with timestamp"
 else
   osslsigncode sign \
       -certs "$DIR/cert.pem" -key "$DIR/key.pem" \
       -h sha256 -n "logi control plane" \
       -in "$EXE" -out "$TMP" >/dev/null
-  echo "  assinado SEM carimbo (a TSA nao respondeu em 25s)"
+  echo "  signed WITHOUT timestamp (the TSA did not answer in 25s)"
 fi
 mv "$TMP" "$EXE"
 osslsigncode verify "$EXE" 2>&1 | grep -E 'Signature verification|Subject|Timestamp' | sed 's/^/  /' || true

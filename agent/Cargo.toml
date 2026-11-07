@@ -2,13 +2,13 @@
 name = "logid-agent"
 version = "0.1.0"
 edition = "2021"
-description = "Agente Windows do logid: HID++ 0x1814 e dead-man's switch"
+description = "logid Windows agent: HID++ 0x1814 and dead-man's switch"
 license = "MIT"
 
 [dependencies]
-# Integrar em vez de reimplementar: enumeracao e I/O de HID no Windows
-# (SetupAPI + HidD_*) sao ~300 linhas de FFI unsafe que esta crate ja
-# resolve e testa. Ver o criterio em ../specs/000-overview.md.
+# Integrate instead of reimplementing: HID enumeration and I/O on Windows
+# (SetupAPI + HidD_*) are ~300 lines of unsafe FFI that this crate already
+# solves and tests. See the criterion in ../specs/000-overview.md.
 hidapi = "2"
 hidpp = { version = "0.1.0", path = "../hidpp" }
 serde_json = "1.0"

@@ -1,69 +1,69 @@
 #!/usr/bin/env bash
-# Setup do logid no Ubuntu 26.04 / GNOME (Wayland).
+# logid setup on Ubuntu 26.04 / GNOME (Wayland).
 #
-# NAO precisa de root: o logid roda como servico de usuario e fala HID++
-# direto. O unico passo privilegiado e a ACL do /dev/hidraw, e ele avisa
-# se faltar.
+# Does NOT need root: logid runs as a user service and speaks HID++
+# directly. The only privileged step is the /dev/hidraw ACL, and it warns
+# if that is missing.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 say() { printf '\n==> %s\n' "$1"; }
 
-say "dependencias de build"
+say "build dependencies"
 missing=()
 command -v cargo >/dev/null || missing+=(cargo rustc)
 pkg-config --exists libudev 2>/dev/null || missing+=(libudev-dev)
 pkg-config --exists dbus-1 2>/dev/null || missing+=(libdbus-1-dev)
 if [ ${#missing[@]} -gt 0 ]; then
-  echo "faltam: ${missing[*]}"
+  echo "missing: ${missing[*]}"
   echo "  sudo apt-get install -y ${missing[*]}"
   exit 1
 fi
 echo "ok: cargo, libudev, libdbus"
 
-say "compilando o logid"
+say "building logid"
 ( cd logid && cargo build --release )
 
-say "instalando o binario em ~/.local/bin"
+say "installing the binary in ~/.local/bin"
 install -D -m 755 logid/target/release/logid "$HOME/.local/bin/logid"
 "$HOME/.local/bin/logid" --version 2>/dev/null || true
 
-say "servico de usuario"
+say "user service"
 install -D -m 644 logid/logid.service "$HOME/.config/systemd/user/logid.service"
 systemctl --user daemon-reload
 systemctl --user enable --now logid.service
 systemctl --user --no-pager status logid.service | head -4
 
-say "acesso ao /dev/hidraw"
-# A regra do Solaar concede por TAG+="uaccess", mas SO a nos criados
-# depois dela. Se os seus nasceram antes, isto resolve.
+say "access to /dev/hidraw"
+# Solaar's rule grants it via TAG+="uaccess", but ONLY to nodes created
+# after the rule. If yours were born before it, this fixes it.
 if getfacl /dev/hidraw0 2>/dev/null | grep -q "^user:$USER:"; then
-  echo "ok: ACL presente"
+  echo "ok: ACL present"
 else
-  echo "FALTA. Rode:"
+  echo "MISSING. Run:"
   echo "  sudo udevadm trigger --subsystem-match=hidraw --action=add"
 fi
 
-say "clipboard e arquivos (opcional)"
+say "clipboard and files (optional)"
 if ! dpkg -s gnome-shell-extension-gsconnect >/dev/null 2>&1; then
   echo "  sudo apt-get install -y gnome-shell-extension-gsconnect"
 else
   gnome-extensions enable gsconnect@andyholmes.github.io 2>/dev/null \
-    && echo "ok: GSConnect habilitado" || echo "ok: GSConnect ja habilitado"
+    && echo "ok: GSConnect enabled" || echo "ok: GSConnect already enabled"
 fi
 
 cat <<'TXT'
 
-pronto. a seguir:
+done. next:
 
-  1. confira os NOMES dos dispositivos (o HID++ nao usa os do Solaar):
+  1. check the device NAMES (HID++ does not use Solaar's):
        cd hidpp && cargo run --release --bin probe
-  2. ajuste ~/.config/logi/config.toml -- em especial [[devices]] e os
-     canais Easy-Switch de cada host
-  3. painel em http://127.0.0.1:8787  (GUI nativa: cd gui && ./run.sh)
-  4. diagnostico: bash status.sh
+  2. adjust ~/.config/logi/config.toml -- especially [[devices]] and each
+     host's Easy-Switch channels
+  3. panel at http://127.0.0.1:8787  (native GUI: cd gui && ./run.sh)
+  4. diagnostics: bash status.sh
 
-a vigilancia de borda e o "seguir o lider" vem DESLIGADOS. leia
-specs/005-input-switch.md antes de ligar: mover dispositivo e
-irreversivel do lado de origem.
+edge watching and "follow the leader" ship OFF. read
+specs/005-input-switch.md before turning them on: moving a device is
+irreversible on the source side.
 TXT

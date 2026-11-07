@@ -1,116 +1,117 @@
-//! HID++ 2.0 sobre HID cru -- o suficiente para inventariar dispositivos
-//! Logitech e trocar canal Easy-Switch, em Linux e Windows.
+//! HID++ 2.0 over raw HID -- enough to inventory Logitech devices and
+//! switch the Easy-Switch channel, on Linux and Windows.
 //!
 //! Spec: ../../specs/005-input-switch.md
 //!
-//! Substitui o backend via `solaar` no Linux. Medido: `solaar show` custa
-//! **5,9 a 15,3 s**, e o `change_host` o chamava 4x por dispositivo -- uma
-//! troca levava 105 s. Por HID++ direto, uma chamada custa **26 a 90 ms**.
+//! Replaces the `solaar` backend on Linux. Measured: `solaar show` costs
+//! **5.9 to 15.3 s**, and `change_host` called it 4x per device -- one
+//! switch took 105 s. Over HID++ directly, one call costs **26 to 90 ms**.
 //!
-//! ## Protocolo, em resumo
+//! ## Protocol, in short
 //!
 //! ```text
-//! requisicao (report 0x11, 20 bytes):
+//! request (report 0x11, 20 bytes):
 //!   [0x11, device_index, feature_index, func<<4 | sw_id, p0..p16]
-//! resposta: mesmo eco de device_index/feature_index/func
-//! erro:     feature_index = 0xFF, codigo em byte 4
+//! reply: same echo of device_index/feature_index/func
+//! error: feature_index = 0xFF, code in byte 4
 //! ```
 //!
-//! O feature 0x0000 (ROOT) esta SEMPRE no indice 0; por ele se descobre o
-//! indice de qualquer outro, que varia por dispositivo.
+//! Feature 0x0000 (ROOT) is ALWAYS at index 0; through it you discover
+//! the index of any other feature, which varies per device.
 //!
-//! ## Qual endpoint abrir
+//! ## Which endpoint to open
 //!
-//! O receptor expoe uma colecao HID por tipo de report (usage 1 = curto
-//! 0x10, 2 = longo 0x11, 4 = muito longo). Usamos SEMPRE o longo na
-//! **usage 2**, para escrever e ler na mesma colecao -- a alternativa
-//! obriga a abrir duas e correlacionar entre elas.
+//! The receiver exposes one HID collection per report type (usage 1 =
+//! short 0x10, 2 = long 0x11, 4 = very long). We ALWAYS use the long one
+//! on **usage 2**, to write and read on the same collection -- the
+//! alternative means opening two and correlating between them.
 //!
-//! No Linux cada dispositivo pareado tem no hidraw proprio, mas ele atende
-//! no **indice de slot do receptor** (medido: /dev/hidraw2 responde em
-//! idx=1), nao em 0xFF. Como o no do receptor atende todos os slots, e ele
-//! que abrimos.
+//! On Linux each paired device has its own hidraw node, but it answers
+//! on the **receiver slot index** (measured: /dev/hidraw2 answers on
+//! idx=1), not on 0xFF. Since the receiver node answers every slot, that
+//! is the one we open.
 
 pub mod protocol;
 
-/// Reexportado para quem consome este crate nao precisar declarar a
-/// dependencia de novo -- e para garantir a MESMA versao em todos.
+/// Re-exported so consumers of this crate need not declare the
+/// dependency again -- and to guarantee the SAME version everywhere.
 pub use hidapi;
 
 use hidapi::{HidApi, HidDevice};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-/// Indice de feature por (slot, feature). E estavel por dispositivo, e
-/// descobri-lo custa uma ida e volta -- no caminho quente isso conta.
+/// Feature index by (slot, feature). Stable per device, and discovering
+/// it costs a round trip -- on the hot path that matters.
 static FEATURE_CACHE: Mutex<Option<BTreeMap<(u8, u16), u8>>> = Mutex::new(None);
 use std::time::{Duration, Instant};
 
 pub const LOGITECH_VID: u16 = 0x046D;
-/// Pagina de uso vendor-defined onde a Logitech expoe o HID++.
+/// Vendor-defined usage page where Logitech exposes HID++.
 pub const HIDPP_USAGE_PAGE: u16 = 0xFF00;
-/// Colecao do report longo (0x11).
+/// Collection of the long report (0x11).
 const USAGE_LONG: u16 = 0x02;
 
 const REPORT_LONG: u8 = 0x11;
 const LONG_LEN: usize = 20;
-/// Identifica as NOSSAS requisicoes nas respostas, separando-as de
-/// notificacao espontanea do dispositivo. 1..15; 0 e reservado.
+/// Marks OUR requests in the replies, telling them apart from
+/// spontaneous device notifications. 1..15; 0 is reserved.
 const SW_ID: u8 = 0x0A;
 
 pub const FEATURE_ROOT: u16 = 0x0000;
 pub const FEATURE_DEVICE_NAME: u16 = 0x0005;
 pub const FEATURE_CHANGE_HOST: u16 = 0x1814;
-/// Bateria moderna, em porcentagem. O MX Anywhere 3 tem esta.
-/// Controles reprogramaveis. E por ele que se remapeia botao.
+/// Modern battery, in percent. The MX Anywhere 3 has this one.
+/// Reprogrammable controls. This is how buttons are remapped.
 pub const FEATURE_REPROG_CONTROLS: u16 = 0x1B04;
 pub const FEATURE_UNIFIED_BATTERY: u16 = 0x1004;
-/// Bateria antiga, em faixas. O MX Keys tem esta -- por isso as duas.
+/// Old battery, in bands. The MX Keys has this one -- hence both.
 pub const FEATURE_BATTERY_STATUS: u16 = 0x1000;
 
 const REPLY_TIMEOUT: Duration = Duration::from_millis(700);
-/// Timeout do ping de presenca. Medido: dispositivo presente responde em
-/// 26 a 90 ms. 250 ms e folgado e deixa a varredura de 6 slots vazios em
-/// ~1,5 s em vez de 4,4 s.
+/// Presence ping timeout. Measured: a present device answers in 26 to
+/// 90 ms. 250 ms is generous and keeps a scan of 6 empty slots at
+/// ~1.5 s instead of 4.4 s.
 const PING_TIMEOUT: Duration = Duration::from_millis(250);
 const READ_SLICE: i32 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostInfo {
     pub num_hosts: u8,
-    /// 1-based, como a config e o Solaar mostram.
+    /// 1-based, as the config and Solaar show it.
     pub current: u8,
 }
 
-/// Bateria. Os dois features reportam de formas diferentes, e
-/// dispositivos da mesma familia usam features diferentes -- medido: o
-/// MX Anywhere 3 expoe 0x1004 (porcentagem) e o MX Keys 0x1000 (faixa).
+/// Battery. The two features report differently, and devices of the
+/// same family use different features -- measured: the MX Anywhere 3
+/// exposes 0x1004 (percent) and the MX Keys 0x1000 (band).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Battery {
-    /// Porcentagem, quando o dispositivo reporta.
+    /// Percent, when the device reports it.
     pub percent: Option<u8>,
-    /// Status **declarado pelo dispositivo**, nao deduzido por nos.
+    /// Status **as declared by the device**, not inferred by us.
     ///
-    /// Vale desconfiar dele: medido, um MX Keys no cabo subiu de 5% para
-    /// 50% reportando `descarregando` o tempo todo -- e o `upower`, que le
-    /// pelo driver do kernel, reporta o mesmo. A mentira e do firmware; o
-    /// nome do campo deixa claro de quem e a afirmacao.
+    /// Worth distrusting: measured, an MX Keys on the cable went from 5%
+    /// to 50% reporting `descarregando` (discharging) the whole time --
+    /// and `upower`, which reads through the kernel driver, reports the
+    /// same. The lie is the firmware's; the field name makes clear whose
+    /// claim it is.
     pub status: Option<&'static str>,
-    /// Proximo degrau de descarga que o dispositivo prevê (0x1000).
+    /// Next discharge step the device predicts (0x1000).
     pub next_level: Option<u8>,
-    /// Carregando. Para 0x1004 usamos chargingStatus **ou** externalPower,
-    /// que e mais confiavel que so o primeiro.
+    /// Charging. For 0x1004 we use chargingStatus **or** externalPower,
+    /// which is more reliable than the former alone.
     pub charging: bool,
-    /// Qual feature respondeu, para o diagnostico nao virar adivinhacao.
+    /// Which feature answered, so diagnosis does not become guesswork.
     pub source: &'static str,
 }
 
 #[derive(Debug, Clone)]
 pub struct Device {
-    /// Slot no receptor, 1..6.
+    /// Slot on the receiver, 1..6.
     pub slot: u8,
-    /// Nome lido do proprio dispositivo (feature 0x0005). `None` se ele
-    /// nao expoe a feature.
+    /// Name read from the device itself (feature 0x0005). `None` if it
+    /// does not expose the feature.
     pub name: Option<String>,
     pub online: bool,
     #[allow(dead_code)]
@@ -126,19 +127,18 @@ pub struct Receiver {
 }
 
 impl Receiver {
-    /// Abre a colecao de report longo do primeiro receptor Logitech.
-    /// Todos os receptores HID++ ligados, nao so o primeiro.
+    /// Every plugged-in HID++ receiver, not just the first.
     ///
-    /// Existe porque o usuario pos DOIS receptores na mesma maquina
-    /// (levou o do Ubuntu para o Windows) e o `open` escolhia um,
-    /// silenciosamente: o agente listava os slots de um receptor e
-    /// reportava os dispositivos do outro como ausentes. O painel ficava
-    /// coerente consigo mesmo e errado sobre o mundo.
+    /// Exists because the user put TWO receivers on the same machine
+    /// (moved the Ubuntu one to Windows) and `open` silently picked one:
+    /// the agent listed the slots of one receiver and reported the
+    /// devices of the other as absent. The panel stayed consistent with
+    /// itself and wrong about the world.
     ///
-    /// Ordem estavel pelo caminho do dispositivo, para duas leituras
-    /// seguidas nao trocarem os receptores de lugar na lista.
+    /// Stable order by device path, so two consecutive reads do not swap
+    /// the receivers' places in the list.
     pub fn open_all(api: &HidApi) -> Vec<Self> {
-        let mut caminhos: Vec<_> = api
+        let mut paths: Vec<_> = api
             .device_list()
             .filter(|d| {
                 d.vendor_id() == LOGITECH_VID
@@ -148,8 +148,8 @@ impl Receiver {
             })
             .map(|d| (d.path().to_string_lossy().to_string(), d.product_id()))
             .collect();
-        caminhos.sort();
-        caminhos
+        paths.sort();
+        paths
             .into_iter()
             .filter_map(|(path, product_id)| {
                 let dev = api.open_path(&std::ffi::CString::new(path.clone()).ok()?).ok()?;
@@ -159,6 +159,7 @@ impl Receiver {
             .collect()
     }
 
+    /// Opens the long-report collection of the first Logitech receiver.
     pub fn open(api: &HidApi) -> Result<Self, String> {
         let info = api
             .device_list()
@@ -167,8 +168,8 @@ impl Receiver {
                     && d.usage_page() == HIDPP_USAGE_PAGE
                     && d.usage() == USAGE_LONG
             })
-            // O receptor tem PID da familia C5xx; preferimos ele ao no de
-            // um dispositivo individual, porque atende todos os slots.
+            // The receiver has a C5xx-family PID; we prefer it over the
+            // node of an individual device, because it answers every slot.
             .min_by_key(|d| if (0xC500..=0xC5FF).contains(&d.product_id()) { 0 } else { 1 })
             .ok_or("nenhuma interface HID++ Logitech (vid 046d, usage page ff00, usage 2)")?;
         let path = info.path().to_string_lossy().to_string();
@@ -223,7 +224,7 @@ impl Receiver {
             }
             let r = &buf[..got];
             if r[1] != slot {
-                continue; // resposta de outro dispositivo no mesmo receptor
+                continue; // reply from another device on the same receiver
             }
             if r[2] == 0xFF {
                 return Err(format!("erro HID++ 0x{:02x} (func 0x{func:02x})", r[4]));
@@ -235,10 +236,10 @@ impl Receiver {
         Err("sem resposta".into())
     }
 
-    /// ROOT.getFeature -- indice do feature neste dispositivo.
+    /// ROOT.getFeature -- index of the feature on this device.
     ///
-    /// Memoizado: o indice nao muda para um dado dispositivo, e no caminho
-    /// quente cada ida e volta evitada e ~25 ms.
+    /// Memoized: the index does not change for a given device, and on
+    /// the hot path every round trip avoided is ~25 ms.
     pub fn feature_index(&self, slot: u8, feature: u16) -> Result<u8, String> {
         if let Ok(g) = FEATURE_CACHE.lock() {
             if let Some(m) = g.as_ref() {
@@ -264,9 +265,9 @@ impl Receiver {
         Ok(idx)
     }
 
-    /// O dispositivo do slot responde? Devolve a latencia.
+    /// Does the device on this slot answer? Returns the latency.
     ///
-    /// Este e o teste de "online": ~26 a 90 ms, contra 5,9 s de um
+    /// This is the "online" test: ~26 to 90 ms, versus 5.9 s for a
     /// `solaar show`.
     pub fn ping(&self, slot: u8) -> Result<f64, String> {
         let p = [
@@ -278,10 +279,10 @@ impl Receiver {
         Ok(ms)
     }
 
-    /// Chamada crua, para sondar feature cujo layout ainda nao se conhece.
+    /// Raw call, to probe a feature whose layout is not known yet.
     ///
-    /// Foi assim que decifrei o 0x1815 (HOSTS_INFO): imprimir os bytes e
-    /// construir o parser sobre a resposta real, em vez de supor o layout.
+    /// This is how 0x1815 (HOSTS_INFO) was decoded: print the bytes and
+    /// build the parser on the real reply, instead of guessing the layout.
     pub fn raw(
         &self,
         slot: u8,
@@ -293,14 +294,14 @@ impl Receiver {
         self.request(slot, fi, func, params).map(|(r, _)| r)
     }
 
-    /// O dispositivo esta presente? Com retry.
+    /// Is the device present? With retry.
     ///
-    /// Use ISTO para presenca, nao `host_info`: aquele custa duas idas e
-    /// volta com timeout de 700 ms cada, e um unico ping perdido nao
-    /// significa ausencia. Medido em uso real: com os dispositivos a 5% de
-    /// bateria, a checagem sem retry reportou "nenhum dispositivo neste
-    /// receptor" 25 vezes em 5 minutos enquanto o usuario movia o mouse
-    /// naquela maquina -- e a borda nao funcionava.
+    /// Use THIS for presence, not `host_info`: that one costs two round
+    /// trips with a 700 ms timeout each, and a single lost ping does not
+    /// mean absence. Measured in real use: with the devices at 5%
+    /// battery, the check without retry reported "no device on this
+    /// receiver" 25 times in 5 minutes while the user was moving the
+    /// mouse on that machine -- and the edge did not work.
     pub fn present(&self, slot: u8, attempts: u8) -> bool {
         for i in 0..attempts.max(1) {
             if i > 0 {
@@ -313,17 +314,17 @@ impl Receiver {
         false
     }
 
-    /// Numero de hosts e canal atual (1-based).
+    /// Number of hosts and current channel (1-based).
     ///
-    /// **Valida a faixa antes de devolver.** O 0x1814 responde lixo
-    /// durante reconexao: o monitor registrou um MX Keys -- que tem tres
-    /// hosts -- declarando `current_host = 5`. Numero impossivel, e
-    /// devolve-lo como fato fazia tudo que le o canal decidir sobre
-    /// ficcao. O reconciliador agia nele.
+    /// **Validates the range before returning.** 0x1814 answers garbage
+    /// during reconnection: the monitor logged an MX Keys -- which has
+    /// three hosts -- declaring `current_host = 5`. An impossible number,
+    /// and returning it as fact made everything that reads the channel
+    /// decide on fiction. The reconciler acted on it.
     ///
-    /// Fora da faixa vira erro, nao numero: quem chama ja sabe lidar com
-    /// "nao sei" (o `survey` poe `None`), e nao sabe lidar com um canal
-    /// que nao existe.
+    /// Out of range becomes an error, not a number: callers already know
+    /// how to handle "don't know" (`survey` puts `None`), and do not know
+    /// how to handle a channel that does not exist.
     pub fn host_info(&self, slot: u8) -> Result<HostInfo, String> {
         let fi = self.feature_index(slot, FEATURE_CHANGE_HOST)?;
         let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0])?;
@@ -332,8 +333,8 @@ impl Receiver {
         }
         let num_hosts = r[0];
         let current = r[1] + 1;
-        // Um dispositivo sem host nenhum nao existe, e canal acima do
-        // total que ele proprio declarou e resposta corrompida.
+        // A device with no host at all does not exist, and a channel above
+        // the total it declared itself is a corrupted reply.
         if num_hosts == 0 || num_hosts > 16 || current == 0 || current > num_hosts {
             return Err(format!(
                 "getHostInfo incoerente: canal {current} de {num_hosts} host(s)"
@@ -342,11 +343,11 @@ impl Receiver {
         Ok(HostInfo { num_hosts, current })
     }
 
-    /// Nome do dispositivo via feature 0x0005, lido em pedacos.
+    /// Device name via feature 0x0005, read in chunks.
     ///
-    /// Resolve por NOME em vez de numero de slot: slot e por receptor e
-    /// **nao coincide entre maquinas** (medido -- no Windows o slot 2
-    /// estava vazio enquanto aqui existe).
+    /// Resolves by NAME instead of slot number: the slot is per receiver
+    /// and **does not match across machines** (measured -- on Windows
+    /// slot 2 was empty while here it exists).
     pub fn device_name(&self, slot: u8) -> Result<String, String> {
         let fi = self.feature_index(slot, FEATURE_DEVICE_NAME)?;
         let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0])?;
@@ -377,15 +378,16 @@ impl Receiver {
         }
     }
 
-    /// Bateria, tentando 0x1004 (porcentagem) e caindo para 0x1000 (faixa).
+    /// Battery, trying 0x1004 (percent) and falling back to 0x1000 (band).
     pub fn battery(&self, slot: u8) -> Option<Battery> {
         // 0x1004 UNIFIED_BATTERY, func 1 = getStatus
         if let Ok(fi) = self.feature_index(slot, FEATURE_UNIFIED_BATTERY) {
             if let Ok((r, _)) = self.request(slot, fi, 0x01, &[0, 0, 0]) {
                 if r.len() >= 3 {
                     // r[0]=stateOfCharge(%), r[1]=level, r[2]=chargingStatus,
-                    // r[3]=externalPowerStatus. Medido no MX Anywhere 3 no
-                    // cabo: 05 01 01 01.
+                    // r[3]=externalPowerStatus. Measured on the MX Anywhere 3
+                    // on the cable: 05 01 01 01.
+                    // The status strings stay pt-BR: they reach the panel.
                     let ext = r.get(3).copied().unwrap_or(0);
                     return Some(Battery {
                         percent: Some(r[0]),
@@ -407,9 +409,10 @@ impl Receiver {
         if r.len() < 3 {
             return None;
         }
-        // r[0]=nivel de descarga (%), r[1]=proximo degrau, r[2]=status.
-        // Medido no MX Keys carregando: 32 14 00 -- 50%, proximo 20%, e
-        // status 0 ("descarregando") apesar de estar no cabo.
+        // r[0]=discharge level (%), r[1]=next step, r[2]=status.
+        // Measured on the MX Keys while charging: 32 14 00 -- 50%, next
+        // 20%, and status 0 ("descarregando", discharging) despite being
+        // on the cable.
         let status = match r[2] {
             0 => "descarregando",
             1 => "recarregando",
@@ -429,15 +432,15 @@ impl Receiver {
         })
     }
 
-    /// Troca de canal SEM esperar resposta.
+    /// Channel switch WITHOUT waiting for a reply.
     ///
-    /// Numa troca bem-sucedida o dispositivo sai do radio **antes** de
-    /// responder, entao esperar e esperar por nada: medido, o
-    /// `REPLY_TIMEOUT` de 700 ms era pago inteiro em cada troca. Aqui
-    /// escrevemos o report e voltamos.
+    /// On a successful switch the device leaves the radio **before**
+    /// replying, so waiting is waiting for nothing: measured, the 700 ms
+    /// `REPLY_TIMEOUT` was paid in full on every switch. Here we write
+    /// the report and return.
     ///
-    /// Com o indice do feature memoizado, isto custa uma escrita -- a
-    /// ordem de 1 ms em vez de 700.
+    /// With the feature index memoized, this costs one write -- on the
+    /// order of 1 ms instead of 700.
     pub fn set_host_nowait(&self, slot: u8, host: u8) -> Result<(), String> {
         if host == 0 {
             return Err("host e 1-based".into());
@@ -453,10 +456,10 @@ impl Receiver {
         self.dev.write(&out).map(|_| ()).map_err(|e| format!("write: {e}"))
     }
 
-    /// CHANGE_HOST.setCurrentHost. `host` e 1-based.
+    /// CHANGE_HOST.setCurrentHost. `host` is 1-based.
     ///
-    /// IRREVERSIVEL: o dispositivo sai deste receptor e nao responde mais
-    /// aqui. **Nao esperar resposta** -- o radio cai antes dela.
+    /// IRREVERSIBLE: the device leaves this receiver and no longer answers
+    /// here. **Do not wait for a reply** -- the radio drops before it.
     pub fn set_host(&self, slot: u8, host: u8) -> Result<(), String> {
         if host == 0 {
             return Err("host e 1-based".into());
@@ -464,18 +467,18 @@ impl Receiver {
         let fi = self.feature_index(slot, FEATURE_CHANGE_HOST)?;
         match self.request(slot, fi, 0x01, &[host - 1, 0, 0]) {
             Ok(_) => Ok(()),
-            // Ausencia de resposta e o caso ESPERADO aqui.
+            // No reply is the EXPECTED case here.
             Err(e) if e == "sem resposta" => Ok(()),
             Err(e) => Err(e),
         }
     }
 
-    /// Varre os slots 1..=max.
+    /// Scans slots 1..=max.
     ///
-    /// `with_names` e `with_battery` sao opcionais porque **custam ida e
-    /// volta**: o nome sao ~2 requisicoes e a bateria mais 2. Com o nome
-    /// em cache do lado de quem chama, pedir de novo e desperdicio puro --
-    /// era 1,1 s dos 1,6 s de uma varredura.
+    /// `with_names` and `with_battery` are optional because **they cost
+    /// round trips**: the name is ~2 requests and the battery 2 more.
+    /// With the name cached on the caller's side, asking again is pure
+    /// waste -- it was 1.1 s of a 1.6 s scan.
     pub fn devices(&self, max: u8, with_names: bool, with_battery: bool) -> Vec<Device> {
         (1..=max)
             .map(|slot| match self.ping(slot) {
@@ -500,10 +503,11 @@ impl Receiver {
     }
 }
 
-/// Nome legivel de um controlID. Tabela parcial, das familias MX.
+/// Readable name of a controlID. Partial table, MX families.
 ///
-/// Os numeros vem do hardware (0x1B04 func 1); os nomes conferem com o
-/// que o Solaar exibia para os mesmos dispositivos.
+/// The numbers come from the hardware (0x1B04 func 1); the names match
+/// what Solaar showed for the same devices. The names stay pt-BR: they
+/// are shown in the panel.
 pub fn control_name(cid: u16) -> &'static str {
     match cid {
         0x0050 => "Botao esquerdo",
@@ -534,16 +538,16 @@ pub struct Control {
     pub cid: u16,
     pub tid: u16,
     pub flags: u8,
-    /// Pode receber outra funcao (flag 0x10).
+    /// Can take another function (flag 0x10).
     pub reprogrammable: bool,
-    /// Pode ser desviado para software (flag 0x20).
+    /// Can be diverted to software (flag 0x20).
     pub divertable: bool,
-    /// Para que CID ele esta mapeado agora, se o dispositivo informar.
+    /// Which CID it is mapped to now, if the device reports it.
     pub remapped_to: Option<u16>,
 }
 
 impl Receiver {
-    /// Lista os controles reprogramaveis do dispositivo.
+    /// Lists the device's reprogrammable controls.
     pub fn controls(&self, slot: u8) -> Result<Vec<Control>, String> {
         let fi = self.feature_index(slot, FEATURE_REPROG_CONTROLS)?;
         let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0])?;
@@ -557,8 +561,8 @@ impl Receiver {
             let cid = u16::from_be_bytes([c[0], c[1]]);
             let tid = u16::from_be_bytes([c[2], c[3]]);
             let flags = c[4];
-            // func 2 = getControlReporting. Nao todos respondem; ausencia
-            // nao e erro, so significa "sem remapeamento declarado".
+            // func 2 = getControlReporting. Not all answer; absence is
+            // not an error, it just means "no remap declared".
             let remapped_to = self
                 .request(slot, fi, 0x02, &[c[0], c[1], 0])
                 .ok()
@@ -578,11 +582,11 @@ impl Receiver {
         Ok(out)
     }
 
-    /// Remapeia um controle para agir como outro.
+    /// Remaps a control to act as another.
     ///
-    /// `to` = 0 devolve o comportamento padrao. Recusa controle que o
-    /// proprio dispositivo diz nao ser reprogramavel -- o botao esquerdo,
-    /// por exemplo, reporta flags=0x01 sem o bit 0x10.
+    /// `to` = 0 restores the default behavior. Refuses a control the
+    /// device itself says is not reprogrammable -- the left button, for
+    /// example, reports flags=0x01 without bit 0x10.
     pub fn set_control_remap(&self, slot: u8, cid: u16, to: u16) -> Result<(), String> {
         let ctl = self
             .controls(slot)?
@@ -599,7 +603,7 @@ impl Receiver {
         }
         let fi = self.feature_index(slot, FEATURE_REPROG_CONTROLS)?;
         // func 3 = setControlReporting(cid, flags, remap)
-        // flags bit 1 (0x02) = aplicar o remap que vem a seguir.
+        // flags bit 1 (0x02) = apply the remap that follows.
         let p = [
             (cid >> 8) as u8,
             (cid & 0xFF) as u8,
@@ -611,7 +615,7 @@ impl Receiver {
     }
 }
 
-/// Endpoints HID++ visiveis, para diagnostico.
+/// Visible HID++ endpoints, for diagnostics.
 pub fn endpoints(api: &HidApi) -> Vec<(String, u16, u16, u16)> {
     api.device_list()
         .filter(|d| d.vendor_id() == LOGITECH_VID && d.usage_page() == HIDPP_USAGE_PAGE)
@@ -627,39 +631,39 @@ pub fn endpoints(api: &HidApi) -> Vec<(String, u16, u16, u16)> {
 }
 
 #[cfg(test)]
-mod testes_host_info {
-    /// A validacao de faixa, isolada da leitura do hardware.
+mod host_info_tests {
+    /// The range check, isolated from the hardware read.
     ///
-    /// Mesma conta que o `host_info` faz depois de ler os dois bytes.
-    /// Existe como funcao de teste porque o caminho real precisa de um
-    /// receptor na mesa, e a regra -- "canal dentro do total que o
-    /// dispositivo declarou" -- nao precisa.
-    fn coerente(num_hosts: u8, current_zero_based: u8) -> bool {
+    /// Same arithmetic `host_info` does after reading the two bytes.
+    /// Exists as a test function because the real path needs a receiver
+    /// on the desk, and the rule -- "channel within the total the device
+    /// declared" -- does not.
+    fn coherent(num_hosts: u8, current_zero_based: u8) -> bool {
         let current = current_zero_based + 1;
         !(num_hosts == 0 || num_hosts > 16 || current == 0 || current > num_hosts)
     }
 
     #[test]
-    fn canal_dentro_da_faixa_passa() {
-        assert!(coerente(3, 0), "host 1 de 3");
-        assert!(coerente(3, 2), "host 3 de 3");
-        assert!(coerente(1, 0), "unico host");
+    fn channel_in_range_passes() {
+        assert!(coherent(3, 0), "host 1 of 3");
+        assert!(coherent(3, 2), "host 3 of 3");
+        assert!(coherent(1, 0), "single host");
     }
 
     #[test]
-    fn canal_acima_do_total_e_recusado() {
-        // O caso real: MX Keys com tres hosts respondeu canal 5 durante
-        // uma reconexao. Devolver isso como fato fazia o reconciliador
-        // decidir sobre um canal que nao existe.
-        assert!(!coerente(3, 4), "canal 5 de 3 hosts");
-        assert!(!coerente(3, 3), "canal 4 de 3 hosts");
+    fn channel_above_total_is_rejected() {
+        // The real case: an MX Keys with three hosts answered channel 5
+        // during a reconnection. Returning that as fact made the
+        // reconciler decide on a channel that does not exist.
+        assert!(!coherent(3, 4), "channel 5 of 3 hosts");
+        assert!(!coherent(3, 3), "channel 4 of 3 hosts");
     }
 
     #[test]
-    fn total_absurdo_e_recusado() {
-        // `num_hosts` tambem vem da mesma resposta corrompida: um
-        // dispositivo que declara 19 hosts leu lixo nos dois bytes.
-        assert!(!coerente(0, 0), "zero hosts");
-        assert!(!coerente(19, 3), "19 hosts");
+    fn absurd_total_is_rejected() {
+        // `num_hosts` also comes from the same corrupted reply: a device
+        // declaring 19 hosts read garbage in both bytes.
+        assert!(!coherent(0, 0), "zero hosts");
+        assert!(!coherent(19, 3), "19 hosts");
     }
 }
