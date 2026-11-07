@@ -23,80 +23,81 @@ use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 
 /// Nobody connected in this long: the tab is gone, and so is the reason to run.
-const ESPERA_ABA: Duration = Duration::from_secs(30);
+const TAB_WAIT: Duration = Duration::from_secs(30);
 /// Largest `Event` on the wire: a tag byte and two `f64`.
-const MAX_EVENTO: usize = 17;
-const ORIGEM_PADRAO: &str = "http://127.0.0.1:8787";
+const MAX_EVENT: usize = 17;
+const DEFAULT_ORIGIN: &str = "http://127.0.0.1:8787";
 
 /// Does this request come from the panel, with this session's token?
-fn autorizado(caminho: &str, origem: Option<&str>, token: &str, esperada: &str) -> bool {
+fn authorized(path: &str, origin: Option<&str>, token: &str, expected: &str) -> bool {
     !token.is_empty()
-        && caminho.strip_prefix('/') == Some(token)
-        && origem == Some(esperada)
+        && path.strip_prefix('/') == Some(token)
+        && origin == Some(expected)
 }
 
 /// Frame header for the page: bit 0 of `flags` marks a keyframe.
-fn embrulhar(keyframe: bool, captured_at_ns: u64, unidade: &[u8]) -> Vec<u8> {
-    let mut m = Vec::with_capacity(9 + unidade.len());
+fn wrap(keyframe: bool, captured_at_ns: u64, unit: &[u8]) -> Vec<u8> {
+    let mut m = Vec::with_capacity(9 + unit.len());
     m.push(u8::from(keyframe));
     m.extend_from_slice(&captured_at_ns.to_be_bytes());
-    m.extend_from_slice(unidade);
+    m.extend_from_slice(unit);
     m
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let alvo = std::env::args()
+    let target = std::env::args()
         .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("uso: logistream-ponte <host:porta>"))?;
+        .ok_or_else(|| anyhow::anyhow!("usage: logistream-ponte <host:port>"))?;
     let token = std::env::var("LOGI_PONTE_TOKEN").unwrap_or_default();
-    anyhow::ensure!(!token.is_empty(), "falta LOGI_PONTE_TOKEN");
-    let origem = std::env::var("LOGI_PONTE_ORIGEM").unwrap_or_else(|_| ORIGEM_PADRAO.into());
+    anyhow::ensure!(!token.is_empty(), "LOGI_PONTE_TOKEN is missing");
+    let origin = std::env::var("LOGI_PONTE_ORIGEM").unwrap_or_else(|_| DEFAULT_ORIGIN.into());
 
-    let ouvinte = TcpListener::bind("127.0.0.1:0").await?;
-    println!("porta {}", ouvinte.local_addr()?.port());
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    // Parsed by logid (`screen.rs`): keep it byte-identical.
+    println!("porta {}", listener.local_addr()?.port());
 
-    let limite = tokio::time::Instant::now() + ESPERA_ABA;
+    let deadline = tokio::time::Instant::now() + TAB_WAIT;
 
-    let portaria = |pedido: &Request, resposta: Response| -> Result<Response, ErrorResponse> {
-        let de = pedido.headers().get("origin").and_then(|v| v.to_str().ok());
-        if autorizado(pedido.uri().path(), de, &token, &origem) {
-            return Ok(resposta);
+    let gate = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
+        let from = request.headers().get("origin").and_then(|v| v.to_str().ok());
+        if authorized(request.uri().path(), from, &token, &origin) {
+            return Ok(response);
         }
-        eprintln!("recusei uma conexao: token ou origem errados");
-        let mut negado = ErrorResponse::new(None);
-        *negado.status_mut() = StatusCode::FORBIDDEN;
-        Err(negado)
+        eprintln!("refused a connection: wrong token or origin");
+        let mut denied = ErrorResponse::new(None);
+        *denied.status_mut() = StatusCode::FORBIDDEN;
+        Err(denied)
     };
-    // Recusar nao encerra a espera: senao uma pagina qualquer derrubaria a
-    // sessao so de tentar, antes de a aba chegar.
+    // Refusing does not end the wait: otherwise any page could kill the
+    // session just by trying, before the tab arrives.
     let mut ws = loop {
-        let (tcp, _) = tokio::time::timeout_at(limite, ouvinte.accept())
+        let (tcp, _) = tokio::time::timeout_at(deadline, listener.accept())
             .await
-            .map_err(|_| anyhow::anyhow!("nenhuma aba conectou"))??;
-        if let Ok(ws) = tokio_tungstenite::accept_hdr_async(tcp, portaria).await {
+            .map_err(|_| anyhow::anyhow!("no tab connected"))??;
+        if let Ok(ws) = tokio_tungstenite::accept_hdr_async(tcp, gate).await {
             break ws;
         }
     };
-    drop(ouvinte);
+    drop(listener);
 
-    let mut enderecos: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&alvo).await?.collect();
-    enderecos.sort_by_key(|a| !a.is_ipv4());
-    let destino = *enderecos.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {alvo}"))?;
+    let mut addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&target).await?.collect();
+    addrs.sort_by_key(|a| !a.is_ipv4());
+    let dest = *addrs.first().ok_or_else(|| anyhow::anyhow!("could not resolve {target}"))?;
     let bind: std::net::SocketAddr =
-        if destino.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
+        if dest.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
     let ep = net::client(bind)?;
-    let conexao = ep.connect(destino, "logistream")?.await?;
-    // stderr, e nao stdout: quem nos lançou lê só a porta e fecha o pipe, e um
-    // `println!` num pipe fechado derruba o processo no meio da sessão.
-    eprintln!("conectado em {destino}");
+    let conn = ep.connect(dest, "logistream")?.await?;
+    // stderr, not stdout: whoever launched us reads only the port and closes
+    // the pipe, and a `println!` on a closed pipe kills the process mid-session.
+    eprintln!("connected to {dest}");
 
     let (tx_in, mut rx_in) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
-    let conexao_in = conexao.clone();
+    let conn_in = conn.clone();
     tokio::spawn(async move {
-        let Ok(mut envio) = conexao_in.open_uni().await else { return };
-        while let Some(evento) = rx_in.recv().await {
-            if envio.write_all(&evento).await.is_err() {
+        let Ok(mut send) = conn_in.open_uni().await else { return };
+        while let Some(event) = rx_in.recv().await {
+            if send.write_all(&event).await.is_err() {
                 break;
             }
         }
@@ -105,13 +106,13 @@ async fn main() -> anyhow::Result<()> {
     let mut r = Reassembler::default();
     loop {
         tokio::select! {
-            d = conexao.read_datagram() => {
-                let Some((cab, unidade)) = r.push(&d?) else { continue };
-                let m = embrulhar(cab.keyframe, cab.captured_at_ns, &unidade);
+            d = conn.read_datagram() => {
+                let Some((header, unit)) = r.push(&d?) else { continue };
+                let m = wrap(header.keyframe, header.captured_at_ns, &unit);
                 ws.send(Message::Binary(m.into())).await?;
             }
             m = ws.next() => match m {
-                Some(Ok(Message::Binary(b))) if b.len() <= MAX_EVENTO => {
+                Some(Ok(Message::Binary(b))) if b.len() <= MAX_EVENT => {
                     let _ = tx_in.send(b.to_vec()).await;
                 }
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return Ok(()),
@@ -122,24 +123,24 @@ async fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     const O: &str = "http://127.0.0.1:8787";
 
     #[test]
-    fn so_o_painel_com_o_token_entra() {
-        assert!(autorizado("/abc", Some(O), "abc", O));
-        assert!(!autorizado("/errado", Some(O), "abc", O));
-        assert!(!autorizado("/abc", Some("https://outro.site"), "abc", O));
-        assert!(!autorizado("/abc", None, "abc", O));
-        assert!(!autorizado("/", Some(O), "", O));
+    fn only_the_panel_with_the_token_gets_in() {
+        assert!(authorized("/abc", Some(O), "abc", O));
+        assert!(!authorized("/wrong", Some(O), "abc", O));
+        assert!(!authorized("/abc", Some("https://other.site"), "abc", O));
+        assert!(!authorized("/abc", None, "abc", O));
+        assert!(!authorized("/", Some(O), "", O));
     }
 
     #[test]
-    fn o_quadro_leva_a_chave_e_o_instante() {
-        let m = embrulhar(true, 0x0102, &[9, 8]);
+    fn the_frame_carries_the_keyframe_flag_and_the_instant() {
+        let m = wrap(true, 0x0102, &[9, 8]);
         assert_eq!(m, [1, 0, 0, 0, 0, 0, 0, 1, 2, 9, 8]);
-        assert_eq!(embrulhar(false, 0, &[])[0], 0);
+        assert_eq!(wrap(false, 0, &[])[0], 0);
     }
 }
