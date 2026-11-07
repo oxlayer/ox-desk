@@ -57,10 +57,29 @@
     background:var(--card)}
   .sub{color:var(--faint);font-size:12px;margin:0 0 22px}
 
-  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(310px,1fr))}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
-    padding:18px;box-shadow:var(--shadow);
-    display:flex;flex-direction:column;gap:14px}
+  .grid{display:grid;gap:18px;align-items:start;
+    grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:0 18px 12px;box-shadow:var(--shadow);overflow:hidden;
+    display:flex;flex-direction:column;gap:14px;
+    transition:border-color .15s ease}
+  .card:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+  .card.off .hero svg{opacity:.32}
+  /* A maquina e o que se reconhece de longe: o resto do cartao e detalhe. */
+  .hero{margin:0 -18px;height:124px;display:grid;place-items:center;
+    color:var(--accent);border-bottom:1px solid var(--line);
+    background:radial-gradient(240px 120px at 50% 120%,
+      color-mix(in srgb,var(--accent) 24%,transparent),transparent 72%),var(--inset)}
+  .hero svg{width:82px;height:82px;display:block}
+  .estado{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--down)}
+  .estado.on{color:var(--up)}
+  .mais{border-top:1px solid var(--line);margin:0 -18px -12px;padding:0 18px}
+  .mais summary{cursor:pointer;padding:10px 0;font-size:12.5px;color:var(--dim);
+    list-style-position:inside;user-select:none}
+  .mais summary:hover{color:var(--fg)}
+  .mais[open]{padding-bottom:14px}
+  .mais[open] .corpo{display:flex;flex-direction:column;gap:12px}
+  .mais .end{font:11px var(--mono);color:var(--faint)}
 
   /* Pulo da lateral para o cartao: um brilho curto, senao a pessoa nao
      sabe qual dos tres cartoes era. */
@@ -103,7 +122,8 @@
     padding-top:2px;border-top:1px solid var(--line)}
   .det b{font-family:var(--mono);font-weight:600;color:var(--fg);font-size:11.5px}
 
-  .bar{height:3px;border-radius:2px;background:var(--line);overflow:hidden;
+  .det>span{flex:1 1 72px;min-width:0}
+  .bar{display:block;height:3px;border-radius:2px;background:var(--line);overflow:hidden;
     margin-top:3px;width:100%}
   .bar i{display:block;height:100%;background:var(--up);border-radius:2px;
     transition:width .5s ease}
@@ -130,12 +150,14 @@
   .ctlrow .st.ok{color:var(--up)} .ctlrow .st.no{color:var(--down)}
   .ctlnote{padding:8px 16px 12px;color:var(--faint);font-size:11.5px}
 
-  .scr{padding:8px 14px 12px;border-top:1px solid var(--line);
+  .scr{
     display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .scr button{font:12px inherit;padding:4px 11px;border-radius:8px;
-    border:1px solid var(--line);background:var(--bg);color:var(--fg);
-    cursor:pointer}
-  .scr button:hover:not(:disabled){background:var(--inset)}
+  /* Conectar e a acao do cartao. Tudo o mais e secundario a ela. */
+  .scr button{font:inherit;font-weight:620;padding:9px 12px;border-radius:10px;
+    width:100%;cursor:pointer;color:#fff;border:1px solid transparent;
+    background:color-mix(in srgb,var(--accent) 88%,#000)}
+  .scr button:hover:not(:disabled){background:var(--accent)}
+  .scr button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .scr button:disabled{opacity:.45;cursor:default}
   .scr .opt{display:flex;align-items:center;gap:4px;font-size:11.5px;
     color:var(--dim);cursor:pointer;user-select:none}
@@ -383,7 +405,7 @@
   </div>
 </header>
 <section class="sec" data-sec="geral">
-<p class="sub">LAN 192.168.1.0/24 &middot; leitura direta de portas, sem agente remoto</p>
+<p class="sub">Leitura direta de portas, sem agente remoto</p>
 <div class="grid" id="grid"></div>
 </section>
 
@@ -559,20 +581,46 @@ function card(h){
     det.push(`<span>CPU <b>&mdash;</b></span>`);
   }
 
-  return `<div class="card">
+  return `<div class="card${h.online ? '' : ' off'}">
+    <div class="hero">${maquinaSvg(h)}</div>
     <div class="top">
       <span class="dot ${h.online ? 'on' : ''}"></span>
       <div class="ident">
         <div class="nm">${esc(h.name)}</div>
-        <div class="ro">${esc(h.role)} &middot; <span>${esc(h.addr)}</span></div>
+        <div class="ro">${esc(h.role)}</div>
       </div>
+      <span class="estado ${h.online ? 'on' : ''}">${h.online ? 'online' : 'offline'}</span>
     </div>
-    <div class="svc"><table>${h.services.map(svcRow).join('')}</table></div>
-    ${units ? `<div class="units">${units}</div>` : ''}
-    ${kvm.length ? `<div class="units">${kvm.join('')}</div>` : ''}
-    ${det.length ? `<div class="det">${det.join('')}</div>` : ''}
     <div class="scr" data-scr="${esc(h.name)}"></div>
+    <details class="mais" data-mais="${esc(h.name)}"${MAIS.has(h.name) ? ' open' : ''}>
+      <summary>Detalhes</summary>
+      <div class="corpo">
+        <div class="end">${esc(h.addr)}</div>
+        <div class="svc"><table>${h.services.map(svcRow).join('')}</table></div>
+        ${units ? `<div class="units">${units}</div>` : ''}
+        ${kvm.length ? `<div class="units">${kvm.join('')}</div>` : ''}
+        ${det.length ? `<div class="det">${det.join('')}</div>` : ''}
+      </div>
+    </details>
   </div>`;
+}
+
+// O grid e refeito a cada leitura, e um <details> aberto fecharia sozinho
+// na cara de quem esta lendo. O que esta aberto mora aqui, fora do DOM.
+const MAIS = new Set();
+document.getElementById('grid').addEventListener('toggle', ev => {
+  const d = ev.target;
+  if (!d.dataset || !d.dataset.mais) return;
+  if (d.open) MAIS.add(d.dataset.mais); else MAIS.delete(d.dataset.mais);
+}, true);
+
+function maquinaSvg(h){
+  const laptop = /macos|mac os|macbook/i.test(h.role + ' ' + h.name);
+  const corpo = laptop
+    ? `<rect x="16" y="16" width="48" height="33" rx="3"/><path d="M8 57h64l-5-8H13z"/>`
+    : `<rect x="10" y="12" width="60" height="40" rx="3"/><path d="M33 52l-2 11h18l-2-11"/><path d="M26 64h28"/>`;
+  return `<svg viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-width="2.4"
+    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${corpo}</svg>`;
 }
 
 let ctlBusy = false;
@@ -723,15 +771,18 @@ async function screens(){
       `<input type="checkbox" data-opt="${id}"${marcado ? ' checked' : ''}` +
       `${pode ? '' : ' disabled'}>${esc(rotulo)}</label>`;
     const semSuporte = `${p.client || 'o cliente'} nao expoe isso`;
+    // So aparece a opcao que o cliente sabe cumprir: tres caixas apagadas
+    // em todo cartao disputavam atencao com o botao, sem mudar nada.
+    const opcoes =
+      (caps.view_only ? opt('control', 'teclado+mouse', true, true, '') : '') +
+      (caps.audio ? opt('audio', 'som', false, true, semSuporte) : '') +
+      (caps.mic ? opt('mic', 'microfone', false, true, semSuporte) : '');
+    const via = p.ready ? `${p.kind} ${p.port}${lat} via ${p.client}` : '';
     box.innerHTML =
-      `<button data-open="${esc(p.host)}"${p.ready ? '' : ' disabled'}>Ver a tela</button>` +
-      opt('control', 'teclado+mouse', true, caps.view_only, 
-          `${p.client || 'o cliente'} sempre controla; nao da para so olhar`) +
-      opt('audio', 'som', false, caps.audio, semSuporte) +
-      opt('mic', 'microfone', false, caps.mic, semSuporte) +
+      `<button data-open="${esc(p.host)}" title="${esc(via)}"` +
+      `${p.ready ? '' : ' disabled'}>Conectar</button>` + opcoes +
       `<span class="why${p.ready ? '' : ' er'}">` +
-      (p.ready ? `${esc(p.kind)} ${p.port}${lat} via ${esc(p.client)}`
-               : esc(p.blocker || 'indisponivel')) + `</span>`;
+      (p.ready ? '' : esc(p.blocker || 'indisponivel')) + `</span>`;
   }
 }
 
