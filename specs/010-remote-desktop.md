@@ -461,7 +461,7 @@ Windows do not need it: they capture via PipeWire and DXGI.
 
 ### What is still missing, and the friction that comes with it
 
-- Pipeline: `avfoundation` -> `h264_videotoolbox` -> `serve::atender`. The
+- Pipeline: `avfoundation` -> `h264_videotoolbox` -> `serve::serve_video`. The
   network loop and the rate cap are the same as for the other two hosts.
 - Input: Core Graphics `CGEvent`, which **requires the Accessibility
   permission** granted by hand in System Preferences. It cannot be worked
@@ -527,7 +527,7 @@ budget goes from 16 KB to 60 KB.
 
 ### 3. The conversion aliased and was also the bottleneck (decode_nv.rs)
 
-`nv12_para_bgra` sampled by nearest neighbor, with a comment of mine saying
+`nv12_to_bgra` sampled by nearest neighbor, with a comment of mine saying
 bilinear was "the next step if it bothers anyone". It did: shrinking 1440p
 into a window aliases every letter, and only on the GPU path -- the
 `swscale` of the other path was already bilinear. Side by side the
@@ -547,7 +547,7 @@ Two fixes in the same loop:
   bands per core.
 
 28.25 ms -> **2.76 ms**, ceiling of 362 fps. It became a budget test
-(`conversao_cabe_no_orcamento`, 12 ms ceiling) so it does not come back.
+(`conversion_fits_the_budget`, 12 ms ceiling) so it does not come back.
 
 ### The lesson
 

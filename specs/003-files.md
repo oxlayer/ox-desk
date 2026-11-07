@@ -99,8 +99,8 @@ group, and then there are eight. Looking for the **month** field finds
 the junction in both cases, because from there to the right the format
 is fixed (`<month> <day> <time-or-year> <name>`) and the size is the
 field immediately before it. Locked by
-`parseia_mesmo_sem_o_campo_de_grupo` and
-`ano_em_vez_de_hora_para_arquivo_antigo`.
+`parses_even_without_the_group_field` and
+`year_instead_of_time_for_old_file`.
 
 The name is cut by **byte offset** in the original line, not by `join`ing
 the remaining fields: `Program Files` has a space, and joining would

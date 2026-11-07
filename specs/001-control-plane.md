@@ -134,7 +134,7 @@ While writing this, a second reading of the same criterion showed up:
 `follow.rs` had its **own** copy of `is_local`, which ignored the new
 flag. On a Windows box with `local = true` and a non-loopback address, `follow`
 and the edge would disagree about which machine is "me". The copy was removed and
-`quem_sou_eu_por_loopback_ou_por_flag` is the test that prevents it from
+`who_am_i_by_loopback_or_by_flag` is the test that prevents it from
 coming back.
 
 ### How it starts on Windows

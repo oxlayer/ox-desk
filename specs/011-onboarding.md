@@ -43,7 +43,7 @@ Measuring over SSH would give "no" for things that are right — see
 
 `Estado::Erro` exists alongside `Ok`, `Falta` and `Fora`, and weighs the
 same as `Falta` in the summary. A step the wizard could not measure **is
-not an approved step**. A step nobody measured is not either: `estado_de`
+not an approved step**. A step nobody measured is not either: `state_of`
 returns `Erro` for a missing id, and there is a test for that.
 
 This is the same family of defect as the `backfill_gate` that did not

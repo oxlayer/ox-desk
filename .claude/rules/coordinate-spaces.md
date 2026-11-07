@@ -2,7 +2,7 @@
 
 The protocol carries `Evento::Mouse` in **frame pixels**: the viewer
 knows the size of what it receives and maps the window onto it
-(`ponto_remoto`, in `logistream/src/bin/view.rs`). The host, on the
+(`remote_point`, in `logistream/src/bin/view.rs`). The host, on the
 other side, injects in the **system's** coordinate space — and the two
 are not the same space on every machine.
 
@@ -20,7 +20,7 @@ window throws the cursor to the bottom-right corner, because double of
 everything is larger than the screen and the system clamps at the edge.
 It arrived as *"the cursor position on the mac didn't match"*.
 
-The conversion is `ponto_de_pixel` in `logistream/src/input.rs`
+The conversion is `point_from_pixel` in `logistream/src/input.rs`
 (platform-neutral, with tests), and the scale comes from the **video
 mode**:
 
@@ -46,7 +46,7 @@ can't be diagnosed without it:
 `GetSystemMetrics` returns **logical** coordinates in a process that
 doesn't declare DPI awareness — and a Rust binary without a manifest is
 DPI-unaware. DXGI captures in physical. Outside 100% scale,
-`input_win::mover` would be dividing physical by logical and be off by
+`input_win::move_to` would be dividing physical by logical and be off by
 the scale.
 
 Measured on 2026-11-04 with `windows/sondas/ler-cursor.ps1` (`/IT` task,

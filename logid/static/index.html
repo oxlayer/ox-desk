@@ -926,7 +926,7 @@ let currentTab = null;
 const T_MOUSE = 1, T_BUTTON = 2, T_SCROLL = 3, T_KEY = 4;
 const BUTTONS = {0: 0x110, 1: 0x112, 2: 0x111};
 // KeyboardEvent.code to evdev keycode: the same table as
-// `evdev_de_winit`, in logistream/src/input.rs.
+// `evdev_from_winit`, in logistream/src/input.rs.
 const KEYS = (() => {
   const t = {Escape:1, Minus:12, Equal:13, Backspace:14, Tab:15, BracketLeft:26,
     BracketRight:27, Enter:28, ControlLeft:29, Semicolon:39, Quote:40, Backquote:41,

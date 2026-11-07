@@ -60,12 +60,12 @@ Without it, the text clipboard to Windows had been **intermittent
 forever** and nobody noticed: a line of text usually wins the race, and
 it was a 50 KB `tar` — which always loses — that revealed the problem.
 
-Use [`remote::comando_logid`](../../logid/src/remote.rs), which already
+Use [`remote::logid_command`](../../logid/src/remote.rs), which already
 builds the right line per system. Don't build it by hand.
 
 ```rust
 // ✅ do
-.arg(crate::remote::comando_logid(&host, "clip-arq-set"))
+.arg(crate::remote::logid_command(&host, "clip-arq-set"))
 
 // ❌ don't
 .arg(r#"& "$env:LOCALAPPDATA\logid\logid.exe" clip-arq-set"#)

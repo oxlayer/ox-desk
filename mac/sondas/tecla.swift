@@ -8,7 +8,7 @@
 //
 // kVK_ANSI_A = 0, which is the macOS code -- the protocol carries evdev,
 // where A = 30. Three numberings coexist in this project; see
-// `tecla_mac_de_evdev` in logistream/src/input.rs.
+// `mac_key_from_evdev` in logistream/src/input.rs.
 //
 // The printed answer (`A: PRESSIONADA` / `A: nunca apertada`) stays as is:
 // the verify-the-mac skill tells people to look for it.

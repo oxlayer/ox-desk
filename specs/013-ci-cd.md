@@ -107,7 +107,7 @@ in `target/`.
 - **Tests run only on Linux**, and for `logistream` only `--lib`. On the Mac
   it would cost ten times more per minute.
 - **The conversion budget does not block CI.**
-  `conversao_cabe_no_orcamento` passed on the first run and failed on the third
+  `conversion_fits_the_budget` passed on the first run and failed on the third
   with 12.18 ms against the 12 ms ceiling, with no change in the measured code: a shared
   runner is not the hardware the ceiling was written for. It
   keeps running and printing the number, without deciding. Since `check.sh`

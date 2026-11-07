@@ -114,7 +114,7 @@ clients with two UIs.
 > **one** argument, and when there is no user the argument has to
 > *disappear* — passing an empty `/u:` makes it prompt for a user and
 > hang without a terminal. Locked by
-> `template_de_usuario_some_quando_nao_ha_usuario`.
+> `user_template_vanishes_when_there_is_no_user`.
 
 ### Windows was turned on with scope, not opened up
 

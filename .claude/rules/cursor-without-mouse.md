@@ -25,7 +25,7 @@ Without a cursor, `LastMouseUpdateTime`, `PointerShapeBufferSize` and
 something that has no cursor is circular — instrumenting DXGI doesn't
 help.
 
-Solved by drawing our own arrow (`cursor::seta_embutida`), with the
+Solved by drawing our own arrow (`cursor::builtin_arrow`), with the
 position coming from `GetCursorPos`, which works whether the cursor is
 visible or not.
 

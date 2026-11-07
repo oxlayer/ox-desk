@@ -1279,7 +1279,7 @@ to break.
 evdev solves it directly: `EVIOCGRAB` is explicit (the click's
 semantics), **the codes are already ours** — `Evento::Tecla` carries an
 evdev keycode because that is what `NotifyKeyboardKeycode` receives, and
-`scancode_de_evdev()` already translates it for Windows — and it is independent of the
+`scancode_from_evdev()` already translates it for Windows — and it is independent of the
 compositor.
 
 ### Relative movement

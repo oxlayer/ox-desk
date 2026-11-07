@@ -27,7 +27,7 @@ Two traps that cost time:
 
 - `SendInput` does **not** dismiss the screensaver. The injection goes
   to the desktop of the calling thread (`Default`); the screensaver, on
-  another desktop, never hears of it. That's why `acordar_tela()` solves
+  another desktop, never hears of it. That's why `wake_screen()` solves
   a screen that is off and doesn't solve this one — two problems that
   looked like one.
 - `SPI_GETSCREENSAVERRUNNING` queried over SSH returns `False` even with
@@ -35,7 +35,7 @@ Two traps that cost time:
   The process list can.
 
 Today the host kills any `*.scr` at startup
-(`encerrar_protetor_de_tela()`), which is what remote access tools do. A
+(`end_screensaver()`), which is what remote access tools do. A
 screensaver has no state to lose.
 
 ## Diagnosis: four causes, same error code
@@ -73,7 +73,7 @@ There `DuplicateOutput` **passes**, and the symptom is harder to find:
 DXGI returns `Parado` (idle) forever, there is never a first frame, and
 the client sits on black without anyone complaining.
 
-Solved in `host_win.rs`: `acordar_tela()` at startup (a
+Solved in `host_win.rs`: `wake_screen()` at startup (a
 `MOUSEEVENTF_MOVE` of +1 and -1 in the same call — one of (0,0) is a
 no-op and Windows discards it), `TelaAcesa` holding `ES_DISPLAY_REQUIRED`
 while we serve, and a watchdog that nudges at 3 s and recreates the

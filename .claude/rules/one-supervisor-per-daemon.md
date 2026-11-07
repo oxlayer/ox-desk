@@ -48,11 +48,11 @@ correct**.
 
 `logid versao` prints the stamp of the **file**; `env!("LOGI_BUILD")` is
 the stamp of **who answers**. A divergence becomes a panel line
-(`setup_comum::veredito_do_carimbo`). Being on disk is not being live.
+(`setup_common::stamp_verdict`). Being on disk is not being live.
 
 And "job loaded" is not "job running": `launchctl print` brings `state`
 and `last exit code`, and ignoring them approved a crash loop
-(`setup_comum::veredito_do_launchd`). The panel said "loaded in the
+(`setup_common::launchd_verdict`). The panel said "loaded in the
 graphical session" about a daemon that hadn't come up since boot.
 
 ## See also

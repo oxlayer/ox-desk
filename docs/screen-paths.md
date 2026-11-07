@@ -35,7 +35,7 @@ it's the accept queue.
 ## Input
 
 The protocol carries **evdev** keycodes on every path, because that is
-what Mutter's `NotifyKeyboardKeycode` receives; `scancode_de_evdev()`
+what Mutter's `NotifyKeyboardKeycode` receives; `scancode_from_evdev()`
 translates to Set-1 on Windows.
 
 Two kinds of pointer movement:
