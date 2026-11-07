@@ -1,821 +1,862 @@
-//! O que falta nesta máquina para o conjunto funcionar.
+//! What this machine still lacks for the set to work.
 //!
 //! Spec: ../../specs/011-onboarding.md
 //!
-//! ## Por que isto existe
+//! ## Why this exists
 //!
-//! Montar uma máquina nova deste conjunto é uma lista de ~10 coisas,
-//! diferente em cada sistema, e nenhuma delas dá erro claro quando
-//! falta: sem ACL no `/dev/hidraw` o HID++ só não acha dispositivo; sem
-//! Gravação de Tela o AVFoundation **trava** em vez de falhar; sem
-//! tarefa `/IT` o host do Windows sobe na sessão 0 e captura preto. Em
-//! todos esses casos o sintoma é "não funcionou" e a causa está a três
-//! comandos de distância.
+//! Setting up a new machine for this set is a list of ~10 things,
+//! different on each OS, and none of them gives a clear error when it is
+//! missing: without an ACL on `/dev/hidraw` HID++ just finds no device;
+//! without Screen Recording AVFoundation **hangs** instead of failing;
+//! without an `/IT` task the Windows host starts in session 0 and
+//! captures black. In all these cases the symptom is "it didn't work" and
+//! the cause is three commands away.
 //!
-//! O `status.sh` já respondia isso no terminal, mas só no Linux e só
-//! para quem sabe que ele existe. Este módulo é o mesmo diagnóstico com
-//! três diferenças que importam: roda nas três máquinas, roda **de
-//! dentro** do daemon (então mede a própria sessão, não a do SSH -- ver
-//! [[../../.claude/rules/graphical-session]]), e sabe arrumar parte do que
-//! encontra.
+//! `status.sh` already answered this in the terminal, but only on Linux
+//! and only for whoever knows it exists. This module is the same
+//! diagnosis with three differences that matter: it runs on all three
+//! machines, it runs **inside** the daemon (so it measures its own
+//! session, not the SSH one -- see
+//! [[../../.claude/rules/graphical-session]]), and it knows how to fix
+//! part of what it finds.
 //!
-//! ## A regra de honestidade
+//! ## The honesty rule
 //!
-//! Um passo que não se consegue medir vira [`Estado::Erro`], **nunca**
-//! [`Estado::Ok`]. Já tivemos duas proteções que não protegiam nada
-//! (`dispatch.backfill_gate` em outro projeto, o `catch` do langfuse) e
-//! o padrão é sempre o mesmo: o silêncio parecia sucesso. Aqui "não sei"
-//! é um estado visível, e bloqueia o "pronto" igual a "falta".
+//! A step that cannot be measured becomes [`State::Error`], **never**
+//! [`State::Ok`]. We already had two guards that guarded nothing
+//! (`dispatch.backfill_gate` in another project, the langfuse `catch`)
+//! and the pattern is always the same: silence looked like success. Here
+//! "I don't know" is a visible state, and it blocks "ready" just like
+//! "missing" does.
 //!
-//! Depois de arrumar, **mede de novo**. O botão nunca pinta verde por
-//! ter rodado o comando; pinta por ter medido o resultado
+//! After fixing, **measure again**. The button never turns green for
+//! having run the command; it turns green for having measured the result
 //! ([[../../.claude/rules/verify-what-arrived]]).
 //!
-//! ## O que é puro e o que não é
+//! ## What is pure and what is not
 //!
-//! Este arquivo é o catálogo e a decisão -- quais passos existem em cada
-//! sistema, em que ordem, quem espera por quem, e quando o conjunto está
-//! pronto. Nada aqui toca disco, rede ou processo, e por isso os testes
-//! rodam no laptop de desenvolvimento cobrindo os **três** catálogos,
-//! não só o desta máquina. Foi o que pegou a dependência pendurada no
-//! `catalogo(Windows)` antes de ela existir numa máquina.
+//! This file is the catalog and the decision -- which steps exist on each
+//! OS, in what order, who waits for whom, and when the set is ready.
+//! Nothing here touches disk, network or processes, so the tests run on
+//! the development laptop covering all **three** catalogs, not only this
+//! machine's. That is what caught the dangling dependency in
+//! `catalog(Windows)` before it existed on a machine.
 //!
-//! A medição real e os reparos ficam em `setup_linux.rs`,
-//! `setup_mac.rs` e `setup_win.rs`.
+//! The real measurement and the repairs live in `setup_linux.rs`,
+//! `setup_mac.rs` and `setup_win.rs`.
 
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Sistema {
+pub enum System {
     Linux,
     Mac,
     Windows,
 }
 
-impl Sistema {
-    pub fn desta_maquina() -> Self {
+impl System {
+    pub fn this_machine() -> Self {
         if cfg!(target_os = "macos") {
-            Sistema::Mac
+            System::Mac
         } else if cfg!(windows) {
-            Sistema::Windows
+            System::Windows
         } else {
-            Sistema::Linux
+            System::Linux
         }
     }
 }
 
-/// Como este passo se arruma -- e quem tem de agir.
+/// How this step gets fixed -- and who has to act.
 ///
-/// A distinção entre `Sudo` e `Clique` não é cosmética: a primeira a
-/// pessoa resolve colando uma linha em qualquer terminal, inclusive por
-/// SSH; a segunda **só** funciona na frente da máquina, porque é o TCC
-/// do macOS ou o UAC do Windows pedindo consentimento humano. Misturar
-/// as duas é prometer automação que não existe.
+/// The distinction between `Sudo` and `Click` is not cosmetic: the first
+/// one the person solves by pasting a line into any terminal, even over
+/// SSH; the second **only** works in front of the machine, because it is
+/// macOS TCC or Windows UAC asking for human consent. Mixing the two is
+/// promising automation that does not exist.
+///
+/// The wire names (`tipo`, `sozinho`, `rotulo`, ...) are read by
+/// `static/setup.html`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "tipo", rename_all = "lowercase")]
-pub enum Arrumo {
-    /// O daemon faz agora, sozinho, e mede de novo.
-    Sozinho { rotulo: &'static str },
-    /// Precisa de root. Mostramos a linha exata para copiar.
-    Sudo { linha: &'static str },
-    /// Precisa de um clique humano numa janela do sistema. O daemon
-    /// abre a janela certa; quem decide é a pessoa.
-    Clique { rotulo: &'static str, onde: &'static str },
-    /// Não há automação honesta aqui. A receita está escrita.
-    Receita { linha: &'static str },
+pub enum Fix {
+    /// The daemon does it now, on its own, and measures again.
+    #[serde(rename = "sozinho")]
+    Auto {
+        #[serde(rename = "rotulo")]
+        label: &'static str,
+    },
+    /// Needs root. We show the exact line to copy.
+    Sudo {
+        #[serde(rename = "linha")]
+        line: &'static str,
+    },
+    /// Needs a human click in a system window. The daemon opens the
+    /// right window; the person decides.
+    #[serde(rename = "clique")]
+    Click {
+        #[serde(rename = "rotulo")]
+        label: &'static str,
+        #[serde(rename = "onde")]
+        location: &'static str,
+    },
+    /// There is no honest automation here. The recipe is written down.
+    #[serde(rename = "receita")]
+    Recipe {
+        #[serde(rename = "linha")]
+        line: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Passo {
+pub struct Step {
     pub id: &'static str,
-    pub titulo: &'static str,
-    /// Uma linha dizendo o que quebra sem isso.
+    #[serde(rename = "titulo")]
+    pub title: &'static str,
+    /// One line saying what breaks without this.
     ///
-    /// Existe porque "ative isto" sem motivo vira clique automático, e
-    /// três meses depois nem eu lembro por que o passo está na lista.
-    pub porque: &'static str,
-    pub arrumo: Arrumo,
-    /// Ids que precisam estar `Ok` antes deste fazer sentido.
-    pub depende: &'static [&'static str],
-    /// `false` = o conjunto funciona sem isso, só perde uma parte.
-    pub essencial: bool,
+    /// It exists because "enable this" without a reason becomes an
+    /// automatic click, and three months later not even I remember why
+    /// the step is on the list.
+    #[serde(rename = "porque")]
+    pub why: &'static str,
+    #[serde(rename = "arrumo")]
+    pub fix: Fix,
+    /// Ids that must be `Ok` before this one makes sense.
+    #[serde(rename = "depende")]
+    pub depends_on: &'static [&'static str],
+    /// `false` = the set works without this, it only loses a part.
+    #[serde(rename = "essencial")]
+    pub essential: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Estado {
+pub enum State {
     Ok,
-    Falta,
-    /// Medir falhou. Não é "ok" e não é "falta": é "não sei".
-    Erro,
-    /// Não se aplica a esta máquina (sem GPU, sem receptor).
-    Fora,
+    #[serde(rename = "falta")]
+    Missing,
+    /// Measuring failed. It is not "ok" and not "missing": it is "I don't
+    /// know".
+    #[serde(rename = "erro")]
+    Error,
+    /// Does not apply to this machine (no GPU, no receiver).
+    #[serde(rename = "fora")]
+    NotApplicable,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Medida {
+pub struct Check {
     pub id: String,
-    pub estado: Estado,
-    pub detalhe: String,
+    #[serde(rename = "estado")]
+    pub state: State,
+    #[serde(rename = "detalhe")]
+    pub detail: String,
 }
 
-impl Medida {
-    pub fn ok(id: &str, detalhe: impl Into<String>) -> Self {
-        Medida { id: id.into(), estado: Estado::Ok, detalhe: detalhe.into() }
+impl Check {
+    pub fn ok(id: &str, detail: impl Into<String>) -> Self {
+        Check { id: id.into(), state: State::Ok, detail: detail.into() }
     }
-    pub fn falta(id: &str, detalhe: impl Into<String>) -> Self {
-        Medida { id: id.into(), estado: Estado::Falta, detalhe: detalhe.into() }
+    pub fn missing(id: &str, detail: impl Into<String>) -> Self {
+        Check { id: id.into(), state: State::Missing, detail: detail.into() }
     }
-    pub fn erro(id: &str, detalhe: impl Into<String>) -> Self {
-        Medida { id: id.into(), estado: Estado::Erro, detalhe: detalhe.into() }
+    pub fn error(id: &str, detail: impl Into<String>) -> Self {
+        Check { id: id.into(), state: State::Error, detail: detail.into() }
     }
-    pub fn fora(id: &str, detalhe: impl Into<String>) -> Self {
-        Medida { id: id.into(), estado: Estado::Fora, detalhe: detalhe.into() }
+    pub fn not_applicable(id: &str, detail: impl Into<String>) -> Self {
+        Check { id: id.into(), state: State::NotApplicable, detail: detail.into() }
     }
-    /// Atalho para medição booleana, que é a maioria.
-    pub fn se(id: &str, cond: bool, bom: impl Into<String>, ruim: impl Into<String>) -> Self {
+    /// Shortcut for a boolean measurement, which is most of them.
+    pub fn when(id: &str, cond: bool, good: impl Into<String>, bad: impl Into<String>) -> Self {
         if cond {
-            Medida::ok(id, bom)
+            Check::ok(id, good)
         } else {
-            Medida::falta(id, ruim)
+            Check::missing(id, bad)
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Resumo {
-    /// Passos essenciais que se aplicam a esta máquina.
+pub struct Summary {
+    /// Essential steps that apply to this machine.
     pub total: usize,
-    pub prontos: usize,
-    /// Todo essencial aplicável está `Ok`.
-    pub pronto: bool,
-    /// Primeiro passo em que agir faz diferença agora.
-    pub proximo: Option<String>,
-    /// Passos que falham mas dependem de outro que falha antes.
-    pub esperando: Vec<String>,
+    #[serde(rename = "prontos")]
+    pub done: usize,
+    /// Every applicable essential step is `Ok`.
+    #[serde(rename = "pronto")]
+    pub ready: bool,
+    /// First step where acting makes a difference now.
+    #[serde(rename = "proximo")]
+    pub next: Option<String>,
+    /// Steps that fail but depend on another one that fails earlier.
+    #[serde(rename = "esperando")]
+    pub waiting: Vec<String>,
 }
 
-pub fn estado_de(medidas: &[Medida], id: &str) -> Estado {
-    // Ausente = Erro, não Ok. Um passo que ninguém mediu não passou:
-    // esquecer de medir é exatamente o jeito de um "pronto" mentir.
-    medidas.iter().find(|m| m.id == id).map(|m| m.estado).unwrap_or(Estado::Erro)
+pub fn state_of(checks: &[Check], id: &str) -> State {
+    // Absent = Error, not Ok. A step nobody measured did not pass:
+    // forgetting to measure is exactly how a "ready" lies.
+    checks.iter().find(|m| m.id == id).map(|m| m.state).unwrap_or(State::Error)
 }
 
-/// Qual dependência deste passo ainda não está de pé.
+/// Which dependency of this step is not up yet.
 ///
-/// Devolve a **primeira** -- a ordem do catálogo é a ordem de resolução,
-/// então a primeira é a que a pessoa deve atacar.
-pub fn bloqueado_por(p: &Passo, medidas: &[Medida]) -> Option<String> {
-    p.depende
+/// Returns the **first** one -- catalog order is resolution order, so
+/// the first is the one the person should tackle.
+pub fn blocked_by(p: &Step, checks: &[Check]) -> Option<String> {
+    p.depends_on
         .iter()
-        .find(|d| !matches!(estado_de(medidas, d), Estado::Ok | Estado::Fora))
+        .find(|d| !matches!(state_of(checks, d), State::Ok | State::NotApplicable))
         .map(|d| (*d).to_string())
 }
 
-pub fn resumo(passos: &[Passo], medidas: &[Medida]) -> Resumo {
+pub fn summarize(steps: &[Step], checks: &[Check]) -> Summary {
     let mut total = 0;
-    let mut prontos = 0;
-    let mut pronto = true;
-    let mut proximo = None;
-    let mut esperando = Vec::new();
+    let mut done = 0;
+    let mut ready = true;
+    let mut next = None;
+    let mut waiting = Vec::new();
 
-    for p in passos {
-        let e = estado_de(medidas, p.id);
-        if e == Estado::Fora {
-            // Não se aplica: não entra na conta nem atrasa ninguém.
-            // Contar como pendência faria o painel acusar falta de GPU
-            // numa máquina que nunca vai ter GPU.
+    for p in steps {
+        let e = state_of(checks, p.id);
+        if e == State::NotApplicable {
+            // Does not apply: it neither counts nor delays anyone.
+            // Counting it as pending would make the panel complain about
+            // a missing GPU on a machine that will never have one.
             continue;
         }
-        if p.essencial {
+        if p.essential {
             total += 1;
-            if e == Estado::Ok {
-                prontos += 1;
+            if e == State::Ok {
+                done += 1;
             } else {
-                pronto = false;
+                ready = false;
             }
         }
-        if e != Estado::Ok {
-            match bloqueado_por(p, medidas) {
-                Some(_) => esperando.push(p.id.to_string()),
-                None if proximo.is_none() => proximo = Some(p.id.to_string()),
+        if e != State::Ok {
+            match blocked_by(p, checks) {
+                Some(_) => waiting.push(p.id.to_string()),
+                None if next.is_none() => next = Some(p.id.to_string()),
                 None => {}
             }
         }
     }
 
-    Resumo { total, prontos, pronto, proximo, esperando }
+    Summary { total, done, ready, next, waiting }
 }
 
-// ---------------------------------------------------------------- catálogos
+// ---------------------------------------------------------------- catalogs
 
-/// Passos desta máquina, na ordem de resolução.
-pub fn catalogo_local() -> Vec<Passo> {
-    catalogo(Sistema::desta_maquina())
+/// This machine's steps, in resolution order.
+pub fn local_catalog() -> Vec<Step> {
+    catalog(System::this_machine())
 }
 
-pub fn catalogo(s: Sistema) -> Vec<Passo> {
+pub fn catalog(s: System) -> Vec<Step> {
     match s {
-        Sistema::Linux => linux(),
-        Sistema::Mac => mac(),
-        Sistema::Windows => windows(),
+        System::Linux => linux(),
+        System::Mac => mac(),
+        System::Windows => windows(),
     }
 }
 
-fn linux() -> Vec<Passo> {
+fn linux() -> Vec<Step> {
     vec![
-        Passo {
+        Step {
             id: "binarios",
-            titulo: "Binários instalados",
-            porque: "o daemon, o host de tela e o KVM vivem em ~/.local/bin. \
+            title: "Binários instalados",
+            why: "o daemon, o host de tela e o KVM vivem em ~/.local/bin. \
                      Faltou o logistream-kvm uma vez e o botão da bandeja \
                      falhava com \"não consegui executar\" -- compilado, \
                      nunca instalado.",
-            arrumo: Arrumo::Receita { linha: "bash install.sh   # ou ./scripts/deploy.sh" },
-            depende: &[],
-            essencial: true,
+            fix: Fix::Recipe { line: "bash install.sh   # ou ./scripts/deploy.sh" },
+            depends_on: &[],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "config",
-            titulo: "Config desta máquina",
-            porque: "cada máquina tem a própria config e nada sincroniza. \
+            title: "Config desta máquina",
+            why: "cada máquina tem a própria config e nada sincroniza. \
                      Sem a entrada desta máquina marcada como local, o \
                      painel não sabe quem é \"aqui\".",
-            arrumo: Arrumo::Sozinho { rotulo: "Escrever a config padrão" },
-            depende: &[],
-            essencial: true,
+            fix: Fix::Auto { label: "Escrever a config padrão" },
+            depends_on: &[],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "daemon",
-            titulo: "Serviço de usuário ativo",
-            porque: "o logid.service é quem sobe o painel no logon. Rodando \
+            title: "Serviço de usuário ativo",
+            why: "o logid.service é quem sobe o painel no logon. Rodando \
                      na mão funciona até a primeira vez que você reinicia.",
-            arrumo: Arrumo::Sozinho { rotulo: "Habilitar e iniciar" },
-            depende: &["binarios"],
-            essencial: true,
+            fix: Fix::Auto { label: "Habilitar e iniciar" },
+            depends_on: &["binarios"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "receptor",
-            titulo: "Acesso ao receptor (HID++)",
-            porque: "é por /dev/hidraw que trocamos o canal Easy-Switch do \
+            title: "Acesso ao receptor (HID++)",
+            why: "é por /dev/hidraw que trocamos o canal Easy-Switch do \
                      teclado e do mouse. Sem acesso o painel simplesmente \
                      não acha dispositivo -- não diz \"sem permissão\".",
-            arrumo: Arrumo::Sudo {
-                linha: "sudo install -m644 ~/dev/logi/logid/udev/70-logid-hidraw.rules /etc/udev/rules.d/\n\
+            fix: Fix::Sudo {
+                line: "sudo install -m644 ~/dev/logi/logid/udev/70-logid-hidraw.rules /etc/udev/rules.d/\n\
                         sudo udevadm control --reload\n\
                         sudo udevadm trigger --subsystem-match=hidraw --action=add",
             },
-            depende: &[],
-            essencial: false,
+            depends_on: &[],
+            essential: false,
         },
-        Passo {
+        Step {
             id: "input-kvm",
-            titulo: "Acesso ao teclado e mouse (KVM por LAN)",
-            porque: "o KVM lê /dev/input/event* e chama EVIOCGRAB. A regra usa \
+            title: "Acesso ao teclado e mouse (KVM por LAN)",
+            why: "o KVM lê /dev/input/event* e chama EVIOCGRAB. A regra usa \
                      TAG+=\"uaccess\" restrito ao vendor 046d, e NÃO o grupo \
                      input: o grupo daria a qualquer processo da conta acesso \
                      permanente a todos os dispositivos de entrada -- um \
                      keylogger passivo de graça.",
-            arrumo: Arrumo::Sudo {
-                linha: "sudo install -m644 ~/dev/logi/logid/udev/70-logid-input.rules /etc/udev/rules.d/\n\
+            fix: Fix::Sudo {
+                line: "sudo install -m644 ~/dev/logi/logid/udev/70-logid-input.rules /etc/udev/rules.d/\n\
                         sudo udevadm control --reload\n\
                         sudo udevadm trigger --subsystem-match=input",
             },
-            depende: &[],
-            essencial: false,
+            depends_on: &[],
+            essential: false,
         },
-        Passo {
+        Step {
             id: "wayland",
-            titulo: "Sessão Wayland",
-            porque: "a detecção de borda usa a API privada do Mutter \
+            title: "Sessão Wayland",
+            why: "a detecção de borda usa a API privada do Mutter \
                      (org.gnome.Mutter.InputCapture), e o clipboard usa a \
                      RemoteDesktop do mesmo Mutter. No X11 nenhum dos dois \
                      foi validado.",
-            arrumo: Arrumo::Receita { linha: "escolha \"GNOME\" (não \"GNOME on Xorg\") na tela de login" },
-            depende: &[],
-            essencial: false,
+            fix: Fix::Recipe { line: "escolha \"GNOME\" (não \"GNOME on Xorg\") na tela de login" },
+            depends_on: &[],
+            essential: false,
         },
-        Passo {
+        Step {
             id: "clipboard",
-            titulo: "Clipboard entre as máquinas",
-            porque: "o Mutter precisa aceitar a sessão de RemoteDesktop para \
+            title: "Clipboard entre as máquinas",
+            why: "o Mutter precisa aceitar a sessão de RemoteDesktop para \
                      observarmos a área de transferência. Sem isso a cópia \
                      não atravessa.",
-            arrumo: Arrumo::Sozinho { rotulo: "Testar agora" },
-            depende: &["daemon"],
-            essencial: true,
+            fix: Fix::Auto { label: "Testar agora" },
+            depends_on: &["daemon"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "pares",
-            titulo: "SSH alcança as outras máquinas",
-            porque: "SSH é o transporte de tudo que cruza máquina -- troca de \
+            title: "SSH alcança as outras máquinas",
+            why: "SSH é o transporte de tudo que cruza máquina -- troca de \
                      tela, clipboard, arquivos. Sem chave autorizada o painel \
                      mostra as outras como mortas.",
-            arrumo: Arrumo::Receita { linha: "ssh-copy-id <alias>   # alias é o campo `ssh` de cada host na config" },
-            depende: &["config"],
-            essencial: true,
+            fix: Fix::Recipe { line: "ssh-copy-id <alias>   # alias é o campo `ssh` de cada host na config" },
+            depends_on: &["config"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "nvenc",
-            titulo: "Codificador de vídeo por hardware",
-            porque: "esta máquina só pode ser ASSISTIDA se tiver NVENC. Sem \
+            title: "Codificador de vídeo por hardware",
+            why: "esta máquina só pode ser ASSISTIDA se tiver NVENC. Sem \
                      ele o painel cai no caminho de software, que é mais \
                      lento e esquenta.",
-            arrumo: Arrumo::Receita { linha: "driver NVIDIA proprietário instalado; confira com nvidia-smi" },
-            depende: &["binarios"],
-            essencial: false,
+            fix: Fix::Recipe { line: "driver NVIDIA proprietário instalado; confira com nvidia-smi" },
+            depends_on: &["binarios"],
+            essential: false,
         },
-        Passo {
+        Step {
             id: "bandeja",
-            titulo: "Ícone na bandeja",
-            porque: "é o caminho mais curto para trazer o teclado de volta \
+            title: "Ícone na bandeja",
+            why: "é o caminho mais curto para trazer o teclado de volta \
                      quando ele está em outra máquina. Sem ele você depende \
                      de lembrar os dois Ctrl.",
-            arrumo: Arrumo::Sozinho { rotulo: "Lançar agora" },
-            depende: &["daemon"],
-            essencial: false,
+            fix: Fix::Auto { label: "Lançar agora" },
+            depends_on: &["daemon"],
+            essential: false,
         },
-        Passo {
+        Step {
             id: "ota",
-            titulo: "Atualização automática (OTA)",
-            porque: "esta máquina se atualiza sozinha pelas Releases do \
+            title: "Atualização automática (OTA)",
+            why: "esta máquina se atualiza sozinha pelas Releases do \
                      GitHub -- é o que mantém o Mac em dia quando ele \
                      está longe de casa e ninguém pode rodar o deploy. \
                      Sem o relógio, o build velho fica.",
-            arrumo: Arrumo::Sozinho { rotulo: "Instalar o relógio e conferir agora" },
-            depende: &["binarios"],
-            essencial: false,
+            fix: Fix::Auto { label: "Instalar o relógio e conferir agora" },
+            depends_on: &["binarios"],
+            essential: false,
         },
     ]
 }
 
-fn mac() -> Vec<Passo> {
+fn mac() -> Vec<Step> {
     vec![
-        Passo {
+        Step {
             id: "binarios",
-            titulo: "Binários instalados",
-            porque: "o Mac é cliente E host de tela. Deixar o host para trás \
+            title: "Binários instalados",
+            why: "o Mac é cliente E host de tela. Deixar o host para trás \
                      já aconteceu: a máquina assistia as outras e nunca era \
                      assistida, e o painel caía no VNC sem dizer por quê.",
-            arrumo: Arrumo::Receita { linha: "./scripts/deploy.sh   # compila no próprio Mac, sem cross-compile" },
-            depende: &[],
-            essencial: true,
+            fix: Fix::Recipe { line: "./scripts/deploy.sh   # compila no próprio Mac, sem cross-compile" },
+            depends_on: &[],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "config",
-            titulo: "Config desta máquina",
-            porque: "cada máquina tem a própria config e nada sincroniza.",
-            arrumo: Arrumo::Sozinho { rotulo: "Escrever a config padrão" },
-            depende: &[],
-            essencial: true,
+            title: "Config desta máquina",
+            why: "cada máquina tem a própria config e nada sincroniza.",
+            fix: Fix::Auto { label: "Escrever a config padrão" },
+            depends_on: &[],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "daemon",
-            titulo: "LaunchAgent do daemon",
-            porque: "o logid tem de nascer na sessão gráfica. Lançado por SSH \
+            title: "LaunchAgent do daemon",
+            why: "o logid tem de nascer na sessão gráfica. Lançado por SSH \
                      ele não enxerga nem o chaveiro nem as permissões.",
-            arrumo: Arrumo::Sozinho { rotulo: "Instalar e carregar" },
-            depende: &["binarios"],
-            essencial: true,
+            fix: Fix::Auto { label: "Instalar e carregar" },
+            depends_on: &["binarios"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "ffmpeg",
-            titulo: "ffmpeg que os binários pedem",
-            porque: "o Mac é a única máquina que liga no ffmpeg -- captura \
+            title: "ffmpeg que os binários pedem",
+            why: "o Mac é a única máquina que liga no ffmpeg -- captura \
                      por avfoundation, codificação por h264_videotoolbox -- \
                      e o soname entra NO BINÁRIO: compilado contra o major \
                      9 ele não carrega com o major 7 instalado. Sem a \
                      formula certa a tela não sobe e o OTA recusa o update \
                      inteiro: está certo, mas chega como recusa de hora em \
                      hora, e não como uma linha aqui.",
-            arrumo: Arrumo::Receita { linha: "brew install ffmpeg@7" },
-            depende: &["binarios"],
-            essencial: true,
+            fix: Fix::Recipe { line: "brew install ffmpeg@7" },
+            depends_on: &["binarios"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "identidade",
-            titulo: "Identidade local de assinatura",
-            porque: "sem ela o binário é ad-hoc, a amarração do TCC é pelo \
+            title: "Identidade local de assinatura",
+            why: "sem ela o binário é ad-hoc, a amarração do TCC é pelo \
                      cdhash e a permissão de tela MORRE a cada compilação. \
                      Medido: conceder, rodar um deploy, e o host voltar a \
                      travar sem erro nenhum no log.",
-            arrumo: Arrumo::Receita {
-                linha: "bash ~/.local/bin/criar-identidade.sh   # no Terminal do Mac: por SSH o chaveiro está trancado",
+            fix: Fix::Recipe {
+                line: "bash ~/.local/bin/criar-identidade.sh   # no Terminal do Mac: por SSH o chaveiro está trancado",
             },
-            depende: &[],
-            essencial: true,
+            depends_on: &[],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "assinatura",
-            titulo: "Host de tela assinado",
-            porque: "é o que faz a permissão sobreviver ao próximo deploy. \
+            title: "Host de tela assinado",
+            why: "é o que faz a permissão sobreviver ao próximo deploy. \
                      Conceder a permissão ANTES de assinar desperdiça a \
                      concessão -- e só o dono da máquina pode dar de volta, \
                      à mão.",
-            arrumo: Arrumo::Sozinho { rotulo: "Assinar agora" },
-            depende: &["binarios", "identidade"],
-            essencial: true,
+            fix: Fix::Auto { label: "Assinar agora" },
+            depends_on: &["binarios", "identidade"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "gravacao-de-tela",
-            titulo: "Permissão de Gravação de Tela",
-            porque: "sem ela o AVFoundation TRAVA em vez de falhar: o log \
+            title: "Permissão de Gravação de Tela",
+            why: "sem ela o AVFoundation TRAVA em vez de falhar: o log \
                      para em \"abrindo a tela 1\" e a última linha é uma \
                      mensagem do ffmpeg sobre formato de pixel, que não tem \
                      nada a ver com o problema. Cuidado: a PRIMEIRA \
                      abertura depois de trocar o binário levou ~30 s, com o \
                      log parado nessa mesma frase (as seguintes, ~3 s). \
                      Espere 30 s antes de culpar o TCC.",
-            arrumo: Arrumo::Clique {
-                rotulo: "Pedir a permissão",
-                onde: "Ajustes > Privacidade e Segurança > Gravação de Tela > logistream-host",
+            fix: Fix::Click {
+                label: "Pedir a permissão",
+                location: "Ajustes > Privacidade e Segurança > Gravação de Tela > logistream-host",
             },
-            depende: &["assinatura"],
-            essencial: true,
+            depends_on: &["assinatura"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "acessibilidade",
-            titulo: "Permissão de Acessibilidade",
-            porque: "é o que permite injetar teclado e mouse. Sem ela a tela \
+            title: "Permissão de Acessibilidade",
+            why: "é o que permite injetar teclado e mouse. Sem ela a tela \
                      aparece e o ponteiro não anda -- mesmo sintoma de \"não \
                      funcionou\", causa diferente.",
-            arrumo: Arrumo::Clique {
-                rotulo: "Pedir a permissão",
-                onde: "Ajustes > Privacidade e Segurança > Acessibilidade > logistream-host",
+            fix: Fix::Click {
+                label: "Pedir a permissão",
+                location: "Ajustes > Privacidade e Segurança > Acessibilidade > logistream-host",
             },
-            depende: &["assinatura"],
-            essencial: true,
+            depends_on: &["assinatura"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "launchagent",
-            titulo: "LaunchAgent do host de tela",
-            porque: "o host sobe por launchctl na sessão gráfica, nunca por \
+            title: "LaunchAgent do host de tela",
+            why: "o host sobe por launchctl na sessão gráfica, nunca por \
                      SSH. RunAtLoad false de propósito: capturar sem ninguém \
                      assistindo gastaria bateria à toa.",
-            arrumo: Arrumo::Sozinho { rotulo: "Instalar e carregar" },
-            depende: &["binarios"],
-            essencial: true,
+            fix: Fix::Auto { label: "Instalar e carregar" },
+            depends_on: &["binarios"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "clipboard",
-            titulo: "Clipboard entre as máquinas",
-            porque: "a leitura do clipboard do Mac passa por JXA, e isso só \
+            title: "Clipboard entre as máquinas",
+            why: "a leitura do clipboard do Mac passa por JXA, e isso só \
                      roda na sessão gráfica.",
-            arrumo: Arrumo::Sozinho { rotulo: "Testar agora" },
-            depende: &["daemon"],
-            essencial: true,
+            fix: Fix::Auto { label: "Testar agora" },
+            depends_on: &["daemon"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "login-remoto",
-            titulo: "Login Remoto (SSH de entrada)",
-            porque: "é o que deixa o deploy e o painel alcançarem este Mac. \
+            title: "Login Remoto (SSH de entrada)",
+            why: "é o que deixa o deploy e o painel alcançarem este Mac. \
                      Sem isso ele só fala, nunca escuta.",
-            arrumo: Arrumo::Sudo { linha: "sudo systemsetup -f -setremotelogin on" },
-            depende: &[],
-            essencial: true,
+            fix: Fix::Sudo { line: "sudo systemsetup -f -setremotelogin on" },
+            depends_on: &[],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "tailscale",
-            titulo: "Tailscale (fora da LAN)",
-            porque: "é o que alcança as outras máquinas fora de casa. Vai pelo \
+            title: "Tailscale (fora da LAN)",
+            why: "é o que alcança as outras máquinas fora de casa. Vai pelo \
                      brew, com serviço próprio, e nunca pelo app: a extensão \
                      de rede do app, sem login, derrubou a internet do Mac.",
-            arrumo: Arrumo::Clique {
-                rotulo: "Instalar pelo brew",
-                onde: "o Terminal que vai abrir: digite a senha e abra o link de login",
+            fix: Fix::Click {
+                label: "Instalar pelo brew",
+                location: "o Terminal que vai abrir: digite a senha e abra o link de login",
             },
-            depende: &[],
-            essencial: false,
+            depends_on: &[],
+            essential: false,
         },
-        Passo {
+        Step {
             id: "pares",
-            titulo: "SSH alcança as outras máquinas",
-            porque: "SSH é o transporte de tudo que cruza máquina.",
-            arrumo: Arrumo::Receita { linha: "ssh-copy-id <alias>" },
-            depende: &["config"],
-            essencial: true,
+            title: "SSH alcança as outras máquinas",
+            why: "SSH é o transporte de tudo que cruza máquina.",
+            fix: Fix::Recipe { line: "ssh-copy-id <alias>" },
+            depends_on: &["config"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "ota",
-            titulo: "Atualização automática (OTA)",
-            porque: "é o passo que faz este Mac se manter em dia longe de \
+            title: "Atualização automática (OTA)",
+            why: "é o passo que faz este Mac se manter em dia longe de \
                      casa. O agente baixa o build publicado, **assina com a \
                      identidade local** e só então troca -- é isso que \
                      preserva a Gravação de Tela, que um binário ad-hoc da \
                      CI perderia.",
-            arrumo: Arrumo::Sozinho { rotulo: "Instalar o relógio e conferir agora" },
-            depende: &["binarios", "identidade"],
-            essencial: false,
+            fix: Fix::Auto { label: "Instalar o relógio e conferir agora" },
+            depends_on: &["binarios", "identidade"],
+            essential: false,
         },
     ]
 }
 
-fn windows() -> Vec<Passo> {
+fn windows() -> Vec<Step> {
     vec![
-        Passo {
+        Step {
             id: "binarios",
-            titulo: "Binários instalados",
-            porque: "o daemon, o agente, o host e o visualizador vivem em \
+            title: "Binários instalados",
+            why: "o daemon, o agente, o host e o visualizador vivem em \
                      %LOCALAPPDATA%\\logid. O deploy assina cada um -- sem \
                      assinatura o Defender come o executável sem avisar.",
-            arrumo: Arrumo::Receita { linha: "./scripts/deploy.sh   # do Ubuntu: cross-compile, assina e troca" },
-            depende: &[],
-            essencial: true,
+            fix: Fix::Recipe { line: "./scripts/deploy.sh   # do Ubuntu: cross-compile, assina e troca" },
+            depends_on: &[],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "config",
-            titulo: "Config desta máquina",
-            porque: "cada máquina tem a própria config e nada sincroniza.",
-            arrumo: Arrumo::Sozinho { rotulo: "Escrever a config padrão" },
-            depende: &[],
-            essencial: true,
+            title: "Config desta máquina",
+            why: "cada máquina tem a própria config e nada sincroniza.",
+            fix: Fix::Auto { label: "Escrever a config padrão" },
+            depends_on: &[],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "daemon",
-            titulo: "Tarefa de logon do daemon",
-            porque: "no Windows o logid sobe por tarefa agendada com /IT, não \
+            title: "Tarefa de logon do daemon",
+            why: "no Windows o logid sobe por tarefa agendada com /IT, não \
                      por serviço: serviço nasce na sessão 0 e de lá não se vê \
                      teclado, mouse nem área de transferência.",
-            arrumo: Arrumo::Sozinho { rotulo: "Criar a tarefa" },
-            depende: &["binarios"],
-            essencial: true,
+            fix: Fix::Auto { label: "Criar a tarefa" },
+            depends_on: &["binarios"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "tarefa-tela",
-            titulo: "Tarefa interativa do host de tela",
-            porque: "mesma fronteira: sem /IT o DXGI devolve E_ACCESSDENIED \
+            title: "Tarefa interativa do host de tela",
+            why: "mesma fronteira: sem /IT o DXGI devolve E_ACCESSDENIED \
                      ou captura preto, e o sintoma não diz nada sobre sessão.",
-            arrumo: Arrumo::Sozinho { rotulo: "Criar a tarefa" },
-            depende: &["binarios"],
-            essencial: true,
+            fix: Fix::Auto { label: "Criar a tarefa" },
+            depends_on: &["binarios"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "clipboard",
-            titulo: "Clipboard entre as máquinas",
-            porque: "ler a área de transferência exige estar na sessão \
+            title: "Clipboard entre as máquinas",
+            why: "ler a área de transferência exige estar na sessão \
                      interativa. Pelo SSH se lê a sessão 0, que está sempre \
                      vazia -- e \"vazio\" parece \"nada copiado\".",
-            arrumo: Arrumo::Sozinho { rotulo: "Testar agora" },
-            depende: &["daemon"],
-            essencial: true,
+            fix: Fix::Auto { label: "Testar agora" },
+            depends_on: &["daemon"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "sshd",
-            titulo: "Servidor OpenSSH",
-            porque: "é por onde o Ubuntu manda deploy, clipboard e arquivos. \
+            title: "Servidor OpenSSH",
+            why: "é por onde o Ubuntu manda deploy, clipboard e arquivos. \
                      Sem ele esta máquina some do painel.",
-            arrumo: Arrumo::Sudo {
-                linha: "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0; Set-Service sshd -StartupType Automatic; Start-Service sshd",
+            fix: Fix::Sudo {
+                line: "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0; Set-Service sshd -StartupType Automatic; Start-Service sshd",
             },
-            depende: &[],
-            essencial: true,
+            depends_on: &[],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "chave-admin",
-            titulo: "Chave autorizada",
-            porque: "o OpenSSH do Windows lê a chave de um administrador em \
+            title: "Chave autorizada",
+            why: "o OpenSSH do Windows lê a chave de um administrador em \
                      ProgramData\\ssh\\administrators_authorized_keys, NÃO no \
                      ~/.ssh do usuário. Põr no lugar errado falha com \
                      \"Permission denied\" e nenhuma pista.",
-            arrumo: Arrumo::Receita {
-                linha: "ssh-copy-id não existe aqui: ver .claude/rules/remote-powershell.md",
+            fix: Fix::Recipe {
+                line: "ssh-copy-id não existe aqui: ver .claude/rules/remote-powershell.md",
             },
-            depende: &["sshd"],
-            essencial: true,
+            depends_on: &["sshd"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "pares",
-            titulo: "SSH alcança as outras máquinas",
-            porque: "SSH é o transporte de tudo que cruza máquina.",
-            arrumo: Arrumo::Receita { linha: "ssh-keygen e copiar a pública para o outro lado" },
-            depende: &["config"],
-            essencial: true,
+            title: "SSH alcança as outras máquinas",
+            why: "SSH é o transporte de tudo que cruza máquina.",
+            fix: Fix::Recipe { line: "ssh-keygen e copiar a pública para o outro lado" },
+            depends_on: &["config"],
+            essential: true,
         },
-        Passo {
+        Step {
             id: "tela-virtual",
-            titulo: "Tela sem monitor ligado",
-            porque: "sem monitor o Windows não tem o que capturar: o visualizador \
+            title: "Tela sem monitor ligado",
+            why: "sem monitor o Windows não tem o que capturar: o visualizador \
                      conecta, o clique passa e nenhum quadro chega. Uma tela \
                      virtual mantém o acesso com a máquina sozinha.",
-            arrumo: Arrumo::Clique {
-                rotulo: "Instalar a tela virtual",
-                onde: "o pedido de administrador do Windows",
+            fix: Fix::Click {
+                label: "Instalar a tela virtual",
+                location: "o pedido de administrador do Windows",
             },
-            depende: &[],
-            essencial: false,
+            depends_on: &[],
+            essential: false,
         },
-        Passo {
+        Step {
             id: "protetor-de-tela",
-            titulo: "Protetor de tela e bloqueio",
-            porque: "com a sessão bloqueada o DXGI devolve E_ACCESSDENIED e a \
+            title: "Protetor de tela e bloqueio",
+            why: "com a sessão bloqueada o DXGI devolve E_ACCESSDENIED e a \
                      tela remota morre sozinha depois de alguns minutos. A \
                      escolha é sua: desligar o bloqueio, ou saber que a tela \
                      cai quando ele entra.",
-            arrumo: Arrumo::Receita {
-                linha: "powercfg /setacvalueindex SCHEME_CURRENT SUB_NONE CONSOLELOCK 0",
+            fix: Fix::Recipe {
+                line: "powercfg /setacvalueindex SCHEME_CURRENT SUB_NONE CONSOLELOCK 0",
             },
-            depende: &[],
-            essencial: false,
+            depends_on: &[],
+            essential: false,
         },
-        Passo {
+        Step {
             id: "ota",
-            titulo: "Atualização automática (OTA)",
-            porque: "aqui o OTA **só confere e relata**: a chave do \
+            title: "Atualização automática (OTA)",
+            why: "aqui o OTA **só confere e relata**: a chave do \
                      Authenticode não sai do Ubuntu, e `.exe` sem assinatura \
                      válida é o que o Defender apaga na escrita. Serve para \
                      o painel dizer quando esta máquina ficou atrás -- quem \
                      troca é o deploy.",
-            arrumo: Arrumo::Sozinho { rotulo: "Instalar a tarefa e conferir agora" },
-            depende: &["binarios"],
-            essencial: false,
+            fix: Fix::Auto { label: "Instalar a tarefa e conferir agora" },
+            depends_on: &["binarios"],
+            essential: false,
         },
     ]
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
-    const TRES: [Sistema; 3] = [Sistema::Linux, Sistema::Mac, Sistema::Windows];
+    const ALL_THREE: [System; 3] = [System::Linux, System::Mac, System::Windows];
 
-    fn m(id: &str, e: Estado) -> Medida {
-        Medida { id: id.into(), estado: e, detalhe: String::new() }
+    fn m(id: &str, e: State) -> Check {
+        Check { id: id.into(), state: e, detail: String::new() }
     }
 
     #[test]
-    fn erro_nao_conta_como_ok() {
-        // O ponto da regra de honestidade: "não sei medir" tem de pesar
-        // igual a "falta". Se pesasse menos, o passo mais difícil de
-        // medir seria o mais fácil de passar.
-        let passos = linux();
-        let medidas: Vec<_> = passos.iter().map(|p| m(p.id, Estado::Erro)).collect();
-        let r = resumo(&passos, &medidas);
-        assert!(!r.pronto);
-        assert_eq!(r.prontos, 0);
+    fn error_does_not_count_as_ok() {
+        // The point of the honesty rule: "I can't measure" must weigh the
+        // same as "missing". If it weighed less, the hardest step to
+        // measure would be the easiest to pass.
+        let steps = linux();
+        let checks: Vec<_> = steps.iter().map(|p| m(p.id, State::Error)).collect();
+        let r = summarize(&steps, &checks);
+        assert!(!r.ready);
+        assert_eq!(r.done, 0);
     }
 
     #[test]
-    fn passo_sem_medida_nao_passa() {
-        // Esquecer de medir um passo é o jeito mais fácil de um "pronto"
-        // mentir -- e o mais provável, porque o catálogo e a medição
-        // moram em arquivos diferentes.
-        let passos = linux();
-        let medidas: Vec<_> = passos
+    fn step_without_check_does_not_pass() {
+        // Forgetting to measure a step is the easiest way for a "ready"
+        // to lie -- and the most likely one, because the catalog and the
+        // measurement live in different files.
+        let steps = linux();
+        let checks: Vec<_> = steps
             .iter()
             .filter(|p| p.id != "clipboard")
-            .map(|p| m(p.id, Estado::Ok))
+            .map(|p| m(p.id, State::Ok))
             .collect();
-        let r = resumo(&passos, &medidas);
-        assert!(!r.pronto);
-        assert_eq!(estado_de(&medidas, "clipboard"), Estado::Erro);
+        let r = summarize(&steps, &checks);
+        assert!(!r.ready);
+        assert_eq!(state_of(&checks, "clipboard"), State::Error);
     }
 
     #[test]
-    fn fora_nao_bloqueia_nem_conta() {
-        let passos = linux();
-        let total_antes = {
-            let todas: Vec<_> = passos.iter().map(|p| m(p.id, Estado::Ok)).collect();
-            resumo(&passos, &todas).total
+    fn not_applicable_neither_blocks_nor_counts() {
+        let steps = linux();
+        let total_before = {
+            let all: Vec<_> = steps.iter().map(|p| m(p.id, State::Ok)).collect();
+            summarize(&steps, &all).total
         };
-        let medidas: Vec<_> = passos
+        let checks: Vec<_> = steps
             .iter()
-            .map(|p| m(p.id, if p.id == "clipboard" { Estado::Fora } else { Estado::Ok }))
+            .map(|p| m(p.id, if p.id == "clipboard" { State::NotApplicable } else { State::Ok }))
             .collect();
-        let r = resumo(&passos, &medidas);
-        assert!(r.pronto, "um passo fora de escopo não impede o pronto");
-        assert_eq!(r.total, total_antes - 1, "e também não entra na conta");
-        assert_eq!(r.proximo, None);
+        let r = summarize(&steps, &checks);
+        assert!(r.ready, "an out-of-scope step does not prevent ready");
+        assert_eq!(r.total, total_before - 1, "and it does not count either");
+        assert_eq!(r.next, None);
     }
 
     #[test]
-    fn nao_essencial_nao_impede_pronto() {
-        let passos = linux();
-        let medidas: Vec<_> = passos
+    fn non_essential_does_not_prevent_ready() {
+        let steps = linux();
+        let checks: Vec<_> = steps
             .iter()
-            .map(|p| m(p.id, if p.essencial { Estado::Ok } else { Estado::Falta }))
+            .map(|p| m(p.id, if p.essential { State::Ok } else { State::Missing }))
             .collect();
-        let r = resumo(&passos, &medidas);
-        assert!(r.pronto);
-        // Mas ainda aparece como próxima ação: não impedir não é esconder.
-        assert!(r.proximo.is_some());
+        let r = summarize(&steps, &checks);
+        assert!(r.ready);
+        // But it still shows up as the next action: not blocking is not
+        // hiding.
+        assert!(r.next.is_some());
     }
 
     #[test]
-    fn proximo_pula_quem_espera_dependencia() {
-        // `daemon` depende de `binarios`. Com os dois faltando, a ação
-        // oferecida tem de ser instalar os binários -- mandar habilitar
-        // um serviço cujo executável não existe não arruma nada e ensina
-        // a pessoa a desconfiar do wizard.
-        let passos = linux();
-        let medidas: Vec<_> = passos
+    fn next_skips_steps_waiting_on_a_dependency() {
+        // `daemon` depends on `binarios`. With both missing, the offered
+        // action must be installing the binaries -- telling the person to
+        // enable a service whose executable does not exist fixes nothing
+        // and teaches them to distrust the wizard.
+        let steps = linux();
+        let checks: Vec<_> = steps
             .iter()
             .map(|p| {
-                let falta = p.id == "daemon" || p.id == "binarios";
-                m(p.id, if falta { Estado::Falta } else { Estado::Ok })
+                let missing = p.id == "daemon" || p.id == "binarios";
+                m(p.id, if missing { State::Missing } else { State::Ok })
             })
             .collect();
-        let r = resumo(&passos, &medidas);
-        assert_eq!(r.proximo.as_deref(), Some("binarios"));
-        assert!(r.esperando.contains(&"daemon".to_string()));
+        let r = summarize(&steps, &checks);
+        assert_eq!(r.next.as_deref(), Some("binarios"));
+        assert!(r.waiting.contains(&"daemon".to_string()));
     }
 
     #[test]
-    fn dependencia_fora_de_escopo_libera_quem_espera() {
-        // `Fora` não é falha: se a dependência não se aplica a esta
-        // máquina, quem espera por ela tem de poder andar.
-        let p = Passo {
+    fn out_of_scope_dependency_releases_its_dependents() {
+        // `NotApplicable` is not a failure: if the dependency does not
+        // apply to this machine, whoever waits for it must be able to move.
+        let p = Step {
             id: "x",
-            titulo: "",
-            porque: "",
-            arrumo: Arrumo::Sozinho { rotulo: "" },
-            depende: &["y"],
-            essencial: true,
+            title: "",
+            why: "",
+            fix: Fix::Auto { label: "" },
+            depends_on: &["y"],
+            essential: true,
         };
-        assert_eq!(bloqueado_por(&p, &[m("y", Estado::Fora)]), None);
-        assert_eq!(bloqueado_por(&p, &[m("y", Estado::Falta)]).as_deref(), Some("y"));
+        assert_eq!(blocked_by(&p, &[m("y", State::NotApplicable)]), None);
+        assert_eq!(blocked_by(&p, &[m("y", State::Missing)]).as_deref(), Some("y"));
     }
 
     #[test]
-    fn tudo_ok_fica_pronto() {
-        for s in TRES {
-            let passos = catalogo(s);
-            let medidas: Vec<_> = passos.iter().map(|p| m(p.id, Estado::Ok)).collect();
-            let r = resumo(&passos, &medidas);
-            assert!(r.pronto, "{s:?}");
-            assert_eq!(r.proximo, None, "{s:?}");
-            assert_eq!(r.prontos, r.total, "{s:?}");
+    fn all_ok_is_ready() {
+        for s in ALL_THREE {
+            let steps = catalog(s);
+            let checks: Vec<_> = steps.iter().map(|p| m(p.id, State::Ok)).collect();
+            let r = summarize(&steps, &checks);
+            assert!(r.ready, "{s:?}");
+            assert_eq!(r.next, None, "{s:?}");
+            assert_eq!(r.done, r.total, "{s:?}");
             assert!(r.total > 0, "{s:?}");
         }
     }
 
     #[test]
-    fn ids_unicos_em_cada_catalogo() {
-        for s in TRES {
-            let passos = catalogo(s);
-            let mut ids: Vec<_> = passos.iter().map(|p| p.id).collect();
-            let antes = ids.len();
+    fn ids_unique_in_each_catalog() {
+        for s in ALL_THREE {
+            let steps = catalog(s);
+            let mut ids: Vec<_> = steps.iter().map(|p| p.id).collect();
+            let before = ids.len();
             ids.sort_unstable();
             ids.dedup();
-            assert_eq!(ids.len(), antes, "id repetido em {s:?}");
+            assert_eq!(ids.len(), before, "duplicate id in {s:?}");
         }
     }
 
     #[test]
-    fn dependencia_existe_e_vem_antes() {
-        // Dependência pendurada deixaria o passo esperando para sempre,
-        // e o wizard nunca ofereceria ação nenhuma -- uma tela de "falta
-        // isso" sem botão. Dependência que aponta para FRENTE mostraria
-        // "esperando" acima da coisa esperada, que é como se lê de
-        // baixo para cima.
-        for s in TRES {
-            let passos = catalogo(s);
-            for (i, p) in passos.iter().enumerate() {
-                for d in p.depende {
-                    let pos = passos.iter().position(|q| q.id == *d);
-                    let pos = pos.unwrap_or_else(|| panic!("{s:?}: {} depende de {d}, que não existe", p.id));
-                    assert!(pos < i, "{s:?}: {} depende de {d}, que vem depois", p.id);
+    fn dependency_exists_and_comes_first() {
+        // A dangling dependency would leave the step waiting forever, and
+        // the wizard would never offer any action -- a "this is missing"
+        // screen with no button. A dependency pointing FORWARD would show
+        // "waiting" above the thing waited for, which reads bottom-up.
+        for s in ALL_THREE {
+            let steps = catalog(s);
+            for (i, p) in steps.iter().enumerate() {
+                for d in p.depends_on {
+                    let pos = steps.iter().position(|q| q.id == *d);
+                    let pos = pos.unwrap_or_else(|| panic!("{s:?}: {} depends on {d}, which does not exist", p.id));
+                    assert!(pos < i, "{s:?}: {} depends on {d}, which comes later", p.id);
                 }
             }
         }
     }
 
     #[test]
-    fn todo_passo_diz_por_que() {
-        // Um passo sem motivo vira clique automático. Barato de testar,
-        // e o teste é o que impede a pressa de encostar um `porque: ""`.
-        for s in TRES {
-            for p in catalogo(s) {
-                assert!(p.porque.len() > 40, "{s:?}: {} sem motivo escrito", p.id);
-                assert!(!p.titulo.is_empty(), "{s:?}: {} sem título", p.id);
+    fn every_step_says_why() {
+        // A step without a reason becomes an automatic click. Cheap to
+        // test, and the test is what stops haste from slipping in a
+        // `why: ""`.
+        for s in ALL_THREE {
+            for p in catalog(s) {
+                assert!(p.why.len() > 40, "{s:?}: {} has no written reason", p.id);
+                assert!(!p.title.is_empty(), "{s:?}: {} has no title", p.id);
             }
         }
     }
 }
 
-// ------------------------------------------------------- despacho por sistema
+// ---------------------------------------------------------- per-OS dispatch
 //
-// Só aqui o módulo puro toca no mundo, e só por delegação: a medição
-// real vive no arquivo da plataforma. A alternativa -- `cfg` espalhado
-// pelo catálogo -- faria os testes acima cobrirem apenas o sistema que
-// está compilando, que é justamente o que eles existem para evitar.
+// Only here does the pure module touch the world, and only by
+// delegation: the real measurement lives in the platform file. The
+// alternative -- `cfg` scattered through the catalog -- would make the
+// tests above cover only the OS being compiled, which is exactly what
+// they exist to avoid.
 
-/// Mede os passos desta máquina, na ordem do catálogo.
-pub fn medir(cfg: &crate::config::Config) -> Vec<Medida> {
+/// Measures this machine's steps, in catalog order.
+pub fn measure(cfg: &crate::config::Config) -> Vec<Check> {
     #[cfg(target_os = "linux")]
-    return crate::setup_linux::medir(cfg);
+    return crate::setup_linux::measure(cfg);
     #[cfg(target_os = "macos")]
-    return crate::setup_mac::medir(cfg);
+    return crate::setup_mac::measure(cfg);
     #[cfg(windows)]
-    return crate::setup_win::medir(cfg);
+    return crate::setup_win::measure(cfg);
 }
 
-/// Tenta arrumar um passo e devolve **o que mediu depois**.
-pub fn arrumar(id: &str, cfg: &crate::config::Config) -> Result<String, String> {
+/// Tries to fix a step and returns **what it measured afterwards**.
+
+pub fn repair(id: &str, cfg: &crate::config::Config) -> Result<String, String> {
     #[cfg(target_os = "linux")]
-    return crate::setup_linux::arrumar(id, cfg);
+    return crate::setup_linux::repair(id, cfg);
     #[cfg(target_os = "macos")]
-    return crate::setup_mac::arrumar(id, cfg);
+    return crate::setup_mac::repair(id, cfg);
     #[cfg(windows)]
-    return crate::setup_win::arrumar(id, cfg);
+    return crate::setup_win::repair(id, cfg);
 }

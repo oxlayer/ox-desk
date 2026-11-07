@@ -1,4 +1,4 @@
-//! Implementacao Linux do contrato em `mod.rs`.
+//! Linux implementation of the contract in `mod.rs`.
 
 use crate::config::Config;
 use crate::logs::Raw;
@@ -9,13 +9,13 @@ use std::sync::{Arc, RwLock};
 
 const UNIT: &str = "logid.service";
 
-/// Resolve por `getent` quando o resolver da libc desiste.
+/// Resolves through `getent` when the libc resolver gives up.
 ///
-/// `to_socket_addrs` usa getaddrinfo com AF_UNSPEC, e isso **falha** para
-/// `.local` nesta maquina: `mdns4_minimal` com `[NOTFOUND=return]` no
-/// nsswitch aborta a cadeia na consulta AAAA. Comprovado: `ssh-keyscan
-/// windows-host.local` da "Temporary failure in name resolution" enquanto
-/// `getent hosts` funciona.
+/// `to_socket_addrs` uses getaddrinfo with AF_UNSPEC, and that **fails**
+/// for `.local` on this machine: `mdns4_minimal` with `[NOTFOUND=return]`
+/// in nsswitch aborts the chain on the AAAA query. Confirmed: `ssh-keyscan
+/// windows-host.local` gives "Temporary failure in name resolution" while
+/// `getent hosts` works.
 pub fn resolve_fallback(addr: &str, port: u16) -> Option<SocketAddr> {
     let out = Command::new("getent").arg("hosts").arg(addr).output().ok()?;
     if !out.status.success() {
@@ -36,7 +36,8 @@ pub fn unit_state(unit: &str) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-/// Aqui o journal timbra e persiste; o daemon so escreve em stdout.
+/// Here the journal timestamps and persists; the daemon only writes to
+/// stdout.
 pub fn log_sink(_line: &str) {}
 
 pub fn log_lines(n: usize) -> Raw {
@@ -56,9 +57,9 @@ pub fn log_lines(n: usize) -> Raw {
     let mut lines = Vec::new();
     for line in text.lines() {
         if line.starts_with("--") {
-            continue; // cabecalho do journal
+            continue; // journal header
         }
-        // "2026-11-03T18:51:18-0300 host logid[123]: mensagem"
+        // "2026-11-03T18:51:18-0300 host logid[123]: message"
         let Some((time, rest)) = line.split_once(' ') else { continue };
         let msg = match rest.split_once("]: ") {
             Some((_, m)) => m,
@@ -73,29 +74,30 @@ pub fn spawn_border(cfg: Arc<RwLock<Config>>) {
     crate::border::spawn(cfg);
 }
 
-/// Conseguimos abrir algum `/dev/hidraw`?
+/// Can we open any `/dev/hidraw`?
 ///
-/// A regra do Solaar concede por `TAG+="uaccess"`, que vira ACL para o
-/// usuario logado. Pegadinha paga: se os nos nasceram ANTES de a regra
-/// existir, nenhuma ACL foi aplicada e so `udevadm trigger` resolve.
+/// The Solaar rule grants through `TAG+="uaccess"`, which becomes an ACL
+/// for the logged-in user. A gotcha we paid for: if the nodes were born
+/// BEFORE the rule existed, no ACL was applied and only `udevadm trigger`
+/// fixes it.
 pub fn device_access() -> bool {
-    let (_, abriveis) = hidraw_contagem();
-    abriveis > 0
+    let (_, openable) = hidraw_count();
+    openable > 0
 }
 
-/// (nos `hidraw` que existem, quantos conseguimos abrir).
+/// (`hidraw` nodes that exist, how many we can open).
 ///
-/// Os dois numeros, e nao so o segundo, porque eles distinguem casos que
-/// pedem acoes opostas: zero nos significa que NAO HA hardware HID bruto
-/// -- o receptor foi desplugado -- e nos que existem mas nao abrem
-/// significam permissao. O painel dizia "sem acesso: rode udevadm" nos
-/// dois casos, e no primeiro isso manda a pessoa consertar uma permissao
-/// que nao esta quebrada. Aconteceu: o usuario levou o receptor para a
-/// outra maquina e o painel acusou falta de ACL.
-pub fn hidraw_contagem() -> (usize, usize) {
+/// Both numbers, not just the second, because they tell apart cases that
+/// call for opposite actions: zero nodes means there is NO raw HID
+/// hardware -- the receiver was unplugged -- and nodes that exist but do
+/// not open mean a permission problem. The panel said "sem acesso: rode
+/// udevadm" in both cases, and in the first that sends the person to fix
+/// a permission that is not broken. It happened: the user took the
+/// receiver to the other machine and the panel reported a missing ACL.
+pub fn hidraw_count() -> (usize, usize) {
     let Ok(entries) = std::fs::read_dir("/dev") else { return (0, 0) };
     let mut total = 0;
-    let mut abriveis = 0;
+    let mut openable = 0;
     for e in entries.flatten() {
         let name = e.file_name();
         let Some(n) = name.to_str() else { continue };
@@ -104,26 +106,26 @@ pub fn hidraw_contagem() -> (usize, usize) {
         }
         total += 1;
         if std::fs::File::open(e.path()).is_ok() {
-            abriveis += 1;
+            openable += 1;
         }
     }
-    (total, abriveis)
+    (total, openable)
 }
 
-/// Clientes de tela conhecidos, em ordem de preferencia.
+/// Known screen clients, in order of preference.
 ///
-/// O `xfreerdp3` vem ANTES do `gnome-connections` porque e o unico que
-/// expoe som e microfone por linha de comando -- e sao justamente as
-/// opcoes que a UI oferece. O gnome-connections continua na lista como
-/// queda: ele fala RDP e VNC e ja vem instalado, so nao deixa escolher
-/// nada.
+/// `xfreerdp3` comes BEFORE `gnome-connections` because it is the only one
+/// that exposes sound and microphone on the command line -- and those are
+/// exactly the options the UI offers. gnome-connections stays on the list
+/// as a fallback: it speaks RDP and VNC and comes preinstalled, it just
+/// does not let you choose anything.
 pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
     use super::ClientSpec;
     match kind {
-        // `/dynamic-resolution` faz o host remoto acompanhar a janela; sem
-        // isso a sessao nasce com a resolucao do servidor e fica com
-        // barras. `+clipboard` e o que faz copiar e colar entre as duas
-        // maquinas funcionar dentro da sessao.
+        // `/dynamic-resolution` makes the remote host follow the window;
+        // without it the session is born at the server's resolution and
+        // stays letterboxed. `+clipboard` is what makes copy and paste
+        // between the two machines work inside the session.
         "rdp" => vec![
             ClientSpec {
                 prog: "xfreerdp3",
@@ -159,8 +161,8 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
             },
         ],
         "vnc" => vec![
-            // O vncviewer vem primeiro por causa do `-ViewOnly`: e o unico
-            // jeito, deste lado, de entrar sem teclado e mouse.
+            // vncviewer comes first because of `-ViewOnly`: it is the only
+            // way, on this side, to come in without keyboard and mouse.
             ClientSpec {
                 prog: "vncviewer",
                 args: &["{host}:{port}"],
@@ -186,14 +188,14 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
                 file: None,
             },
         ],
-        // O NOSSO. Mesmo binario em qualquer plataforma, e o unico
-        // que fala o protocolo do `logistream` -- H.264 por QUIC com
-        // input de volta. Ver specs/010.
+        // OURS. The same binary on every platform, and the only one that
+        // speaks the `logistream` protocol -- H.264 over QUIC with input
+        // coming back. See specs/010.
         "logistream" => vec![ClientSpec {
             prog: "logistream-view",
             args: &["{host}:{port}"],
-            // Ainda nao tem audio nem modo so-leitura; quando tiver,
-            // muda aqui e a UI acende sozinha.
+            // No audio or view-only mode yet; when there is, it changes
+            // here and the UI lights up on its own.
             audio: None,
             mic: None,
             view_only: None,
@@ -203,12 +205,13 @@ pub fn screen_clients(kind: &str) -> Vec<super::ClientSpec> {
     }
 }
 
-/// Onde procurar clientes fora do PATH.
+/// Where to look for clients outside PATH.
 ///
-/// `~/.local/bin` entra porque e onde os NOSSOS binarios ficam, e o
-/// daemon roda com PATH minimo -- sob systemd ou launchd ele nao herda
-/// o PATH do shell, e procurar so no PATH faria o `logistream-view`
-/// parecer nao instalado quando esta.
+/// `~/.local/bin` is included because that is where OUR binaries live,
+/// and the daemon runs with a minimal PATH -- under systemd or launchd it
+/// does not inherit the shell's PATH, and looking only in PATH would make
+/// `logistream-view` look uninstalled when it is installed.
+
 pub fn screen_client_dirs() -> Vec<std::path::PathBuf> {
     vec![home_dir().join(".local").join("bin")]
 }

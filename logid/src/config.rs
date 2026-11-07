@@ -1,24 +1,25 @@
-//! Config em TOML, legivel e editavel a mao.
+//! Config in TOML, readable and editable by hand.
 //!
-//! Dois niveis separados de proposito (spec 001): config e o que o usuario
-//! escolheu, runtime e o que foi descoberto. Aqui so vive config.
+//! Two levels kept apart on purpose (spec 001): config is what the user
+//! chose, runtime is what was discovered. Only config lives here.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-/// Como interpretar uma porta fechada. Tres estados porque dois davam
-/// falso alarme: o SSH que nao existe aqui de proposito, e o RDP do
-/// Windows desligado por escolha.
+/// How to interpret a closed port. Three states because two gave false
+/// alarms: the SSH that does not exist here on purpose, and the Windows
+/// RDP turned off by choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Expect {
-    /// Tem que estar no ar; vermelho se cair.
+    /// Must be up; red if it goes down.
     #[default]
     Up,
-    /// Tem que estar fechada (ex.: porta de servidor nesta maquina, que e cliente).
+    /// Must be closed (e.g. a server port on this machine, which is a
+    /// client).
     Down,
-    /// Informativo; nunca alarma.
+    /// Informational; never alarms.
     Any,
 }
 
@@ -33,52 +34,55 @@ pub struct ServiceCfg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostCfg {
     pub name: String,
-    /// Nome mDNS, **nunca IP**. Ver spec 007.
+    /// mDNS name, **never an IP**. See spec 007.
     pub addr: String,
     #[serde(default)]
     pub role: String,
     #[serde(default)]
     pub services: Vec<ServiceCfg>,
-    /// Units systemd --user a inspecionar (so faz sentido na maquina local).
+    /// systemd --user units to inspect (only makes sense on the local
+    /// machine).
     #[serde(default)]
     pub units: Vec<String>,
-    /// Alias do ~/.ssh/config, se der para buscar detalhe por SSH.
+    /// Alias in ~/.ssh/config, if details can be fetched over SSH.
     #[serde(default)]
     pub ssh: Option<String>,
-    /// Caminho do logid-agent nesta maquina. Sem ele, nao ha dead-man's
-    /// switch -- e sem dead-man's switch a rota fisica e de ida so.
+    /// Path of logid-agent on this machine. Without it there is no
+    /// dead-man's switch -- and without a dead-man's switch the physical
+    /// route is one-way.
     #[serde(default)]
     pub agent: Option<String>,
-    /// Onde esta maquina fica na grade da GUI. Ver `Config::neighbors`.
+    /// Where this machine sits on the GUI grid. See `Config::neighbors`.
     #[serde(default)]
     pub layout: Option<Cell>,
-    /// windows | linux | macos. Opcional: ver `HostCfg::os`.
+    /// windows | linux | macos. Optional: see `HostCfg::os`.
     #[serde(default)]
     pub os: Option<String>,
-    /// Como controlar a tela deste host, quando der.
+    /// How to control this host's screen, when possible.
     #[serde(default)]
     pub screen: Option<ScreenCfg>,
-    /// Esta entrada e a maquina onde o daemon roda?
+    /// Is this entry the machine the daemon runs on?
     ///
-    /// Era implicito -- `addr = "127.0.0.1"` e um texto livre em `role`
-    /// dizendo "este PC". Passou a importar quando o daemon foi rodar no
-    /// Windows: o dead-man's switch precisa saber para onde devolver o
-    /// dispositivo, e "o host que nao sou eu" exige saber quem eu sou.
+    /// It used to be implicit -- `addr = "127.0.0.1"` and free text in
+    /// `role` saying "este PC". It started to matter when the daemon went
+    /// to run on Windows: the dead-man's switch needs to know where to
+    /// give the device back, and "the host that is not me" requires
+    /// knowing who I am.
     ///
-    /// Opcional: sem a chave, vale a heuristica do endereco de loopback,
-    /// para as configs que ja existem continuarem valendo.
+    /// Optional: without the key, the loopback-address heuristic applies,
+    /// so existing configs keep working.
     #[serde(default)]
     pub local: Option<bool>,
 }
 
 impl HostCfg {
-    /// SO deste host. A chave `os` manda; sem ela, inferimos.
+    /// This host's OS. The `os` key rules; without it, we infer.
     ///
-    /// A inferencia existe para as configs que ja estao escritas: o host
-    /// local e o SO em que este binario roda, e um `agent` com `%VAR%` ou
-    /// `\\` so pode ser caminho de Windows. Quando nao da para saber,
-    /// `Unknown` -- e quem usa degrada em vez de chutar e rodar o comando
-    /// errado na maquina de outra pessoa.
+    /// The inference exists for configs already written: the local host
+    /// is the OS this binary runs on, and an `agent` with `%VAR%` or `\\`
+    /// can only be a Windows path. When it cannot be known, `Unknown` --
+    /// and callers degrade instead of guessing and running the wrong
+    /// command on someone else's machine.
     pub fn os(&self) -> HostOs {
         if let Some(v) = &self.os {
             return match v.to_ascii_lowercase().as_str() {
@@ -111,27 +115,26 @@ impl HostCfg {
     }
 }
 
-/// Posicao do host na grade.
+/// The host's position on the grid.
 ///
-/// Escrever `edge = "right"` e `target = "windows-host"` a mao sempre foi
-/// descrever uma relacao ESPACIAL em prosa. A grade diz a mesma coisa de
-/// um jeito que a pessoa ja pensa -- "o Windows fica a direita" -- e as
-/// bordas saem dela.
+/// Writing `edge = "right"` and `target = "windows-host"` by hand was always
+/// describing a SPATIAL relation in prose. The grid says the same thing
+/// the way the person already thinks -- "Windows is to the right" -- and
+/// the edges come out of it.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Cell {
     pub col: i32,
     pub row: i32,
 }
 
-/// Sistema operacional do host.
+/// The host's operating system.
 ///
-/// Passou a importar quando o par deixou de ser sempre Windows. Dois
-/// lugares montam comando para rodar NO par, e os dois sao especificos:
-/// `agent::devices` monta PowerShell (`& "exe" devices`) e
-/// `probe::detalhe` roda um one-liner de PowerShell com CIM. Contra
-/// Ubuntu ou macOS os dois falhariam -- e falhariam em silencio, porque
-/// o detalhe e enfeite e o probe do agente ja degrada para "nao
-/// respondeu".
+/// It started to matter when the peer stopped always being Windows. Two
+/// places build a command to run ON the peer, and both are specific:
+/// `agent::devices` builds PowerShell (`& "exe" devices`) and
+/// `probe::host_detail` runs a PowerShell one-liner with CIM. Against Ubuntu
+/// or macOS both would fail -- and fail silently, because the detail is
+/// decoration and the agent probe already degrades to "did not answer".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostOs {
     Windows,
@@ -140,21 +143,21 @@ pub enum HostOs {
     Unknown,
 }
 
-/// Protocolo de tela do host, e em que porta.
+/// The host's screen protocol, and on which port.
 ///
-/// Um por host porque e propriedade do SO: o Windows fala RDP, o macOS
-/// fala VNC (Compartilhamento de Tela), o GNOME fala RDP pelo
-/// `gnome-remote-desktop`. Nao ha um protocolo que os tres sirvam, e
-/// escolher o nativo de cada um evita subir servidor novo em qualquer
-/// deles -- a decisao esta em specs/006.
+/// One per host because it is a property of the OS: Windows speaks RDP,
+/// macOS speaks VNC (Screen Sharing), GNOME speaks RDP through
+/// `gnome-remote-desktop`. There is no protocol all three serve, and
+/// picking each one's native protocol avoids starting a new server on any
+/// of them -- the decision is in specs/006.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenCfg {
     /// rdp | vnc
     pub kind: String,
     #[serde(default = "default_screen_port")]
     pub port: u16,
-    /// Usuario para o cliente ja preencher. Nao e credencial: senha
-    /// nunca entra nesta config.
+    /// User for the client to prefill. It is not a credential: a password
+    /// never goes into this config.
     #[serde(default)]
     pub user: Option<String>,
 }
@@ -167,8 +170,8 @@ fn default_edge() -> String {
     "right".into()
 }
 
-/// Vigilancia de borda. **Desligada por padrao** de proposito: ela dispara
-/// troca de canal, que e irreversivel do lado de origem (spec 005).
+/// Border watch. **Off by default** on purpose: it triggers a channel
+/// switch, which is irreversible on the origin side (spec 005).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BorderCfg {
     #[serde(default)]
@@ -176,14 +179,15 @@ pub struct BorderCfg {
     /// left | right | top | bottom
     #[serde(default = "default_edge")]
     pub edge: String,
-    /// Host que recebe o foco ao atravessar. Sem ele, nao arma.
+    /// Host that receives focus on crossing. Without it, it does not arm.
     #[serde(default)]
     pub target: Option<String>,
-    /// Quantas ativacoes na janela antes de trocar. `1` = imediato.
+    /// How many activations within the window before switching. `1` =
+    /// immediate.
     ///
-    /// O mutter dispara no contato e nao tem dwell; aproximamos pela
-    /// densidade de ativacoes. Mais alto evita troca por raspao, mais
-    /// baixo responde na hora.
+    /// Mutter fires on contact and has no dwell; we approximate it by
+    /// activation density. Higher avoids switching on a graze, lower
+    /// responds right away.
     #[serde(default = "default_hold_hits")]
     pub hold_hits: usize,
     #[serde(default = "default_hold_window_ms")]
@@ -213,20 +217,21 @@ fn default_follow_interval() -> u64 {
     5
 }
 
-/// Fazer os demais dispositivos seguirem o canal do lider.
+/// Make the other devices follow the leader's channel.
 ///
-/// Resolve o estado dividido na raiz: mouse e teclado em maquinas
-/// diferentes. E funciona inclusive quando a troca foi **manual**, no
-/// botao Easy-Switch -- que o `border` nao ve.
+/// Solves the split state at the root: mouse and keyboard on different
+/// machines. And it works even when the switch was **manual**, with the
+/// Easy-Switch button -- which `border` does not see.
 ///
-/// **Desligado por padrao**: mover dispositivo e irreversivel do lado de
-/// origem (spec 005), e um reconciliador que erra te deixa sem teclado.
+/// **Off by default**: moving a device is irreversible on the origin side
+/// (spec 005), and a reconciler that gets it wrong leaves you without a
+/// keyboard.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FollowCfg {
     #[serde(default)]
     pub enabled: bool,
-    /// Nome (HID++) do dispositivo que manda. Os outros de `[[devices]]`
-    /// seguem. Sem ele, nao arma.
+    /// (HID++) name of the leading device. The others in `[[devices]]`
+    /// follow. Without it, it does not arm.
     #[serde(default)]
     pub leader: Option<String>,
     #[serde(default = "default_follow_interval")]
@@ -241,23 +246,23 @@ impl Default for FollowCfg {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InputCfg {
-    /// Como trocar o input de maquina: `"lan"` ou `"hidpp"`.
+    /// How to move input between machines: `"lan"` or `"hidpp"`.
     ///
-    /// - **`lan`** (padrao): captura aqui (`EVIOCGRAB`) e manda pelo
-    ///   stream de input da tela remota. O dispositivo nao sai do
-    ///   lugar, nao importa quem tem o dongle, e e reversivel na hora.
-    /// - **`hidpp`**: manda o PROPRIO dispositivo trocar de canal
-    ///   Easy-Switch (0x1814). Exige um receptor pareado na maquina de
-    ///   destino, e e irreversivel da origem -- depois do ChangeHost
-    ///   este receptor nao alcanca mais o dispositivo.
+    /// - **`lan`** (default): capture here (`EVIOCGRAB`) and send it over
+    ///   the remote screen's input stream. The device stays put, it does
+    ///   not matter who has the dongle, and it is reversible on the spot.
+    /// - **`hidpp`**: tells the device ITSELF to switch Easy-Switch
+    ///   channel (0x1814). Requires a paired receiver on the target
+    ///   machine, and is irreversible from the origin -- after ChangeHost
+    ///   this receiver no longer reaches the device.
     ///
-    /// O padrao virou `lan` quando ficamos com um dongle so: no
-    /// `hidpp`, "mandar para windows-host" fazia o teclado procurar um
-    /// receptor que nao existe la, nao achar, e voltar. Comportamento
-    /// correto do protocolo resolvendo o problema errado.
+    /// The default became `lan` when we were down to a single dongle:
+    /// with `hidpp`, "send to windows-host" made the keyboard look for a
+    /// receiver that does not exist there, not find it, and come back.
+    /// Correct protocol behavior solving the wrong problem.
     ///
-    /// A captura so existe no Linux por enquanto.
-    #[serde(default = "default_modo_input")]
+    /// Capture only exists on Linux for now.
+    #[serde(default = "default_input_mode")]
     pub mode: String,
     #[serde(default)]
     pub border: BorderCfg,
@@ -265,7 +270,7 @@ pub struct InputCfg {
     pub follow: FollowCfg,
 }
 
-fn default_modo_input() -> String {
+fn default_input_mode() -> String {
     "lan".into()
 }
 
@@ -276,15 +281,16 @@ fn default_refresh() -> u64 {
     10
 }
 
-/// Dispositivo Logitech e em que canal Easy-Switch ele vive em cada host.
+/// A Logitech device and which Easy-Switch channel it lives on for each
+/// host.
 ///
-/// Este mapa e exatamente o que o Solaar nao tem e o que o Logitech Flow
-/// guarda na nuvem. Aqui mora num TOML seu.
+/// This map is exactly what Solaar lacks and what Logitech Flow keeps in
+/// the cloud. Here it lives in a TOML of your own.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceCfg {
-    /// Nome como o Solaar reporta (ex.: "MX Anywhere 3").
+    /// Name as Solaar reports it (e.g. "MX Anywhere 3").
     pub name: String,
-    /// host -> canal (1-based).
+    /// host -> channel (1-based).
     #[serde(default)]
     pub hosts: BTreeMap<String, u8>,
 }
@@ -305,187 +311,187 @@ pub struct Config {
 
 pub const DEFAULT_TOML: &str = include_str!("../default-config.toml");
 
-/// Troca valores dentro de uma secao, preservando o resto do arquivo.
+/// Replaces values inside a section, preserving the rest of the file.
 ///
-/// Terceira vez que esta cirurgia apareceu (grade, borda, agora o
-/// reconciliador), entao virou funcao. O motivo e sempre o mesmo:
-/// reserializar a struct produz TOML correto e apaga os comentarios, e
-/// nesta config eles sao o registro de por que cada escolha foi feita.
+/// The third time this surgery showed up (grid, border, now the
+/// reconciler), so it became a function. The reason is always the same:
+/// reserializing the struct produces correct TOML and wipes the comments,
+/// and in this config they are the record of why each choice was made.
 ///
-/// Chave que nao existe na secao e **acrescentada** ao fim dela, nao
-/// ignorada -- `leader` pode nunca ter sido escrito.
-pub fn set_in_section(toml_text: &str, secao: &str, pares: &[(&str, String)]) -> String {
-    let cabecalho = format!("[{secao}]");
+/// A key that does not exist in the section is **appended** at its end,
+/// not ignored -- `leader` may never have been written.
+pub fn set_in_section(toml_text: &str, section: &str, pairs: &[(&str, String)]) -> String {
+    let header = format!("[{section}]");
     let mut out: Vec<String> = Vec::new();
-    let mut dentro = false;
-    let mut vistos: Vec<&str> = Vec::new();
+    let mut inside = false;
+    let mut seen: Vec<&str> = Vec::new();
 
-    let faltantes = |vistos: &Vec<&str>| -> Vec<String> {
-        pares
+    let missing_keys = |seen: &Vec<&str>| -> Vec<String> {
+        pairs
             .iter()
-            .filter(|(k, _)| !vistos.contains(k))
+            .filter(|(k, _)| !seen.contains(k))
             .map(|(k, v)| format!("{k} = {v}"))
             .collect()
     };
 
-    for linha in toml_text.lines() {
-        let t = linha.trim();
+    for line in toml_text.lines() {
+        let t = line.trim();
         if t.starts_with('[') {
-            if dentro {
-                out.extend(faltantes(&vistos));
+            if inside {
+                out.extend(missing_keys(&seen));
             }
-            dentro = t == cabecalho;
-            vistos.clear();
-            out.push(linha.to_string());
+            inside = t == header;
+            seen.clear();
+            out.push(line.to_string());
             continue;
         }
-        if dentro {
-            if let Some((chave, _)) = t.split_once('=') {
-                let chave = chave.trim();
-                if let Some((k, v)) = pares.iter().find(|(k, _)| *k == chave) {
+        if inside {
+            if let Some((key, _)) = t.split_once('=') {
+                let key = key.trim();
+                if let Some((k, v)) = pairs.iter().find(|(k, _)| *k == key) {
                     out.push(format!("{k} = {v}"));
-                    vistos.push(k);
+                    seen.push(k);
                     continue;
                 }
             }
         }
-        out.push(linha.to_string());
+        out.push(line.to_string());
     }
-    if dentro {
-        out.extend(faltantes(&vistos));
+    if inside {
+        out.extend(missing_keys(&seen));
     }
 
-    let mut texto = out.join("\n");
-    if toml_text.ends_with('\n') && !texto.ends_with('\n') {
-        texto.push('\n');
+    let mut text = out.join("\n");
+    if toml_text.ends_with('\n') && !text.ends_with('\n') {
+        text.push('\n');
     }
-    texto
+    text
 }
 
-fn gravar(depois: String) -> Result<(), String> {
-    // Valida ANTES de gravar: edicao de texto que produz TOML invalido
-    // deixaria o daemon sem config no proximo boot.
-    toml::from_str::<Config>(&depois).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
+fn write_validated(after: String) -> Result<(), String> {
+    // Validate BEFORE writing: a text edit that produces invalid TOML
+    // would leave the daemon without a config on the next boot.
+    toml::from_str::<Config>(&after).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
     let p = Config::path();
-    std::fs::write(&p, depois).map_err(|e| format!("gravar {p:?}: {e}"))
+    std::fs::write(&p, after).map_err(|e| format!("gravar {p:?}: {e}"))
 }
 
 pub fn save_border_enabled(on: bool) -> Result<(), String> {
     let p = Config::path();
-    let antes = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
-    gravar(set_in_section(&antes, "input.border", &[("enabled", on.to_string())]))
+    let before = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+    write_validated(set_in_section(&before, "input.border", &[("enabled", on.to_string())]))
 }
 
-/// Liga/desliga o reconciliador e escolhe quem manda.
+/// Turns the reconciler on/off and picks who leads.
 ///
-/// Configuravel porque a resposta certa depende de como a pessoa troca
-/// de maquina: com a borda ligada quem manda e o mouse (e ele que
-/// atravessa); trocando no botao Easy-Switch do teclado, o lider tem de
-/// ser o TECLADO -- senao o reconciliador puxa o teclado de volta para
-/// onde o mouse esta e desfaz a acao que a pessoa acabou de fazer.
+/// Configurable because the right answer depends on how the person
+/// switches machines: with the border on, the mouse leads (it is what
+/// crosses); switching with the keyboard's Easy-Switch button, the leader
+/// has to be the KEYBOARD -- otherwise the reconciler pulls the keyboard
+/// back to where the mouse is and undoes what the person just did.
 pub fn save_follow(on: bool, leader: Option<&str>) -> Result<(), String> {
     let p = Config::path();
-    let antes = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
-    let mut pares: Vec<(&str, String)> = vec![("enabled", on.to_string())];
+    let before = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+    let mut pairs: Vec<(&str, String)> = vec![("enabled", on.to_string())];
     if let Some(l) = leader {
-        pares.push(("leader", format!("\"{}\"", l.replace('"', ""))));
+        pairs.push(("leader", format!("\"{}\"", l.replace('"', ""))));
     }
-    gravar(set_in_section(&antes, "input.follow", &pares))
+    write_validated(set_in_section(&before, "input.follow", &pairs))
 }
 
-/// Grava as posicoes no arquivo, preservando comentarios.
+/// Writes the positions to the file, preserving comments.
 pub fn save_layout(pos: &BTreeMap<String, Cell>) -> Result<(), String> {
     let p = Config::path();
-    let antes = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
-    let depois = apply_layout(&antes, pos);
-    // Valida ANTES de gravar: uma edicao de texto que produz TOML
-    // invalido deixaria o daemon sem config no proximo boot.
-    toml::from_str::<Config>(&depois).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
-    std::fs::write(&p, depois).map_err(|e| format!("gravar {p:?}: {e}"))
+    let before = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+    let after = apply_layout(&before, pos);
+    // Validate BEFORE writing: a text edit that produces invalid TOML
+    // would leave the daemon without a config on the next boot.
+    toml::from_str::<Config>(&after).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
+    std::fs::write(&p, after).map_err(|e| format!("gravar {p:?}: {e}"))
 }
 
-/// Escreve a posicao de cada host na grade, preservando o arquivo.
+/// Writes each host's grid position, preserving the file.
 ///
-/// Edicao **cirurgica de texto**, nao serializacao. Reserializar a
-/// struct produziria um TOML correto e jogaria fora todos os
-/// comentarios -- e nesta config os comentarios sao o registro de por
-/// que cada escolha foi feita (por que o canal 3 nao esta mapeado, por
-/// que o follow esta desligado no Windows, por que nunca se escreve IP).
-/// Perder isso para salvar duas coordenadas seria pessimo negocio.
+/// **Surgical text editing**, not serialization. Reserializing the struct
+/// would produce correct TOML and throw away every comment -- and in this
+/// config the comments are the record of why each choice was made (why
+/// channel 3 is not mapped, why follow is off on Windows, why an IP is
+/// never written). Losing that to save two coordinates would be a terrible
+/// deal.
 ///
-/// Para cada `[[hosts]]` com `name` conhecido: troca a linha `layout` se
-/// houver, senao insere logo depois do `name`.
+/// For each `[[hosts]]` with a known `name`: replaces the `layout` line if
+/// there is one, otherwise inserts it right after `name`.
 pub fn apply_layout(toml_text: &str, pos: &BTreeMap<String, Cell>) -> String {
     let mut out: Vec<String> = Vec::new();
-    let mut host_atual: Option<String> = None;
-    let mut ja_escrito = false;
+    let mut current_host: Option<String> = None;
+    let mut already_written = false;
 
-    for linha in toml_text.lines() {
-        let t = linha.trim();
+    for line in toml_text.lines() {
+        let t = line.trim();
 
-        // Um cabecalho de tabela qualquer fecha o host anterior.
+        // Any table header closes the previous host.
         if t.starts_with("[[") || (t.starts_with('[') && !t.starts_with("[[")) {
             if t == "[[hosts]]" {
-                host_atual = None;
-                ja_escrito = false;
+                current_host = None;
+                already_written = false;
             } else if !t.starts_with("[hosts.") && !t.starts_with("[[hosts.") {
-                host_atual = None;
+                current_host = None;
             }
-            out.push(linha.to_string());
+            out.push(line.to_string());
             continue;
         }
 
-        // Dentro de um [[hosts]], a linha `name` identifica quem e.
-        if host_atual.is_none() {
-            if let Some(nome) = t
+        // Inside a [[hosts]], the `name` line identifies who it is.
+        if current_host.is_none() {
+            if let Some(name) = t
                 .strip_prefix("name")
                 .and_then(|r| r.trim_start().strip_prefix('='))
                 .map(|r| r.trim().trim_matches('"').to_string())
             {
-                if pos.contains_key(&nome) {
-                    host_atual = Some(nome.clone());
-                    out.push(linha.to_string());
-                    let c = pos[&nome];
+                if pos.contains_key(&name) {
+                    current_host = Some(name.clone());
+                    out.push(line.to_string());
+                    let c = pos[&name];
                     out.push(format!("layout = {{ col = {}, row = {} }}", c.col, c.row));
-                    ja_escrito = true;
+                    already_written = true;
                     continue;
                 }
             }
-            out.push(linha.to_string());
+            out.push(line.to_string());
             continue;
         }
 
-        // Ja escrevemos a nova: a antiga, se existir, e descartada.
-        if ja_escrito && t.starts_with("layout") && t.contains('=') {
+        // We already wrote the new one: the old one, if any, is dropped.
+        if already_written && t.starts_with("layout") && t.contains('=') {
             continue;
         }
-        out.push(linha.to_string());
+        out.push(line.to_string());
     }
 
-    let mut texto = out.join("\n");
-    if toml_text.ends_with('\n') && !texto.ends_with('\n') {
-        texto.push('\n');
+    let mut text = out.join("\n");
+    if toml_text.ends_with('\n') && !text.ends_with('\n') {
+        text.push('\n');
     }
-    texto
+    text
 }
 
 impl Config {
-    /// Vizinhos da maquina local na grade: (borda, nome do host).
+    /// The local machine's neighbors on the grid: (edge, host name).
     ///
-    /// "Imediatamente a direita" e o host mais PROXIMO com `col` maior na
-    /// mesma linha -- nao `col + 1`. Com buraco na grade (tres maquinas
-    /// em 0, 1 e 3, por exemplo) exigir adjacencia exata deixaria a borda
-    /// sem alvo, e a pessoa arrastou os quadrados justamente para dizer
-    /// quem fica de que lado.
+    /// "Immediately to the right" is the CLOSEST host with a larger `col`
+    /// on the same row -- not `col + 1`. With a gap in the grid (three
+    /// machines at 0, 1 and 3, for example) requiring exact adjacency
+    /// would leave the edge without a target, and the person dragged the
+    /// squares precisely to say who sits on which side.
     ///
-    /// Hosts sem `layout` ficam de fora: nao da para derivar direcao de
-    /// quem nao tem posicao.
+    /// Hosts without `layout` are left out: a direction cannot be derived
+    /// for something with no position.
     pub fn neighbors(&self) -> Vec<(&'static str, String)> {
-        let Some(eu) = self.hosts.iter().find(|h| h.is_local()) else { return Vec::new() };
-        let Some(meu) = eu.layout else { return Vec::new() };
+        let Some(me) = self.hosts.iter().find(|h| h.is_local()) else { return Vec::new() };
+        let Some(mine) = me.layout else { return Vec::new() };
 
         let mut v = Vec::new();
-        for (borda, mesma_linha, maior) in [
+        for (edge, same_row, greater) in [
             ("right", true, true),
             ("left", true, false),
             ("bottom", false, true),
@@ -496,79 +502,80 @@ impl Config {
                 .iter()
                 .filter(|h| !h.is_local())
                 .filter_map(|h| h.layout.map(|c| (c, h)))
-                .filter(|(c, _)| if mesma_linha { c.row == meu.row } else { c.col == meu.col })
+                .filter(|(c, _)| if same_row { c.row == mine.row } else { c.col == mine.col })
                 .filter_map(|(c, h)| {
-                    let d = if mesma_linha { c.col - meu.col } else { c.row - meu.row };
-                    let ok = if maior { d > 0 } else { d < 0 };
+                    let d = if same_row { c.col - mine.col } else { c.row - mine.row };
+                    let ok = if greater { d > 0 } else { d < 0 };
                     ok.then(|| (d.abs(), h))
                 })
                 .collect();
             cands.sort_by_key(|(d, _)| *d);
             if let Some((_, h)) = cands.first() {
-                v.push((borda, h.name.clone()));
+                v.push((edge, h.name.clone()));
             }
         }
         v
     }
 
-    /// As bordas a vigiar: `(borda, host alvo)`.
+    /// The edges to watch: `(edge, target host)`.
     ///
-    /// A grade manda quando existe. Sem ela, vale o par `edge`/`target`
-    /// escrito a mao -- as configs anteriores a grade continuam valendo,
-    /// e quem quiser uma borda so continua podendo escreve-la.
+    /// The grid rules when it exists. Without it, the hand-written
+    /// `edge`/`target` pair applies -- configs from before the grid keep
+    /// working, and whoever wants a single edge can still write it.
     pub fn border_edges(&self) -> Vec<(String, String)> {
         self.border_edges_full().into_iter().filter(|(_, _, ok)| *ok).map(|(e, t, _)| (e, t)).collect()
     }
 
-    /// Como `border_edges`, mas sem esconder os vizinhos descartados.
+    /// Like `border_edges`, but without hiding the discarded neighbors.
     ///
-    /// O terceiro campo e "este alvo consegue RECEBER". Um host sem
-    /// `ssh` + `agent` nao tem quem devolva o dispositivo, entao o
-    /// `focus::plan` bloqueia a troca -- criar barreira para ele daria
-    /// uma borda que so sabe recusar, enchendo o log a cada vez que a
-    /// pessoa encosta. E caso real: o MacBook nao tem receptor Logitech.
+    /// The third field is "this target can RECEIVE". A host without `ssh`
+    /// + `agent` has nobody to give the device back, so `focus::plan`
+    /// blocks the switch -- creating a barrier for it would give an edge
+    /// that can only refuse, filling the log every time the person touches
+    /// it. It is a real case: the MacBook has no Logitech receiver.
     ///
-    /// A UI mostra os dois grupos, para a grade nao mentir em silencio
-    /// sobre um vizinho que esta la e nao funciona.
+    /// The UI shows both groups, so the grid does not silently lie about
+    /// a neighbor that is there and does not work.
     pub fn border_edges_full(&self) -> Vec<(String, String, bool)> {
         let b = &self.input.border;
         if !b.enabled {
             return Vec::new();
         }
-        let recebe = |nome: &str| {
+        let can_receive = |name: &str| {
             self.hosts
                 .iter()
-                .find(|h| h.name == nome)
+                .find(|h| h.name == name)
                 .is_some_and(|h| h.ssh.is_some() && h.agent.is_some())
         };
-        let da_grade = self.neighbors();
-        if !da_grade.is_empty() {
-            return da_grade
+        let from_grid = self.neighbors();
+        if !from_grid.is_empty() {
+            return from_grid
                 .into_iter()
                 .map(|(e, h)| {
-                    let ok = recebe(&h);
+                    let ok = can_receive(&h);
                     (e.to_string(), h, ok)
                 })
                 .collect();
         }
         match &b.target {
             Some(t) => {
-                let ok = recebe(t);
+                let ok = can_receive(t);
                 vec![(b.edge.clone(), t.clone(), ok)]
             }
             None => Vec::new(),
         }
     }
 
-    /// O primeiro host que nao e esta maquina.
+    /// The first host that is not this machine.
     ///
-    /// Quem usa e o dead-man's switch da borda do Windows, que precisa
-    /// saber para onde devolver o dispositivo. No Linux ninguem chama:
-    /// la o guard mora no alvo (o `logid-agent`), nao na origem.
+    /// The caller is the Windows border's dead-man's switch, which needs
+    /// to know where to give the device back. On Linux nobody calls it:
+    /// there the guard lives on the target (`logid-agent`), not the
+    /// origin.
     ///
-    /// Com dois hosts e o par, sem ambiguidade. Com mais de dois, a
-    /// escolha passa a ter de ser explicita e quem chama tem de dizer
-    /// qual -- por isso devolve o primeiro em vez de adivinhar peso.
+    /// With two hosts it is the peer, unambiguously. With more than two,
+    /// the choice has to become explicit and the caller has to say which
+    /// -- that is why it returns the first instead of guessing weights.
     #[cfg_attr(not(windows), allow(dead_code))]
     pub fn peer_host(&self) -> Option<&HostCfg> {
         self.hosts.iter().find(|h| !h.is_local())
@@ -578,7 +585,7 @@ impl Config {
         crate::sys::config_dir().join("config.toml")
     }
 
-    /// Le do disco; na primeira execucao grava o default e usa ele.
+    /// Reads from disk; on the first run writes the default and uses it.
     pub fn load() -> Result<Self, String> {
         let p = Self::path();
         if !p.exists() {
@@ -586,22 +593,22 @@ impl Config {
                 std::fs::create_dir_all(dir).map_err(|e| format!("criar {dir:?}: {e}"))?;
             }
             std::fs::write(&p, DEFAULT_TOML).map_err(|e| format!("gravar {p:?}: {e}"))?;
-            gripe!("config inicial gravada em {}", p.display());
+            gripe!("initial config written to {}", p.display());
         }
         let raw = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
         toml::from_str(&raw).map_err(|e| format!("TOML invalido em {}: {e}", p.display()))
     }
 
-    /// Grava validando antes: se o TOML resultante nao reabre, nao escreve.
-    /// Grava a config inteira, reserializada.
+    /// Writes after validating: if the resulting TOML does not reopen, it
+    /// does not write. Writes the whole config, reserialized.
     ///
-    /// ⚠️ **Destroi todos os comentarios do arquivo.** Reserializar a
-    /// struct produz TOML correto e perde tudo que nao e dado -- e nesta
-    /// config os comentarios registram por que cada escolha foi feita.
+    /// ⚠️ **Destroys every comment in the file.** Reserializing the struct
+    /// produces correct TOML and loses everything that is not data -- and
+    /// in this config the comments record why each choice was made.
     ///
-    /// Hoje so o `PATCH /api/config` chama isto, e nada na UI usa aquela
-    /// rota. Para mudancas pontuais prefira edicao cirurgica de texto,
-    /// como `apply_layout` faz.
+    /// Today only `PATCH /api/config` calls this, and nothing in the UI
+    /// uses that route. For targeted changes prefer surgical text editing,
+    /// as `apply_layout` does.
     pub fn save(&self) -> Result<(), String> {
         let text = toml::to_string_pretty(self).map_err(|e| format!("serializar: {e}"))?;
         toml::from_str::<Config>(&text).map_err(|e| format!("auto-validacao falhou: {e}"))?;
@@ -615,52 +622,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn o_default_parseia_e_tem_as_tres_maquinas() {
-        // O `DEFAULT_TOML` e escrito na primeira execucao E pelo botao
-        // "Escrever a config padrao" do wizard -- entao um erro aqui so
-        // aparece na maquina nova, que e exatamente onde ninguem tem
-        // como diagnosticar.
+    fn the_default_parses_and_has_the_three_machines() {
+        // `DEFAULT_TOML` is written on the first run AND by the wizard's
+        // "Escrever a config padrão" button -- so an error here only shows
+        // up on the new machine, which is exactly where nobody can
+        // diagnose it.
         //
-        // Este teste nasceu de um defeito real: o MacBook ficou de fora
-        // deste arquivo por meses. Como as tres configs vivas o tinham,
-        // nada acusou -- ate alguem reescrever a config padrao e perder
-        // uma maquina inteira sem aviso.
-        let c: Config = toml::from_str(DEFAULT_TOML).expect("o default tem de parsear");
-        assert_eq!(c.hosts.len(), 3, "o default descreve as tres maquinas");
-        assert_eq!(c.hosts.iter().filter(|h| h.is_local()).count(), 1, "exatamente um local");
+        // This test was born from a real defect: the MacBook was left out
+        // of this file for months. Since all three live configs had it,
+        // nothing complained -- until someone rewrote the default config
+        // and lost a whole machine without warning.
+        let c: Config = toml::from_str(DEFAULT_TOML).expect("the default must parse");
+        assert_eq!(c.hosts.len(), 3, "the default describes the three machines");
+        assert_eq!(c.hosts.iter().filter(|h| h.is_local()).count(), 1, "exactly one local");
 
-        let mut nomes: Vec<&str> = c.hosts.iter().map(|h| h.name.as_str()).collect();
-        nomes.sort_unstable();
-        let antes = nomes.len();
-        nomes.dedup();
-        assert_eq!(nomes.len(), antes, "nome de host repetido");
+        let mut names: Vec<&str> = c.hosts.iter().map(|h| h.name.as_str()).collect();
+        names.sort_unstable();
+        let before = names.len();
+        names.dedup();
+        assert_eq!(names.len(), before, "duplicate host name");
 
-        // Grade sem colisao: duas maquinas na mesma celula fazem a borda
-        // apontar para a errada.
-        let mut celulas: Vec<(i32, i32)> =
+        // Grid without collisions: two machines in the same cell make the
+        // edge point at the wrong one.
+        let mut cells: Vec<(i32, i32)> =
             c.hosts.iter().filter_map(|h| h.layout).map(|l| (l.col, l.row)).collect();
-        assert_eq!(celulas.len(), 3, "todo host no default tem posicao na grade");
-        celulas.sort_unstable();
-        celulas.dedup();
-        assert_eq!(celulas.len(), 3, "duas maquinas na mesma celula da grade");
+        assert_eq!(cells.len(), 3, "every host in the default has a grid position");
+        cells.sort_unstable();
+        cells.dedup();
+        assert_eq!(cells.len(), 3, "two machines in the same grid cell");
 
-        // Nenhum IP literal: ja quebrou tudo uma vez quando o do Windows
-        // mudou.
+        // No literal IP: it already broke everything once when the
+        // Windows one changed.
         for h in &c.hosts {
             let ip = h.addr.split('.').count() == 4
                 && h.addr.split('.').all(|p| p.parse::<u8>().is_ok());
-            assert!(!ip || h.is_local(), "{} tem IP literal: {}", h.name, h.addr);
+            assert!(!ip || h.is_local(), "{} has a literal IP: {}", h.name, h.addr);
         }
     }
 
     #[test]
-    fn expect_default_e_up() {
-        // Importa: um servico sem `expect` declarado tem de alarmar se cair.
+    fn expect_default_is_up() {
+        // It matters: a service without a declared `expect` must alarm if
+        // it goes down.
         assert_eq!(Expect::default(), Expect::Up);
     }
 
     #[test]
-    fn toml_minimo_parseia_e_aplica_defaults() {
+    fn minimal_toml_parses_and_applies_defaults() {
         let t = r#"
             [[hosts]]
             name = "a"
@@ -669,17 +677,17 @@ mod tests {
               label = "SSH"
               port = 22
         "#;
-        let c: Config = toml::from_str(t).expect("deveria parsear");
-        assert_eq!(c.port, 8787, "porta default");
+        let c: Config = toml::from_str(t).expect("should parse");
+        assert_eq!(c.port, 8787, "default port");
         assert_eq!(c.refresh_seconds, 10);
         assert_eq!(c.hosts.len(), 1);
         assert_eq!(c.hosts[0].services[0].expect, Expect::Up);
         assert!(c.devices.is_empty());
-        assert!(!c.input.border.enabled, "borda desligada por default");
+        assert!(!c.input.border.enabled, "border off by default");
     }
 
     #[test]
-    fn expect_down_e_any_desserializam() {
+    fn expect_down_and_any_deserialize() {
         let t = r#"
             [[hosts]]
             name = "a"
@@ -699,8 +707,8 @@ mod tests {
     }
 
     #[test]
-    fn quem_sou_eu_por_loopback_ou_por_flag() {
-        // Heuristica: configs que ja existem nao tem a chave `local`.
+    fn who_am_i_by_loopback_or_by_flag() {
+        // Heuristic: existing configs do not have the `local` key.
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
@@ -716,10 +724,10 @@ mod tests {
         assert!(!c.hosts[1].is_local());
         assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("la"));
 
-        // Flag explicita vence o endereco -- e o caso do Windows, onde a
-        // entrada local pode nao usar loopback. Uma segunda leitura
-        // divergente deste criterio ja existiu em `follow.rs` e foi
-        // removida; este teste e o que impede ela de voltar.
+        // An explicit flag beats the address -- that is the Windows case,
+        // where the local entry may not use loopback. A second, diverging
+        // reading of this criterion once existed in `follow.rs` and was
+        // removed; this test is what keeps it from coming back.
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
@@ -733,14 +741,14 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert!(c.hosts[0].is_local(), "flag explicita tem de vencer o endereco");
-        assert!(!c.hosts[1].is_local(), "local = false vence o loopback");
+        assert!(c.hosts[0].is_local(), "an explicit flag must beat the address");
+        assert!(!c.hosts[1].is_local(), "local = false beats loopback");
         assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("la"));
     }
 
     #[test]
-    fn salvar_a_grade_nao_apaga_comentario() {
-        let antes = r#"# Config do logid. Comentario que explica uma decisao cara.
+    fn saving_the_grid_keeps_comments() {
+        let before = r#"# Config do logid. Comentario que explica uma decisao cara.
 port = 8787
 
 [[hosts]]
@@ -761,65 +769,65 @@ addr = "la.local"
         let mut pos = BTreeMap::new();
         pos.insert("aqui".to_string(), Cell { col: 0, row: 1 });
         pos.insert("la".to_string(), Cell { col: 2, row: 1 });
-        let depois = apply_layout(antes, &pos);
+        let after = apply_layout(before, &pos);
 
-        assert!(depois.contains("# Comentario que explica uma decisao cara.")
-                || depois.contains("Comentario que explica uma decisao cara"));
-        assert!(depois.contains("# Este comentario tem de sobreviver."));
-        assert!(depois.contains("label = \"SSH\""), "subtabela intacta");
-        // Inserida onde nao havia.
-        assert!(depois.contains("name = \"aqui\"\nlayout = { col = 0, row = 1 }"));
-        // Substituida onde havia -- e a antiga sumiu.
-        assert!(depois.contains("layout = { col = 2, row = 1 }"));
-        assert!(!depois.contains("col = 9"), "a posicao antiga tem de sair");
-        // E continua sendo TOML valido com o resto no lugar.
-        let c: Config = toml::from_str(&depois).unwrap();
+        assert!(after.contains("# Comentario que explica uma decisao cara.")
+                || after.contains("Comentario que explica uma decisao cara"));
+        assert!(after.contains("# Este comentario tem de sobreviver."));
+        assert!(after.contains("label = \"SSH\""), "subtable intact");
+        // Inserted where there was none.
+        assert!(after.contains("name = \"aqui\"\nlayout = { col = 0, row = 1 }"));
+        // Replaced where there was one -- and the old one is gone.
+        assert!(after.contains("layout = { col = 2, row = 1 }"));
+        assert!(!after.contains("col = 9"), "the old position must go");
+        // And it is still valid TOML with the rest in place.
+        let c: Config = toml::from_str(&after).unwrap();
         assert_eq!(c.hosts.len(), 2);
         assert_eq!(c.hosts[0].services.len(), 1);
         assert_eq!(c.hosts[1].layout.map(|l| (l.col, l.row)), Some((2, 1)));
     }
 
     #[test]
-    fn chave_que_falta_e_acrescentada() {
-        // `leader` pode nunca ter sido escrito na secao.
-        let antes = "[input.follow]\n# comentario\nenabled = false\n";
-        let depois = set_in_section(
-            antes,
+    fn missing_key_is_appended() {
+        // `leader` may never have been written in the section.
+        let before = "[input.follow]\n# comentario\nenabled = false\n";
+        let after = set_in_section(
+            before,
             "input.follow",
             &[("enabled", "true".into()), ("leader", "\"MX Keys\"".into())],
         );
-        assert!(depois.contains("# comentario"));
-        assert!(depois.contains("enabled = true"));
-        assert!(depois.contains("leader = \"MX Keys\""));
+        assert!(after.contains("# comentario"));
+        assert!(after.contains("enabled = true"));
+        assert!(after.contains("leader = \"MX Keys\""));
     }
 
     #[test]
-    fn toggle_da_borda_preserva_a_secao() {
-        let antes = "# topo\n[input.border]\n# por que esta assim\nenabled = false\nedge = \"right\"\n\n[input.follow]\nenabled = true\n";
-        let depois = set_in_section(antes, "input.border", &[("enabled", "true".into())]);
-        assert!(depois.contains("# por que esta assim"));
-        assert!(depois.contains("[input.border]\n# por que esta assim\nenabled = true"));
-        // Nao pode encostar no enabled do OUTRO bloco.
-        assert!(depois.contains("[input.follow]\nenabled = true"));
-        let c: Config = toml::from_str(&depois).unwrap();
+    fn border_toggle_preserves_the_section() {
+        let before = "# topo\n[input.border]\n# por que esta assim\nenabled = false\nedge = \"right\"\n\n[input.follow]\nenabled = true\n";
+        let after = set_in_section(before, "input.border", &[("enabled", "true".into())]);
+        assert!(after.contains("# por que esta assim"));
+        assert!(after.contains("[input.border]\n# por que esta assim\nenabled = true"));
+        // Must not touch the OTHER block's enabled.
+        assert!(after.contains("[input.follow]\nenabled = true"));
+        let c: Config = toml::from_str(&after).unwrap();
         assert!(c.input.border.enabled);
         assert!(c.input.follow.enabled);
 
-        // E desligar de volta tambem.
-        let c2: Config = toml::from_str(&set_in_section(&depois, "input.border", &[("enabled", "false".into())])).unwrap();
+        // And turning it back off too.
+        let c2: Config = toml::from_str(&set_in_section(&after, "input.border", &[("enabled", "false".into())])).unwrap();
         assert!(!c2.input.border.enabled);
-        assert!(c2.input.follow.enabled, "o follow nao pode ser arrastado junto");
+        assert!(c2.input.follow.enabled, "follow must not be dragged along");
     }
 
     #[test]
-    fn host_fora_do_mapa_fica_como_estava() {
-        let antes = "[[hosts]]\nname = \"intocado\"\naddr = \"x.local\"\n";
-        let depois = apply_layout(antes, &BTreeMap::new());
-        assert_eq!(antes, depois);
+    fn host_outside_the_map_stays_as_it_was() {
+        let before = "[[hosts]]\nname = \"intocado\"\naddr = \"x.local\"\n";
+        let after = apply_layout(before, &BTreeMap::new());
+        assert_eq!(before, after);
     }
 
     #[test]
-    fn vizinhos_saem_da_grade() {
+    fn neighbors_come_from_the_grid() {
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
@@ -849,18 +857,18 @@ addr = "la.local"
         )
         .unwrap();
         let n = c.neighbors();
-        let acha = |b: &str| n.iter().find(|(e, _)| *e == b).map(|(_, h)| h.as_str());
-        // Coluna 3 com buraco no 2: ainda e o vizinho da direita.
-        assert_eq!(acha("right"), Some("direita"));
-        assert_eq!(acha("left"), Some("esquerda"));
-        assert_eq!(acha("top"), Some("acima"));
-        // Diagonal nao e vizinho de borda nenhuma.
-        assert_eq!(acha("bottom"), None);
-        assert_eq!(n.len(), 3, "so as tres bordas com vizinho");
+        let lookup = |b: &str| n.iter().find(|(e, _)| *e == b).map(|(_, h)| h.as_str());
+        // Column 3 with a gap at 2: still the right-hand neighbor.
+        assert_eq!(lookup("right"), Some("direita"));
+        assert_eq!(lookup("left"), Some("esquerda"));
+        assert_eq!(lookup("top"), Some("acima"));
+        // A diagonal is not a neighbor on any edge.
+        assert_eq!(lookup("bottom"), None);
+        assert_eq!(n.len(), 3, "only the three edges with a neighbor");
     }
 
     #[test]
-    fn o_mais_proximo_ganha() {
+    fn the_closest_wins() {
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
@@ -885,8 +893,9 @@ addr = "la.local"
     }
 
     #[test]
-    fn sem_grade_nenhuma_nao_ha_vizinho() {
-        // Config antiga, sem `layout`: a borda explicita continua valendo.
+    fn no_grid_means_no_neighbor() {
+        // Old config, without `layout`: the explicit edge still applies.
+
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
@@ -902,7 +911,7 @@ addr = "la.local"
     }
 
     #[test]
-    fn mapa_de_canais_por_nome_de_dispositivo() {
+    fn channel_map_by_device_name() {
         let t = r#"
             [[hosts]]
             name = "a"
