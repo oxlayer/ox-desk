@@ -106,7 +106,7 @@ path = "src/bin/kvm.rs"
 
 [[bin]]
 name = "logistream-ponte"
-path = "src/bin/ponte.rs"
+path = "src/bin/bridge.rs"
 
 [[bin]]
 name = "logistream-view"
@@ -130,7 +130,7 @@ path = "src/bin/capture-probe.rs"
 
 [[bin]]
 name = "logistream-probe-sistema"
-path = "src/bin/sistema-probe.rs"
+path = "src/bin/system-probe.rs"
 
 [[bin]]
 name = "logistream-probe-input"
