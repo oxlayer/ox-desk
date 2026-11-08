@@ -21,6 +21,7 @@ pub mod capture;
 pub mod capture_input;
 pub mod capture_win;
 pub mod cursor;
+pub mod cursor_win;
 pub mod decode;
 pub mod decode_nv;
 pub mod encode;

@@ -313,7 +313,11 @@ impl Screen {
             if info.LastMouseUpdateTime != 0 {
                 self.system_visible = info.PointerPosition.Visible.as_bool();
             }
-            self.visible = self.shape.is_none() || self.system_visible;
+            // And the overlay on the desktop (`cursor_win`) wins over both:
+            // it draws a REAL window, which DXGI captures like any other.
+            // Composing here as well would send two arrows to the viewer.
+            self.visible = (self.shape.is_none() || self.system_visible)
+                && !crate::cursor_win::drawing();
 
             // If the system HAS a cursor, it sends the shape when it
             // changes, and drawing its shape is better than ours (hand, text

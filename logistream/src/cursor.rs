@@ -328,6 +328,48 @@ pub fn builtin_arrow() -> Shape {
     Shape { kind: ShapeKind::Mono, w, h: h * 2, pitch, bytes, hot: (0, 0) }
 }
 
+/// The same arrow, as premultiplied BGRA for a layered window.
+///
+/// `builtin_arrow` serves the compositing path, which speaks DXGI's
+/// monochrome AND/XOR. `UpdateLayeredWindow` speaks 32-bit BGRA with
+/// premultiplied alpha. Both read the SAME `ARROW` table on purpose: the
+/// cursor drawn on the desktop and the cursor composed into the frame are
+/// the same picture, and a second table would let them drift apart.
+///
+/// `scale` repeats each pixel N times. 1 is the size of the classic
+/// Windows arrow (12x19 of visible arrow inside its 32x32 bitmap).
+pub fn arrow_bgra(scale: u32) -> (u32, u32, Vec<u8>) {
+    let scale = scale.max(1);
+    let w = ARROW[0].len() as u32 * scale;
+    let h = ARROW.len() as u32 * scale;
+    let mut px = vec![0u8; (w * h * 4) as usize];
+
+    for (y, row) in ARROW.iter().enumerate() {
+        for (x, c) in row.bytes().enumerate() {
+            // PREMULTIPLIED, which is why transparent stays 0,0,0,0 and is
+            // not "black with alpha 0": with premultiplied alpha the latter
+            // is a legal colour, and `UpdateLayeredWindow` would render it
+            // as a dark halo around the arrow.
+            let (b, g, r) = match c {
+                b'.' => continue,
+                b'K' => (0u8, 0u8, 0u8),
+                _ => (255u8, 255u8, 255u8),
+            };
+            for dy in 0..scale {
+                for dx in 0..scale {
+                    let o = (((y as u32 * scale + dy) * w + x as u32 * scale + dx) * 4) as usize;
+                    px[o] = b;
+                    px[o + 1] = g;
+                    px[o + 2] = r;
+                    px[o + 3] = 0xFF;
+                }
+            }
+        }
+    }
+
+    (w, h, px)
+}
+
 #[cfg(test)]
 mod arrow_tests {
     use super::*;
@@ -343,6 +385,35 @@ mod arrow_tests {
         assert_eq!(at(0, 0), 0xFF, "the tip is the white outline");
         assert_eq!(at(1, 2), 0x00, "the body is black");
         assert_eq!(at(11, 0), 100, "outside the arrow the background stays intact");
+    }
+
+    #[test]
+    fn the_bgra_arrow_is_the_same_picture_as_the_mono_one() {
+        let (w, h, px) = arrow_bgra(1);
+        assert_eq!((w, h), (12, 19), "the classic arrow's size");
+        assert_eq!(px.len(), (12 * 19 * 4) as usize);
+        let at = |x: u32, y: u32| {
+            let o = ((y * w + x) * 4) as usize;
+            (px[o], px[o + 1], px[o + 2], px[o + 3])
+        };
+        assert_eq!(at(0, 0), (0xFF, 0xFF, 0xFF, 0xFF), "the tip is the white outline");
+        assert_eq!(at(1, 2), (0, 0, 0, 0xFF), "the body is black and opaque");
+        // The one that matters for a layered window: outside the arrow
+        // EVERY channel is zero, not just alpha.
+        assert_eq!(at(11, 0), (0, 0, 0, 0), "outside the arrow nothing is painted");
+    }
+
+    #[test]
+    fn scaling_repeats_pixels_and_keeps_the_hole_transparent() {
+        let (w, h, px) = arrow_bgra(3);
+        assert_eq!((w, h), (36, 57));
+        let alpha = |x: u32, y: u32| px[(((y * w + x) * 4) + 3) as usize];
+        for y in 0..3 {
+            for x in 0..3 {
+                assert_eq!(alpha(x, y), 0xFF, "the tip became a 3x3 block at {x},{y}");
+            }
+        }
+        assert_eq!(alpha(35, 0), 0, "and the transparent part stayed transparent");
     }
 
     #[test]
