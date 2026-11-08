@@ -105,6 +105,45 @@ if out=$(cargo build --release --manifest-path stream/Cargo.toml 2>&1 &&
          mkdir -p ~/.local/state 2>&1); then ok; else erro "$out"; fi
 
 # ---------- windows ----------
+# Removes every leftover `<name>.new.exe` on Windows.
+#
+# The Windows SFTP server REFUSES to overwrite: `Overwriting an existing
+# file is not supported`, with no filename in the message. Six steps below
+# upload to a fixed `.new.exe`, so one file left by an interrupted deploy
+# blocks the next one -- and because the message names nothing, it sent me
+# chasing three different steps for a single cause.
+#
+# Cleaning once at the top of the Windows section was not enough: whatever
+# leaves the file does it DURING the run. So the cleanup lives next to the
+# operation it protects, called by `envia` immediately before each upload.
+#
+# No variable is interpolated into this heredoc, on purpose: an expanding
+# heredoc is how this file broke once already.
+limpa_novos() {
+  { cat <<'PS1' | psrun; } 2>&1
+$d = Join-Path $env:LOCALAPPDATA 'oxdesk'
+$sobrou = @()
+foreach ($n in 'oxdesk','oxdesk-agent','oxdesk-ota','oxdesk-view','oxdesk-bridge','oxdesk-host') {
+  $p = Join-Path $d ($n + '.new.exe')
+  if (Test-Path $p) {
+    Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    try { Remove-Item -Force $p -ErrorAction Stop } catch { }
+    if (Test-Path $p) { $sobrou += $p }
+  }
+}
+if ($sobrou.Count) { Write-Output ('ERROR: still in the way: ' + ($sobrou -join ', ')); exit 1 }
+PS1
+}
+
+# Sends a signed binary to Windows as `<name>.new.exe`, clearing the way
+# first and naming the file when it cannot.
+envia() {
+  local src="$1" nome="$2" limpo
+  limpo=$(limpa_novos)
+  if printf '%s' "$limpo" | grep -q 'ERROR'; then printf '%s\n' "$limpo"; return 1; fi
+  timeout 180 scp -q "$src" "windows-host:C:/Users/user/AppData/Local/oxdesk/$nome.new.exe" 2>&1
+}
+
 passo "windows: build"
 if out=$(cargo build --release --target x86_64-pc-windows-gnu --manifest-path oxdesk/Cargo.toml 2>&1); then ok; else erro "$out"; fi
 
@@ -116,7 +155,7 @@ passo "windows: sign"
 if out=$(cp "$EXE" "$ASSINADO" && bash scripts/sign-windows.sh "$ASSINADO" 2>&1); then ok; else erro "$out"; fi
 
 passo "windows: upload and swap"
-if out=$(timeout 120 scp -q "$ASSINADO" 'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk.new.exe' 2>&1); then
+if out=$(envia "$ASSINADO" oxdesk); then
   out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
 $novo = Join-Path $dst 'oxdesk.new.exe'
@@ -171,8 +210,7 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   AG=agent/target/x86_64-pc-windows-gnu/release/oxdesk-agent.exe
   AGSIG=$(mktemp -u /tmp/oxdesk-agent-assinado-XXXX.exe)
   if out=$(cp "$AG" "$AGSIG" && bash scripts/sign-windows.sh "$AGSIG" 2>&1 &&
-           timeout 120 scp -q "$AGSIG" \
-             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-agent.new.exe' 2>&1); then
+           envia "$AGSIG" oxdesk-agent); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
 $novo = Join-Path $dst 'oxdesk-agent.new.exe'
@@ -212,13 +250,8 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path ota/Cargo.toml 2>&1); then
   OT=ota/target/x86_64-pc-windows-gnu/release/oxdesk-ota.exe
   OTSIG=$(mktemp -u /tmp/oxdesk-ota-assinado-XXXX.exe)
-  limpa=$({ cat <<'PS1' | psrun; } 2>&1
-Remove-Item (Join-Path $env:LOCALAPPDATA 'oxdesk\oxdesk-ota.new.exe') -ErrorAction SilentlyContinue
-PS1
-)
   if out=$(cp "$OT" "$OTSIG" && bash scripts/sign-windows.sh "$OTSIG" 2>&1 &&
-           timeout 120 scp -q "$OTSIG" \
-             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-ota.new.exe' 2>&1); then
+           envia "$OTSIG" oxdesk-ota); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
 $novo = Join-Path $dst 'oxdesk-ota.new.exe'
@@ -253,8 +286,7 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   VW=stream/target/x86_64-pc-windows-gnu/release/oxdesk-view.exe
   VWSIG=$(mktemp -u /tmp/oxdesk-view-assinado-XXXX.exe)
   if out=$(cp "$VW" "$VWSIG" && bash scripts/sign-windows.sh "$VWSIG" 2>&1 &&
-           timeout 180 scp -q "$VWSIG" \
-             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-view.new.exe' 2>&1); then
+           envia "$VWSIG" oxdesk-view); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
 $novo = Join-Path $dst 'oxdesk-view.new.exe'
@@ -293,8 +325,7 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   PT=stream/target/x86_64-pc-windows-gnu/release/oxdesk-bridge.exe
   PTSIG=$(mktemp -u /tmp/oxdesk-bridge-assinado-XXXX.exe)
   if out=$(cp "$PT" "$PTSIG" && bash scripts/sign-windows.sh "$PTSIG" 2>&1 &&
-           timeout 180 scp -q "$PTSIG" \
-             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-bridge.new.exe' 2>&1); then
+           envia "$PTSIG" oxdesk-bridge); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
 $novo = Join-Path $dst 'oxdesk-bridge.new.exe'
@@ -347,13 +378,8 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   # the `.new.exe` behind and poisons every later deploy. A step that only
   # works if the previous one finished cleanly is not a step, it is a
   # trap.
-  limpa=$({ cat <<'PS1' | psrun; } 2>&1
-Remove-Item (Join-Path $env:LOCALAPPDATA 'oxdesk\oxdesk-host.new.exe') -ErrorAction SilentlyContinue
-PS1
-)
   if out=$(cp "$HOSTEXE" "$HOSTSIG" && bash scripts/sign-windows.sh "$HOSTSIG" 2>&1 &&
-           timeout 180 scp -q "$HOSTSIG" \
-             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-host.new.exe' 2>&1); then
+           envia "$HOSTSIG" oxdesk-host); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
 $novo = Join-Path $dst 'oxdesk-host.new.exe'

@@ -18,6 +18,25 @@ the tests and installing while thinking the binary had been updated
 already cost an hour of confusion about why the validation wasn't
 taking effect.
 
+## 1b. A pipe eats the exit code you were about to trust
+
+`cmd | tail -5` exits with **`tail`'s** status, not `cmd`'s. Three times in
+one day this turned a failure into a green line:
+
+| What ran | What it really did | What the pipe said |
+|---|---|---|
+| `brew install ffmpeg@7 \| tail -25` | failed: `make: *** [frameworkinstallapps] Error 2` | exit 0 |
+| `oxdesk-ota --conferir \| tail -4` | exit 1, repo private without a token | exit 0 |
+| `bash scripts/deploy.sh \| tail -32` | exit 1, one step failed | exit 0 |
+
+The deploy was not even at fault: it ends in `exit "$falhas"`, and the
+pipe discarded it.
+
+So: when the exit code is the thing being checked, do not pipe. Redirect
+to a file and read it, or capture into a variable like the steps in
+`deploy.sh` do, or set `pipefail` and mean it. A filtered command is for
+reading; an unfiltered one is for deciding.
+
 ## 2. A number that matters must appear in the log
 
 The NVENC bitrate target was wrong for weeks — the formula fell to the
