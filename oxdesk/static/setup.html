@@ -56,8 +56,35 @@
   .pronto.on{display:block}
   .pronto b{color:var(--up)}
 
+  /* ---- phases ----
+     Fourteen cards in one flat list is a wall, and the counter said
+     "11 of 12" next to it. Grouping gives the eye somewhere to rest and
+     lets a finished group collapse into one line. */
+  li.fase{margin:18px 0 2px;display:flex;align-items:baseline;gap:10px;
+    background:none;border:0;box-shadow:none;border-radius:0;padding:0 2px}
+  li.fase:first-child{margin-top:0}
+  li.fase h2{font-size:12px;font-weight:620;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--dim);margin:0}
+  li.fase .conta{font:11px/1 var(--mono);color:var(--faint)}
+  li.fase.fechada{cursor:pointer;padding:7px 10px;border-radius:9px;
+    background:color-mix(in srgb,var(--card) 70%,transparent);border:1px solid var(--line)}
+  li.fase.fechada:hover{background:var(--card)}
+  li.fase.fechada:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  li.fase .ver{margin-left:auto;font-size:11px;color:var(--faint)}
+  li.fase .conta.tudook{color:var(--up)}
+
   /* ---- steps ---- */
-  ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+  ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  /* A one-word state, not a log line. The paths, the dylib list and the
+     tailnet address were in every subtitle; the person already knows which
+     machine they are on. They live behind the expansion now. */
+  .tit .est{font-weight:520;font-size:12.5px;color:var(--dim)}
+  .tit .est.falta{color:var(--down)}
+  .tit .est.erro{color:var(--warn)}
+  .tit .est.ok{color:var(--up)}
+  .tecnico{margin:0 0 10px;font:11.5px/1.5 var(--mono);color:var(--faint);
+    background:var(--inset);border:1px solid var(--line);border-radius:8px;
+    padding:8px 10px;overflow-wrap:anywhere}
   li{background:var(--card);border:1px solid var(--line);border-radius:12px;
     box-shadow:var(--shadow);overflow:hidden}
   /* The step where acting makes a difference NOW gets the ring. A wizard
@@ -220,8 +247,8 @@ function row(p, isCurrent){
     n.appendChild(op);
   }
   const d = document.createElement('div');
-  d.className = 'd ' + (p.estado === 'falta' ? 'falta' : p.estado === 'erro' ? 'erro' : '');
-  d.textContent = waiting ? ('espera por: ' + p.esperando) : p.detalhe;
+  d.className = 'est ' + (p.estado === 'falta' ? 'falta' : p.estado === 'erro' ? 'erro' : p.estado === 'ok' ? 'ok' : '');
+  d.textContent = waiting ? ('espera por ' + p.esperando) : PALAVRA[p.estado] || p.estado;
   title.append(n, d);
 
   const ch = document.createElement('div');
@@ -237,6 +264,16 @@ function row(p, isCurrent){
   why.className = 'porque';
   why.textContent = p.porque;
   body.appendChild(why);
+
+  // What used to be the subtitle. It is the machine's own words -- paths,
+  // dylib names, the error a tool printed -- and it belongs to whoever
+  // opened the step, not to everyone scrolling past.
+  if (p.detalhe) {
+    const t = document.createElement('p');
+    t.className = 'tecnico';
+    t.textContent = p.detalhe;
+    body.appendChild(t);
+  }
 
   const fix = p.arrumo || {};
   if (fix.onde) {
@@ -331,6 +368,57 @@ function row(p, isCurrent){
   return li;
 }
 
+// A state is a word, not a sentence. The sentence is the machine's and
+// lives behind the expansion.
+// Finished phases collapse to their header. A healthy machine showed
+// fourteen green cards, and the one asking for action scrolled off -- the
+// same reasoning as `li.ok` taking less room, carried to the group.
+// Clicking a header opens it; the choice is remembered while the page is.
+const abertas = new Set();
+
+const PALAVRA = {
+  ok: 'pronto',
+  falta: 'falta fazer',
+  erro: 'com erro',
+  espera: 'esperando',
+  fora: 'não se aplica',
+};
+
+// Which group each step belongs to. It is a question about reading order
+// for a person, which is why it lives here and not in the daemon.
+//
+// Grouping by the `essencial` flag was tried first and was wrong: on Linux
+// the Logitech receiver, the KVM input access, Wayland and NVENC all come
+// back `essencial: false`, so the product's own core feature landed in a
+// bucket called "Optional". Optional is a property of the STEP -- the row
+// already carries that badge -- not a place in the list.
+const FASES = [
+  ['Instalação',              ['binarios', 'daemon', 'config', 'launchagent', 'bandeja']],
+  ['Permissões e assinatura', ['identidade', 'assinatura', 'gravacao-de-tela',
+                               'acessibilidade', 'chave-admin', 'protetor-de-tela']],
+  ['Teclado e mouse',         ['receptor', 'input-kvm']],
+  ['Tela e vídeo',            ['wayland', 'nvenc', 'ffmpeg', 'tela-virtual']],
+  ['Rede e máquinas',         ['login-remoto', 'sshd', 'pares', 'clipboard', 'tailscale']],
+  ['Atualização',             ['ota']],
+];
+const FASE_OUTROS = 'Outros';
+
+/// Groups in a fixed order, keeping every unknown id rather than dropping
+/// it: a step the daemon gains tomorrow has to appear even if nobody
+/// updated this file.
+function agrupa(passos){
+  const vistos = new Set();
+  const grupos = [];
+  for (const [nome, ids] of FASES) {
+    const itens = ids.map(id => passos.find(x => x.id === id)).filter(Boolean);
+    itens.forEach(p => vistos.add(p.id));
+    if (itens.length) grupos.push([nome, itens]);
+  }
+  const sobra = passos.filter(p => !vistos.has(p.id));
+  if (sobra.length) grupos.push([FASE_OUTROS, sobra]);
+  return grupos;
+}
+
 function render(d, extra){
   const r = d.resumo || {};
   // The role already names the OS ("Ubuntu 26.04 - este PC"); repeating
@@ -371,7 +459,42 @@ function render(d, extra){
     list.appendChild(li);
     return;
   }
-  for (const p of steps) list.appendChild(row(p, p.id === r.proximo));
+  for (const [nome, itens] of agrupa(steps)) {
+    const prontos = itens.filter(x => x.estado === 'ok' || x.estado === 'fora').length;
+    const cab = document.createElement('li');
+    cab.className = 'fase';
+    const h = document.createElement('h2');
+    h.textContent = nome;
+    const c = document.createElement('span');
+    c.className = 'conta' + (prontos === itens.length ? ' tudook' : '');
+    c.textContent = prontos === itens.length
+      ? (itens.length + '/' + itens.length + ' ok')
+      : (prontos + '/' + itens.length);
+    const tudoOk = prontos === itens.length;
+    // An actionable step always shows, even inside a finished phase: the
+    // ring means nothing if the card is hidden.
+    const temAtual = itens.some(x => x.id === r.proximo);
+    const fechada = tudoOk && !abertas.has(nome) && !temAtual;
+    if (fechada) {
+      cab.classList.add('fechada');
+      cab.tabIndex = 0;
+      cab.setAttribute('role', 'button');
+      cab.setAttribute('aria-expanded', 'false');
+      const abre = () => { abertas.add(nome); touched = true; render(d, extra); };
+      cab.onclick = abre;
+      cab.onkeydown = (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); abre(); }
+      };
+      const ver = document.createElement('span');
+      ver.className = 'ver';
+      ver.textContent = 'ver';
+      cab.appendChild(ver);
+    }
+    cab.append(h, c);
+    list.appendChild(cab);
+    if (fechada) continue;
+    for (const p of itens) list.appendChild(row(p, p.id === r.proximo));
+  }
 
   // Scroll the active step into view WHEN IT CHANGES, not on every
   // measurement: a screen that scrolls by itself while the person reads
