@@ -178,7 +178,7 @@ impl Receiver {
             .open_device(api)
             .map_err(|e| format!("abrir {path}: {e}"))?;
         dev.set_blocking_mode(false)
-            .map_err(|e| format!("modo nao-bloqueante: {e}"))?;
+            .map_err(|e| format!("non-blocking mode: {e}"))?;
         Ok(Self { dev, path, product_id })
     }
 
@@ -227,13 +227,13 @@ impl Receiver {
                 continue; // reply from another device on the same receiver
             }
             if r[2] == 0xFF {
-                return Err(format!("erro HID++ 0x{:02x} (func 0x{func:02x})", r[4]));
+                return Err(format!("HID++ error 0x{:02x} (func 0x{func:02x})", r[4]));
             }
             if r[2] == feature_index && r[3] == head {
                 return Ok((r[4..].to_vec(), t0.elapsed().as_secs_f64() * 1000.0));
             }
         }
-        Err("sem resposta".into())
+        Err("no answer".into())
     }
 
     /// ROOT.getFeature -- index of the feature on this device.
@@ -260,7 +260,7 @@ impl Receiver {
         let (r, _) = self.request(slot, 0x00, 0x00, &p)?;
         let idx = *r.first().ok_or("resposta vazia de getFeature")?;
         if idx == 0 {
-            return Err(format!("feature 0x{feature:04x} nao suportado"));
+            return Err(format!("feature 0x{feature:04x} not supported"));
         }
         Ok(idx)
     }
@@ -351,7 +351,7 @@ impl Receiver {
     pub fn device_name(&self, slot: u8) -> Result<String, String> {
         let fi = self.feature_index(slot, FEATURE_DEVICE_NAME)?;
         let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0])?;
-        let len = *r.first().ok_or("getCount vazio")? as usize;
+        let len = *r.first().ok_or("getCount came back empty")? as usize;
         let mut name = String::new();
         let mut at = 0usize;
         while at < len && at < 64 {
@@ -372,7 +372,7 @@ impl Receiver {
         }
         let trimmed = name.trim().to_string();
         if trimmed.is_empty() {
-            Err("nome vazio".into())
+            Err("empty name".into())
         } else {
             Ok(trimmed)
         }
@@ -414,14 +414,14 @@ impl Receiver {
         // 20%, and status 0 ("descarregando", discharging) despite being
         // on the cable.
         let status = match r[2] {
-            0 => "descarregando",
-            1 => "recarregando",
-            2 => "quase cheia",
-            3 => "cheia",
-            4 => "carga lenta",
-            5 => "invalida",
-            6 => "erro",
-            _ => "desconhecido",
+            0 => "discharging",
+            1 => "charging",
+            2 => "almost full",
+            3 => "full",
+            4 => "slow charge",
+            5 => "invalid",
+            6 => "error",
+            _ => "unknown",
         };
         Some(Battery {
             percent: if r[0] > 0 { Some(r[0]) } else { None },
@@ -468,7 +468,7 @@ impl Receiver {
         match self.request(slot, fi, 0x01, &[host - 1, 0, 0]) {
             Ok(_) => Ok(()),
             // No reply is the EXPECTED case here.
-            Err(e) if e == "sem resposta" => Ok(()),
+            Err(e) if e == "no answer" => Ok(()),
             Err(e) => Err(e),
         }
     }
@@ -528,8 +528,8 @@ pub fn control_name(cid: u16) -> &'static str {
         0x00e0 => "Easy-Switch 3",
         0x00e1 => "Backlight -",
         0x00e2 => "Backlight +",
-        0x00e3 => "Faixa anterior",
-        _ => "desconhecido",
+        0x00e3 => "Previous track",
+        _ => "unknown",
     }
 }
 
@@ -551,7 +551,7 @@ impl Receiver {
     pub fn controls(&self, slot: u8) -> Result<Vec<Control>, String> {
         let fi = self.feature_index(slot, FEATURE_REPROG_CONTROLS)?;
         let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0])?;
-        let count = *r.first().ok_or("getCount vazio")?;
+        let count = *r.first().ok_or("getCount came back empty")?;
         let mut out = Vec::new();
         for i in 0..count {
             let (c, _) = self.request(slot, fi, 0x01, &[i, 0, 0])?;
@@ -592,11 +592,11 @@ impl Receiver {
             .controls(slot)?
             .into_iter()
             .find(|c| c.cid == cid)
-            .ok_or_else(|| format!("controle 0x{cid:04x} nao existe neste dispositivo"))?;
+            .ok_or_else(|| format!("control 0x{cid:04x} does not exist on this device"))?;
         if !ctl.reprogrammable {
             return Err(format!(
-                "0x{cid:04x} ({}) nao e reprogramavel: o dispositivo reporta \
-                 flags=0x{:02x}, sem o bit 0x10",
+                "0x{cid:04x} ({}) is not reprogrammable: the device reports \
+                 flags=0x{:02x}, without bit 0x10",
                 control_name(cid),
                 ctl.flags
             ));

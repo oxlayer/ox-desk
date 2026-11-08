@@ -442,20 +442,15 @@ fn sort_entries(v: &mut [Entry]) {
 
 // --- transfer --------------------------------------------------------------
 
-/// A copy requested from the screen. `state` is `andando` (in progress),
-/// `ok` or `erro` -- wire values the page reads.
+/// A copy requested from the screen. `state` is `running`, `ok` or
+/// `error` -- wire values the page reads as CSS classes.
 #[derive(Debug, Clone, Serialize)]
 pub struct Transfer {
     pub id: u64,
-    #[serde(rename = "nome")]
     pub name: String,
-    #[serde(rename = "de")]
     pub from: String,
-    #[serde(rename = "para")]
     pub to: String,
-    #[serde(rename = "estado")]
     pub state: &'static str,
-    #[serde(rename = "detalhe")]
     pub detail: String,
 }
 
@@ -543,7 +538,7 @@ pub fn transfer(
         name: name.clone(),
         from: from.into(),
         to: to.into(),
-        state: "andando",
+        state: "running",
         detail: String::new(),
     });
     let excess = g.len().saturating_sub(MAX_TRANSFERS);
@@ -554,7 +549,7 @@ pub fn transfer(
         (cfg.clone(), to.to_string(), folder.to_string(), remote.addr.clone());
     std::thread::spawn(move || {
         if let Err(e) = sftp_batch(&alias, &addr, &script) {
-            return finish(id, "erro", e);
+            return finish(id, "error", e);
         }
         // Finishing is not arriving: the destination is what answers.
         match entry_in(&cfg, &to, &folder, &name) {
@@ -565,11 +560,11 @@ pub fn transfer(
             }
             Ok(Some(e)) => finish(
                 id,
-                "erro",
+                "error",
                 format!("chegou com {:?} bytes, esperava {:?}", e.size, source.size),
             ),
-            Ok(None) => finish(id, "erro", "o destino nao tem o arquivo".into()),
-            Err(e) => finish(id, "erro", e),
+            Ok(None) => finish(id, "error", "o destino nao tem o arquivo".into()),
+            Err(e) => finish(id, "error", e),
         }
     });
     Ok(id)

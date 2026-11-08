@@ -16,7 +16,7 @@
 //!
 //! Here, both binaries emit the same format by construction.
 //!
-//! JSON keys (`nome`, `receptor`, `receptores`, ...) are the wire format
+//! JSON keys (`name`, `receiver`, `receivers`, ...) are the wire format
 //! and stay as they are. The `error` texts stay pt-BR: they reach the
 //! panel.
 
@@ -131,7 +131,7 @@ pub fn hosts(api: &HidApi, slot: u8) -> Value {
 
         list.push(json!({
             "host": i + 1,
-            "nome": name,
+            "name": name,
             "bus": match bus { 0x01 => "unifying", 0x04 => "bluetooth", _ => "?" },
             "bus_byte": bus,
         }));
@@ -210,7 +210,7 @@ pub fn devices(api: &HidApi) -> Value {
     let links = Receiver::open_all(api);
     if links.is_empty() {
         return json!({ "ok": false, "interfaces": interfaces,
-                       "error": "nenhum receptor HID++ Logitech conectado aqui" });
+                       "error": "no Logitech HID++ receiver connected here" });
     }
 
     // Efficient path: 250 ms ping first, and host_info (more expensive)
@@ -234,7 +234,7 @@ pub fn devices(api: &HidApi) -> Value {
                 }
                 json!({
                     "slot": d.slot,
-                    "receptor": rid,
+                    "receiver": rid,
                     "name": d.name,
                     "online": true,
                     "paired": true,
@@ -250,7 +250,7 @@ pub fn devices(api: &HidApi) -> Value {
                 let remembered = known.get(&format!("{rid}/{}", d.slot));
                 json!({
                     "slot": d.slot,
-                    "receptor": rid,
+                    "receiver": rid,
                     "name": remembered,
                     "online": false,
                     "paired": remembered.is_some(),
@@ -260,7 +260,7 @@ pub fn devices(api: &HidApi) -> Value {
         .collect();
     write_names(&seen);
     json!({ "ok": true, "interfaces": interfaces,
-            "receptores": links.len(), "slots": slots })
+            "receivers": links.len(), "slots": slots })
 }
 
 pub fn host_info(api: &HidApi, slot: u8) -> Value {
@@ -283,8 +283,8 @@ pub fn set_host(api: &HidApi, slot: u8, host: u8, confirmed: bool) -> Value {
     // by accident or by distracted typing.
     if !confirmed {
         return fail(
-            "falta --confirm: esta acao e irreversivel \
-             (o dispositivo sai deste receptor)",
+            "--confirm is missing: this action cannot be undone \
+             (the device leaves this receiver)",
         );
     }
     let link = match Receiver::open(api) {

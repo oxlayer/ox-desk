@@ -9,14 +9,12 @@ use serde::Serialize;
 
 const TEXT: &str = include_str!("../CHANGELOG.md");
 
-/// The wire names (`data`, `titulo`, `descricao`) are read by the panel.
+/// The wire names are the Rust names: the panel reads `date`, `title`
+/// and `description`.
 #[derive(Debug, Serialize, PartialEq)]
 pub struct Entry {
-    #[serde(rename = "data")]
     pub date: String,
-    #[serde(rename = "titulo")]
     pub title: String,
-    #[serde(rename = "descricao")]
     pub description: String,
 }
 

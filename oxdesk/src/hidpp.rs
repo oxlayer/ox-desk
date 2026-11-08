@@ -217,7 +217,7 @@ pub struct Survey {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Seconds of reading pause left, when paused.
-    #[serde(rename = "pausado_s", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub paused_s: Option<u64>,
 }
 

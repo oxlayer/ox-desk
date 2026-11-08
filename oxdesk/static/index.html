@@ -409,7 +409,7 @@
   .fila{grid-column:1/-1;max-height:96px;overflow:auto;font-size:12.5px;color:var(--dim)}
   .fila:empty{display:none}
   .fila div{padding:2px 4px}
-  .fila .ok{color:var(--up)} .fila .erro{color:var(--down)}
+  .fila .ok{color:var(--up)} .fila .error{color:var(--down)}
   .palco canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
     outline:0;display:none;cursor:default}
   .palco canvas.on{display:block}
@@ -1111,7 +1111,7 @@ async function openTab(host){
   s.notice.textContent = 'Conectando em ' + host + '...';
   s.stats = document.createElement('div'); s.stats.className = 'medida';
   document.getElementById('tela').append(s.canvas, s.notice, s.stats);
-  s.ws = new WebSocket(`ws://127.0.0.1:${d.porta}/${d.token}`);
+  s.ws = new WebSocket(`ws://127.0.0.1:${d.port}/${d.token}`);
   s.ws.binaryType = 'arraybuffer';
   wireVideo(s); wireInput(s);
   s.ws.onclose = () => {
@@ -1192,13 +1192,13 @@ function xferButtons(){
 async function xferQueue(){
   let t = [];
   try{ t = await (await fetch('/api/files/transferencias', {cache:'no-store'})).json(); }catch(e){}
-  const busy = t.some(x => x.estado === 'andando');
-  const label = {andando:'copiando...', ok:'chegou', erro:'falhou'};
+  const busy = t.some(x => x.state === 'running');
+  const label = {running:'copiando...', ok:'chegou', error:'falhou'};
   const queue = document.getElementById('arqfila');
   const lines = t.slice(-4).reverse().map(x =>
-    `<div class="${x.estado}">${esc(x.nome)}: ${esc(x.de)} &rarr; ${esc(x.para)} &middot; ` +
-    `${label[x.estado]}${x.detalhe ? ' &middot; ' + esc(x.detalhe) : ''}</div>`).join('');
-  queue.innerHTML = (XFER.error ? `<div class="erro">${esc(XFER.error)}</div>` : '') + lines;
+    `<div class="${x.state}">${esc(x.name)}: ${esc(x.from)} &rarr; ${esc(x.to)} &middot; ` +
+    `${label[x.state]}${x.detail ? ' &middot; ' + esc(x.detail) : ''}</div>`).join('');
+  queue.innerHTML = (XFER.error ? `<div class="error">${esc(XFER.error)}</div>` : '') + lines;
   if (XFER.wasBusy && !busy){ xferList('esq'); xferList('dir'); }
   XFER.wasBusy = busy;
 }
@@ -1208,8 +1208,8 @@ async function xferCopy(from, to){
   XFER.error = '';
   const r = await fetch('/api/files/transfer', {method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({de:o.host, caminho:o.path.replace(/[\/\\]+$/, '') + '/' + e.name,
-      para:XFER[to].host, pasta:XFER[to].path})});
+    body: JSON.stringify({from:o.host, path:o.path.replace(/[\/\\]+$/, '') + '/' + e.name,
+      to:XFER[to].host, folder:XFER[to].path})});
   if (!r.ok) XFER.error = (await r.json()).error || ('HTTP ' + r.status);
   xferQueue();
 }
@@ -1283,14 +1283,14 @@ async function whatsNew(){
   // per-person convenience, not state that needs to last.
   let seen = null;
   try{ seen = localStorage.getItem('oxdesk.novidades.visto'); }catch(e){}
-  const cut = items.findIndex(i => i.titulo === seen);
+  const cut = items.findIndex(i => i.title === seen);
   const unseen = cut < 0 ? (seen ? items.length : 0) : cut;
 
   document.getElementById('novlist').innerHTML = items.map((i, n) =>
     `<div class="novitem${n < unseen ? ' novo' : ''}">` +
     `<div class="d">${esc(i.data)}</div>` +
-    `<div class="t">${esc(i.titulo)}</div>` +
-    `<div class="x">${esc(i.descricao)}</div></div>`).join('');
+    `<div class="t">${esc(i.title)}</div>` +
+    `<div class="x">${esc(i.description)}</div></div>`).join('');
 
   const badge = document.getElementById('novbadge');
   badge.textContent = unseen;
@@ -1300,7 +1300,7 @@ async function whatsNew(){
     const pop = document.getElementById('novpop');
     pop.classList.toggle('on');
     if (pop.classList.contains('on')){
-      try{ localStorage.setItem('oxdesk.novidades.visto', items[0].titulo); }catch(e){}
+      try{ localStorage.setItem('oxdesk.novidades.visto', items[0].title); }catch(e){}
       badge.hidden = true;
       for (const el of pop.querySelectorAll('.novitem.novo')) el.classList.remove('novo');
     }
@@ -1359,7 +1359,7 @@ function lyEdges(edges, enabled){
   // reason: the grid must not silently lie about a side that will not work.
   box.innerHTML = edges.map(e => {
     const edgeText = `${esc(edgeNames[e.edge] || e.edge)} &rarr; ${esc(e.target)}`;
-    return e.ativa === false
+    return e.active === false
       ? `<span class="lyedge off" title="sem ssh+agent: nao ha quem devolva o dispositivo, ` +
         `entao nao criamos borda para la">${edgeText} &middot; nao recebe</span>`
       : `<span class="lyedge">${edgeText}</span>`;
@@ -1394,7 +1394,7 @@ async function layout(){
     }
     if (d.follow_leader) sel.value = d.follow_leader;
     document.getElementById('lyfollowon').checked = !!d.follow_enabled;
-    PAUSED_S = d.hidpp_pausado_s ?? null;
+    PAUSED_S = d.hidpp_paused_s ?? null;
     paintPause();
   }catch(e){
     document.getElementById('lymeta').textContent = 'inacessivel: ' + e.message;
@@ -1407,7 +1407,7 @@ async function lySave(){
   try{
     const r = await fetch('/api/layout', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({posicoes: positions})
+      body: JSON.stringify({positions: positions})
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
@@ -1429,7 +1429,7 @@ document.getElementById('lykvmon').addEventListener('change', async ev => {
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-    meta.textContent = d.nota;
+    meta.textContent = d.note;
     layout();
   }catch(e){
     meta.textContent = e.message;
@@ -1449,7 +1449,7 @@ async function saveFollow(){
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-    meta.textContent = d.nota;
+    meta.textContent = d.note;
   }catch(e){ meta.textContent = e.message; }
 }
 document.getElementById('lyfollowon').addEventListener('change', saveFollow);
@@ -1801,7 +1801,7 @@ async function pauseHidpp(minutes){
       body: JSON.stringify({ minutes: minutes })
     });
     const d = await r.json();
-    PAUSED_S = d.pausado_s ?? null;
+    PAUSED_S = d.paused_s ?? null;
     paintPause();
   }catch(e){ document.getElementById('pausamsg').textContent = e.message; }
 }

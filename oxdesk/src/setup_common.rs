@@ -154,7 +154,7 @@ pub fn tailscale_verdict(json: &str, app_installed: bool) -> Check {
 /// per OS: on Windows a machine with no monitor can grow one in software
 /// (`virtual-display`), and on macOS it cannot -- someone has to plug
 /// something in (`display`).
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn monitors_verdict(id: &str, output: &str) -> Check {
     match output.trim().parse::<u32>() {
         Ok(0) => Check::missing(id, "no monitor present: the remote screen receives no frames"),

@@ -2,7 +2,7 @@
 //!
 //! It comes from an environment variable and not from `git` directly
 //! because the Mac builds from an rsync copy WITHOUT `.git` -- calling git
-//! there would give "desconhecido" precisely on the machine that once fell
+//! there would give "unknown" precisely on the machine that once fell
 //! behind. Whoever triggers the deploy knows the commit; it passes it on.
 fn main() {
     println!("cargo:rerun-if-env-changed=OXDESK_BUILD");
@@ -17,7 +17,7 @@ fn main() {
             .ok()
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_else(|| "desconhecido".into())
+            .unwrap_or_else(|| "unknown".into())
     });
     println!("cargo:rustc-env=OXDESK_BUILD={v}");
 

@@ -319,7 +319,6 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
 /// What the tab needs to talk to the bridge.
 #[derive(serde::Serialize)]
 pub struct Session {
-    #[serde(rename = "porta")]
     pub port: u16,
     pub token: String,
 }

@@ -363,7 +363,7 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     }
     let incoming: serde_json::Value = match serde_json::from_str(&body) {
         Ok(v) => v,
-        Err(e) => return err_json(req, 400, &format!("JSON invalido: {e}")),
+        Err(e) => return err_json(req, 400, &format!("invalid JSON: {e}")),
     };
     let serde_json::Value::Object(patch) = incoming else {
         return err_json(req, 400, "esperado um objeto JSON");
@@ -376,11 +376,11 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         };
         let mut base = match serde_json::to_value(&*guard) {
             Ok(serde_json::Value::Object(m)) => m,
-            _ => return err_json(req, 500, "config atual nao serializa"),
+            _ => return err_json(req, 500, "the current config does not serialize"),
         };
         for (k, v) in patch {
             if !base.contains_key(&k) {
-                return err_json(req, 400, &format!("campo desconhecido: {k}"));
+                return err_json(req, 400, &format!("unknown field: {k}"));
             }
             base.insert(k, v);
         }
@@ -389,10 +389,10 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 
     let next: Config = match serde_json::from_value(merged) {
         Ok(c) => c,
-        Err(e) => return err_json(req, 422, &format!("config resultante invalida: {e}")),
+        Err(e) => return err_json(req, 422, &format!("the resulting config is invalid: {e}")),
     };
     if next.port == 0 {
-        return err_json(req, 422, "port invalida");
+        return err_json(req, 422, "invalid port");
     }
     if next.hosts.is_empty() {
         return err_json(req, 422, "precisa de ao menos um host");
@@ -409,7 +409,7 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     };
     match cfg.write() {
         Ok(mut g) => *g = next,
-        Err(_) => return err_json(req, 500, "nao consegui aplicar"),
+        Err(_) => return err_json(req, 500, "could not apply it"),
     }
     invalidate(cache);
     ok_json(req, body);
@@ -428,7 +428,7 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
     }
     let fr: focus::FocusRequest = match serde_json::from_str(&body) {
         Ok(v) => v,
-        Err(e) => return err_json(req, 400, &format!("JSON invalido: {e}")),
+        Err(e) => return err_json(req, 400, &format!("invalid JSON: {e}")),
     };
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
@@ -450,7 +450,7 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
             Ok(dest) => serde_json::json!({
                 "plan": { "host": fr.host, "route": "lan" },
                 "executed": true,
-                "results": [format!("input indo para {} ({dest})", fr.host)],
+                "results": [format!("input going to {} ({dest})", fr.host)],
             }),
             Err(e) => serde_json::json!({
                 "plan": { "host": fr.host, "route": "lan" },
@@ -513,7 +513,7 @@ fn post_remap(mut req: Request) {
     }
     let b: Body = match serde_json::from_str(&body) {
         Ok(v) => v,
-        Err(e) => return err_json(req, 400, &format!("JSON invalido: {e}")),
+        Err(e) => return err_json(req, 400, &format!("invalid JSON: {e}")),
     };
     if !b.confirm {
         return err_json(req, 400, "falta confirm: isto muda o comportamento fisico do botao");
@@ -565,7 +565,7 @@ fn post_clipboard_files(mut req: Request) {
         .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
         .unwrap_or_default();
     if paths.is_empty() {
-        return err_json(req, 400, "informe {\"paths\": [...]}");
+        return err_json(req, 400, "send {\"paths\": [...]}");
     }
     match clip_files::apply_local(&paths) {
         Ok(()) => ok_json(req, "{\"ok\":true}".into()),
@@ -586,7 +586,7 @@ fn post_clipboard_send(mut req: Request, cfg: &RwLock<Config>) {
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(host) = v.get("host").and_then(|h| h.as_str()).map(String::from) else {
-        return err_json(req, 400, "informe {\"host\": \"<nome>\"}");
+        return err_json(req, 400, "send {\"host\": \"<name>\"}");
     };
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
@@ -614,7 +614,7 @@ fn post_transfer(mut req: Request, cfg: &RwLock<Config>) {
         Ok(g) => g.clone(),
         Err(_) => return err_json(req, 500, "config lock poisoned"),
     };
-    match files::transfer(&snap, &field("de"), &field("caminho"), &field("para"), &field("pasta")) {
+    match files::transfer(&snap, &field("from"), &field("path"), &field("to"), &field("folder")) {
         Ok(id) => ok_json(req, serde_json::json!({ "id": id }).to_string()),
         Err(e) => err_json(req, 409, &e),
     }
@@ -627,7 +627,7 @@ fn post_session(mut req: Request, cfg: &RwLock<Config>) {
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(host) = v.get("host").and_then(|h| h.as_str()).map(String::from) else {
-        return err_json(req, 400, "informe {\"host\": \"<nome>\"}");
+        return err_json(req, 400, "send {\"host\": \"<name>\"}");
     };
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
@@ -649,7 +649,7 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(host) = v.get("host").and_then(|h| h.as_str()).map(String::from) else {
-        return err_json(req, 400, "informe {\"host\": \"<nome>\"}");
+        return err_json(req, 400, "send {\"host\": \"<name>\"}");
     };
     // Omitting an option means the default: control yes, sound and
     // microphone no. Turning audio on without asking is the kind of
@@ -693,8 +693,8 @@ fn post_hidpp_pause(mut req: Request) {
     }
     ok_json(
         req,
-        serde_json::json!({ "ok": true, "pausado_s": remaining,
-            "nota": if remaining.is_some() {
+        serde_json::json!({ "ok": true, "paused_s": remaining,
+            "note": if remaining.is_some() {
                 "a sondagem parou; trocar de canal continua funcionando"
             } else {
                 "sondagem retomada"
@@ -735,11 +735,11 @@ fn post_follow(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             ok_json(
                 req,
                 serde_json::json!({ "ok": true, "enabled": on, "leader": leader_name,
-                    "nota": if on { "ligado agora; o laco le o estado a cada passada" } else { "desligado agora -- a proxima passada nao age" } })
+                    "note": if on { "on now; the loop reads the state on every pass" } else { "off now -- the next pass does nothing" } })
                 .to_string(),
             )
         }
-        Err(e) => err_json(req, 500, &format!("gravou mas nao recarregou: {e}")),
+        Err(e) => err_json(req, 500, &format!("written but not reloaded: {e}")),
     }
 }
 
@@ -751,7 +751,7 @@ fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(on) = v.get("enabled").and_then(|x| x.as_bool()) else {
-        return err_json(req, 400, "informe {\"enabled\": true|false}");
+        return err_json(req, 400, "send {\"enabled\": true|false}");
     };
     if let Err(e) = config::save_border_enabled(on) {
         return err_json(req, 500, &e);
@@ -768,19 +768,19 @@ fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             ok_json(
                 req,
                 serde_json::json!({ "ok": true, "enabled": on,
-                    "nota": if on {
-                        "ligada; se o daemon subiu sem borda, reinicie para criar as barreiras"
+                    "note": if on {
+                        "on; if the daemon started without edge detection, restart it to create the barriers"
                     } else {
-                        "desligada agora -- a proxima encostada nao troca mais"
+                        "off now -- the next touch of the edge will not switch"
                     } })
                 .to_string(),
             )
         }
-        Err(e) => err_json(req, 500, &format!("gravou mas nao recarregou: {e}")),
+        Err(e) => err_json(req, 500, &format!("written but not reloaded: {e}")),
     }
 }
 
-/// POST /api/layout {"posicoes": {"<host>": {"col": N, "row": M}}}
+/// POST /api/layout {"positions": {"<host>": {"col": N, "row": M}}}
 ///
 /// Saves by surgical TOML editing, not by reserializing: the config's
 /// comments are the record of why each choice was made, and that is not
@@ -791,8 +791,8 @@ fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-    let Some(obj) = v.get("posicoes").and_then(|p| p.as_object()) else {
-        return err_json(req, 400, "informe {\"posicoes\": {\"<host>\": {\"col\":N,\"row\":M}}}");
+    let Some(obj) = v.get("positions").and_then(|p| p.as_object()) else {
+        return err_json(req, 400, "send {\"positions\": {\"<host>\": {\"col\":N,\"row\":M}}}");
     };
     let mut pos = std::collections::BTreeMap::new();
     for (name, c) in obj {
@@ -800,7 +800,7 @@ fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             c.get("col").and_then(|x| x.as_i64()),
             c.get("row").and_then(|x| x.as_i64()),
         ) else {
-            return err_json(req, 400, &format!("posicao invalida para '{name}'"));
+            return err_json(req, 400, &format!("invalid position for '{name}'"));
         };
         pos.insert(name.clone(), config::Cell { col: col as i32, row: row as i32 });
     }
@@ -814,7 +814,7 @@ fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             let edges: Vec<_> = reloaded
                 .border_edges_full()
                 .into_iter()
-                .map(|(e, t, ok)| serde_json::json!({ "edge": e, "target": t, "ativa": ok }))
+                .map(|(e, t, ok)| serde_json::json!({ "edge": e, "target": t, "active": ok }))
                 .collect();
             if let Ok(mut g) = cfg.write() {
                 *g = reloaded;
@@ -826,11 +826,11 @@ fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             ok_json(
                 req,
                 serde_json::json!({ "ok": true, "edges": edges,
-                    "nota": "a grade vale agora; barreiras novas exigem reiniciar o daemon" })
+                    "note": "a grade vale agora; barreiras novas exigem reiniciar o daemon" })
                 .to_string(),
             )
         }
-        Err(e) => err_json(req, 500, &format!("gravou mas nao recarregou: {e}")),
+        Err(e) => err_json(req, 500, &format!("written but not reloaded: {e}")),
     }
 }
 
@@ -849,7 +849,7 @@ fn post_kill(mut req: Request, cfg: &RwLock<Config>) {
         v.get("host").and_then(|h| h.as_str()).map(String::from),
         v.get("pid").and_then(|p| p.as_u64()).map(|p| p as u32),
     ) else {
-        return err_json(req, 400, "informe {\"host\": \"<nome>\", \"pid\": <n>}");
+        return err_json(req, 400, "send {\"host\": \"<name>\", \"pid\": <n>}");
     };
     let force = v.get("force").and_then(|f| f.as_bool()).unwrap_or(false);
     let confirm = v.get("confirm").and_then(|c| c.as_bool()).unwrap_or(false);
@@ -1040,7 +1040,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 
         // Where input is going, and through which mechanism.
         //
-        // The tray NEEDS this. It only showed "Trazer para aqui" when some
+        // The tray NEEDS this. It only showed "Bring it here" when some
         // device appeared offline -- a signal that worked for HID++, where
         // the device vanishes from our receiver when it switches channel.
         // In LAN mode the devices NEVER leave here, which is the point:
@@ -1156,7 +1156,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             let edges: Vec<_> = snap
                 .border_edges_full()
                 .into_iter()
-                .map(|(e, t, ok)| serde_json::json!({ "edge": e, "target": t, "ativa": ok }))
+                .map(|(e, t, ok)| serde_json::json!({ "edge": e, "target": t, "active": ok }))
                 .collect();
             let body = serde_json::json!({
                 "hosts": hosts,
@@ -1164,7 +1164,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 "border_enabled": snap.input.border.enabled,
                 "follow_enabled": snap.input.follow.enabled,
                 "follow_leader": snap.input.follow.leader,
-                "hidpp_pausado_s": hidpp::pause_remaining_s(),
+                "hidpp_paused_s": hidpp::pause_remaining_s(),
                 "devices": snap.devices.iter().map(|d| d.name.clone()).collect::<Vec<_>>(),
             });
             ok_json(req, body.to_string())
@@ -1225,6 +1225,6 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             )
         }
 
-        _ => err_json(req, 404, "nao encontrado"),
+        _ => err_json(req, 404, "not found"),
     }
 }
