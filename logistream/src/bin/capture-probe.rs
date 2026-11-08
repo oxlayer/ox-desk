@@ -12,28 +12,40 @@
 //!
 //!   cargo run --release --bin capture-probe -- [frames] [connector]
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::time::{Duration, Instant};
+// The whole file is Linux -- one `cfg` over the group, not one per
+// line. The stub `main` below is the only thing that survives on
+// another target.
+#[cfg(target_os = "linux")]
+use {
+    std::cell::RefCell,
+    std::rc::Rc,
+    std::time::{Duration, Instant},
 
-use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
-use dbus::blocking::Connection;
-use dbus::message::MatchRule;
-use dbus::Path;
+    dbus::blocking::stdintf::org_freedesktop_dbus::Properties,
+    dbus::blocking::Connection,
+    dbus::message::MatchRule,
+    dbus::Path,
 
-use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
-use pipewire::spa::param::video::VideoFormat;
-use pipewire::spa::pod::{self, Pod};
-use pipewire::spa::sys;
-use pipewire::spa::utils::{Direction, SpaTypes};
-use pipewire::stream::{Stream, StreamFlags};
+    pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType},
+    pipewire::spa::param::video::VideoFormat,
+    pipewire::spa::pod::{self, Pod},
+    pipewire::spa::sys,
+    pipewire::spa::utils::{Direction, SpaTypes},
+    pipewire::stream::{Stream, StreamFlags},
+};
 
+#[cfg(target_os = "linux")]
 const SC: &str = "org.gnome.Mutter.ScreenCast";
+#[cfg(target_os = "linux")]
 const SC_OBJ: &str = "/org/gnome/Mutter/ScreenCast";
+#[cfg(target_os = "linux")]
 const SESSION: &str = "org.gnome.Mutter.ScreenCast.Session";
+#[cfg(target_os = "linux")]
 const STREAM: &str = "org.gnome.Mutter.ScreenCast.Stream";
+#[cfg(target_os = "linux")]
 const T: Duration = Duration::from_secs(10);
 
+#[cfg(target_os = "linux")]
 #[derive(Default)]
 struct State {
     frames: u64,
@@ -46,6 +58,19 @@ struct State {
     intervals_ms: Vec<f64>,
 }
 
+// Only on Linux, and the stub says so instead of the crate
+// failing to build: the probe talks to Mutter over D-Bus and takes
+// frames over PipeWire, neither of which exists on Windows. Same
+// shape as `kvm.rs`, which solved this first -- and it is what lets
+// check.sh cross-build the WHOLE crate instead of a hand-picked
+// list of binaries.
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("logistream-probe-capture so roda no Linux: ele fala com o Mutter por D-Bus e recebe os quadros por PipeWire");
+    std::process::exit(1);
+}
+
+#[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let target: u64 = a.first().and_then(|v| v.parse().ok()).unwrap_or(120);
@@ -218,5 +243,6 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 #[allow(unused_imports)]
 use sys as _;

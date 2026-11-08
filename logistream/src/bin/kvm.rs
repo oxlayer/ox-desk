@@ -32,17 +32,26 @@
 //! shows the last line of this process's log to the person when it exits
 //! early ("o KVM saiu (...) antes de agarrar: {line}", logid/src/kvm.rs).
 
+// All of these are consumed by the Linux `main` alone. Without the cfg
+// they come out as four `unused import` warnings on the Windows build --
+// which nobody saw while that build was not part of check.sh.
+#[cfg(target_os = "linux")]
 use std::collections::HashSet;
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
 use bytes::BytesMut;
+#[cfg(target_os = "linux")]
 use logistream::input::Event;
+#[cfg(target_os = "linux")]
 use logistream::net;
 
 #[cfg(target_os = "linux")]
 use logistream::capture_input::{is_rescue, Device};
 
 /// Default names, if nobody passes `--dispositivo`.
+#[cfg(target_os = "linux")]
 const DEFAULT: [&str; 2] = ["MX Keys", "MX Anywhere"];
 
 #[cfg(not(target_os = "linux"))]
