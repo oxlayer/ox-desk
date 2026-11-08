@@ -24,6 +24,18 @@ if ($Cleanup) {
   }
   if (Test-Path $old) { Remove-Item -Recurse -Force $old; Say ('removed ' + $old) }
   if ((Get-MpPreference).ExclusionPath -contains $old) { Remove-MpPreference -ExclusionPath $old; Say 'removed the old Defender exclusion' }
+  # Same rule as ubuntu.sh: %APPDATA%\logi goes only against evidence at the
+  # new path, because it holds identidade.der (a PRIVATE KEY) and a
+  # config.toml. It survived the cutover here -- the move is skipped when the
+  # destination exists, and the daemon had already created the new dir -- so
+  # what is left is a superseded key plus a copy of ANOTHER machine's config,
+  # sitting in the very path legacy.rs reads on a reinstall.
+  $cfgOld = Join-Path $env:APPDATA 'logi'
+  $proof = Join-Path $env:APPDATA 'oxdesk\identity\identity.der'
+  if (Test-Path $cfgOld) {
+    if ((Test-Path $proof) -and (Get-Item $proof).Length -gt 0) { Remove-Item -Recurse -Force $cfgOld; Say ('removed ' + $cfgOld) }
+    else { Say ('KEPT ' + $cfgOld + ': ' + $proof + ' is missing') }
+  }
   exit 0
 }
 

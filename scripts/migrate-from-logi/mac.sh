@@ -27,6 +27,14 @@ if [ "${1:-}" = "--cleanup" ]; then
     [ -e ~/.local/bin/$b ] && rm -f ~/.local/bin/$b && say "removed ~/.local/bin/$b"
   done
   rm -f ~/.local/state/logistream-host.log ~/.local/state/logistream-host.log.1 ~/.local/state/assinar.log
+  # Same rule as ubuntu.sh: the old dir goes only against evidence at the new
+  # path, because it holds a private key and a config.toml. Here the old dir
+  # really did survive the cutover -- `mvif` skips when the destination
+  # exists, and the daemon had already created the new one by itself.
+  velha() { [ -s "$2" ] || { say "KEPT $1: $2 is missing"; return 0; }; [ -e "$1" ] && rm -rf "$1" && say "removed $1"; }
+  velha ~/.config/logi ~/.config/oxdesk/identity/identity.der
+  [ -e ~/.cache/logi ] && rm -rf ~/.cache/logi && say "removed ~/.cache/logi"
+  [ -e ~/.local/state/logi-ota ] && rm -rf ~/.local/state/logi-ota && say "removed ~/.local/state/logi-ota"
   exit 0
 fi
 
