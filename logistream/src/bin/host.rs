@@ -45,6 +45,8 @@ fn redirect_output() {
     let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
     let dir = std::path::PathBuf::from(base).join("logid");
     let _ = std::fs::create_dir_all(&dir);
+    // Keep the previous session's log as `.1` (see logid's wake command).
+    let _ = std::fs::rename(dir.join("logistream-host.log"), dir.join("logistream-host.log.1"));
     let Ok(f) = std::fs::File::create(dir.join("logistream-host.log")) else {
         return;
     };

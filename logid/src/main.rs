@@ -309,6 +309,12 @@ fn main() -> std::process::ExitCode {
         tray::watch(h, Arc::clone(&cfg));
     }
 
+    // Spec 017: pair with the peers once at startup, so phase C can refuse
+    // strangers without refusing our own machines.
+    if let Ok(c) = cfg.read() {
+        pairing::pair_peers(c.hosts.clone(), screen::local_host_bin());
+    }
+
     let server = Arc::new(server);
     let workers: Vec<_> = (0..4)
         .map(|_| {
