@@ -192,10 +192,38 @@ fn identity() -> Check {
     }
     // Unlock before asking. Over SSH the keychain is locked and
     // `security` answers "User interaction is not allowed" -- which is
-    // not "does not exist". The password is not a secret on purpose (see
-    // mac/create-identity.sh): the keychain holds ONE self-signed key
-    // whose only power is signing our binaries.
-    let _ = run_timed("/usr/bin/security", &["unlock-keychain", "-p", "oxdesk", &kc.to_string_lossy()], 8);
+    // not "does not exist".
+    //
+    // The password used to be a literal here, and the literal DRIFTED:
+    // this line said "oxdesk" while the keychain had been created with
+    // "logi", and the result was thrown away with `let _ =`, so it had
+    // been unlocking nothing since the rename. One file, read at runtime,
+    // cannot disagree with itself -- .claude/rules/no-secrets-in-source.md.
+    let passfile = crate::sys::home_dir().join(".config/oxdesk/keychain-password");
+    match std::fs::read_to_string(&passfile) {
+        Ok(pass) => {
+            // Reported, not discarded: a keychain that did not open is why
+            // the step below would otherwise say "exists but has no
+            // identity", which sends whoever reads it to recreate the
+            // identity -- and that costs the Screen Recording grant.
+            if let Err(e) = run_timed(
+                "/usr/bin/security",
+                &["unlock-keychain", "-p", pass.trim(), &kc.to_string_lossy()],
+                8,
+            ) {
+                return Check::error(
+                    "identidade",
+                    format!("o chaveiro não abriu com a senha de {}: {e}", passfile.display()),
+                );
+            }
+        }
+        Err(_) => {
+            return Check::missing(
+                "identidade",
+                format!("sem a senha do chaveiro em {} -- rode create-identity.sh", passfile.display()),
+            )
+        }
+    }
 
     // `find-identity` WITHOUT `-v`.
     //

@@ -369,11 +369,18 @@ a measurement.
    prototype whose finding already lives in [[005-input-switch]], the
    stale desktop entry pointing at a personal path. *Check:* `git grep`
    for the deleted paths returns only history. **Done 2026-11-08.**
-3. **Rotate the keychain password.** Random value written by
-   `create-identity.sh`, read from a file by `sign.sh`; the literal
-   disappears from all three places and the Rust path either agrees or
-   goes away. *Check:* `deploy.sh`'s "mac: sign the host" step passes and
-   `grep -rn 'unlock-keychain -p'` finds no literal.
+3. **Rotate the keychain password. Done 2026-11-08.** 32 random
+   characters generated **on the Mac** (so it never travelled in an `ssh`
+   argument), written to `~/.config/oxdesk/keychain-password` with
+   `umask 077`, and applied with `security set-keychain-password -o logi`.
+   The identity's name and the keychain's filename still say `logi` on
+   purpose: both are baked into the certificate's designated requirement,
+   and recreating it to rename them would make macOS discard the Screen
+   Recording grant. *Checked:* signing a throwaway copy gives
+   `Authority=logi local signing` — with `codesign -dvvv`, because `-dv`
+   does not print that line; and the only remaining mentions of the old
+   literal are this table and the rule, which is what "rotate, don't
+   rewrite" means in practice.
 4. **Make the default config generic.** Placeholders, or the machine's own
    hostname. *Check:* a fresh config on a machine with a different
    hostname describes that machine.

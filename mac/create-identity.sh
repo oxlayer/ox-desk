@@ -23,14 +23,19 @@
 # its partition list set from the command line -- and then `codesign` runs
 # without asking, even over SSH. It is the pattern every macOS CI uses.
 #
-# The password is not a secret on purpose: the keychain holds ONE
-# self-signed key whose only power is signing our own binaries so TCC
-# recognizes them. It signs nothing another machine trusts.
+# The keychain holds ONE self-signed key whose only power is signing our own
+# binaries so TCC recognizes them; it signs nothing another machine trusts.
+# That used to be the argument for a hardcoded password (`logi`, in this file
+# and in sign.sh). It is not good enough for a public repository, and it was
+# not good enough before: the literal drifted -- setup_mac.rs ended up
+# unlocking with `oxdesk` and discarding the failure. One random value,
+# written once, read at runtime
+# (.claude/rules/no-secrets-in-source.md).
 set -euo pipefail
 
 NAME="logi local signing"
 KC="$HOME/Library/Keychains/logi.keychain-db"
-KCPASS="logi"
+PASSFILE="$HOME/.config/oxdesk/keychain-password"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -56,6 +61,14 @@ if [ -f "$KC" ] && security find-certificate -c "$NAME" "$KC" >/dev/null 2>&1; t
   security find-identity -p codesigning "$KC" 2>&1 | tail -2
   exit 0
 fi
+
+# The password is generated here and nowhere else. `umask 077` before the
+# write, so it is never briefly world-readable.
+mkdir -p "$(dirname "$PASSFILE")"
+KCPASS="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)"
+(umask 077; printf '%s' "$KCPASS" > "$PASSFILE")
+chmod 600 "$PASSFILE"
+echo "keychain password written to $PASSFILE"
 
 security delete-keychain "$KC" 2>/dev/null || true
 security create-keychain -p "$KCPASS" "$KC"
