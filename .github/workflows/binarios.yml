@@ -101,7 +101,7 @@ jobs:
           key: ${{ matrix.alvo }}
           workspaces: |
             oxdesk
-            oxdesk-stream
+            stream
             agent
             ota
 

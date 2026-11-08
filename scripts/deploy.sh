@@ -422,7 +422,7 @@ else
   # sending the rest without it would leave the machine that travels
   # without the only path it has to update itself away from home
   # (specs/015).
-  if out=$(for d in hidpp oxdesk oxdesk-stream ota; do
+  if out=$(for d in hidpp oxdesk stream ota; do
              rsync -az --delete --exclude target -e "ssh -o BatchMode=yes" "$d" mac:~/oxdesk/ || exit 1
            done 2>&1); then ok; else erro "$out"; fi
 
@@ -490,7 +490,7 @@ else
   # is strict on purpose -- a package linked to the unversioned prefix
   # does not install on a machine that only has the versioned keg.
   if out=$(timeout 900 ssh -n -o BatchMode=yes mac \
-            "cd ~/oxdesk/oxdesk-stream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig &&
+            "cd ~/oxdesk/stream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig &&
              ~/.cargo/bin/cargo build --release --bin oxdesk-view --bin oxdesk-bridge --bin oxdesk-host 2>&1 | tail -3 &&
              mkdir -p ~/.local/bin ~/.local/state &&
              install -m755 target/release/oxdesk-view ~/.local/bin/ &&

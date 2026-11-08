@@ -37,13 +37,13 @@ run() {
 # compiles EMPTY because of `#![cfg(windows)]`, and the agent cannot find
 # the functions. Not a regression, just no native target here.
 echo "== native (linux) =="
-for c in hidpp oxdesk ota oxdesk-stream; do
+for c in hidpp oxdesk ota stream; do
   run "$c: build" cargo build --release --manifest-path "$c/Cargo.toml"
 done
 # `oxdesk-stream` tests here and not only in the cross: 85 of them exist and
 # NONE of them ran in this suite -- including the pixel ones in `cursor.rs`,
 # which were moved out of `capture_win.rs` precisely so they would run.
-for c in hidpp oxdesk ota oxdesk-stream; do
+for c in hidpp oxdesk ota stream; do
   run "$c: test" cargo test --release --manifest-path "$c/Cargo.toml"
 done
 
