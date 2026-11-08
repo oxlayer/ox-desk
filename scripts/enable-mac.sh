@@ -9,7 +9,7 @@
 #   bash enable-mac.sh
 set -uo pipefail
 
-PUB='ssh-ed25519 <your-public-key> -> mac (logi)'
+PUB='ssh-ed25519 <your-public-key> -> mac (oxdesk)'
 
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
 nao()  { printf '  \033[31mfailed\033[0m %s\n' "$1"; }
@@ -74,7 +74,7 @@ cat <<'EOF'
 
 == done ==
 
-Let me know. I will SSH in, install Rust if it is missing, build logid
+Let me know. I will SSH in, install Rust if it is missing, build oxdesk
 here (cross-compiling from Linux to macOS needs Apple's SDK, so the build
 has to happen on this machine) and add the Mac to the three configs.
 

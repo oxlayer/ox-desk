@@ -10,15 +10,15 @@ three in ~1 min.
 `RunAtLoad false` + idle exit after 20 s without a client, so as not to
 spend battery capturing for nobody. **Two of my tests failed because of
 this** before I noticed: `input-send` by hand skips the step that
-`logid` does by itself.
+`oxdesk` does by itself.
 
-Waking it up is what `acordar_host` does (logid/src/screen.rs), and it
+Waking it up is what `acordar_host` does (oxdesk/src/screen.rs), and it
 is idempotent:
 
 ```bash
-ssh mac 'pgrep -x logistream-host >/dev/null 2>&1 ||
-         launchctl kickstart "gui/$(id -u)/ai.logi.logistream-host" >/dev/null 2>&1;
-         sleep 1; pgrep -x logistream-host >/dev/null && echo vivo || echo morto'
+ssh mac 'pgrep -x oxdesk-host >/dev/null 2>&1 ||
+         launchctl kickstart "gui/$(id -u)/app.oxdesk.host" >/dev/null 2>&1;
+         sleep 1; pgrep -x oxdesk-host >/dev/null && echo vivo || echo morto'
 ```
 
 From the tray or the panel it isn't needed: `mandar` already calls this
@@ -27,8 +27,8 @@ before opening the KVM.
 ## 1. Does the screen open?
 
 ```bash
-ssh mac 'launchctl kickstart -k gui/$(id -u)/ai.logi.logistream-host; sleep 7
-         tail -8 ~/.local/state/logistream-host.log'
+ssh mac 'launchctl kickstart -k gui/$(id -u)/app.oxdesk.host; sleep 7
+         tail -8 ~/.local/state/oxdesk-host.log'
 ```
 
 Passing means seeing the four lines:
@@ -49,24 +49,24 @@ do with the problem. See [[../rules/graphical-session]].
 ## 2. Does the video arrive?
 
 ```bash
-cargo run --release --bin logistream-sink -- mac-host.local:9777 5
+cargo run --release --bin oxdesk-sink -- mac-host.local:9777 5
 ```
 
 Expected: ~46 fps, `quadros perdidos: 0`.
 
 ## 3. Does the mouse arrive?
 
-The probes in `mac/sondas/` compile in 1 s and exist because **"it looks
+The probes in `mac/probes/` compile in 1 s and exist because **"it looks
 like it didn't move" is not a measurement**:
 
 ```bash
-scp mac/sondas/*.swift mac:/tmp/
-ssh mac 'cd /tmp && swiftc -O -o cursor cursor.swift && swiftc -O -o tecla tecla.swift'
+scp mac/probes/*.swift mac:/tmp/
+ssh mac 'cd /tmp && swiftc -O -o cursor cursor.swift && swiftc -O -o tecla key.swift'
 ```
 
 ```bash
 echo "antes:  $(ssh mac /tmp/cursor)"
-cargo run --release --bin logistream-input-send -- mac-host.local:9778 --rel 20
+cargo run --release --bin oxdesk-input-send -- mac-host.local:9778 --rel 20
 echo "depois: $(ssh mac /tmp/cursor)"
 ```
 
@@ -85,8 +85,8 @@ stays hidden behind the clamp.
 
 ```bash
 for p in "0 0" "3359 2099" "1680 1050" "840 525"; do
-  ssh mac 'pgrep -x logistream-host >/dev/null || launchctl kickstart "gui/$(id -u)/ai.logi.logistream-host"; sleep 2'
-  cargo run --release --bin logistream-input-send -- mac-host.local:9778 --abs $p
+  ssh mac 'pgrep -x oxdesk-host >/dev/null || launchctl kickstart "gui/$(id -u)/app.oxdesk.host"; sleep 2'
+  cargo run --release --bin oxdesk-input-send -- mac-host.local:9778 --abs $p
   echo "quadro ($p) -> cursor $(ssh mac /tmp/cursor)"
 done
 ```
@@ -110,7 +110,7 @@ quadro (840 525)     -> cursor 420 262
 
 ```bash
 ssh mac '/tmp/tecla > /tmp/tecla.out 2>&1 &' & sleep 1
-cargo run --release --bin logistream-input-send -- mac-host.local:9778 --segurar 30
+cargo run --release --bin oxdesk-input-send -- mac-host.local:9778 --segurar 30
 sleep 4; ssh mac 'cat /tmp/tecla.out'
 ```
 
@@ -125,16 +125,16 @@ the cdhash, which changes on every build; a stable identity ties it to
 the designated requirement, which doesn't change. To prove it:
 
 ```bash
-ssh mac 'cd ~/logi/logistream && touch src/bin/host.rs &&
+ssh mac 'cd ~/oxdesk/oxdesk-stream && touch src/bin/host.rs &&
          export PATH=/opt/homebrew/bin:$PATH PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig &&
-         ~/.cargo/bin/cargo build --release --bin logistream-host 2>&1 | tail -1 &&
-         install -m755 target/release/logistream-host ~/.local/bin/ &&
-         ~/.local/bin/assinar.sh ~/.local/bin/logistream-host'
+         ~/.cargo/bin/cargo build --release --bin oxdesk-host 2>&1 | tail -1 &&
+         install -m755 target/release/oxdesk-host ~/.local/bin/ &&
+         ~/.local/bin/sign.sh ~/.local/bin/oxdesk-host'
 ```
 
 Then repeat step 1. If it opens, it survived.
 
-**Don't run `criar-identidade.sh` again.** It refuses precisely because
+**Don't run `create-identity.sh` again.** It refuses precisely because
 of this: swapping the certificate invalidates the grant and costs
 another trip to the Mac's Settings. That's what happened to me in the
 middle of this work.
@@ -147,7 +147,7 @@ before the screen. Since then it opens `Capture screen 0` by name. Check
 the frame's size and luminance, not just the count.
 
 About the wizard saying "falta" (missing) with the toggle on: a child of
-`logid` answers with `logid`'s permissions. That's why the question goes
+`oxdesk` answers with `oxdesk`'s permissions. That's why the question goes
 out as a launchd job.
 
 ## See also

@@ -6,7 +6,7 @@ Two faces of the same rule, both paid for dearly.
 
 An `scp` that "worked" doesn't guarantee the right file at the
 destination. Defender once **restored the quarantined copy on top of**
-the freshly sent `logid-agent.exe` — 402984 bytes where 458792 had been
+the freshly sent `oxdesk-agent.exe` — 402984 bytes where 458792 had been
 sent. The deploy said ok.
 
 That's why each Windows step in `deploy.sh` captures stderr, tests the

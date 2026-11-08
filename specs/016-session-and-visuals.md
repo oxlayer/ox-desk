@@ -47,7 +47,7 @@ download show progress and errors per file.
 
 ## How
 
-**The video is decoded in the page.** `logistream-view` is another process
+**The video is decoded in the page.** `oxdesk-view` is another process
 with a native window, and that cannot be embedded in a tab. A local bridge
 speaks QUIC to the host and hands H.264 to the page over WebSocket on
 `127.0.0.1`, with a token and an `Origin` check. The page decodes with
@@ -60,13 +60,13 @@ reorder, and the hardware decoder holds about 4 frames: 172 ms versus
 send `max_num_reorder_frames=0` in the H.264 VUI.
 
 Measured on 2026-11-07, with host and client on the same Mac, at 3360×2100:
-from capture to draw, 6.3 ms in the tab and 37 ms in `logistream-view`.
+from capture to draw, 6.3 ms in the tab and 37 ms in `oxdesk-view`.
 Decoding at that size costs 5.2 ms and about half a core. Between machines
 the measurement carries the clock difference, which is why the comparison is
 on the same Mac.
 
 With this, tab, bar and files are the same page, and the bar is HTML.
-`logistream-view` stays as an alternative until the tab's latency is
+`oxdesk-view` stays as an alternative until the tab's latency is
 measured: it only replaces the native one if it is not worse.
 
 **The file manager is a tab in the same way.** See [spec 003](003-files.md).
@@ -74,7 +74,7 @@ measured: it only replaces the native one if it is not worse.
 **Transfer goes over SFTP**, like the listing. The new route is
 `POST /api/files/transfer`, with progress read by the panel.
 
-`logid` keeps listening only on `127.0.0.1` (spec 008). It is the one doing
+`oxdesk` keeps listening only on `127.0.0.1` (spec 008). It is the one doing
 the transfer, with the key it already has.
 
 ## Rules this inherits
@@ -83,7 +83,7 @@ the transfer, with the key it already has.
   nothing ([[../docs/screen-paths]]).
 - **A click on the bar does not go to the remote machine.** The test checks
   that no `Evento::Mouse` went out.
-- **The tab is measured against `logistream-view`:** the delay from capture
+- **The tab is measured against `oxdesk-view`:** the delay from capture
   to screen.
 - **Transfer is proven by the hash on both sides**, not by the progress bar
   finishing ([[../.claude/rules/verify-what-arrived]]).

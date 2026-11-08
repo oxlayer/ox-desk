@@ -8,19 +8,19 @@ without having restarted.
 
 | Machine | Process | Command |
 |---|---|---|
-| Ubuntu | `logid` | `systemctl --user restart logid.service` |
-| macOS | `logid` | `launchctl kickstart -k gui/$(id -u)/ai.logi.logid` |
-| Windows | **`logid.exe`** | `taskkill /F /IM logid.exe` + `schtasks /run /tn logid` |
+| Ubuntu | `oxdesk` | `systemctl --user restart oxdesk.service` |
+| macOS | `oxdesk` | `launchctl kickstart -k gui/$(id -u)/app.oxdesk.daemon` |
+| Windows | **`oxdesk.exe`** | `taskkill /F /IM oxdesk.exe` + `schtasks /run /tn oxdesk` |
 
-The scheduled task on Windows is called **`logid`**, and the executable
-**`logid.exe`** — not `logid-agent`, even though the deploy talks about
-`logid-agent.exe` in other contexts. Check with
-`schtasks /query /fo table | findstr /i logi`.
+The scheduled task on Windows is called **`oxdesk`**, and the executable
+**`oxdesk.exe`** — not `oxdesk-agent`, even though the deploy talks about
+`oxdesk-agent.exe` in other contexts. Check with
+`schtasks /query /fo table | findstr /i oxdesk`.
 
 ## `taskkill`, not `Stop-Process`
 
 Over SSH, `Stop-Process -Force` **does not kill a process in the
-interactive session**. A `logistream-host` survived three attempts and
+interactive session**. A `oxdesk-host` survived three attempts and
 held port 9777, making the following tests fail for the wrong reason — I
 lost time thinking capture was broken.
 

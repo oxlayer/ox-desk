@@ -53,7 +53,7 @@ looks like success.
 ### 2. Fixing is not having fixed
 
 Every repair **measures again** and returns what the measurement said,
-not what the command returned. The Mac's `assinar.sh` is deliberately
+not what the command returned. The Mac's `sign.sh` is deliberately
 non-fatal; `schtasks` returns 0 while creating a task without an
 interactive token; `electron` starts and dies within 200 ms. In all three
 cases the exit code lies and the measurement does not
@@ -78,12 +78,12 @@ system window.
 
 | File | Role |
 |---|---|
-| `logid/src/setup.rs` | catalog of the three systems + decision. **Pure**, with tests |
-| `logid/src/setup_comum.rs` | measurements common to all three (config, peers, clipboard) |
-| `logid/src/setup_linux.rs` | binaries, unit, udev, Wayland, NVENC, tray |
-| `logid/src/setup_mac.rs` | launchd, identity, signing, TCC, Remote Login |
-| `logid/src/setup_win.rs` | `/IT` tasks, sshd, admin key, screen saver |
-| `logid/static/setup.html` | the page |
+| `oxdesk/src/setup.rs` | catalog of the three systems + decision. **Pure**, with tests |
+| `oxdesk/src/setup_comum.rs` | measurements common to all three (config, peers, clipboard) |
+| `oxdesk/src/setup_linux.rs` | binaries, unit, udev, Wayland, NVENC, tray |
+| `oxdesk/src/setup_mac.rs` | launchd, identity, signing, TCC, Remote Login |
+| `oxdesk/src/setup_win.rs` | `/IT` tasks, sshd, admin key, screen saver |
+| `oxdesk/static/setup.html` | the page |
 | `gui/check-setup.js` | smoke test of the page against the API |
 
 The catalog is pure on purpose: the tests run on the development laptop
@@ -108,7 +108,7 @@ On macOS, `gravacao-de-tela` and `acessibilidade` **depend on**
 the TCC binding is by cdhash, which changes with every build. Granting
 before signing wastes the grant, and only the machine's owner can give
 it back, by hand, in the UI. This has already happened twice here — see
-[[../.claude/rules/coordinate-spaces]] and `mac/criar-identidade.sh`.
+[[../.claude/rules/coordinate-spaces]] and `mac/create-identity.sh`.
 
 ## What the wizard does NOT do
 
@@ -130,7 +130,7 @@ it back, by hand, in the UI. This has already happened twice here — see
   `--conferir` compiling, `launchctl print` as the measurement, and
   whether the TCC dialog appears when triggered by the daemon (which
   runs in the graphical session, so it should).
-- `logid/udev/70-logid-hidraw.rules` went in alongside and was never
+- `oxdesk/udev/70-oxdesk-hidraw.rules` went in alongside and was never
   installed on any machine: here the grant comes from the Solaar
   package's rule, which remains in `/usr/lib` even with Solaar removed.
 

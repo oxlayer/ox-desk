@@ -2,9 +2,9 @@
 //!
 //! Spec: ../../specs/015-ota.md
 //!
-//! A twin of `rodar` in `logid/src/setup_comum.rs`, on purpose: this
+//! A twin of `rodar` in `oxdesk/src/setup_comum.rs`, on purpose: this
 //! binary does not link the daemon (there is no `lib.rs` there) and
-//! turning `logid` into a library to share 40 lines of process waiting
+//! turning `oxdesk` into a library to share 40 lines of process waiting
 //! would cost more than it pays. If a third client shows up, the right
 //! place is a `common/` crate.
 //!

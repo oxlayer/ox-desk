@@ -7,7 +7,7 @@ part of.
 ## Run (once, needs sudo)
 
 ```bash
-sudo install -m644 ~/dev/logi/logid/udev/70-logid-input.rules /etc/udev/rules.d/
+sudo install -m644 ~/dev/oxdesk/oxdesk/udev/70-oxdesk-input.rules /etc/udev/rules.d/
 sudo udevadm control --reload
 sudo udevadm trigger --subsystem-match=input
 ```

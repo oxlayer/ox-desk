@@ -57,7 +57,7 @@ are clients. Here the server is **Windows**:
 ## Ubuntu (here)
 
 ```bash
-cd /home/user/dev/logi
+cd /home/user/dev/oxdesk
 sudo bash install.sh
 ```
 
@@ -529,17 +529,17 @@ product, not of a weekend project — and RustDesk is open source and
 without writing anything. On a LAN you don't even need a relay: direct
 connection.
 
-## `logid` — the control plane (Rust)
+## `oxdesk` — the control plane (Rust)
 
-In [`logid/`](logid/). A 929 KB binary, no runtime.
+In [`oxdesk/`](oxdesk/). A 929 KB binary, no runtime.
 
 ```bash
-cargo build --release          # inside logid/
-install -m755 target/release/logid ~/.local/bin/logid
-systemctl --user enable --now logid.service
+cargo build --release          # inside oxdesk/
+install -m755 target/release/oxdesk ~/.local/bin/oxdesk
+systemctl --user enable --now oxdesk.service
 ```
 
-Config in `~/.config/logi/config.toml`, written on first boot if it
+Config in `~/.config/oxdesk/config.toml`, written on first boot if it
 doesn't exist. **An invalid config doesn't silently become the
 default**: the daemon refuses and exits with code 1.
 
@@ -649,8 +649,8 @@ runtime:
 ```bash
 cd agent
 cargo +stable build --release --target x86_64-pc-windows-gnu
-scp target/x86_64-pc-windows-gnu/release/logid-agent.exe \
-    windows-host:'C:/Users/user/AppData/Local/logid/logid-agent.exe'
+scp target/x86_64-pc-windows-gnu/release/oxdesk-agent.exe \
+    windows-host:'C:/Users/user/AppData/Local/oxdesk/oxdesk-agent.exe'
 ```
 
 Toolchain: `rustup target add x86_64-pc-windows-gnu` + apt
@@ -658,7 +658,7 @@ Toolchain: `rustup target add x86_64-pc-windows-gnu` + apt
 linker.
 
 It's a **CLI, not a server**, invoked over SSH: zero new ports, zero new
-auth. `logid` talks to it through the `ssh windows-host` that already exists.
+auth. `oxdesk` talks to it through the `ssh windows-host` that already exists.
 
 Read from the hardware via HID++ 0x1814/0x1815:
 
@@ -729,8 +729,8 @@ cd gui && npm install && ./run.sh
 ```
 
 Native window, tray, single instance, closing hides. **It doesn't
-duplicate logic**: `logid` serves the UI and the GUI wraps it. If
-`logid.service` is up it reuses it; if the port is free, it starts a
+duplicate logic**: `oxdesk` serves the UI and the GUI wraps it. If
+`oxdesk.service` is up it reuses it; if the port is free, it starts a
 child — and only then kills it on exit.
 
 Electron pinned at **44.9.0**. Don't guess the version: I assumed 38.x
@@ -771,7 +771,7 @@ libnss-mdns:         0.15.1-5
 ```
 
 So all configs switched to **`windows-host.local`**: `Deskflow.conf`,
-`~/.ssh/config` and `~/.config/logi/config.toml`. Deskflow reconnected
+`~/.ssh/config` and `~/.config/oxdesk/config.toml`. Deskflow reconnected
 (`ESTAB → 192.168.1.42:24800`) with no IP written anywhere.
 
 > ⚠️ **Deskflow's comma-separated list doesn't work**, even though the

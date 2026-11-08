@@ -1,8 +1,8 @@
 [package]
-name = "logid-agent"
+name = "oxdesk-agent"
 version = "0.1.0"
 edition = "2021"
-description = "logid Windows agent: HID++ 0x1814 and dead-man's switch"
+description = "oxdesk Windows agent: HID++ 0x1814 and dead-man's switch"
 license = "MIT"
 
 [dependencies]

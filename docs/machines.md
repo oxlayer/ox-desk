@@ -19,23 +19,23 @@ This is where time gets lost. None of it follows a single pattern.
 
 | What | Ubuntu | Windows | macOS |
 |---|---|---|---|
-| config | `~/.config/logi/config.toml` | `%APPDATA%\logi\config.toml` | `~/.config/logi/config.toml` |
-| binaries | `~/.local/bin/` | `%LOCALAPPDATA%\logid\` | `~/.local/bin/` |
-| agent process | `logid` | `logid.exe` | `logid` |
-| restart | `systemctl --user restart logid.service` | `taskkill /F /IM logid.exe` + `schtasks /run /tn logid` | `launchctl kickstart -k gui/$(id -u)/ai.logi.logid` |
-| screen host log | `~/.local/state/logistream-host.log` | `%LOCALAPPDATA%\logid\logistream-host.log` | same as Ubuntu |
+| config | `~/.config/oxdesk/config.toml` | `%APPDATA%\oxdesk\config.toml` | `~/.config/oxdesk/config.toml` |
+| binaries | `~/.local/bin/` | `%LOCALAPPDATA%\oxdesk\` | `~/.local/bin/` |
+| agent process | `oxdesk` | `oxdesk.exe` | `oxdesk` |
+| restart | `systemctl --user restart oxdesk.service` | `taskkill /F /IM oxdesk.exe` + `schtasks /run /tn oxdesk` | `launchctl kickstart -k gui/$(id -u)/app.oxdesk.daemon` |
+| screen host log | `~/.local/state/oxdesk-host.log` | `%LOCALAPPDATA%\oxdesk\oxdesk-host.log` | same as Ubuntu |
 
-Note that the scheduled **task** on Windows is called `logid` while the
-**executable** is `logid.exe` — and the screen host is `logistream-host`
+Note that the scheduled **task** on Windows is called `oxdesk` while the
+**executable** is `oxdesk.exe` — and the screen host is `oxdesk-host`
 in both. Always check with
-`schtasks /query /fo table | findstr /i logi`.
+`schtasks /query /fo table | findstr /i oxdesk`.
 
 ## Ports
 
 | Port | Service |
 |---|---|
-| 8787 | `logid` API + panel (each machine serves its own) |
-| 9777 | `logistream` screen host (QUIC: video by datagram, input by stream) |
+| 8787 | `oxdesk` API + panel (each machine serves its own) |
+| 9777 | `oxdesk-stream` screen host (QUIC: video by datagram, input by stream) |
 | 22 | SSH (Windows and Mac) |
 | 1716 | ~~KDE Connect~~ — removed on 2026-11-04, replaced by the native clipboard |
 | 5900 | Mac VNC — stays while the Mac host doesn't produce frames |
@@ -50,7 +50,7 @@ duplicating the screen, not injecting input, not turning off the
 monitor.
 
 What works: a scheduled task with `/IT`, which runs in the interactive
-session. That is how `logid` and `logistream-host` start.
+session. That is how `oxdesk` and `oxdesk-host` start.
 
 ## See also
 
@@ -77,4 +77,4 @@ signal for "it's away". In `lan` it never leaves here. What answers
 "where is input going" is `GET /api/kvm`.
 
 Capture only exists on Linux for now. Process log:
-`~/.local/state/logistream-kvm.log`.
+`~/.local/state/oxdesk-kvm.log`.

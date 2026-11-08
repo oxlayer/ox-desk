@@ -1,5 +1,5 @@
 #![cfg(windows)]
-//! Win32 code shared by `logid` and `logid-agent`.
+//! Win32 code shared by `oxdesk` and `oxdesk-agent`.
 //!
 //! It lived inside the agent as `input.rs`. It became a crate when the
 //! daemon started running on Windows too: two copies of `unsafe` FFI that
@@ -166,7 +166,7 @@ pub fn claim_single_instance(name: &str) -> bool {
 
 // --- clipboard -------------------------------------------------------
 //
-// Exists so `logid` does not have to call `powershell -Command
+// Exists so `oxdesk` does not have to call `powershell -Command
 // Get-Clipboard` on every sample. That worked, but spawning a PowerShell
 // every 2 s costs ~200 ms of CPU per read -- and, if the caller forgets
 // `CREATE_NO_WINDOW`, it opens a visible console window on every round.

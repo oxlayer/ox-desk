@@ -5,7 +5,7 @@
 //!
 //! The order is not arbitrary. **Signing and testing happen in the
 //! staging folder, before any swap**: a Mac binary that does not run
-//! (`logistream-host` links against brew's ffmpeg, and CI compiles
+//! (`oxdesk-host` links against brew's ffmpeg, and CI compiles
 //! against the runner's version) has to be refused *before* it replaces
 //! what works, not after. Swapping and then finding out is what requires
 //! rolling back; checking first is what avoids needing to.
@@ -74,7 +74,7 @@ fn uid_of(home: &Path) -> u32 {
 }
 
 fn read_token(s: System, base: &Path) -> Option<String> {
-    if let Ok(t) = std::env::var("LOGI_OTA_TOKEN") {
+    if let Ok(t) = std::env::var("OXDESK_OTA_TOKEN") {
         if !t.trim().is_empty() {
             return Some(t);
         }
@@ -97,7 +97,7 @@ pub fn context(mode: Mode) -> Result<Context, String> {
         base,
         dir,
         mode,
-        repo: std::env::var("LOGI_OTA_REPO").unwrap_or_else(|_| REPO.to_string()),
+        repo: std::env::var("OXDESK_OTA_REPO").unwrap_or_else(|_| REPO.to_string()),
         token,
     })
 }
@@ -165,12 +165,12 @@ pub fn run(mode: Mode) -> Result<State, State> {
 }
 
 fn steps(ctx: &Context, st: &mut State) -> Result<(), String> {
-    // `LOGI_OTA_API` exists so the whole path -- download, check the sum,
+    // `OXDESK_OTA_API` exists so the whole path -- download, check the sum,
     // extract, swap, restart, check /healthz, roll back -- can be
     // exercised against a local server, without publishing a fake Release
     // and without touching the single source of truth all three machines
     // consume. That is how the rollback was tested.
-    let api = std::env::var("LOGI_OTA_API")
+    let api = std::env::var("OXDESK_OTA_API")
         .unwrap_or_else(|_| "https://api.github.com".to_string());
     let url = format!("{api}/repos/{}/releases/latest", ctx.repo);
     let json = exec::api(&url, ctx.token.as_deref(), 30).map_err(|e| {
@@ -299,7 +299,7 @@ fn install(
     }
 
     // The stamp proves this binary is from THIS commit -- the same question
-    // `construir-binarios.sh` asks before packaging and that `deploy.sh`
+    // `build-binaries.sh` asks before packaging and that `deploy.sh`
     // asks /healthz at the end.
     let daemon = inner.join(ctx.plan.daemon);
     let raw = fs::read(&daemon).map_err(|e| format!("{}: {e}", ctx.plan.daemon))?;
@@ -435,14 +435,14 @@ fn sign_all(ctx: &Context, inner: &Path, items: &[(String, String)]) -> Result<(
         if !s.ok {
             return Err(format!("assinar {name}: {}", first_line(&s.err)));
         }
-        // `assinar.sh` is deliberately non-fatal (it does not bring anything
+        // `sign.sh` is deliberately non-fatal (it does not bring anything
         // down on its own). The one that turns it into a failure is whoever
         // checks -- and here the failure matters: an ad-hoc binary installed
         // means a black screen on the next request.
         let v = exec::run("codesign", &["-dvvv", &target.to_string_lossy()], 30)?;
         let all = format!("{}{}", v.out, v.err);
         if all.contains("adhoc") || !all.contains("Authority=") {
-            return Err(format!("{name} seguiu sem identidade apos assinar; rode criar-identidade.sh no Mac"));
+            return Err(format!("{name} seguiu sem identidade apos assinar; rode create-identity.sh no Mac"));
         }
     }
     Ok(())
@@ -450,7 +450,7 @@ fn sign_all(ctx: &Context, inner: &Path, items: &[(String, String)]) -> Result<(
 
 /// Does the binary find the libraries it depends on, on this machine?
 ///
-/// That is the real, known risk of the Mac package: `logistream-host` and
+/// That is the real, known risk of the Mac package: `oxdesk-host` and
 /// `-view` link against brew's ffmpeg, CI compiles against the runner's
 /// version, and a different major does not run. Check the linkage instead
 /// of executing: some of these binaries open a window, and a window
@@ -501,7 +501,7 @@ fn check_links(s: System, bin: &Path) -> Result<(), String> {
 /// Does the package's daemon run?
 ///
 /// `--help` opens no port and loads no config (see `run_cli` in
-/// `logid/src/main.rs`), so it is safe to run with the real daemon up.
+/// `oxdesk/src/main.rs`), so it is safe to run with the real daemon up.
 /// What we look for is a **loader** error, not the exit code: the help
 /// goes to stderr on purpose, and exiting non-zero is not a symptom.
 fn smoke_test_daemon(bin: &Path) -> Result<(), String> {
@@ -526,7 +526,7 @@ fn smoke_test_daemon(bin: &Path) -> Result<(), String> {
 fn restart(ctx: &Context) -> Result<(), String> {
     // Before asking for the restart, clear out of the way whoever the
     // supervisor does not know about. See `plan::Plan::clear`: without
-    // this an orphan `logid` holds the port, `/healthz` answers the old
+    // this an orphan `oxdesk` holds the port, `/healthz` answers the old
     // build and we roll back an update that was correct.
     //
     // A failure here is ignored on purpose: `pkill` returns 1 when it
@@ -574,21 +574,21 @@ fn check_healthz(base: &Path, s: System, expected: &str) -> Result<(), String> {
 /// which it installs without checking anything. Reads the `port = N`
 /// line instead of pulling in `toml` as a dependency for one number.
 fn port(base: &Path, s: System) -> u16 {
-    if let Some(p) = std::env::var("LOGI_PORT").ok().and_then(|p| p.parse::<u16>().ok()) {
+    if let Some(p) = std::env::var("OXDESK_PORT").ok().and_then(|p| p.parse::<u16>().ok()) {
         return p;
     }
-    // On Windows the config does NOT sit next to the binaries: `logid`
-    // reads it from `%APPDATA%\logi` (Roaming), and the binaries live in
-    // `%LOCALAPPDATA%\logid`. Looking in the same place for both would
+    // On Windows the config does NOT sit next to the binaries: `oxdesk`
+    // reads it from `%APPDATA%\oxdesk` (Roaming), and the binaries live in
+    // `%LOCALAPPDATA%\oxdesk`. Looking in the same place for both would
     // never find it -- and fall back to the hardcoded 8787, which is the
     // bug this function exists to avoid. Checked against the wizard's
-    // output there: `C:\Users\user\AppData\Roaming\logi\config.toml`.
+    // output there: `C:\Users\user\AppData\Roaming\oxdesk\config.toml`.
     let cfg = match s {
-        System::Linux | System::Mac => base.join(".config").join("logi").join("config.toml"),
+        System::Linux | System::Mac => base.join(".config").join("oxdesk").join("config.toml"),
         System::Windows => std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| base.to_path_buf())
-            .join("logi")
+            .join("oxdesk")
             .join("config.toml"),
     };
     fs::read_to_string(cfg)
@@ -615,7 +615,7 @@ mod tests {
 
     #[test]
     fn finds_the_stamp_inside_arbitrary_bytes() {
-        let bin = b"\x7fELF\x02\x01...logid 2f1409d em http://127.0.0.1\x00mais lixo";
+        let bin = b"\x7fELF\x02\x01...oxdesk 2f1409d em http://127.0.0.1\x00mais lixo";
         assert!(contains(bin, b"2f1409d"));
         assert!(!contains(bin, b"deadbee"));
         assert!(!contains(bin, b""), "an empty needle matches nothing");
@@ -623,16 +623,16 @@ mod tests {
     }
 
     /// The extracted folder is the package name without `.tar.gz` -- that
-    /// is how `construir-binarios.sh` packages (`tar -C dist <basename>`).
+    /// is how `build-binaries.sh` packages (`tar -C dist <basename>`).
     #[test]
     fn the_package_folder_is_the_name_without_extension() {
-        let name = "logi-mac-arm64-unsigned-124-abc1234.tar.gz";
-        assert_eq!(name.trim_end_matches(".tar.gz"), "logi-mac-arm64-unsigned-124-abc1234");
+        let name = "oxdesk-mac-arm64-unsigned-124-abc1234.tar.gz";
+        assert_eq!(name.trim_end_matches(".tar.gz"), "oxdesk-mac-arm64-unsigned-124-abc1234");
     }
 
     #[test]
     fn copy_deletes_the_destination_first() {
-        let d = std::env::temp_dir().join(format!("logi-ota-cp-{}", state::now()));
+        let d = std::env::temp_dir().join(format!("oxdesk-ota-cp-{}", state::now()));
         fs::create_dir_all(&d).unwrap();
         let a = d.join("a");
         let b = d.join("b");
@@ -653,8 +653,8 @@ mod tests {
     /// watching.
     #[test]
     fn the_port_comes_from_the_config() {
-        let d = std::env::temp_dir().join(format!("logi-ota-porta-{}", state::now()));
-        let cfg = d.join(".config").join("logi");
+        let d = std::env::temp_dir().join(format!("oxdesk-ota-porta-{}", state::now()));
+        let cfg = d.join(".config").join("oxdesk");
         fs::create_dir_all(&cfg).unwrap();
         fs::write(cfg.join("config.toml"), "# comentario\nport = 9191\nfollow = true\n").unwrap();
         assert_eq!(port(&d, System::Linux), 9191);

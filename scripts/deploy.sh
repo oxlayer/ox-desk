@@ -22,16 +22,16 @@ fi
 PULAR_MAC=0
 [ "${1:-}" = "--pular-mac" ] && PULAR_MAC=1
 
-# `desconhecido` and `-sujo` are part of the build stamp that logid parses
-# (logid/build.rs, setup_comum.rs): they stay as they are.
+# `desconhecido` and `-sujo` are part of the build stamp that oxdesk parses
+# (oxdesk/build.rs, setup_comum.rs): they stay as they are.
 BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo desconhecido)"
 git diff --quiet 2>/dev/null || BUILD="$BUILD-sujo"
-export LOGI_BUILD="$BUILD"
+export OXDESK_BUILD="$BUILD"
 # Incremental number: tells WHICH machine is behind, not just that they
 # differ. It travels along because the Mac's copy has no .git.
-LOGI_BUILD_N="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
-export LOGI_BUILD_N
-echo "== build #$LOGI_BUILD_N $BUILD =="
+OXDESK_BUILD_N="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+export OXDESK_BUILD_N
+echo "== build #$OXDESK_BUILD_N $BUILD =="
 
 falhas=0
 
@@ -63,16 +63,16 @@ psrun() {
 
 # ---------- ubuntu ----------
 passo "ubuntu: build"
-if out=$(cargo build --release --manifest-path logid/Cargo.toml 2>&1); then ok; else erro "$out"; fi
+if out=$(cargo build --release --manifest-path oxdesk/Cargo.toml 2>&1); then ok; else erro "$out"; fi
 passo "ubuntu: install and restart"
-# `pkill -x logid` before the restart: `systemctl restart` only kills the
-# copy systemd created. An orphan `logid` (the GUI used to spawn a child
+# `pkill -x oxdesk` before the restart: `systemctl restart` only kills the
+# copy systemd created. An orphan `oxdesk` (the GUI used to spawn a child
 # of its own in a boot race) keeps the port, the new daemon dies with
 # `Address already in use` and the machine serves an old binary while
 # saying `ok`. See .claude/rules/one-supervisor-per-daemon.md.
-if out=$( { install -m755 logid/target/release/logid ~/.local/bin/logid &&
-            { pkill -x logid || true; } &&
-            systemctl --user restart logid.service &&
+if out=$( { install -m755 oxdesk/target/release/oxdesk ~/.local/bin/oxdesk &&
+            { pkill -x oxdesk || true; } &&
+            systemctl --user restart oxdesk.service &&
             for _ in $(seq 10); do
               sleep 1
               curl -s --max-time 2 "localhost:8787/healthz" | grep -q "$BUILD" && break
@@ -82,48 +82,48 @@ if out=$( { install -m755 logid/target/release/logid ~/.local/bin/logid &&
   if ruim "$out"; then erro "$out"; else ok; fi
 else erro "$out"; fi
 
-passo "ubuntu: updater (logi-ota)"
+passo "ubuntu: updater (oxdesk-ota)"
 # The one that downloads the Release, checks the sum, swaps and reverts.
 # Goes to ALL THREE machines -- on Windows it only checks and reports
 # (specs/015).
 if out=$(cargo build --release --manifest-path ota/Cargo.toml 2>&1 &&
-         install -m755 ota/target/release/logi-ota ~/.local/bin/logi-ota 2>&1); then ok; else erro "$out"; fi
+         install -m755 ota/target/release/oxdesk-ota ~/.local/bin/oxdesk-ota 2>&1); then ok; else erro "$out"; fi
 
-passo "ubuntu: screen and KVM (logistream)"
+passo "ubuntu: screen and KVM (oxdesk-stream)"
 # The host runs on this machine when someone asks for its screen; the
 # client is installed too, for when it becomes the one watching.
 #
-# `logistream-kvm` has to be here because `logid` launches it by name
+# `oxdesk-kvm` has to be here because `oxdesk` launches it by name
 # when the tray sends input to another machine. It was left out of the
 # first version and the button failed with "nao consegui executar
-# logistream-kvm" -- binary built, never installed.
-if out=$(cargo build --release --manifest-path logistream/Cargo.toml 2>&1 &&
-         install -m755 logistream/target/release/logistream-host ~/.local/bin/ 2>&1 &&
-         install -m755 logistream/target/release/logistream-view ~/.local/bin/ 2>&1 &&
-         install -m755 logistream/target/release/logistream-ponte ~/.local/bin/ 2>&1 &&
-         install -m755 logistream/target/release/logistream-kvm ~/.local/bin/ 2>&1 &&
+# oxdesk-kvm" -- binary built, never installed.
+if out=$(cargo build --release --manifest-path stream/Cargo.toml 2>&1 &&
+         install -m755 stream/target/release/oxdesk-host ~/.local/bin/ 2>&1 &&
+         install -m755 stream/target/release/oxdesk-view ~/.local/bin/ 2>&1 &&
+         install -m755 stream/target/release/oxdesk-bridge ~/.local/bin/ 2>&1 &&
+         install -m755 stream/target/release/oxdesk-kvm ~/.local/bin/ 2>&1 &&
          mkdir -p ~/.local/state 2>&1); then ok; else erro "$out"; fi
 
 # ---------- windows ----------
 passo "windows: build"
-if out=$(cargo build --release --target x86_64-pc-windows-gnu --manifest-path logid/Cargo.toml 2>&1); then ok; else erro "$out"; fi
+if out=$(cargo build --release --target x86_64-pc-windows-gnu --manifest-path oxdesk/Cargo.toml 2>&1); then ok; else erro "$out"; fi
 
-EXE=logid/target/x86_64-pc-windows-gnu/release/logid.exe
-ASSINADO=$(mktemp -u /tmp/logid-assinado-XXXX.exe)
+EXE=oxdesk/target/x86_64-pc-windows-gnu/release/oxdesk.exe
+ASSINADO=$(mktemp -u /tmp/oxdesk-assinado-XXXX.exe)
 passo "windows: sign"
 # ALWAYS before copying: Defender removed the raw .exe the instant it was
 # written, twice, taking the scheduled task with it. See specs/008.
 if out=$(cp "$EXE" "$ASSINADO" && bash scripts/sign-windows.sh "$ASSINADO" 2>&1); then ok; else erro "$out"; fi
 
 passo "windows: upload and swap"
-if out=$(timeout 120 scp -q "$ASSINADO" 'windows-host:C:/Users/user/AppData/Local/logid/logid.new.exe' 2>&1); then
+if out=$(timeout 120 scp -q "$ASSINADO" 'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk.new.exe' 2>&1); then
   out=$({ cat <<'PS1' | psrun; } 2>&1
-$dst = Join-Path $env:LOCALAPPDATA 'logid'
-$novo = Join-Path $dst 'logid.new.exe'
+$dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
+$novo = Join-Path $dst 'oxdesk.new.exe'
 if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
 $v = Get-AuthenticodeSignature $novo
 if ($v.Status -ne 'Valid') { Write-Output ("ERROR: signature " + $v.Status); exit 1 }
-Get-Process -Name logid -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process -Name oxdesk -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 600
 # Size BEFORE moving, compared AFTER. In PowerShell, not passed through
 # bash: a valid signature does not guarantee the file stayed (Defender
@@ -131,15 +131,15 @@ Start-Sleep -Milliseconds 600
 # "ok"), and bringing the number in from outside would need an expanding
 # heredoc -- which is how I broke this very step.
 $esperado = (Get-Item $novo).Length
-Copy-Item -Force $novo (Join-Path $dst 'logid.exe')
+Copy-Item -Force $novo (Join-Path $dst 'oxdesk.exe')
 Remove-Item -Force $novo
 Start-Sleep -Milliseconds 500
-$tem = (Get-Item (Join-Path $dst 'logid.exe')).Length
+$tem = (Get-Item (Join-Path $dst 'oxdesk.exe')).Length
 if ($tem -ne $esperado) {
   Write-Output ('ERROR: written but has ' + $tem + ' bytes, expected ' + $esperado + ' -- antivirus reverting? check the exclusion for ' + $dst)
   exit 1
 }
-schtasks /run /tn 'logid' | Out-Null
+schtasks /run /tn 'oxdesk' | Out-Null
 exit 0
 PS1
 )
@@ -157,26 +157,26 @@ passo "windows: GUI shell"
 #
 # Takes effect on the app's next launch; we do not kill anyone's window.
 if out=$(timeout 60 scp -q gui/main.js \
-           'windows-host:C:/Users/user/AppData/Local/logid/gui/main.js' 2>&1); then ok
+           'windows-host:C:/Users/user/AppData/Local/oxdesk/gui/main.js' 2>&1); then ok
 else erro "$out"; fi
 
 passo "windows: agent"
 # The agent WAS LEFT BEHIND for a whole day: this script updated
-# `logid.exe` and forgot `logid-agent.exe`, which is exactly what Ubuntu
+# `oxdesk.exe` and forgot `oxdesk-agent.exe`, which is exactly what Ubuntu
 # invokes over SSH to read devices and request a channel switch. An old
 # binary on the other side of the bridge is the kind of divergence that
 # raises no error -- it answers, it just answers yesterday's answer.
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path agent/Cargo.toml 2>&1); then
-  AG=agent/target/x86_64-pc-windows-gnu/release/logid-agent.exe
-  AGSIG=$(mktemp -u /tmp/logid-agent-assinado-XXXX.exe)
+  AG=agent/target/x86_64-pc-windows-gnu/release/oxdesk-agent.exe
+  AGSIG=$(mktemp -u /tmp/oxdesk-agent-assinado-XXXX.exe)
   if out=$(cp "$AG" "$AGSIG" && bash scripts/sign-windows.sh "$AGSIG" 2>&1 &&
            timeout 120 scp -q "$AGSIG" \
-             'windows-host:C:/Users/user/AppData/Local/logid/logid-agent.new.exe' 2>&1); then
+             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-agent.new.exe' 2>&1); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
-$dst = Join-Path $env:LOCALAPPDATA 'logid'
-$novo = Join-Path $dst 'logid-agent.new.exe'
-$alvo = Join-Path $dst 'logid-agent.exe'
+$dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
+$novo = Join-Path $dst 'oxdesk-agent.new.exe'
+$alvo = Join-Path $dst 'oxdesk-agent.exe'
 if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
 $v = Get-AuthenticodeSignature $novo
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
@@ -203,26 +203,26 @@ PS1
   rm -f "$AGSIG"
 else erro "$out"; fi
 
-passo "windows: updater (logi-ota)"
+passo "windows: updater (oxdesk-ota)"
 # Signed like every .exe that lands here: Defender deletes the raw one on
 # write (specs/008). Here it does NOT swap binaries -- the Authenticode
-# key never leaves Ubuntu, so on that side logi-ota checks and reports,
+# key never leaves Ubuntu, so on that side oxdesk-ota checks and reports,
 # and this script is what swaps.
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path ota/Cargo.toml 2>&1); then
-  OT=ota/target/x86_64-pc-windows-gnu/release/logi-ota.exe
-  OTSIG=$(mktemp -u /tmp/logi-ota-assinado-XXXX.exe)
+  OT=ota/target/x86_64-pc-windows-gnu/release/oxdesk-ota.exe
+  OTSIG=$(mktemp -u /tmp/oxdesk-ota-assinado-XXXX.exe)
   limpa=$({ cat <<'PS1' | psrun; } 2>&1
-Remove-Item (Join-Path $env:LOCALAPPDATA 'logid\logi-ota.new.exe') -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $env:LOCALAPPDATA 'oxdesk\oxdesk-ota.new.exe') -ErrorAction SilentlyContinue
 PS1
 )
   if out=$(cp "$OT" "$OTSIG" && bash scripts/sign-windows.sh "$OTSIG" 2>&1 &&
            timeout 120 scp -q "$OTSIG" \
-             'windows-host:C:/Users/user/AppData/Local/logid/logi-ota.new.exe' 2>&1); then
+             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-ota.new.exe' 2>&1); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
-$dst = Join-Path $env:LOCALAPPDATA 'logid'
-$novo = Join-Path $dst 'logi-ota.new.exe'
-$alvo = Join-Path $dst 'logi-ota.exe'
+$dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
+$novo = Join-Path $dst 'oxdesk-ota.new.exe'
+$alvo = Join-Path $dst 'oxdesk-ota.exe'
 if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
 $v = Get-AuthenticodeSignature $novo
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
@@ -249,20 +249,20 @@ passo "windows: screen viewer"
 # side: the .exe's DLL list has only Windows stuff, and the decoder comes
 # with the NVIDIA driver, loaded at runtime.
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
-           --manifest-path logistream/Cargo.toml --bin logistream-view 2>&1); then
-  VW=logistream/target/x86_64-pc-windows-gnu/release/logistream-view.exe
-  VWSIG=$(mktemp -u /tmp/logistream-view-assinado-XXXX.exe)
+           --manifest-path stream/Cargo.toml --bin oxdesk-view 2>&1); then
+  VW=stream/target/x86_64-pc-windows-gnu/release/oxdesk-view.exe
+  VWSIG=$(mktemp -u /tmp/oxdesk-view-assinado-XXXX.exe)
   if out=$(cp "$VW" "$VWSIG" && bash scripts/sign-windows.sh "$VWSIG" 2>&1 &&
            timeout 180 scp -q "$VWSIG" \
-             'windows-host:C:/Users/user/AppData/Local/logid/logistream-view.new.exe' 2>&1); then
+             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-view.new.exe' 2>&1); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
-$dst = Join-Path $env:LOCALAPPDATA 'logid'
-$novo = Join-Path $dst 'logistream-view.new.exe'
+$dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
+$novo = Join-Path $dst 'oxdesk-view.new.exe'
 if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
 $v = Get-AuthenticodeSignature $novo
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
 # It may be open: whoever is watching closes the window when they want.
-Get-Process -Name logistream-view -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process -Name oxdesk-view -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 400
 # Size BEFORE moving, compared AFTER. In PowerShell, not passed through
 # bash: a valid signature does not guarantee the file stayed (Defender
@@ -270,10 +270,10 @@ Start-Sleep -Milliseconds 400
 # "ok"), and bringing the number in from outside would need an expanding
 # heredoc -- which is how I broke this very step.
 $esperado = (Get-Item $novo).Length
-Copy-Item -Force $novo (Join-Path $dst 'logistream-view.exe')
+Copy-Item -Force $novo (Join-Path $dst 'oxdesk-view.exe')
 Remove-Item -Force $novo
 Start-Sleep -Milliseconds 500
-$tem = (Get-Item (Join-Path $dst 'logistream-view.exe')).Length
+$tem = (Get-Item (Join-Path $dst 'oxdesk-view.exe')).Length
 if ($tem -ne $esperado) {
   Write-Output ('ERROR: written but has ' + $tem + ' bytes, expected ' + $esperado + ' -- antivirus reverting? check the exclusion for ' + $dst)
   exit 1
@@ -289,20 +289,20 @@ else erro "$out"; fi
 passo "windows: tab bridge"
 # Without it, Connect on Windows falls back to the native window (specs/016).
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
-           --manifest-path logistream/Cargo.toml --bin logistream-ponte 2>&1); then
-  PT=logistream/target/x86_64-pc-windows-gnu/release/logistream-ponte.exe
-  PTSIG=$(mktemp -u /tmp/logistream-ponte-assinado-XXXX.exe)
+           --manifest-path stream/Cargo.toml --bin oxdesk-bridge 2>&1); then
+  PT=stream/target/x86_64-pc-windows-gnu/release/oxdesk-bridge.exe
+  PTSIG=$(mktemp -u /tmp/oxdesk-bridge-assinado-XXXX.exe)
   if out=$(cp "$PT" "$PTSIG" && bash scripts/sign-windows.sh "$PTSIG" 2>&1 &&
            timeout 180 scp -q "$PTSIG" \
-             'windows-host:C:/Users/user/AppData/Local/logid/logistream-ponte.new.exe' 2>&1); then
+             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-bridge.new.exe' 2>&1); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
-$dst = Join-Path $env:LOCALAPPDATA 'logid'
-$novo = Join-Path $dst 'logistream-ponte.new.exe'
+$dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
+$novo = Join-Path $dst 'oxdesk-bridge.new.exe'
 if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
 $v = Get-AuthenticodeSignature $novo
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
 # An open tab holds the file: the session drops and reopens.
-Get-Process -Name logistream-ponte -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process -Name oxdesk-bridge -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 400
 # Size BEFORE moving, compared AFTER. In PowerShell, not passed through
 # bash: a valid signature does not guarantee the file stayed (Defender
@@ -310,10 +310,10 @@ Start-Sleep -Milliseconds 400
 # "ok"), and bringing the number in from outside would need an expanding
 # heredoc -- which is how I broke this very step.
 $esperado = (Get-Item $novo).Length
-Copy-Item -Force $novo (Join-Path $dst 'logistream-ponte.exe')
+Copy-Item -Force $novo (Join-Path $dst 'oxdesk-bridge.exe')
 Remove-Item -Force $novo
 Start-Sleep -Milliseconds 500
-$tem = (Get-Item (Join-Path $dst 'logistream-ponte.exe')).Length
+$tem = (Get-Item (Join-Path $dst 'oxdesk-bridge.exe')).Length
 if ($tem -ne $esperado) {
   Write-Output ('ERROR: written but has ' + $tem + ' bytes, expected ' + $esperado + ' -- antivirus reverting? check the exclusion for ' + $dst)
   exit 1
@@ -326,9 +326,9 @@ PS1
   rm -f "$PTSIG"
 else erro "$out"; fi
 
-passo "windows: screen host (logistream)"
+passo "windows: screen host (oxdesk-stream)"
 # Windows became a HOST of our protocol (v4): DXGI -> NVENC -> QUIC.
-# It needs a signature for the same reason as logid -- Defender deleted
+# It needs a signature for the same reason as oxdesk -- Defender deleted
 # the raw .exe the instant it was written, twice (specs/008).
 #
 # And it needs a SCHEDULED TASK, not a launch over SSH: SSH lands in
@@ -336,9 +336,9 @@ passo "windows: screen host (logistream)"
 # reaches no desktop at all. `/it` makes the task run in the interactive
 # session.
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
-           --manifest-path logistream/Cargo.toml --bin logistream-host 2>&1); then
-  HOSTEXE=logistream/target/x86_64-pc-windows-gnu/release/logistream-host.exe
-  HOSTSIG=$(mktemp -u /tmp/logistream-host-assinado-XXXX.exe)
+           --manifest-path stream/Cargo.toml --bin oxdesk-host 2>&1); then
+  HOSTEXE=stream/target/x86_64-pc-windows-gnu/release/oxdesk-host.exe
+  HOSTSIG=$(mktemp -u /tmp/oxdesk-host-assinado-XXXX.exe)
   # Delete the destination BEFORE the scp.
   #
   # The Windows SFTP server refuses to overwrite with "Overwriting an
@@ -348,20 +348,20 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   # works if the previous one finished cleanly is not a step, it is a
   # trap.
   limpa=$({ cat <<'PS1' | psrun; } 2>&1
-Remove-Item (Join-Path $env:LOCALAPPDATA 'logid\logistream-host.new.exe') -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $env:LOCALAPPDATA 'oxdesk\oxdesk-host.new.exe') -ErrorAction SilentlyContinue
 PS1
 )
   if out=$(cp "$HOSTEXE" "$HOSTSIG" && bash scripts/sign-windows.sh "$HOSTSIG" 2>&1 &&
            timeout 180 scp -q "$HOSTSIG" \
-             'windows-host:C:/Users/user/AppData/Local/logid/logistream-host.new.exe' 2>&1); then
+             'windows-host:C:/Users/user/AppData/Local/oxdesk/oxdesk-host.new.exe' 2>&1); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
-$dst = Join-Path $env:LOCALAPPDATA 'logid'
-$novo = Join-Path $dst 'logistream-host.new.exe'
-$alvo = Join-Path $dst 'logistream-host.exe'
+$dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
+$novo = Join-Path $dst 'oxdesk-host.new.exe'
+$alvo = Join-Path $dst 'oxdesk-host.exe'
 if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
 $v = Get-AuthenticodeSignature $novo
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
-Get-Process -Name logistream-host -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process -Name oxdesk-host -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 400
 # Size BEFORE moving, compared AFTER. In PowerShell, not passed through
 # bash: a valid signature does not guarantee the file stayed (Defender
@@ -385,19 +385,19 @@ if ($tem -ne $esperado) {
 # watching. The user reported it as "that terminal that opens when
 # connecting to the screen".
 #
-# Now the host is `windows_subsystem = "windows"` (as logid already was)
+# Now the host is `windows_subsystem = "windows"` (as oxdesk already was)
 # and redirects its own output to the same log file before the first
 # line. No cmd.exe in the path, no window, same log.
 # No argument: the host defaults to 9777. Passing the number here would
 # require nesting quotes in /tr, which has already broken three times on
 # this bridge.
 $env1 = $alvo
-Remove-Item (Join-Path $dst 'logistream-host.cmd') -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $dst 'oxdesk-host.cmd') -ErrorAction SilentlyContinue
 # A task that does NOT run on its own: `once` at 00:00 has already
 # passed, and we only wake it with `schtasks /run`. `/it` is the point --
 # without it the capture lands in session 0, where there is no desktop to
 # duplicate and no desktop for SendInput to reach.
-$r = schtasks /create /tn logistream-host /tr $env1 /sc once /st 00:00 /it /f 2>&1
+$r = schtasks /create /tn oxdesk-host /tr $env1 /sc once /st 00:00 /it /f 2>&1
 # The exit code is 0 with a WARNING about /ST being in the past: that is
 # expected and wanted. A real error comes with a code != 0.
 if ($LASTEXITCODE -ne 0) { Write-Output ('ERROR: schtasks ' + $r); exit 1 }
@@ -414,7 +414,7 @@ if [ "$PULAR_MAC" -eq 1 ]; then
   echo "  mac: skipped"
 else
   passo "mac: send source"
-  # `logistream` goes along: the Mac is the remote-screen CLIENT, and
+  # `oxdesk-stream` goes along: the Mac is the remote-screen CLIENT, and
   # leaving its binary behind has already happened once -- the one who
   # noticed was the user, not me.
   #
@@ -422,34 +422,34 @@ else
   # sending the rest without it would leave the machine that travels
   # without the only path it has to update itself away from home
   # (specs/015).
-  if out=$(for d in hidpp logid logistream ota; do
-             rsync -az --delete --exclude target -e "ssh -o BatchMode=yes" "$d" mac:~/logi/ || exit 1
+  if out=$(for d in hidpp oxdesk oxdesk-stream ota; do
+             rsync -az --delete --exclude target -e "ssh -o BatchMode=yes" "$d" mac:~/oxdesk/ || exit 1
            done 2>&1); then ok; else erro "$out"; fi
 
-  passo "mac: updater (logi-ota)"
+  passo "mac: updater (oxdesk-ota)"
   # Built THERE, like every Mac binary. It deliberately does not depend on
-  # brew (construir-binarios.sh refuses if it does): whatever repairs the
+  # brew (build-binaries.sh refuses if it does): whatever repairs the
   # machine must not need ffmpeg to come up.
   if out=$(timeout 300 ssh -n -o BatchMode=yes mac \
-            "cd ~/logi/ota && LOGI_BUILD='$BUILD' LOGI_BUILD_N='$LOGI_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
-             install -m755 target/release/logi-ota ~/.local/bin/logi-ota &&
-             ~/.local/bin/logi-ota --help > /dev/null" 2>&1); then ok; else erro "$out"; fi
+            "cd ~/oxdesk/ota && OXDESK_BUILD='$BUILD' OXDESK_BUILD_N='$OXDESK_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
+             install -m755 target/release/oxdesk-ota ~/.local/bin/oxdesk-ota &&
+             ~/.local/bin/oxdesk-ota --help > /dev/null" 2>&1); then ok; else erro "$out"; fi
   passo "mac: build and restart"
   # No cross-compile from Linux to macOS: it needs Apple's SDK, so the
-  # build happens there. LOGI_BUILD travels along because the copy has no
+  # build happens there. OXDESK_BUILD travels along because the copy has no
   # .git. Two things this step learned on a day it said `ok` seven times
   # in a row about a Mac serving a ten-day-old binary:
   #
-  # 1. `pkill -x logid` before the kickstart. `-k` only kills launchd's
+  # 1. `pkill -x oxdesk` before the kickstart. `-k` only kills launchd's
   #    copy; the GUI's orphan child keeps the port and the new daemon
   #    dies with `Address already in use`.
   # 2. Check `/healthz`. Asking for a restart is not having restarted --
   #    see .claude/rules/verify-what-arrived.md.
   if out=$(timeout 420 ssh -n -o BatchMode=yes mac \
-            "cd ~/logi/logid && LOGI_BUILD='$BUILD' LOGI_BUILD_N='$LOGI_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
-             install -m755 target/release/logid ~/.local/bin/logid || exit 1
-             pkill -x logid
-             launchctl kickstart -k gui/\$(id -u)/ai.logi.logid
+            "cd ~/oxdesk/oxdesk && OXDESK_BUILD='$BUILD' OXDESK_BUILD_N='$OXDESK_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
+             install -m755 target/release/oxdesk ~/.local/bin/oxdesk || exit 1
+             pkill -x oxdesk
+             launchctl kickstart -k gui/\$(id -u)/app.oxdesk.daemon
              for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
                sleep 2
                curl -s --max-time 2 localhost:8787/healthz | grep -q '$BUILD' && exit 0
@@ -459,13 +459,13 @@ else
     if ruim "$out"; then erro "$out"; else ok; fi
   else erro "$out"; fi
 
-  passo "mac: screen (logistream, client and host)"
+  passo "mac: screen (oxdesk-stream, client and host)"
   # brew's PKG_CONFIG_PATH: `ffmpeg-next` only finds libavcodec through
   # it, and SSH does not load the shell profile.
   #
   # `ffmpeg@7` and not `ffmpeg`: the binary CI builds will replace THIS
   # one through OTA, and both must reference the same prefix. See
-  # FFMPEG_FORMULA in construir-binarios.sh.
+  # FFMPEG_FORMULA in build-binaries.sh.
   #
   # The HOST was missing here. Only the client was built, so the machine
   # could watch the others and never be watched -- and the panel fell
@@ -486,17 +486,17 @@ else
   # from OTA captured. What needs to be true is weaker and more useful:
   # the dylibs resolve, and the major is the declared one.
   #
-  # See FFMPEG_SONAME in construir-binarios.sh, which on the PACKAGE path
+  # See FFMPEG_SONAME in build-binaries.sh, which on the PACKAGE path
   # is strict on purpose -- a package linked to the unversioned prefix
   # does not install on a machine that only has the versioned keg.
   if out=$(timeout 900 ssh -n -o BatchMode=yes mac \
-            "cd ~/logi/logistream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig &&
-             ~/.cargo/bin/cargo build --release --bin logistream-view --bin logistream-ponte --bin logistream-host 2>&1 | tail -3 &&
+            "cd ~/oxdesk/oxdesk-stream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig &&
+             ~/.cargo/bin/cargo build --release --bin oxdesk-view --bin oxdesk-bridge --bin oxdesk-host 2>&1 | tail -3 &&
              mkdir -p ~/.local/bin ~/.local/state &&
-             install -m755 target/release/logistream-view ~/.local/bin/ &&
-             install -m755 target/release/logistream-ponte ~/.local/bin/ &&
-             install -m755 target/release/logistream-host ~/.local/bin/ || exit 1
-             for b in logistream-host logistream-view; do
+             install -m755 target/release/oxdesk-view ~/.local/bin/ &&
+             install -m755 target/release/oxdesk-bridge ~/.local/bin/ &&
+             install -m755 target/release/oxdesk-host ~/.local/bin/ || exit 1
+             for b in oxdesk-host oxdesk-view; do
                otool -L ~/.local/bin/\$b | grep -q 'libavcodec.61.dylib' ||
                  echo \"ERROR: \$b does not ask for libavcodec.61 -- did the ffmpeg major change? see FFMPEG_SONAME\"
                for d in \$(otool -L ~/.local/bin/\$b | grep -o '/opt/[^ ]*'); do
@@ -520,9 +520,9 @@ else
   # had a `|| true` and said ok with the signature not applied -- and I
   # only found out because the Mac's screen started freezing again.
   if out=$(ssh -n -o BatchMode=yes mac \
-            "~/.local/bin/assinar.sh ~/.local/bin/logistream-host 2>&1 | tail -3;
-             if codesign -dv ~/.local/bin/logistream-host 2>&1 | grep -q adhoc; then
-               echo 'ERROR: the binary stayed ad-hoc; run criar-identidade.sh on the Mac'
+            "~/.local/bin/sign.sh ~/.local/bin/oxdesk-host 2>&1 | tail -3;
+             if codesign -dv ~/.local/bin/oxdesk-host 2>&1 | grep -q adhoc; then
+               echo 'ERROR: the binary stayed ad-hoc; run create-identity.sh on the Mac'
                exit 1
              fi" 2>&1); then ok; else erro "$out"; fi
 
@@ -531,10 +531,10 @@ else
   # Recording permission survive a rebuild: cargo's binary is
   # ad-hoc/linker-signed and the cdhash always changes, so TCC loses the
   # grant on every deploy. The identity itself is created by hand, once,
-  # in the Mac's Terminal (`criar-identidade.sh`) -- over SSH the keychain
+  # in the Mac's Terminal (`create-identity.sh`) -- over SSH the keychain
   # is locked.
-  if out=$(scp -q -o BatchMode=yes mac/criar-identidade.sh mac/assinar.sh mac:.local/bin/ 2>&1 &&
-           ssh -n -o BatchMode=yes mac "chmod +x ~/.local/bin/criar-identidade.sh ~/.local/bin/assinar.sh" 2>&1); then ok; else erro "$out"; fi
+  if out=$(scp -q -o BatchMode=yes mac/create-identity.sh mac/sign.sh mac:.local/bin/ 2>&1 &&
+           ssh -n -o BatchMode=yes mac "chmod +x ~/.local/bin/create-identity.sh ~/.local/bin/sign.sh" 2>&1); then ok; else erro "$out"; fi
 
   passo "mac: screen host LaunchAgent"
   # The host MUST be born in the graphical session: capture depends on a
@@ -542,15 +542,15 @@ else
   # AVFoundation hangs instead of failing. `RunAtLoad false` -- it only
   # comes up when someone asks for the screen, so it does not burn battery
   # capturing for nobody.
-  if out=$(scp -q -o BatchMode=yes mac/ai.logi.logistream-host.plist mac:Library/LaunchAgents/ 2>&1 &&
+  if out=$(scp -q -o BatchMode=yes mac/app.oxdesk.host.plist mac:Library/LaunchAgents/ 2>&1 &&
            ssh -n -o BatchMode=yes mac \
-            "launchctl bootout gui/\$(id -u)/ai.logi.logistream-host 2>/dev/null || true;
+            "launchctl bootout gui/\$(id -u)/app.oxdesk.host 2>/dev/null || true;
              # bootstrap fails with an I/O error if the previous one is
              # still exiting. A short pause covers it, and retrying is
              # idempotent.
              sleep 1
-             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.logistream-host.plist 2>/dev/null || \
-             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.logi.logistream-host.plist" 2>&1); then ok; else erro "$out"; fi
+             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/app.oxdesk.host.plist 2>/dev/null || \
+             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/app.oxdesk.host.plist" 2>&1); then ok; else erro "$out"; fi
 
   passo "mac: GUI shell"
   # Windows got a loose `main.js` on every deploy; the Mac had the shell
@@ -571,11 +571,11 @@ else
   # and killing the window of whoever is using the machine is not the
   # deploy's job.
   if out=$(ssh -n -o BatchMode=yes mac \
-             'mkdir -p ~/Applications/Logi.app/Contents/Resources/app' 2>&1 &&
+             'mkdir -p ~/Applications/Oxdesk.app/Contents/Resources/app' 2>&1 &&
            rsync -az -e "ssh -o BatchMode=yes" gui/main.js gui/package.json gui/icon.png gui/tray.png \
-             mac:Applications/Logi.app/Contents/Resources/app/ 2>&1 &&
+             mac:Applications/Oxdesk.app/Contents/Resources/app/ 2>&1 &&
            ssh -n -o BatchMode=yes mac '
-             APP=$HOME/Applications/Logi.app
+             APP=$HOME/Applications/Oxdesk.app
              if [ -f "$APP/Contents/Resources/app.asar" ]; then
                mv "$APP/Contents/Resources/app.asar" "$APP/Contents/Resources/app.asar.off"
                /usr/libexec/PlistBuddy -c "Delete :ElectronAsarIntegrity" "$APP/Contents/Info.plist" >/dev/null 2>&1
@@ -592,20 +592,20 @@ fi
 # on this repo. It lives here and is distributed; without it the API
 # answers 200 with {"message":"Not Found"} and the wizard says exactly
 # that. See specs/015.
-TOKEN="$HOME/.config/logi/ota-token"
+TOKEN="$HOME/.config/oxdesk/ota-token"
 if [ -f "$TOKEN" ]; then
   passo "windows: OTA token"
   if out=$(timeout 60 scp -q "$TOKEN" \
-             'windows-host:C:/Users/user/AppData/Local/logid/ota-token' 2>&1); then ok
+             'windows-host:C:/Users/user/AppData/Local/oxdesk/ota-token' 2>&1); then ok
   else erro "$out"; fi
   if [ "$PULAR_MAC" -eq 0 ]; then
     passo "mac: OTA token"
     # `chmod 600` on that side: scp preserves the source mode, but relying
     # on that is relying on another machine's umask -- and the wizard
     # refuses a token readable by others.
-    if out=$(ssh -n -o BatchMode=yes mac 'mkdir -p ~/.config/logi' 2>&1 &&
-             scp -q -o BatchMode=yes "$TOKEN" mac:.config/logi/ota-token 2>&1 &&
-             ssh -n -o BatchMode=yes mac 'chmod 600 ~/.config/logi/ota-token' 2>&1); then ok
+    if out=$(ssh -n -o BatchMode=yes mac 'mkdir -p ~/.config/oxdesk' 2>&1 &&
+             scp -q -o BatchMode=yes "$TOKEN" mac:.config/oxdesk/ota-token 2>&1 &&
+             ssh -n -o BatchMode=yes mac 'chmod 600 ~/.config/oxdesk/ota-token' 2>&1); then ok
     else erro "$out"; fi
   fi
 else

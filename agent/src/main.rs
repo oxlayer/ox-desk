@@ -1,8 +1,8 @@
-//! logid-agent -- the Windows side.
+//! oxdesk-agent -- the Windows side.
 //!
 //! Spec: ../specs/005-input-switch.md
 //!
-//! It is a CLI, not a server, on purpose: `logid` invokes it over SSH,
+//! It is a CLI, not a server, on purpose: `oxdesk` invokes it over SSH,
 //! which we already have authenticated by key. Zero new ports, zero new
 //! auth, zero network surface. JSON output for the control plane to
 //! consume.
@@ -11,7 +11,7 @@
 //! interactive session, because GetLastInputInfo does not see input from
 //! another session.
 //!
-//! The JSON `error`/`reason` values stay pt-BR: they travel to `logid`
+//! The JSON `error`/`reason` values stay pt-BR: they travel to `oxdesk`
 //! and can reach the panel. The log lines are English; `watch-edge START`
 //! is the marker people grep for (specs/005).
 
@@ -35,7 +35,7 @@ fn logline(msg: &str) {
     let line = format!("{ts} {msg}\n");
     eprint!("{line}");
     let Some(dir) = std::env::var_os("LOCALAPPDATA") else { return };
-    let path = std::path::Path::new(&dir).join("logid").join("watch-edge.log");
+    let path = std::path::Path::new(&dir).join("oxdesk").join("watch-edge.log");
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = f.write_all(line.as_bytes());
     }
@@ -53,7 +53,7 @@ fn fail(msg: impl AsRef<str>) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "logid-agent <command>
+        "oxdesk-agent <command>
 
   devices                      HID++ interfaces and current host of each slot
   host-info <slot>             number of hosts and current channel (slot 1..6)
@@ -153,7 +153,7 @@ fn main() -> ExitCode {
                      atalho em shell:startup.",
                 );
             }
-            if !input::claim_single_instance("logid-agent-watch-edge") {
+            if !input::claim_single_instance("oxdesk-agent-watch-edge") {
                 return fail(
                     "ja existe um watch-edge rodando -- tres instancias \
                      competindo pelo mesmo receptor foi problema real",
@@ -178,7 +178,7 @@ fn main() -> ExitCode {
             // Logic: when the devices ARRIVE on this machine, we give a
             // window. If no input shows up in it, we send them back -- the
             // sender cannot undo, only the holder can.
-            let guard_secs: u64 = std::env::var("LOGID_GUARD_SECS")
+            let guard_secs: u64 = std::env::var("OXDESK_GUARD_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(25);

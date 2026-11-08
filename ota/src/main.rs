@@ -1,23 +1,23 @@
-//! `logi-ota` -- the machine updates itself from the GitHub Releases.
+//! `oxdesk-ota` -- the machine updates itself from the GitHub Releases.
 //!
 //! Spec: ../../specs/015-ota.md
 //!
-//! A separate binary, and not a thread inside `logid`, for three reasons
+//! A separate binary, and not a thread inside `oxdesk`, for three reasons
 //! that come together:
 //!
 //! 1. **Whoever swaps the binary must not die with it.** Restarting the
 //!    daemon kills everything in the service's cgroup on Linux and in the
-//!    job's process group under launchd. A thread inside `logid` would
+//!    job's process group under launchd. A thread inside `oxdesk` would
 //!    not survive the very restart it asked for -- and nobody would be
 //!    left to check `/healthz` or to roll back.
 //! 2. **OTA has to work with the daemon dead.** That is exactly the case
-//!    where updating fixes things. If the clock lived in `logid`, a
-//!    broken `logid` would never fix itself again.
+//!    where updating fixes things. If the clock lived in `oxdesk`, a
+//!    broken `oxdesk` would never fix itself again.
 //! 3. The clock belongs to the system supervisor (systemd timer, launchd
 //!    `StartInterval`, scheduled task), which already exists on all
 //!    three machines and already wakes up everything that needs waking.
 //!
-//!   usage:  logi-ota [--conferir | --forcar | --estado]
+//!   usage:  oxdesk-ota [--conferir | --forcar | --estado]
 //!
 //! With no argument: check, and apply if there is something new.
 
@@ -39,7 +39,7 @@ fn main() -> ExitCode {
         Some("--estado") => return show_state(args.iter().any(|a| a == "--curto")),
         Some("-h") | Some("--help") => {
             println!(
-                "logi-ota [--conferir | --forcar | --estado]
+                "oxdesk-ota [--conferir | --forcar | --estado]
 
   (no argument)    check the latest Release and apply it if it is newer
   --conferir       only check and record the state; swaps nothing
@@ -47,13 +47,13 @@ fn main() -> ExitCode {
   --estado         print the JSON of the last check
   --estado --curto one line: <result> TAB <age in s> TAB <phrase>
 
-Read token for the Releases (private repo) in ~/.config/logi/ota-token
-or in the LOGI_OTA_TOKEN variable. See specs/015-ota.md."
+Read token for the Releases (private repo) in ~/.config/oxdesk/ota-token
+or in the OXDESK_OTA_TOKEN variable. See specs/015-ota.md."
             );
             return ExitCode::SUCCESS;
         }
         Some(other) => {
-            eprintln!("logi-ota: unknown argument {other}; try --help");
+            eprintln!("oxdesk-ota: unknown argument {other}; try --help");
             return ExitCode::from(2);
         }
     };
@@ -74,16 +74,16 @@ or in the LOGI_OTA_TOKEN variable. See specs/015-ota.md."
 
 /// The last check, for whoever consumes it.
 ///
-/// `--curto` exists for the wizard's `ota` step: `logid` does not link
+/// `--curto` exists for the wizard's `ota` step: `oxdesk` does not link
 /// this crate (they are separate binaries) and **must not reimplement
 /// either the file format or the phrases**. So the asker runs
-/// `logi-ota --estado --curto` and splits on TAB. One owner of the
+/// `oxdesk-ota --estado --curto` and splits on TAB. One owner of the
 /// format, a one-line contract.
 fn show_state(short: bool) -> ExitCode {
     let ctx = match apply::context(apply::Mode::Check) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("logi-ota: {e}");
+            eprintln!("oxdesk-ota: {e}");
             return ExitCode::FAILURE;
         }
     };

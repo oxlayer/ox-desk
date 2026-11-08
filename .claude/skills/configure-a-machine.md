@@ -74,7 +74,7 @@ connected: delete the app from Finder and **deny** any VPN request. See
 
 ```bash
 brew install tailscale
-sudo bash logid/setup/instalar-tailscale-mac.sh   # in the repo clone
+sudo bash oxdesk/setup/install-tailscale-mac.sh   # in the repo clone
 ```
 
 The wizard button does the same without a clone: it opens Terminal with
@@ -84,7 +84,7 @@ the script.
 
 The `tela-virtual` step counts the monitors present. With zero, the
 viewer connects and no frame arrives. The button installs the driver
-from `logid/setup/instalar-tela-virtual.ps1`, with pinned version and
+from `oxdesk/setup/install-virtual-display.ps1`, with pinned version and
 hash. Over SSH, as administrator, the script runs directly, without a
 prompt on screen.
 

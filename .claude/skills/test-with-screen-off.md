@@ -15,7 +15,7 @@ session 0, where there is no desktop to turn off. Hence the task with
 `/it`.
 
 ```powershell
-# apagar-tela.ps1, in %LOCALAPPDATA%\logid\
+# screen-off.ps1, in %LOCALAPPDATA%\oxdesk\
 $src = @"
 using System;
 using System.Runtime.InteropServices;
@@ -30,19 +30,19 @@ Add-Type -TypeDefinition $src
 ```
 
 ```powershell
-schtasks /create /tn apagar-tela /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ps`"" /sc once /st 00:00 /it /f
+schtasks /create /tn oxdesk-screen-off /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ps`"" /sc once /st 00:00 /it /f
 ```
 
 ## 2. Run the test
 
 ```bash
-ssh windows-host 'taskkill /F /IM logistream-host.exe'      # NOT Stop-Process
+ssh windows-host 'taskkill /F /IM oxdesk-host.exe'      # NOT Stop-Process
 sleep 2
-ssh windows-host 'powershell -NoProfile -Command "schtasks /run /tn apagar-tela | Out-Null"'
+ssh windows-host 'powershell -NoProfile -Command "schtasks /run /tn oxdesk-screen-off | Out-Null"'
 sleep 25                                              # time for it to really go off
-ssh windows-host 'powershell -NoProfile -Command "schtasks /run /tn logistream-host | Out-Null"'
+ssh windows-host 'powershell -NoProfile -Command "schtasks /run /tn oxdesk-host | Out-Null"'
 sleep 4
-cargo run --release --bin logistream-sink -- windows-host.local:9777 14
+cargo run --release --bin oxdesk-sink -- windows-host.local:9777 14
 ```
 
 ## 3. What passing looks like
@@ -61,6 +61,6 @@ Leaving a task that turns off the screen on someone's machine causes
 confusion later:
 
 ```powershell
-schtasks /delete /tn apagar-tela /f
-Remove-Item (Join-Path $env:LOCALAPPDATA 'logid\apagar-tela.ps1')
+schtasks /delete /tn oxdesk-screen-off /f
+Remove-Item (Join-Path $env:LOCALAPPDATA 'oxdesk\screen-off.ps1')
 ```

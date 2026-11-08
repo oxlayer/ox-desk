@@ -36,14 +36,14 @@ pub fn current() -> System {
 /// The start of each system's package name.
 ///
 /// Mirrors `PACOTE` in
-/// [`construir-binarios.sh`](../../scripts/construir-binarios.sh). If
+/// [`build-binaries.sh`](../../scripts/build-binaries.sh). If
 /// someone renames it there, this finds no package and the state says
 /// exactly that -- instead of installing another architecture's package.
 pub fn prefix(s: System) -> &'static str {
     match s {
-        System::Linux => "logi-linux-x86_64-",
-        System::Mac => "logi-mac-arm64-unsigned-",
-        System::Windows => "logi-windows-x86_64-unsigned-",
+        System::Linux => "oxdesk-linux-x86_64-",
+        System::Mac => "oxdesk-mac-arm64-unsigned-",
+        System::Windows => "oxdesk-windows-x86_64-unsigned-",
     }
 }
 
@@ -70,7 +70,7 @@ pub struct Plan {
     /// **not** know about, before restarting.
     ///
     /// It exists because `kickstart -k` (and `systemctl restart`) only
-    /// kill the copy the supervisor created. An orphan `logid` --
+    /// kill the copy the supervisor created. An orphan `oxdesk` --
     /// typically started by the GUI in a boot race -- keeps the port, the
     /// new daemon dies with `Address already in use`, `/healthz` keeps
     /// answering the OLD build, and this program concludes the update
@@ -86,29 +86,29 @@ pub fn plan(s: System, uid: u32) -> Plan {
     match s {
         System::Linux => Plan {
             system: s,
-            daemon: "logid",
+            daemon: "oxdesk",
             signs: false,
             refusal: None,
             restart: vec![
                 "systemctl".into(),
                 "--user".into(),
                 "restart".into(),
-                "logid.service".into(),
+                "oxdesk.service".into(),
             ],
-            clear: vec!["pkill".into(), "-x".into(), "logid".into()],
+            clear: vec!["pkill".into(), "-x".into(), "oxdesk".into()],
         },
         System::Mac => Plan {
             system: s,
-            daemon: "logid",
+            daemon: "oxdesk",
             signs: true,
             refusal: None,
             restart: vec![
                 "launchctl".into(),
                 "kickstart".into(),
                 "-k".into(),
-                format!("gui/{uid}/ai.logi.logid"),
+                format!("gui/{uid}/app.oxdesk.daemon"),
             ],
-            clear: vec!["pkill".into(), "-x".into(), "logid".into()],
+            clear: vec!["pkill".into(), "-x".into(), "oxdesk".into()],
         },
         // The Authenticode key never leaves the Ubuntu box (specs/008), and
         // an `.exe` without a valid signature is what Defender deleted the
@@ -120,7 +120,7 @@ pub fn plan(s: System, uid: u32) -> Plan {
         // Mac, which does.
         System::Windows => Plan {
             system: s,
-            daemon: "logid.exe",
+            daemon: "oxdesk.exe",
             signs: false,
             // Shown in the panel: stays in Portuguese.
             refusal: Some("nao assino aqui: a chave do Authenticode vive no Ubuntu (specs/008); rode o deploy"),
@@ -137,22 +137,22 @@ pub fn plan(s: System, uid: u32) -> Plan {
 pub fn install_dir(s: System, base: &Path) -> PathBuf {
     match s {
         System::Linux | System::Mac => base.join(".local").join("bin"),
-        System::Windows => base.join("logid"),
+        System::Windows => base.join("oxdesk"),
     }
 }
 
 /// Where the state, the log and the copy of the previous build live.
 pub fn state_dir(s: System, base: &Path) -> PathBuf {
     match s {
-        System::Linux | System::Mac => base.join(".local").join("state").join("logi-ota"),
-        System::Windows => base.join("logid").join("ota"),
+        System::Linux | System::Mac => base.join(".local").join("state").join("oxdesk-ota"),
+        System::Windows => base.join("oxdesk").join("ota"),
     }
 }
 
 /// The signing script, when the system signs.
 pub fn signer(s: System, base: &Path) -> Option<PathBuf> {
     match s {
-        System::Mac => Some(base.join(".local").join("bin").join("assinar.sh")),
+        System::Mac => Some(base.join(".local").join("bin").join("sign.sh")),
         _ => None,
     }
 }
@@ -207,8 +207,8 @@ mod tests {
             let p = plan(s, 501);
             assert!(!p.clear.is_empty(), "{s:?} applies and does not clear the port");
             assert_eq!(p.clear[0], "pkill", "{s:?}");
-            // `-x`: EXACT name. Without it `pkill` would match `logi-ota`
-            // itself and any command line that mentions logid.
+            // `-x`: EXACT name. Without it `pkill` would match `oxdesk-ota`
+            // itself and any command line that mentions oxdesk.
             assert!(p.clear.contains(&"-x".to_string()), "{s:?}: {:?}", p.clear);
         }
         assert!(plan(System::Windows, 0).clear.is_empty(), "whoever refuses kills nothing");
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn the_mac_restart_carries_the_uid() {
         let p = plan(System::Mac, 501);
-        assert!(p.restart.iter().any(|a| a == "gui/501/ai.logi.logid"), "{:?}", p.restart);
+        assert!(p.restart.iter().any(|a| a == "gui/501/app.oxdesk.daemon"), "{:?}", p.restart);
     }
 
     #[test]
@@ -234,10 +234,10 @@ mod tests {
         }
         assert_eq!(d[0], d[1], "Linux and Mac use the same ~/.local/bin");
         assert_ne!(d[1], d[2], "Windows does not use .local/bin");
-        assert!(state_dir(System::Mac, &home()).ends_with("logi-ota"));
+        assert!(state_dir(System::Mac, &home()).ends_with("oxdesk-ota"));
     }
 
-    /// Distinct prefixes, and none a prefix of another. `logi-mac-arm64-`
+    /// Distinct prefixes, and none a prefix of another. `oxdesk-mac-arm64-`
     /// without `unsigned-` would match a future signed package, and that
     /// is wanted -- but none may match another system's package.
     #[test]
@@ -260,9 +260,9 @@ mod tests {
     /// wrong would mean the stamp is never found in the right package.
     #[test]
     fn the_daemon_name_follows_the_system() {
-        assert_eq!(plan(System::Windows, 0).daemon, "logid.exe");
-        assert_eq!(plan(System::Linux, 0).daemon, "logid");
-        assert_eq!(plan(System::Mac, 0).daemon, "logid");
+        assert_eq!(plan(System::Windows, 0).daemon, "oxdesk.exe");
+        assert_eq!(plan(System::Linux, 0).daemon, "oxdesk");
+        assert_eq!(plan(System::Mac, 0).daemon, "oxdesk");
     }
 }
 
@@ -274,7 +274,7 @@ mod tests {
 /// ../../specs/015-ota.md for what that changes in the trust model.
 pub fn token_path(s: System, base: &Path) -> PathBuf {
     match s {
-        System::Linux | System::Mac => base.join(".config").join("logi").join("ota-token"),
-        System::Windows => base.join("logid").join("ota-token"),
+        System::Linux | System::Mac => base.join(".config").join("oxdesk").join("ota-token"),
+        System::Windows => base.join("oxdesk").join("ota-token"),
     }
 }

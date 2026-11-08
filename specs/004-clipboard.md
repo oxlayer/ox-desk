@@ -91,7 +91,7 @@ only then paste.
 
 The remote binary's path comes **per system**, not from PATH: SSH's
 non-interactive shell does not load the login PATH, and the Mac replied
-`zsh:1: command not found: logid`. The config's `agent` field does not
+`zsh:1: command not found: oxdesk`. The config's `agent` field does not
 work either — it points to another executable and only exists on Windows.
 
 ### Why `clip-set` does not write directly

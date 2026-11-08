@@ -63,7 +63,7 @@ Write-Host '  2. Configure Server -> drag a new screen next to Windows'
 Write-Host '     (the EXACT hostname the Ubuntu client shows)'
 Write-Host '  3. install KDE Connect from the Microsoft Store (clipboard + files)'
 
-# --- logistream: screen and input ---------------------------------------
+# --- oxdesk-stream: screen and input ---------------------------------------
 #
 # Two ports, two rules. The input one (9778) was missing when LAN KVM
 # arrived, and the symptom did not say "firewall": the KVM grabbed the
@@ -72,8 +72,8 @@ Write-Host '  3. install KDE Connect from the Microsoft Store (clipboard + files
 # disables only that one. The rule display names are left as they are:
 # they are how this script finds an existing rule.
 foreach ($r in @(
-  @{ nome = 'logistream (tela remota) UDP 9777'; porta = 9777 },
-  @{ nome = 'logistream (input KVM) UDP 9778';   porta = 9778 }
+  @{ nome = 'oxdesk-stream (tela remota) UDP 9777'; porta = 9777 },
+  @{ nome = 'oxdesk-stream (input KVM) UDP 9778';   porta = 9778 }
 )) {
   if (-not (Get-NetFirewallRule -DisplayName $r.nome -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -DisplayName $r.nome -Direction Inbound -Protocol UDP `

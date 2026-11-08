@@ -128,7 +128,7 @@ sudo udevadm trigger --subsystem-match=hidraw --action=add   # or replug the rec
 getfacl /dev/hidraw0 | grep user                           # confirm the ACL
 ```
 
-`logid` should **check this at startup** and report it in the API/GUI when it is
+`oxdesk` should **check this at startup** and report it in the API/GUI when it is
 missing, instead of failing obscurely at switch time.
 
 Mapping on this machine:
@@ -166,12 +166,12 @@ It is a **CLI, not a server**, invoked over SSH. It reuses the key
 that already exists: zero new ports, zero new auth, zero network surface.
 
 ```
-logid-agent devices                      # slots, number of channels, current channel
-logid-agent host-info <slot>
-logid-agent set-host <slot> <n> --confirm
-logid-agent input-age                    # ms since the last input
-logid-agent guard <slot> <n> <segundos>  # dead-man's switch
-logid-agent raw <slot> <feature> <func>  # protocol probing
+oxdesk-agent devices                      # slots, number of channels, current channel
+oxdesk-agent host-info <slot>
+oxdesk-agent set-host <slot> <n> --confirm
+oxdesk-agent input-age                    # ms since the last input
+oxdesk-agent guard <slot> <n> <segundos>  # dead-man's switch
+oxdesk-agent raw <slot> <feature> <func>  # protocol probing
 ```
 
 HID++ via `hidapi` (integrate rather than reimplement: HID enumeration and I/O
@@ -246,7 +246,7 @@ source does not try to save itself, the destination rescues it.
 
 ### Implemented inside `watch-edge` — and why there
 
-First idea: `logid` would ask the target's agent, over SSH, to run
+First idea: `oxdesk` would ask the target's agent, over SSH, to run
 `guard`. **It does not work.** `GetLastInputInfo` is per session, and a command over
 SSH lands in a session that has never seen input — measured: it reports the machine's
 uptime (704577031 ms ≈ 8 days).
@@ -256,7 +256,7 @@ user's session and already polls:
 
 1. detects that the devices **arrived** (transition from absent to
    present, checked at 1 Hz);
-2. records the idle at that instant and opens a `LOGID_GUARD_SECS` window
+2. records the idle at that instant and opens a `OXDESK_GUARD_SECS` window
    (25 s by default);
 3. if the idle drops below the time since arrival, there was activity — and
    it disarms;
@@ -329,13 +329,13 @@ Complete cycle, in both directions, with real hardware:
 
 ```
 # Windows -> Ubuntu, through the agent via SSH
-logid-agent set-host 1 1            -> recusa: falta --confirm
-logid-agent set-host 1 1 --confirm  -> {"ok":true,"slot":1,"host":1}
-logid-agent set-host 2 1 --confirm  -> {"ok":true,"slot":2,"host":1}
+oxdesk-agent set-host 1 1            -> recusa: falta --confirm
+oxdesk-agent set-host 1 1 --confirm  -> {"ok":true,"slot":1,"host":1}
+oxdesk-agent set-host 2 1 --confirm  -> {"ok":true,"slot":2,"host":1}
    Ubuntu:  slot 1 e 2 online=True
    Windows: nenhum slot online
 
-# Ubuntu -> Windows, through logid
+# Ubuntu -> Windows, through oxdesk
 POST /api/focus {"host":"windows-host","confirm":true}
    executado: true
    MX Anywhere 3:    slot 1 -> canal 2
@@ -354,7 +354,7 @@ no open project had.
 ### `input-age` over SSH is useless — proven
 
 ```
-$ ssh windows-host logid-agent input-age
+$ ssh windows-host oxdesk-agent input-age
 {"idle_ms":704577031,"ok":true}        # ~8.15 days
 ```
 
@@ -378,7 +378,7 @@ indistinguishable from Flow.
 
 ## Implemented in Rust and measured (2026-11-03)
 
-[`logid/src/border.rs`](../logid/src/border.rs), via the `dbus` crate
+[`oxdesk/src/border.rs`](../oxdesk/src/border.rs), via the `dbus` crate
 (libdbus), **not** zbus: measured, zbus took the tree from 5 to **189
 crates**, dragging in an async runtime to make six D-Bus calls.
 With `dbus 0.9.12` it stayed at **40**, at the cost of `libdbus-1-dev` from apt.
@@ -447,7 +447,7 @@ that left — use the Easy-Switch button on the one that stayed.)
 [`agent/`](../agent/) gained `watch-edge`, which closes the mode B cycle:
 
 ```
-logid-agent watch-edge left 1,2 1 [hold_ms]
+oxdesk-agent watch-edge left 1,2 1 [hold_ms]
 ```
 
 It watches the edge and, on touching it, sends the slots to the target's channel.
@@ -503,16 +503,16 @@ not the real monitor. Same isolation that already invalidated `input-age` over
 SSH. That is why the watcher **has** to be born in the interactive session.
 
 > History: this used to be a shortcut in `shell:startup` pointing to
-> `logid-agent watch-edge`, created by a `windows-autostart.ps1`. Both
+> `oxdesk-agent watch-edge`, created by a `windows-autostart.ps1`. Both
 > were removed. The watcher became a **daemon thread**
-> ([`border_win.rs`](../logid/src/border_win.rs)) when `logid` started
+> ([`border_win.rs`](../oxdesk/src/border_win.rs)) when `oxdesk` started
 > running on Windows, because with both alive there would be two owners of the same
 > HID++ receiver — it already happened, three simultaneous `watch-edge`
 > tripling the radio traffic. The thread claims the **same mutex
 > name** as the old mode precisely so that a forgotten shortcut never
 > polls alongside the daemon.
 >
-> What guarantees the interactive session today is `logid`'s scheduled task,
+> What guarantees the interactive session today is `oxdesk`'s scheduled task,
 > created with `/it` by the wizard (`setup_win.rs`), and the dead script
 > was still asking to create a shortcut to an `.exe` that no longer exists.
 
@@ -566,7 +566,7 @@ Discovered when gathering the devices: Windows had **slot 1 online**
 and slot 2 empty, while here both exist. `set-host 2` from there
 failed because of that, not because of a bug.
 
-The `logid` config already resolves by device **name**. The agent
+The `oxdesk` config already resolves by device **name**. The agent
 still takes raw numbers on the command line (`watch-edge left 1,2 1`),
 and the presence check makes it tolerate the divergence — but the right thing is for it to
 read `DEVICE NAME` (HID++ 0x0005) and match by name too. Left open.
@@ -628,7 +628,7 @@ migration mandatory, not optional.
 ## Migrated to direct HID++ — measured before and after
 
 `solaar` left the hot path. The protocol became a shared crate
-in [`hidpp/`](../hidpp/), used by `logid` **and** by `agent` — a single
+in [`hidpp/`](../hidpp/), used by `oxdesk` **and** by `agent` — a single
 copy, tested against hardware on both systems.
 
 | | before (solaar) | after (HID++) |
@@ -655,7 +655,7 @@ with `cargo run --release --bin probe` in the crate.
 **1. An offline device disappeared from the API.** HID++ does not read the name of
 something that does not respond, so the list came out empty and the GUI blank —
 a regression compared to solaar, which listed offline devices by name. Solved with a
-slot→name cache persisted in `~/.local/state/logi/slots.json`:
+slot→name cache persisted in `~/.local/state/oxdesk/slots.json`:
 disposable runtime, not config.
 
 **2. `executed: true` with zero results.** With the switch so much
@@ -683,7 +683,7 @@ agent migrated that dropped to ~2 s, so the switch should end up close to
 
 ## Keyboard follows the mouse: reconciler
 
-[`logid/src/follow.rs`](../logid/src/follow.rs). One device is the
+[`oxdesk/src/follow.rs`](../oxdesk/src/follow.rs). One device is the
 **leader** and the others in `[[devices]]` follow its channel, re-evaluated
 every N seconds.
 
@@ -715,7 +715,7 @@ I tested the direction that goes through the peer, not the local one:
 
 ```
 # only the leader goes back to channel 1; the keyboard stays on 2
-ssh windows-host logid-agent set-host 2 1 --confirm
+ssh windows-host oxdesk-agent set-host 2 1 --confirm
 
 follow: MX Keys Wireless Keyboard: pedi a windows-host que o mandasse para o canal 1
 -> MX Anywhere 3              online=True canal=1
@@ -779,7 +779,7 @@ every 10, otherwise a device paired later would never show up.
 
 **4. Do not wait for SSH on the hot path** (the user's idea). The agent
 probe was ~2.2 s of the 3.9 s. A background refresher
-([`peers.rs`](../logid/src/peers.rs)) keeps the peers' state every
+([`peers.rs`](../oxdesk/src/peers.rs)) keeps the peers' state every
 6 s, and `"fast": true` reads the cache:
 
 ```
@@ -1065,7 +1065,7 @@ Removed from the package and from both machines, but it remained in the config: 
 in `units`. The panel showed `Deskflow srv: fechada` ("closed") and
 `deskflow-client · inactive` — noise about something that no longer exists.
 
-Replaced by `logid.service`, which is what actually matters to watch.
+Replaced by `oxdesk.service`, which is what actually matters to watch.
 
 ## When the devices "switch hosts on their own": the list (2026-11-04)
 
@@ -1110,7 +1110,7 @@ a few seconds later it comes back".
    precisely because looking at one side only was not enough.
 2. Logs from **both** machines. "No line claims the action" is
    information, not a lack of information: it rules out our code.
-3. Processes separate from the daemon: `logid-agent watch-edge` has its own
+3. Processes separate from the daemon: `oxdesk-agent watch-edge` has its own
    shortcut in Windows Startup and does not die with the daemon's flag.
 4. Another manager: `solaar`, `logiops`, `piper`, `ratbagd`.
 5. USB power on the DESTINATION host.
@@ -1318,7 +1318,7 @@ check before letting the program steal someone's keyboard.
 
 ### Permission
 
-`logid/udev/70-logid-input.rules`, with `TAG+="uaccess"` on the
+`oxdesk/udev/70-oxdesk-input.rules`, with `TAG+="uaccess"` on the
 Logitech devices — not the `input` group, which would give any
 process of the account permanent access to every input device,
 even with the session closed. Recipe in

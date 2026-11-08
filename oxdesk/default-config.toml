@@ -1,0 +1,134 @@
+# oxdesk config. Editable by hand -- the daemon revalidates on read.
+#
+# RULE: never write an IP here. See specs/007-device-routing.md --
+# the Windows IP already changed once and broke everything pinned to it.
+
+port = 8787
+refresh_seconds = 10
+
+[[hosts]]
+name = "ubuntu-host"
+addr = "127.0.0.1"
+role = "Ubuntu 26.04 - este PC"
+layout = { col = 1, row = 1 }
+# gnome-remote-desktop left along with RDP: our screen uses Mutter's
+# private APIs (ScreenCast/RemoteDesktop), served by gnome-shell itself,
+# not by that daemon.
+units = ["oxdesk.service"]
+
+  # With NO service the host stays "off" forever: the panel decides
+  # online by `services.iter().any(up)`. When KDE Connect left, this card
+  # went empty and the machine the panel runs on showed up as off.
+  [[hosts.services]]
+  label = "SSH"
+  port = 22
+
+[[hosts]]
+name = "windows-host"
+addr = "windows-host.local"  # mDNS, never an IP
+role = "Windows 10 Pro"
+ssh = "windows-host"
+agent = "%LOCALAPPDATA%\\oxdesk\\oxdesk-agent.exe"
+layout = { col = 2, row = 1 }
+
+  [[hosts.services]]
+  label = "SSH"
+  port = 22
+
+  # OUR screen (DXGI -> NVENC -> QUIC), not RDP. The host starts from a
+  # scheduled task with /IT: a service would land in session 0, where
+  # there is no desktop to duplicate.
+  [hosts.screen]
+  kind = "oxdesk-stream"
+  port = 9777
+
+# The MacBook was left OUT of this file for months, and only the three
+# live configs had it. Whoever wrote the default config -- including the
+# wizard's "Escrever a config padrão" button -- lost the third machine
+# without any warning.
+[[hosts]]
+name = "mac-host"
+addr = "mac-host.local"   # mDNS, never an IP
+os = "macos"
+role = "macOS - MacBook Air"
+ssh = "mac"
+layout = { col = 0, row = 1 }
+
+  [[hosts.services]]
+  label = "SSH"
+  port = 22
+
+  # Starts from a LaunchAgent (`app.oxdesk.host`), never over
+  # SSH: capture depends on a TCC permission given to whoever launched
+  # it, and over SSH AVFoundation hangs instead of failing.
+  [hosts.screen]
+  kind = "oxdesk-stream"
+  port = 9777
+
+
+# Easy-Switch channel of each device on each host.
+#
+# MIND the name: it has to be what HID++ reports (feature 0x0005), not
+# what solaar showed. Measured: solaar said "MX Keys Keyboard", the
+# device is called "MX Keys Wireless Keyboard". Check with
+#   cargo run --release --bin probe   (in the hidpp/ crate)
+#
+# READ FROM THE HARDWARE on 03/11, not guessed. Source:
+#   solaar config 2 change-host
+#   -> possible values: [ 1:ubuntu-host, 2:windows-host, 3:ASSET-TAG-0001 ]
+#
+# There is a third paired host (ASSET-TAG-0001) that is not in this
+# config because it is not in [[hosts]]. To include it, just add the host
+# block and the channel line.
+#
+# The channel names live on the KEYBOARD: it has HOSTS INFO {1815}, the
+# mouse does not. Reading 0x1815 from the mouse returns garbage -- the
+# feature does not exist on it.
+
+[[devices]]
+name = "MX Anywhere 3"
+  [devices.hosts]
+  "ubuntu-host" = 1
+  "windows-host" = 2
+
+[[devices]]
+name = "MX Keys Wireless Keyboard"
+  [devices.hosts]
+  "ubuntu-host" = 1
+  "windows-host" = 2
+
+# Border watch (mode B): crossing the screen edge sends the devices to
+# the target host's channel, via HID++.
+#
+# OFF by default: it triggers an IRREVERSIBLE action on the origin side.
+# The full pre-flight runs before every switch, so a bad config does not
+# leave you without a keyboard -- but read specs/005 before turning it on.
+#
+# Detection uses org.gnome.Mutter.InputCapture directly. The equivalent
+# portal accepts CreateSession and never answers.
+
+[input.border]
+enabled = false
+edge = "right"          # left | right | top | bottom
+target = "windows-host"
+
+# Make the other devices follow the leader's channel.
+#
+# Solves the split state at the root -- mouse on one machine, keyboard on
+# another -- and works even when the switch was MANUAL, with the
+# Easy-Switch button, which the border watch does not see.
+#
+# OFF by default: moving a device is irreversible on the origin side, and
+# a reconciler that gets it wrong leaves you without a keyboard. It never
+# acts without knowing where the leader is.
+
+[input.follow]
+enabled = false
+leader = "MX Anywhere 3"     # HID++ name; check with the `probe` bin
+interval_seconds = 5
+
+# Dwell on the edge before switching. hold_hits = 1 switches on the first
+# touch (more immediate, more chance of switching on a graze).
+
+# hold_hits = 2
+# hold_window_ms = 300

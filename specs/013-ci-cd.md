@@ -15,13 +15,13 @@ commit?" without recompiling.
 ## The shape
 
 One workflow, [`binarios.yml`](../.github/workflows/binarios.yml), which
-calls one script, [`construir-binarios.sh`](../scripts/construir-binarios.sh).
+calls one script, [`build-binaries.sh`](../scripts/build-binaries.sh).
 
 | Target | Runner | How it compiles | Package |
 |---|---|---|---|
-| Ubuntu | `ubuntu-24.04` | native, and runs the tests | `logi-linux-x86_64-<n>-<hash>.tar.gz` |
-| Windows | `ubuntu-24.04` | cross, `x86_64-pc-windows-gnu` | `logi-windows-x86_64-unsigned-<n>-<hash>.tar.gz` |
-| macOS | `macos-15` (arm64) | native, ffmpeg from brew | `logi-mac-arm64-unsigned-<n>-<hash>.tar.gz` |
+| Ubuntu | `ubuntu-24.04` | native, and runs the tests | `oxdesk-linux-x86_64-<n>-<hash>.tar.gz` |
+| Windows | `ubuntu-24.04` | cross, `x86_64-pc-windows-gnu` | `oxdesk-windows-x86_64-unsigned-<n>-<hash>.tar.gz` |
+| macOS | `macos-15` (arm64) | native, ffmpeg from brew | `oxdesk-mac-arm64-unsigned-<n>-<hash>.tar.gz` |
 
 | Event | What happens |
 |---|---|
@@ -63,11 +63,11 @@ packaging, the script refuses if:
 
 - any binary on the list is missing, or is smaller than 100 KB;
 - the format is not the target's (ELF, PE32+, Mach-O arm64);
-- `logid` does not carry the commit stamp, the same question the
+- `oxdesk` does not carry the commit stamp, the same question the
   deploy asks `/healthz`, only before any machine receives it;
 - on Linux, `ldd` reports a missing library;
 - on Windows, the `.exe` imports a DLL the system does not have (mingw, ffmpeg);
-- on the Mac, `logid` depends on brew.
+- on the Mac, `oxdesk` depends on brew.
 
 The size and sha256 of each binary go to the log and the run summary. The
 wrong stamp was tested on purpose: `deadbee` is refused and nothing is
@@ -91,27 +91,27 @@ has write permission. `contents: write` exists only there.
 **`ubuntu-24.04` runner on an Ubuntu 26.04.** Compiling against the older glibc
 runs on the newer one; the reverse does not.
 
-**`construir-binarios.sh` runs locally.** The binary list cannot
+**`build-binaries.sh` runs locally.** The binary list cannot
 live only in a YAML nobody executes. `--sem-compilar` checks what is already
 in `target/`.
 
 ## Known limits
 
 - **The binary list is duplicated** between `deploy.sh` and
-  `construir-binarios.sh`. A new binary goes into both. It is the defect that
-  already left `logistream-kvm` out of a deploy; merging the two lists
+  `build-binaries.sh`. A new binary goes into both. It is the defect that
+  already left `oxdesk-kvm` out of a deploy; merging the two lists
   is deferred until the deploy starts consuming the packages.
 - **The Mac host and view link against brew's ffmpeg.** The run used
   9.0.2. The package only runs with the same major installed on the MacBook, which
   was not checked.
-- **Tests run only on Linux**, and for `logistream` only `--lib`. On the Mac
+- **Tests run only on Linux**, and for `oxdesk-stream` only `--lib`. On the Mac
   it would cost ten times more per minute.
 - **The conversion budget does not block CI.**
   `conversion_fits_the_budget` passed on the first run and failed on the third
   with 12.18 ms against the 12 ms ceiling, with no change in the measured code: a shared
   runner is not the hardware the ceiling was written for. It
   keeps running and printing the number, without deciding. Since `check.sh`
-  does not test `logistream` either, **today nothing automatic blocks this
+  does not test `oxdesk-stream` either, **today nothing automatic blocks this
   regression**: whoever touches the conversion runs the test here.
 - **Without a Mac runner there is no release.** In the tag test, the job waited 15
   minutes without a runner and was cancelled (`The job was not acquired by

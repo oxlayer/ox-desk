@@ -44,7 +44,7 @@ ufw allow from "$LAN" to any port 3389 proto tcp comment 'rdp: gnome-remote-desk
 ufw allow from "$LAN" to any port 1716:1764 proto tcp comment 'kde connect' >/dev/null
 ufw allow from "$LAN" to any port 1716:1764 proto udp comment 'kde connect' >/dev/null
 
-# The logid API is NOT included: it listens on 127.0.0.1 on purpose
+# The oxdesk API is NOT included: it listens on 127.0.0.1 on purpose
 # (specs/008). If it ever needs a rule here, something is wrong.
 
 echo "== enabling =="

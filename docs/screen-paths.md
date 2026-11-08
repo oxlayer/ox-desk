@@ -28,7 +28,7 @@ pointed to the bug — see [[../specs/010-remote-desktop.md]].
 QUIC (`quinn`): video by **datagram** (losing a frame is better than
 delaying), input by **stream** (it can't lose a key or reorder).
 
-The host serves **one client at a time**. A second `logistream-sink`
+The host serves **one client at a time**. A second `oxdesk-sink`
 trying to measure while someone is watching times out — it's not a bug,
 it's the accept queue.
 
@@ -70,7 +70,7 @@ still. Mutter only delivers a frame when something changes.
 With no monitor DXGI has no output: `DuplicateOutput` refuses with
 `0x80070057` and the client connects without receiving frames. Windows
 has no native virtual screen, so we use the Virtual Display Driver,
-signed by the SignPath Foundation (`logid/setup/instalar-tela-virtual.ps1`).
+signed by the SignPath Foundation (`oxdesk/setup/install-virtual-display.ps1`).
 
 The script puts the publisher in `TrustedPublisher` only during the
 installation, because the confirmation prompt doesn't show up over SSH,

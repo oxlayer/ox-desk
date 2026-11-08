@@ -10,17 +10,17 @@ __pycache__/
 
 # Rust: `target/` in ANY crate, not one per name.
 #
-# The per-name list went stale: `logistream`, `hidpp` and `winput` were
+# The per-name list went stale: `oxdesk-stream`, `hidpp` and `winput` were
 # born later and were not on it, so 3,893 build files got into the repo
 # and every `cargo build` started dirtying the tree -- the deploy itself
 # stamped the binaries as `-sujo` (dirty) because of it. A pattern without
 # a leading slash matches at any level.
 target/
 
-# Output of scripts/construir-binarios.sh
+# Output of scripts/build-binaries.sh
 dist/
 
-# Signing keys live in ~/.config/logi/signing, never here.
+# Signing keys live in ~/.config/oxdesk/signing, never here.
 *.pem
 *.pfx
 *.cer

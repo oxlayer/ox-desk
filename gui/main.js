@@ -1,4 +1,4 @@
-// Native shell over logid. It duplicates no logic: the daemon collects data
+// Native shell over oxdesk. It duplicates no logic: the daemon collects data
 // and serves the UI, Electron provides the window, tray and shortcuts.
 //
 // Runs on both machines. The daemon is the same binary on both OSes (see
@@ -8,7 +8,7 @@
 // `paths()`.
 const { app, BrowserWindow, Tray, Menu, shell, nativeImage } = require('electron');
 
-/// On Linux the tray is native (ksni inside logid). Windows and macOS keep
+/// On Linux the tray is native (ksni inside oxdesk). Windows and macOS keep
 /// Electron's tray until they get their own.
 const NATIVE_TRAY = process.platform === 'linux';
 const { spawn } = require('node:child_process');
@@ -24,35 +24,35 @@ function paths() {
     const appdata = process.env.APPDATA || process.env.USERPROFILE || '.';
     const local = process.env.LOCALAPPDATA || appdata;
     return {
-      config: path.join(appdata, 'logi', 'config.toml'),
-      logid: path.join(local, 'logid', 'logid.exe'),
+      config: path.join(appdata, 'oxdesk', 'config.toml'),
+      oxdesk: path.join(local, 'oxdesk', 'oxdesk.exe'),
     };
   }
   const home = process.env.HOME || '/tmp';
   return {
     config: path.join(
       process.env.XDG_CONFIG_HOME || path.join(home, '.config'),
-      'logi', 'config.toml'
+      'oxdesk', 'config.toml'
     ),
-    logid: path.join(home, '.local', 'bin', 'logid'),
+    oxdesk: path.join(home, '.local', 'bin', 'oxdesk'),
   };
 }
 
 const PATHS = paths();
 
-// The port comes from logid's config (TOML). A regex instead of a parser:
+// The port comes from oxdesk's config (TOML). A regex instead of a parser:
 // it is one scalar line in a file we generate ourselves.
 function readPort() {
   try {
     const m = fs.readFileSync(PATHS.config, 'utf8').match(/^\s*port\s*=\s*(\d+)/m);
     if (m) return parseInt(m[1], 10);
-  } catch { /* no config yet: logid writes the default on first boot */ }
+  } catch { /* no config yet: oxdesk writes the default on first boot */ }
   return 8787;
 }
 
 const PORT = readPort();
 const URL = `http://127.0.0.1:${PORT}/`;
-const LOGID = PATHS.logid;
+const DAEMON_BIN = PATHS.oxdesk;
 
 /// Path of one of our URLs, without using the `URL` class.
 ///
@@ -76,7 +76,7 @@ let quitting = false;
 
 // --- backend ---------------------------------------------------------------
 
-/// GET + JSON from logid. Returns null on any failure: the tray degrades
+/// GET + JSON from oxdesk. Returns null on any failure: the tray degrades
 /// to "no data" instead of breaking.
 function getJson(path, timeout = 4000) {
   return new Promise((resolve) => {
@@ -124,12 +124,12 @@ function ping(timeout = 800) {
 // orphan's old build and REVERTS an update that was correct.
 function supervisorCommand() {
   if (process.platform === 'darwin') {
-    return ['launchctl', ['kickstart', `gui/${process.getuid()}/ai.logi.logid`]];
+    return ['launchctl', ['kickstart', `gui/${process.getuid()}/app.oxdesk.daemon`]];
   }
   if (process.platform === 'linux') {
-    return ['systemctl', ['--user', 'start', 'logid.service']];
+    return ['systemctl', ['--user', 'start', 'oxdesk.service']];
   }
-  return ['schtasks', ['/run', '/tn', 'logid']];
+  return ['schtasks', ['/run', '/tn', 'oxdesk']];
 }
 
 function request(cmd, args) {
@@ -161,7 +161,7 @@ async function ensureBackend() {
   // still has to open -- the GUI is precisely how one reaches the wizard
   // that installs the supervisor. Only then a standalone child, killed
   // on `will-quit`.
-  const bin = fs.existsSync(LOGID) ? LOGID : 'logid';
+  const bin = fs.existsSync(DAEMON_BIN) ? DAEMON_BIN : 'oxdesk';
   // windowsHide: the daemon is a console app, and without this a black
   // window flashes on screen every time the GUI starts it.
   child = spawn(bin, [], { stdio: 'ignore', detached: false, windowsHide: true });
@@ -228,7 +228,7 @@ function createWindow(route = '/') {
 
   // Closing hides to the tray -- but only where THAT tray exists.
   //
-  // On Linux the tray is now native, inside logid, and this shell no
+  // On Linux the tray is now native, inside oxdesk, and this shell no
   // longer creates its own. Hiding the window without a tray of our own
   // would leave an invisible process with no way back: the native menu
   // opens the panel in the browser, not this window. So here closing
@@ -362,7 +362,7 @@ async function refreshTray() {
     ? list.map((d) => `${d.name}: ${d.battery_percent ?? '?'}%`).join(' | ')
     : 'sem dispositivos';
   tray.setToolTip(
-    'logid' + (low.length ? '  [BATERIA BAIXA]' : '') + '\n' + summary
+    'oxdesk' + (low.length ? '  [BATERIA BAIXA]' : '') + '\n' + summary
   );
 }
 
@@ -414,7 +414,7 @@ async function checkSetup() {
 function createTray() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
   tray = new Tray(img.resize({ width: 22, height: 22 }));
-  tray.setToolTip('logid');
+  tray.setToolTip('oxdesk');
   tray.on('click', toggle);
   refreshTray();
   // The tray is read at a glance: keep it fresh without the user asking.
@@ -453,7 +453,7 @@ if (!app.requestSingleInstanceLock()) {
     // time the person has learned to close it without reading. A real
     // gap is what is wrong HERE.
     checkSetup();
-    // A tray only where there is no native one. On Linux logid registers
+    // A tray only where there is no native one. On Linux oxdesk registers
     // its own via StatusNotifierItem; creating Electron's as well would put
     // TWO identical icons in the bar, each with a menu the other does not
     // update.

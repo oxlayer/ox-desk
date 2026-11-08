@@ -53,7 +53,7 @@ A file you want to "send to the other machine" as a gesture: the
 
 ## Implemented (2026-11-03)
 
-[`logid/src/files.rs`](../logid/src/files.rs) + "Arquivos" (Files) panel
+[`oxdesk/src/files.rs`](../oxdesk/src/files.rs) + "Arquivos" (Files) panel
 in the dashboard. **Listing only** in this version: no download, no
 upload, no delete.
 

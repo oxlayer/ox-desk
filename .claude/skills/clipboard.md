@@ -17,8 +17,8 @@ station, and `Get-Clipboard` from session 0 reads a different one. It
 needs an interactive task:
 
 ```powershell
-schtasks /create /tn ler-clip /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ps`"" /sc once /st 00:00 /it /f
-schtasks /run /tn ler-clip
+schtasks /create /tn oxdesk-read-clipboard /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ps`"" /sc once /st 00:00 /it /f
+schtasks /run /tn oxdesk-read-clipboard
 ```
 
 where the script does `Get-Clipboard -Raw | Out-File ...` and you read
@@ -27,12 +27,12 @@ the screen host ([[../rules/cursor-without-mouse]]).
 
 ## When it doesn't propagate
 
-The source `logid` log tells you. `journalctl --user -u logid -n 30 | grep clip`:
+The source `oxdesk` log tells you. `journalctl --user -u oxdesk -n 30 | grep clip`:
 
 | Message | Cause |
 |---|---|
-| `command not found: logid` | wrong remote path — the SSH shell doesn't load the login PATH |
-| `recusou (exit status: 1)` with empty stderr | the peer's `logid` is old and doesn't know `clip-set` — deploy |
+| `command not found: oxdesk` | wrong remote path — the SSH shell doesn't load the login PATH |
+| `recusou (exit status: 1)` with empty stderr | the peer's `oxdesk` is old and doesn't know `clip-set` — deploy |
 | `nao consegui falar com <host>` | SSH doesn't connect: key, mDNS or machine offline |
 | nothing in the log | the source didn't see the copy; on Windows/Mac the sampling is every 2 s |
 
@@ -42,7 +42,7 @@ The Mac reaches the Ubuntu machine through the `ubuntu` alias in its
 `~/.ssh/config`, which carries the right `IdentityFile`. Testing with
 `user@ubuntu-host.local` gives `Permission denied` even with
 everything right — it's the alias that has the key. Always use the alias
-that the `logid` config declares in `ssh = `.
+that the `oxdesk` config declares in `ssh = `.
 
 If the key isn't authorized on this side:
 
@@ -96,8 +96,8 @@ On Windows and macOS the copy must be born in the **graphical session**:
 
 ```bash
 # Windows: /IT task (over SSH it's session 0, with its own empty clipboard)
-scp windows/sondas/por-arquivo-no-clipboard.ps1 'windows-host:AppData/Local/logid/'
-ssh windows-host 'schtasks /create /tn por-arquivo /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $env:LOCALAPPDATA\logid\por-arquivo-no-clipboard.ps1" /sc once /st 00:00 /it /f; schtasks /run /tn por-arquivo'
+scp windows/probes/file-to-clipboard.ps1 'windows-host:AppData/Local/oxdesk/'
+ssh windows-host 'schtasks /create /tn oxdesk-file-to-clipboard /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $env:LOCALAPPDATA\oxdesk\file-to-clipboard.ps1" /sc once /st 00:00 /it /f; schtasks /run /tn oxdesk-file-to-clipboard'
 
 # macOS: the pasteboard is per user, so over SSH it works
 ssh mac 'osascript -l JavaScript -e "ObjC.import(\"AppKit\");const pb=\$.NSPasteboard.generalPasteboard;pb.clearContents;pb.writeObjects(\$([\$.NSURL.fileURLWithPath(\"/tmp/x.txt\")]))"'
@@ -111,7 +111,7 @@ xclip -selection clipboard -t TARGETS -o
 xclip -selection clipboard -t x-special/gnome-copied-files -o   # starts with `copy`
 
 # Windows: interactive session, via /IT task
-ssh windows-host 'schtasks /run /tn ler-clipboard; Start-Sleep 3; Get-Content $env:LOCALAPPDATA\logid\clipboard.txt'
+ssh windows-host 'schtasks /run /tn oxdesk-read-clipboard; Start-Sleep 3; Get-Content $env:LOCALAPPDATA\oxdesk\clipboard.txt'
 
 # macOS
 ssh mac 'osascript -l JavaScript /tmp/ler-pb.js'
@@ -130,6 +130,6 @@ paste happened, and deleting someone's file by mistake has no undo.
 - **A repeated name is refused**, not renamed: two `igual.txt` from
   different folders would land on top of each other in the staging
   folder and you would paste one thinking there were two.
-- **The staging folder is `~/.cache/logi/clipboard/`**, outside `/tmp`:
+- **The staging folder is `~/.cache/oxdesk/clipboard/`**, outside `/tmp`:
   on some distros `/tmp` is tmpfs, and 2 GB of clipboard in RAM is a way
   to meet the OOM killer. It keeps the last 5 deliveries.

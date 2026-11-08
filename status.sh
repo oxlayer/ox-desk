@@ -3,9 +3,9 @@
 #   bash status.sh
 set -uo pipefail
 
-CONF="${XDG_CONFIG_HOME:-$HOME/.config}/logi/config.toml"
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/logi"
-UNIT=logid.service
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/oxdesk/config.toml"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/oxdesk"
+UNIT=oxdesk.service
 PORT=$(grep -E '^port *=' "$CONF" 2>/dev/null | head -1 | grep -oE '[0-9]+' || echo 8787)
 API="http://127.0.0.1:$PORT"
 
@@ -100,7 +100,7 @@ info "Deskflow was REMOVED: in mode B the switch is physical, not over the netwo
 info "moving a device is irreversible on the source side (specs/005)"
 
 sec "── Recent errors ──────────────────────────────────"
-# The pattern matches logid's own log words, Portuguese and English: keep
+# The pattern matches oxdesk's own log words, Portuguese and English: keep
 # it in step with the daemon's messages.
 ERR=$(journalctl --user -u $UNIT --since '-1 hour' --no-pager 2>/dev/null \
       | grep -iE 'failed|falhou|erro|error|FATAL|split state|dividido' | tail -6)

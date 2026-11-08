@@ -66,7 +66,7 @@ pub fn parse(json: &str) -> Result<Release, String> {
     Ok(Release { tag, assets })
 }
 
-/// This system's package, by the prefix `construir-binarios.sh` uses.
+/// This system's package, by the prefix `build-binaries.sh` uses.
 pub fn pick<'a>(l: &'a Release, s: System) -> Result<&'a Asset, String> {
     let p = crate::plan::prefix(s);
     l.assets
@@ -88,9 +88,9 @@ pub fn sums<'a>(l: &'a Release) -> Result<&'a Asset, String> {
 
 /// The `-<n>-<hash>` the package name carries.
 ///
-/// `logi-linux-x86_64-124-abc1234.tar.gz` -> `(124, "abc1234")`. The rule
+/// `oxdesk-linux-x86_64-124-abc1234.tar.gz` -> `(124, "abc1234")`. The rule
 /// is "the last two fields before `.tar.gz`", which also holds for
-/// `logi-windows-x86_64-unsigned-...`, which has one extra field in the
+/// `oxdesk-windows-x86_64-unsigned-...`, which has one extra field in the
 /// middle.
 pub fn stamp_from_name(name: &str) -> Option<(u64, String)> {
     let base = name.strip_suffix(".tar.gz")?;
@@ -182,9 +182,9 @@ mod tests {
       "tag_name": "v0.1.0",
       "assets": [
         {"name":"SHA256SUMS","url":"https://api.github.com/x/releases/assets/1","size":300},
-        {"name":"logi-linux-x86_64-124-abc1234.tar.gz","url":"https://api.github.com/x/releases/assets/2","size":9000000},
-        {"name":"logi-mac-arm64-unsigned-124-abc1234.tar.gz","url":"https://api.github.com/x/releases/assets/3","size":8000000},
-        {"name":"logi-windows-x86_64-unsigned-124-abc1234.tar.gz","url":"https://api.github.com/x/releases/assets/4","size":7000000}
+        {"name":"oxdesk-linux-x86_64-124-abc1234.tar.gz","url":"https://api.github.com/x/releases/assets/2","size":9000000},
+        {"name":"oxdesk-mac-arm64-unsigned-124-abc1234.tar.gz","url":"https://api.github.com/x/releases/assets/3","size":8000000},
+        {"name":"oxdesk-windows-x86_64-unsigned-124-abc1234.tar.gz","url":"https://api.github.com/x/releases/assets/4","size":7000000}
       ]
     }"#;
 
@@ -193,11 +193,11 @@ mod tests {
         let l = parse(RELEASE).unwrap();
         assert_eq!(l.tag, "v0.1.0");
         assert_eq!(l.assets.len(), 4);
-        assert_eq!(pick(&l, System::Linux).unwrap().name, "logi-linux-x86_64-124-abc1234.tar.gz");
-        assert_eq!(pick(&l, System::Mac).unwrap().name, "logi-mac-arm64-unsigned-124-abc1234.tar.gz");
+        assert_eq!(pick(&l, System::Linux).unwrap().name, "oxdesk-linux-x86_64-124-abc1234.tar.gz");
+        assert_eq!(pick(&l, System::Mac).unwrap().name, "oxdesk-mac-arm64-unsigned-124-abc1234.tar.gz");
         assert_eq!(
             pick(&l, System::Windows).unwrap().name,
-            "logi-windows-x86_64-unsigned-124-abc1234.tar.gz"
+            "oxdesk-windows-x86_64-unsigned-124-abc1234.tar.gz"
         );
         assert_eq!(sums(&l).unwrap().bytes, 300);
     }
@@ -235,20 +235,20 @@ mod tests {
 
     #[test]
     fn stamp_comes_from_the_name_with_and_without_extra_field() {
-        assert_eq!(stamp_from_name("logi-linux-x86_64-124-abc1234.tar.gz"), Some((124, "abc1234".into())));
+        assert_eq!(stamp_from_name("oxdesk-linux-x86_64-124-abc1234.tar.gz"), Some((124, "abc1234".into())));
         assert_eq!(
-            stamp_from_name("logi-windows-x86_64-unsigned-124-abc1234.tar.gz"),
+            stamp_from_name("oxdesk-windows-x86_64-unsigned-124-abc1234.tar.gz"),
             Some((124, "abc1234".into()))
         );
-        assert_eq!(stamp_from_name("logi-linux-x86_64.tar.gz"), None);
+        assert_eq!(stamp_from_name("oxdesk-linux-x86_64.tar.gz"), None);
         assert_eq!(stamp_from_name("SHA256SUMS"), None);
         // `zzzzzzz` is not hexadecimal: not a commit hash.
-        assert_eq!(stamp_from_name("logi-linux-x86_64-124-zzzzzzz.tar.gz"), None);
+        assert_eq!(stamp_from_name("oxdesk-linux-x86_64-124-zzzzzzz.tar.gz"), None);
     }
 
     #[test]
     fn decides_by_n_and_breaks_ties_by_hash() {
-        let newer = "logi-linux-x86_64-124-abc1234.tar.gz";
+        let newer = "oxdesk-linux-x86_64-124-abc1234.tar.gz";
         assert_eq!(decide(124, "abc1234", newer), Decision::Same { n: 124, hash: "abc1234".into() });
         assert_eq!(decide(120, "0000000", newer), Decision::Update { n: 124, hash: "abc1234".into() });
         assert_eq!(decide(130, "0000000", newer), Decision::NewerHere { here: 130, there: 124 });
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn dirty_stamp_counts_as_the_same_commit() {
         assert_eq!(
-            decide(124, "abc1234-sujo", "logi-linux-x86_64-124-abc1234.tar.gz"),
+            decide(124, "abc1234-sujo", "oxdesk-linux-x86_64-124-abc1234.tar.gz"),
             Decision::Same { n: 124, hash: "abc1234".into() }
         );
     }
@@ -272,21 +272,21 @@ mod tests {
     /// Never swap without knowing what is being swapped.
     #[test]
     fn no_stamp_does_not_update() {
-        assert!(matches!(decide(1, "x", "logi-linux-x86_64.tar.gz"), Decision::NoStamp { .. }));
+        assert!(matches!(decide(1, "x", "oxdesk-linux-x86_64.tar.gz"), Decision::NoStamp { .. }));
     }
 
     #[test]
     fn reads_sums_with_path_and_binary_mode() {
         let sums = "\
-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  dist/logi-linux-x86_64-124-abc1234.tar.gz
-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad *logid
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  dist/oxdesk-linux-x86_64-124-abc1234.tar.gz
+ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad *oxdesk
 lixo que nao e soma
 ";
         assert_eq!(
-            sum_for(sums, "logi-linux-x86_64-124-abc1234.tar.gz").unwrap(),
+            sum_for(sums, "oxdesk-linux-x86_64-124-abc1234.tar.gz").unwrap(),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
-        assert_eq!(sum_for(sums, "logid").unwrap().len(), 64);
+        assert_eq!(sum_for(sums, "oxdesk").unwrap().len(), 64);
         assert_eq!(sum_for(sums, "nao-existe"), None);
         assert_eq!(lines(sums).len(), 2, "the garbage line does not count");
     }

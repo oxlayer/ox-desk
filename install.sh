@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# logid setup on Ubuntu 26.04 / GNOME (Wayland).
+# oxdesk setup on Ubuntu 26.04 / GNOME (Wayland).
 #
-# Does NOT need root: logid runs as a user service and speaks HID++
+# Does NOT need root: oxdesk runs as a user service and speaks HID++
 # directly. The only privileged step is the /dev/hidraw ACL, and it warns
 # if that is missing.
 set -euo pipefail
@@ -21,18 +21,18 @@ if [ ${#missing[@]} -gt 0 ]; then
 fi
 echo "ok: cargo, libudev, libdbus"
 
-say "building logid"
-( cd logid && cargo build --release )
+say "building oxdesk"
+( cd oxdesk && cargo build --release )
 
 say "installing the binary in ~/.local/bin"
-install -D -m 755 logid/target/release/logid "$HOME/.local/bin/logid"
-"$HOME/.local/bin/logid" --version 2>/dev/null || true
+install -D -m 755 oxdesk/target/release/oxdesk "$HOME/.local/bin/oxdesk"
+"$HOME/.local/bin/oxdesk" --version 2>/dev/null || true
 
 say "user service"
-install -D -m 644 logid/logid.service "$HOME/.config/systemd/user/logid.service"
+install -D -m 644 oxdesk/oxdesk.service "$HOME/.config/systemd/user/oxdesk.service"
 systemctl --user daemon-reload
-systemctl --user enable --now logid.service
-systemctl --user --no-pager status logid.service | head -4
+systemctl --user enable --now oxdesk.service
+systemctl --user --no-pager status oxdesk.service | head -4
 
 say "access to /dev/hidraw"
 # Solaar's rule grants it via TAG+="uaccess", but ONLY to nodes created
@@ -58,7 +58,7 @@ done. next:
 
   1. check the device NAMES (HID++ does not use Solaar's):
        cd hidpp && cargo run --release --bin probe
-  2. adjust ~/.config/logi/config.toml -- especially [[devices]] and each
+  2. adjust ~/.config/oxdesk/config.toml -- especially [[devices]] and each
      host's Easy-Switch channels
   3. panel at http://127.0.0.1:8787  (native GUI: cd gui && ./run.sh)
   4. diagnostics: bash status.sh

@@ -10,8 +10,8 @@ didn't answer. That seems polite — "if nobody answers, I'll start it" —
 but it creates a **second owner of port 8787**:
 
 ```
-boot → ai.logi.gui starts first → pings, nobody answers → spawn(logid)
-     → ai.logi.logid (LaunchAgent) starts later → Address already in use
+boot → app.oxdesk.gui starts first → pings, nobody answers → spawn(oxdesk)
+     → app.oxdesk.daemon (LaunchAgent) starts later → Address already in use
      → exit 1 → launchd throttles → state = spawn scheduled, forever
 ```
 
@@ -35,7 +35,7 @@ machine, where the GUI is how you reach the wizard.
 
 ### 2. Whoever restarts clears the port first
 
-`pkill -x logid` before `kickstart -k` / `systemctl restart`. It's not
+`pkill -x oxdesk` before `kickstart -k` / `systemctl restart`. It's not
 brutality: `-k` already kills the supervised copy anyway, so the net
 effect is exactly *"also the ones the supervisor doesn't know about"*.
 It is in `plan::Plan::clear` (OTA) and in the `deploy.sh` steps.
@@ -46,7 +46,7 @@ correct**.
 
 ### 3. The panel compares who serves with what is on disk
 
-`logid versao` prints the stamp of the **file**; `env!("LOGI_BUILD")` is
+`oxdesk versao` prints the stamp of the **file**; `env!("OXDESK_BUILD")` is
 the stamp of **who answers**. A divergence becomes a panel line
 (`setup_common::stamp_verdict`). Being on disk is not being live.
 

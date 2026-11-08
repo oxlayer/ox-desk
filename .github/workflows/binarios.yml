@@ -6,13 +6,13 @@ on:
     branches: [main, 'ci/**']
     tags: ['v*']
     paths:
-      - 'logid/**'
-      - 'logistream/**'
+      - 'oxdesk/**'
+      - 'stream/**'
       - 'hidpp/**'
       - 'agent/**'
       - 'ota/**'
       - 'winput/**'
-      - 'scripts/construir-binarios.sh'
+      - 'scripts/build-binaries.sh'
       - '.github/workflows/binarios.yml'
   workflow_dispatch:
 
@@ -49,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # LOGI_BUILD_N is `rev-list --count`: a shallow clone would always give 1.
+          # OXDESK_BUILD_N is `rev-list --count`: a shallow clone would always give 1.
           fetch-depth: 0
 
       - name: Dependencies (linux)
@@ -76,7 +76,7 @@ jobs:
           # the MacBook -- the package came out correct and uninstallable,
           # and OTA refused the whole update naming `libavcodec.63`.
           # The versioned prefix is the SAME on both ends. See
-          # FFMPEG_FORMULA in scripts/construir-binarios.sh, which breaks
+          # FFMPEG_FORMULA in scripts/build-binaries.sh, which breaks
           # the build if this step and that declaration diverge.
           brew install ffmpeg@7 pkgconf
           echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig" >> "$GITHUB_ENV"
@@ -93,45 +93,45 @@ jobs:
 
       - name: Build stamp
         run: |
-          echo "LOGI_BUILD=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
-          echo "LOGI_BUILD_N=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+          echo "OXDESK_BUILD=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "OXDESK_BUILD_N=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.alvo }}
           workspaces: |
-            logid
-            logistream
+            oxdesk
+            oxdesk-stream
             agent
             ota
 
       - name: Build, check and package
-        run: bash scripts/construir-binarios.sh "${{ matrix.alvo }}"
+        run: bash scripts/build-binaries.sh "${{ matrix.alvo }}"
 
       - name: Tests
         if: matrix.alvo == 'linux'
         run: |
           cargo test --release --locked --manifest-path hidpp/Cargo.toml
-          cargo test --release --locked --manifest-path logid/Cargo.toml
+          cargo test --release --locked --manifest-path oxdesk/Cargo.toml
           cargo test --release --locked --manifest-path ota/Cargo.toml
-          cargo test --release --locked --manifest-path logistream/Cargo.toml --lib \
+          cargo test --release --locked --manifest-path stream/Cargo.toml --lib \
             -- --skip decode_nv::tests::conversion_fits_the_budget
 
       # The 12 ms budget holds for the home hardware. On a shared runner the
       # same code measured 12.18 ms and broke the build, so here it only
       # prints the number: it measures, but does not decide.
-      # (The test name below lives in logistream; keep it in sync if renamed.)
+      # (The test name below lives in oxdesk-stream; keep it in sync if renamed.)
       - name: Conversion budget (informational)
         if: matrix.alvo == 'linux'
         continue-on-error: true
         run: |
-          cargo test --release --locked --manifest-path logistream/Cargo.toml --lib \
+          cargo test --release --locked --manifest-path stream/Cargo.toml --lib \
             -- --exact decode_nv::tests::conversion_fits_the_budget --nocapture
 
       # Tar, not the loose binaries: upload-artifact loses the executable bit.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: logi-${{ matrix.alvo }}
+          name: oxdesk-${{ matrix.alvo }}
           path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 14
