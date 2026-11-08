@@ -1124,32 +1124,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
-name = "oxdesk-stream"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "cudarc",
- "dbus",
- "ffmpeg-next",
- "futures-util",
- "if-addrs",
- "libc",
- "moq-nvenc",
- "pipewire",
- "quinn",
- "rcgen",
- "reed-solomon-erasure",
- "ring",
- "rustls",
- "softbuffer",
- "tokio",
- "tokio-tungstenite",
- "windows",
- "winit",
-]
-
-[[package]]
 name = "lru"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1595,6 +1569,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "oxdesk-stream"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "cudarc",
+ "dbus",
+ "ffmpeg-next",
+ "futures-util",
+ "if-addrs",
+ "libc",
+ "moq-nvenc",
+ "pipewire",
+ "quinn",
+ "rcgen",
+ "reed-solomon-erasure",
+ "ring",
+ "rustls",
+ "softbuffer",
+ "tokio",
+ "tokio-tungstenite",
+ "windows",
+ "winit",
 ]
 
 [[package]]
