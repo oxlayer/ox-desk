@@ -120,6 +120,10 @@ name = "oxdesk-probe-mac"
 path = "src/bin/mac-probe.rs"
 
 [[bin]]
+name = "oxdesk-probe-mac-native"
+path = "src/bin/mac-native-probe.rs"
+
+[[bin]]
 name = "oxdesk-probe-nvdec"
 path = "src/bin/nvdec-probe.rs"
 
