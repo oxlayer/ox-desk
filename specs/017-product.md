@@ -1,7 +1,7 @@
 # 017 — From personal infra to product
 
-> Status: decided on 2026-11-07. Phase A of pairing live since 2026-11-07 (#11,
-> build #166 on all three machines).
+> Status: decided on 2026-11-07. Pairing phases A, B and C live on all three
+> machines since 2026-11-07 (#11, #13, #17; phase C switched on by hand at build #209).
 
 ## The decision
 
@@ -137,6 +137,24 @@ period of observation, as the `observe` → `enforce` lesson says.
 The switch to phase C only happens after the phase A log shows zero
 `desconhecido` and zero `sem certificado` in the legitimate connections of the three
 machines.
+
+### Phase C as built (2026-11-07)
+
+- **The switch is a file:** `<identity dir>/enforce` (`~/.config/logi/identidade/enforce`,
+  `%APPDATA%\logi\identidade\enforce` on Windows). With it, the host refuses a client
+  without a certificate or with a fingerprint not in `autorizados`; without it, phases A/B.
+  Both files are read on every handshake, so neither change needs a restart.
+- **Turning it off** is deleting that file, over SSH, which phase C does not touch.
+- **Every machine pairs with its peers at startup** (`pairing::pair_peers`): pins each SSH
+  peer that serves screens and adds itself to that peer's list, every time. Without this
+  the KVM and the native viewer, which never pass through the panel, would be refused.
+- **The refusal reaches the person:** the TLS alert carries
+  `este computador (<fp>) nao esta autorizado neste host`.
+- **Proven on each host** with a session from an authorized machine (video arrived) and a
+  client with a throwaway identity (refused with the message above). Before switching,
+  the host logs showed only `authorized` connections.
+- **A new computer** gets in once its `logid` starts with SSH access to the others: the
+  startup pairing authorizes it. Without SSH there is no way in, which is the point.
 
 ## 2. Telemetry
 
