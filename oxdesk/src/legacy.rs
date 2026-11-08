@@ -57,6 +57,10 @@ const CONFIG_VALUES: &[(&str, &str)] = &[
     ("\"ai.logi.logistream-host\"", "\"app.oxdesk.host\""),
     ("\"ai.logi.ota\"", "\"app.oxdesk.ota\""),
     ("\\\\logid\\\\logid-agent.exe", "\\\\oxdesk\\\\oxdesk-agent.exe"),
+    // Watched process names on Windows, and the agent path on the Unix peers.
+    ("\"logid\"", "\"oxdesk\""),
+    ("\"logid-agent\"", "\"oxdesk-agent\""),
+    ("/.local/bin/logid\"", "/.local/bin/oxdesk\""),
 ];
 
 /// The config text with the old values replaced, or `None` if nothing changed.
@@ -142,13 +146,17 @@ mod tests {
             "agent = \"%LOCALAPPDATA%\\\\logid\\\\logid-agent.exe\"\n",
             "[hosts.screen]\n  kind = \"logistream\"\n",
             "units = [\"ai.logi.logid\"]\n",
+            "units = [\"logid\", \"logid-agent\", \"sshd\"]\n",
+            "agent = \"/home/user/.local/bin/logid\"\n",
         );
         let new = rewrite_config(old).expect("changed");
         assert!(new.contains("units = [\"oxdesk.service\"]"), "{new}");
         assert!(new.contains("agent = \"%LOCALAPPDATA%\\\\oxdesk\\\\oxdesk-agent.exe\""), "{new}");
         assert!(new.contains("  kind = \"oxdesk-stream\""), "{new}");
         assert!(new.contains("units = [\"app.oxdesk.daemon\"]"), "{new}");
-        assert!(new.starts_with("# Config do logid NESTE MAC."), "comments are not touched");
+        assert!(new.contains("units = [\"oxdesk\", \"oxdesk-agent\", \"sshd\"]"), "{new}");
+        assert!(new.contains("agent = \"/home/user/.local/bin/oxdesk\""), "{new}");
+        assert!(new.starts_with("# Config do logid NESTE MAC."), "a comment without a quoted value stays");
         assert_eq!(rewrite_config(&new), None, "idempotent");
         // The result must still be a valid config for the new code.
         assert!(!new.contains("logistream\"\n  "), "{new}");
