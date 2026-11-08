@@ -3,7 +3,7 @@ name = "winput"
 version = "0.1.0"
 edition = "2021"
 description = "Win32: input age, cursor, virtual screen, session and single instance"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 # The whole crate is `#![cfg(windows)]`: on Linux it compiles empty instead
 # of failing, so whoever declares the dependency without a gate does not

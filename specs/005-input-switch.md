@@ -17,9 +17,17 @@ Flow does the first. Deskflow does the second. **Neither chooses between
 the two.** Choosing is the product.
 
 The physical route is better when available: native latency, it works with
-the network down, and it does not depend on input injection through the portal — which
-**works around the Deskflow server-mode segfault on Linux**
-([`README`](../README.md#ubuntu-as-server-tested-and-it-does-not-work-1270)).
+the network down, and it does not depend on input injection through the
+portal — which **works around the Deskflow server-mode segfault on
+Linux**. That one was measured and is worth keeping: `deskflow-core server`
+1.27.0 segfaulted on startup (exit 139), reproduced twice, with an
+isolated config and with the real one. It crashed **before reaching the
+portal**, so it was not the GNOME `InputCapture` gap the Deskflow
+documentation describes — that was ruled out separately, since
+`gnome.portal` does declare `org.freedesktop.impl.portal.InputCapture` and
+accepts `CreateSession` v1. It was a bug in that build's server mode, and
+the practical consequence at the time was that the Windows machine stayed
+the server.
 Today both machines have a Unifying receiver, so the physical route is
 possible in both directions.
 

@@ -3,7 +3,7 @@ name = "oxdesk-ota"
 version = "0.1.0"
 edition = "2021"
 description = "Updates from the GitHub Releases: checks, downloads, signs, swaps and checks again"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 # Only to read the GitHub API response. The rest -- network, unpacking,

@@ -50,9 +50,34 @@ public repository has public Releases: the token, its distribution script,
 its `chmod 600` and its expiry date all go away.
 
 That is the one piece of the move that makes the product *simpler* rather
-than more careful, and it should be done in the same pass as step 10 —
-with the token's removal verified by an OTA check on a machine that has no
-token file at all.
+than more careful, and it is **step 11: after the flip, never before.**
+Measured on 2026-11-08, with the token file moved aside on the Ubuntu
+machine:
+
+```
+erro: o GitHub respondeu: Not Found (repo privado sem token:
+      ponha um PAT de leitura em ~/.config/oxdesk/ota-token)
+```
+
+Exit code 1, so it fails loudly — the token is still load-bearing while
+the Releases are private, and deleting the plumbing today would stop OTA
+on all three machines.
+
+The good news is that it is a deletion and not a redesign: the token is
+`Option<String>` the whole way down (`apply::read_token` →
+`exec::api`/`exec::download` → `exec::token_config`, which already returns
+`None` for absent and for blank). What goes, once public:
+
+| What | Where |
+|---|---|
+| Reading the token | `ota/src/apply.rs` (`read_token`), `ota/src/plan.rs` (`token_path`) |
+| Sending it | `ota/src/exec.rs` (`token_config`, and the `Option` parameters) |
+| Distributing it | `scripts/distribute-ota-token.sh`, and the two "OTA token" steps in `deploy.sh` |
+| Checking it | the wizard's `ota` step (`setup_common::ota`, `setup_linux::ota_token`) |
+| Documenting it | section 1 of [[../.claude/skills/enable-ota]], and the token part of [[015-ota]] |
+
+*Check:* an OTA run on a machine with **no token file at all** answers
+`igual` instead of `Not Found`.
 
 ## What "publishable" means
 
@@ -69,6 +94,53 @@ A fourth property is not new, only now load-bearing: a protection that
 stops protecting has to fail loudly. Public repositories attract the
 reading of code, and "it is all public anyway" must never become the
 argument for weakening a gate ([[../.claude/rules/verify-what-arrived]]).
+
+## The license: AGPL-3.0-or-later, and why it was not a preference
+
+The crates declared `license = "MIT"`. That was not sustainable, and the
+reason is concrete rather than ideological.
+
+**We already distribute GPL-3.0-or-later code.** `oxdesk-host` and
+`oxdesk-view` on macOS link Homebrew's `ffmpeg@7` dynamically — Homebrew
+reports it as `GPL-3.0-or-later`, built `--enable-gpl --enable-version3`,
+and the Mac package in every Release carries binaries with those dylib
+paths recorded. A binary linked against a GPL-3 library cannot be
+distributed as MIT and mean it. AGPL-3.0 **is** compatible with GPL-3.0,
+so this move makes the publication coherent instead of creating a new
+constraint. Linux and Windows packages carry no FFmpeg, so this is a Mac
+fact that decides the whole project's license, because the project ships
+one Release.
+
+The usual AGPL argument applies too, and it is the weaker of the two here:
+section 13 obliges whoever offers the software over a network to publish
+their modifications, which is aimed exactly at
+`oxdesk-encontro` — the rendezvous and relay of [[017-product]], which an
+Enterprise customer may host themselves. For the desktop side, where the
+user runs the binary on their own machine, AGPL and GPL are
+indistinguishable in practice.
+
+**`hidpp` stays MIT.** It speaks HID++ 2.0 over raw HID, it links nothing
+GPL, and it is the one piece with value to projects that are not this one.
+AGPL on a small protocol crate buys nothing and blocks the only realistic
+form of outside reuse — which is the form most likely to produce a
+contributor. If the patent grant matters, the Rust-ecosystem norm is
+`MIT OR Apache-2.0` and that is a one-line change.
+
+Every Rust dependency is permissive (`MIT`, `Apache-2.0`, `Unicode-3.0`,
+`Unlicense`; no GPL-2.0-**only** anywhere, which would have been
+incompatible). Details in [[../THIRD-PARTY]].
+
+### Open question: a CLA, decided now or not at all
+
+AGPL is normally paired with a contributor licence agreement when the
+owner wants to offer the same code under other terms — which is the
+standard business model behind an Enterprise relay. Without a CLA, we hold
+only AGPL rights to contributed code, so **we could not offer a
+proprietary licence either**, and collecting agreements retroactively from
+contributors is the kind of task that does not finish.
+
+This spec does not decide it. It records that the window is now: the first
+outside contribution closes it.
 
 ## What the audit found
 
@@ -310,8 +382,11 @@ a measurement.
    outside `specs/`.
 6. **Translate `oxdesk/src`.** *Check:* no accented line outside test
    fixtures and specs.
-7. **Add `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`.** *Check:* GitHub
-   shows the license in the sidebar.
+7. **Add `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`.** `LICENSE`
+   (AGPL-3.0), `hidpp/LICENSE` (MIT) and [[../THIRD-PARTY]] are **done
+   2026-11-08**; the crate metadata moved with them. *Check:* GitHub shows
+   the license in the sidebar once public, and `grep -h '^license' */Cargo.toml`
+   shows AGPL everywhere except `hidpp`.
 8. **Run a real secret scanner over all history.** *Check:* clean report
    attached to the PR that flips visibility.
 9. **Add the `pull_request` trigger** under the constraints of adversarial

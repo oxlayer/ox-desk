@@ -3,7 +3,7 @@ name = "oxdesk-agent"
 version = "0.1.0"
 edition = "2021"
 description = "oxdesk Windows agent: HID++ 0x1814 and dead-man's switch"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 # Integrate instead of reimplementing: HID enumeration and I/O on Windows

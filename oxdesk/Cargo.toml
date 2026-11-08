@@ -3,7 +3,7 @@ name = "oxdesk"
 version = "0.1.0"
 edition = "2021"
 description = "Control plane for a personal two-machine LAN setup"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 # Minimal blocking HTTP server -- we do not need async for a local daemon

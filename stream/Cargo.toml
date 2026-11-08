@@ -3,7 +3,7 @@ name = "oxdesk-stream"
 version = "0.1.0"
 edition = "2021"
 description = "Our own remote screen: capture, NVENC, QUIC. See specs/010."
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 # QUIC: datagrams for video (loss tolerated), streams for input,
