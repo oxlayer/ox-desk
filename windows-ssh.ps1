@@ -1,9 +1,11 @@
-# Lets this Ubuntu box manage Windows over SSH.
-# Run in PowerShell AS ADMINISTRATOR:
-#   powershell -ExecutionPolicy Bypass -File windows-ssh.ps1
+# Lets the machine you drive from manage this Windows box over SSH.
+# Run in PowerShell AS ADMINISTRATOR, passing the public key of that
+# machine:
+#   powershell -ExecutionPolicy Bypass -File windows-ssh.ps1 -PublicKey 'ssh-ed25519 AAAA...'
 #
 # Installs OpenSSH Server, makes PowerShell the default shell and
-# authorizes ubuntu-host's public key.
+# authorizes the key you passed.
+param([string]$PublicKey)
 
 $ErrorActionPreference = 'Stop'
 
@@ -12,7 +14,16 @@ if (-not ([Security.Principal.WindowsPrincipal]     [Security.Principal.WindowsI
   throw 'Run as Administrator.'
 }
 
-$pub = 'ssh-ed25519 <your-public-key> -> windows'
+# The key to authorize comes from whoever runs this, never from the repo:
+# a literal here authorized the MAINTAINER's key on the machine of anyone
+# who followed the README. See .claude/rules/no-secrets-in-source.md.
+$pub = $PublicKey
+if (-not $pub) {
+  throw "usage: .\windows-ssh.ps1 -PublicKey '<ssh public key>'  (the key of the machine you drive from)"
+}
+if ($pub -notmatch '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-\S+|sk-ssh-\S+) ') {
+  throw "that does not look like an SSH public key"
+}
 
 Write-Host '==> installing OpenSSH Server (Windows optional feature)'
 $cap = Get-WindowsCapability -Online -Name 'OpenSSH.Server*'

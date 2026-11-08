@@ -48,7 +48,7 @@ Two kinds of pointer movement:
 
 ## See also
 
-- [[machines]]
+- [[new-computer]] — the order of operations on a machine
 - [[../specs/010-remote-desktop.md]] — the full stack
 - [[../specs/005-input-switch.md]] — machine switching and KVM
 

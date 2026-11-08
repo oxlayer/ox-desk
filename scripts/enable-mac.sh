@@ -9,7 +9,20 @@
 #   bash enable-mac.sh
 set -uo pipefail
 
-PUB='ssh-ed25519 <your-public-key> -> mac (oxdesk)'
+# The key to authorize comes from whoever runs this, never from the repo.
+# A literal here authorized the MAINTAINER's key on the machine of anyone
+# who followed the README -- a backdoor by accident, not a privacy problem.
+# See .claude/rules/no-secrets-in-source.md.
+PUB="${1:-$(cat ~/.ssh/id_ed25519.pub 2>/dev/null)}"
+if [ -z "$PUB" ]; then
+  echo "usage: bash $0 '<ssh public key>'" >&2
+  echo "  or have one at ~/.ssh/id_ed25519.pub on the machine you drive from" >&2
+  exit 2
+fi
+case "$PUB" in
+  ssh-ed25519\ *|ssh-rsa\ *|ecdsa-sha2-*\ *|sk-ssh-*) ;;
+  *) echo "that does not look like an SSH public key: ${PUB%% *}" >&2; exit 2 ;;
+esac
 
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
 nao()  { printf '  \033[31mfailed\033[0m %s\n' "$1"; }

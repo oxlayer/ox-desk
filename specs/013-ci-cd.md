@@ -182,9 +182,38 @@ cancelled after 15 minutes — here nothing is ever scheduled.
 What rules out our own code: the workflow file is byte-identical between the
 run that succeeded at 02:37 and the one that failed at 03:10 on the same
 branch (`git diff aa6d4ed 2fc748b -- .github/workflows/`), and `gh run rerun`
-reproduces it on attempt 2. Reading the cause needs `admin:org` on the
-billing endpoint, which the `gh` token here does not carry; the page is
-`github.com/organizations/oxlayer/settings/billing`.
+reproduces it on attempt 2. GitHub's own status page was fully operational.
+
+**The cause, measured.** The old billing endpoints are gone (`410`, and they
+asked for `admin:org`), but the enhanced-billing one answers with plain
+`read:org`:
+
+```bash
+gh api "organizations/oxlayer/settings/billing/usage?year=2026&month=11"
+```
+
+November 2026, product `actions`: gross **US$ 12.0996**, discount **US$
+12.0996**, net **US$ 0.00**. The Free allowance is 2,000 Linux minutes, and
+at the current US$ 0.006 per Linux minute that is exactly **US$ 12.00** — so
+the month crossed the line. The net is zero not because it fit, but because
+the spending limit is US$ 0: past the allowance GitHub stops scheduling
+instead of charging, which is the two-second failure above.
+
+October, for contrast: 1,733 minutes, US$ 10.47, all discounted, never
+blocked.
+
+Where it went in November:
+
+| repo | Linux | macOS | macOS in US$ |
+|---|---:|---:|---:|
+| ox-desk | 283 min | 151.3 min | 9.38 |
+| ox-code | 154 min | — | — |
+
+The cost table above predicted this shape: **the Mac is 78% of the bill**
+(US$ 9.38 of 12.00) out of 151 minutes of wall clock, because a macOS minute
+bills ten times. Three ways out, in order of cost: raise the spending limit
+above US$ 0 (the whole month was US$ 12); take the Mac off `push`, which is
+the first cut named above; or wait for the allowance to reset on the 1st.
 
 The first cut named in **Cost** above — taking the Mac off `push` and leaving
 it on tag and `workflow_dispatch` — is still the cheapest lever, and it is a
