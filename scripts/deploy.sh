@@ -29,7 +29,15 @@ git diff --quiet 2>/dev/null || BUILD="$BUILD-sujo"
 export OXDESK_BUILD="$BUILD"
 # Incremental number: tells WHICH machine is behind, not just that they
 # differ. It travels along because the Mac's copy has no .git.
-OXDESK_BUILD_N="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+# BUILD_BASE + the commit count, because the count RESTARTED.
+#
+# The branch history was squashed on 2026-11-08, so `rev-list --count` went
+# from 240 to 1 -- and the build number is what the updater compares. With
+# `n_here = 1` against the published package's `n_there = 229`, `decide()`
+# in ota/src/release.rs returns `Update` and every machine would install
+# OLDER code over itself on the next timer tick. The base keeps the number
+# monotonic across the rewrite.
+OXDESK_BUILD_N="$(( $(cat BUILD_BASE 2>/dev/null || echo 0) + $(git rev-list --count HEAD 2>/dev/null || echo 0) ))"
 export OXDESK_BUILD_N
 echo "== build #$OXDESK_BUILD_N $BUILD =="
 

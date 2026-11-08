@@ -264,6 +264,21 @@ tag, which is also why it does not qualify as erasure — and if erasure
 were the goal, the tags would have to go too, and with them the
 provenance of every published Release. That trade was not taken.
 
+**What it nearly cost, and this one is not about documentation:** the
+squash reset `git rev-list --count` from 240 to **1**, and that number is
+the build stamp the updater compares. `decide()` in `ota/src/release.rs`
+refuses to go backwards (`if n_there < n_here`) and otherwise **applies**
+— so with `n_here = 1` against the published package's `n_there = 229`,
+every machine would have installed older code over itself on the next
+timer tick. Caught before the deploy, not after.
+
+The fix is a `BUILD_BASE` file at the root, added to the commit count by
+`deploy.sh`, `build-binaries.sh` and the CI workflow. It is 240 today, so
+the first post-squash build is #241 and the sequence stays monotonic.
+**Any future history rewrite has to raise it**, and the check is one line:
+the number must come out greater than the `n` in the newest published
+package name.
+
 **What it does cost, and what was done about it:** the commit messages.
 A squash collapses them, and today's carried measurements that were not
 anywhere else. Those were moved into documents first —

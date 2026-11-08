@@ -94,7 +94,9 @@ jobs:
       - name: Build stamp
         run: |
           echo "OXDESK_BUILD=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
-          echo "OXDESK_BUILD_N=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+          # BUILD_BASE + the count: the squash reset `rev-list --count`, and a
+          # package with a smaller `n` makes the updater downgrade the fleet.
+          echo "OXDESK_BUILD_N=$(( $(cat BUILD_BASE) + $(git rev-list --count HEAD) ))" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:

@@ -21,7 +21,10 @@ COMPILAR=1
 [ "${2:-}" = "--sem-compilar" ] && COMPILAR=0
 
 OXDESK_BUILD="${OXDESK_BUILD:-$(git rev-parse --short HEAD)}"
-OXDESK_BUILD_N="${OXDESK_BUILD_N:-$(git rev-list --count HEAD)}"
+# BUILD_BASE + the commit count: the squash of 2026-11-08 reset the count,
+# and a package whose `n` went backwards makes the updater downgrade every
+# machine. See the comment in deploy.sh.
+OXDESK_BUILD_N="${OXDESK_BUILD_N:-$(( $(cat BUILD_BASE 2>/dev/null || echo 0) + $(git rev-list --count HEAD) ))}"
 export OXDESK_BUILD OXDESK_BUILD_N
 
 WIN=x86_64-pc-windows-gnu
