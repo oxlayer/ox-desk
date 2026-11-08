@@ -31,9 +31,14 @@ pub mod host_win;
 pub mod identity;
 pub mod input;
 pub mod input_mac;
+// Empty off macOS: the file carries its own `#![cfg]`.
+pub mod mac_native;
 pub mod input_win;
 pub mod net;
 pub mod nvenc;
 pub mod quality;
 pub mod serve;
+// Empty on other targets: the file carries its own `#![cfg(target_os = "macos")]`,
+// so the crate still cross-builds whole.
+pub mod vt;
 pub mod telemetry;

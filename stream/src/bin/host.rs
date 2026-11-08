@@ -67,6 +67,17 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Same reason `--conferir` and `--pedir` live here: macOS ties the
+    // Screen Recording grant to THIS binary's designated requirement. A
+    // fresh probe binary is refused with `-3801 The user declined TCCs`
+    // (measured), while this one already holds the grant and keeps it
+    // across rebuilds thanks to the local signing identity. See
+    // specs/020-native-mac.md.
+    #[cfg(target_os = "macos")]
+    if std::env::args().nth(1).as_deref() == Some("--probe-nativo") {
+        return oxdesk_stream::mac_native::probe().map_err(|e| anyhow::anyhow!(e));
+    }
+
     #[cfg(windows)]
     redirect_output();
 

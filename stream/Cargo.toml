@@ -67,6 +67,21 @@ windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_
 # was raw ScreenCaptureKit and VideoToolbox, hundreds of lines of
 # Objective-C bridging to get to the same place.
 [target.'cfg(target_os = "macos")'.dependencies]
+# Compile-time bindings to Apple's own frameworks: no runtime dependency,
+# nothing to install, and all permissive (MIT / Zlib OR Apache-2.0 OR MIT).
+# That is the point of specs/020 -- what we are removing is a GPL-3 library
+# that has to be installed by a package manager, not every crate.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSError", "NSString", "NSValue", "NSGeometry"] }
+# `objc2-core-media` is a FEATURE of this crate, not only a dependency of
+# ours: `captureSampleBufferWithFilter:` is gated on
+# `all(SCStream, block2, objc2-core-media)` and is simply absent without it.
+objc2-screen-capture-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-media", "SCStream", "SCShareableContent", "SCScreenshotManager"] }
+objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMSampleBuffer", "CMFormatDescription", "CMBlockBuffer", "CMTime"] }
+objc2-core-video = { version = "0.3", default-features = false, features = ["std", "CVPixelBuffer", "CVImageBuffer", "CVReturn"] }
+block2 = "0.6"
+dispatch2 = "0.3"
+
 ffmpeg-next = { version = "9.0", default-features = false, features = [
   "codec",
   "device",
@@ -122,6 +137,10 @@ path = "src/bin/mac-probe.rs"
 [[bin]]
 name = "oxdesk-probe-mac-native"
 path = "src/bin/mac-native-probe.rs"
+
+[[bin]]
+name = "oxdesk-probe-mac-capture"
+path = "src/bin/mac-capture-probe.rs"
 
 [[bin]]
 name = "oxdesk-probe-nvdec"

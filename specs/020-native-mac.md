@@ -114,12 +114,64 @@ It does, and so does its permission model. The reference machine is macOS
 14, so this is not a constraint today — but it is a floor to write down
 before someone tries to support an older Mac.
 
+## Measured so far (2026-11-08)
+
+**Step 1 passed.** `oxdesk-probe-mac-native`, hand-written FFI, no media
+crate:
+
+```
+CVPixelBuffer: ok, stride 5120
+VTCompressionSession: criada
+parameter set 0: 16 bytes, nal_type 7 (SPS), length prefix 4 bytes
+parameter set 1: 4 bytes, nal_type 8 (PPS)
+callback: 1 chamada(s), OSStatus 0
+access unit: 18231 bytes
+nal 0: tipo 6 (SEI), 30 bytes
+nal 1: tipo 5 (IDR slice), 18193 bytes
+```
+
+So the encoder half is settled: `h264_videotoolbox` is a wrapper and the
+session opens from Rust with a null specification, which on Apple Silicon
+is hardware.
+
+**Step 2's order was changed, and the reason is worth keeping.** The spec
+said encoder first, fed from the existing capture. That would have meant a
+pixel conversion the final design does not have — the native chain hands a
+`CVPixelBuffer` from ScreenCaptureKit straight to VideoToolbox — so the
+measurement would have been pessimistic and the plumbing thrown away.
+Capture and encode are therefore proved together.
+
+**Step 2 is blocked on a TCC grant, not on code.** `ScreenCaptureKit`
+answers `-3801 The user declined TCCs for application, window, display
+capture`, and it does so from three places: a fresh probe binary, from
+`oxdesk-host --probe-nativo` over SSH, and from `oxdesk-host` launched by
+a LaunchAgent **inside the graphical session**. The reason is not the
+session: `oxdesk-host --conferir` reports **`gravacao-de-tela: falta`**.
+The host simply does not hold the grant.
+
+Which is a finding about the fleet and not about this work: the grant
+belongs to the binary, the rename changed `logistream-host` into
+`oxdesk-host`, and `scripts/migrate-from-logi/mac.sh` says in its own
+header that Screen Recording and Accessibility have to be approved again
+by hand after that. Nobody did. **The Mac has not been able to serve its
+own screen since the cutover**, and the wizard has been saying so.
+
+One thing already learned in favour of the native path, by accident:
+ScreenCaptureKit **returns a loud error** where AVFoundation, per
+[[../.claude/rules/graphical-session]], simply *hangs* without the grant —
+"macOS is the worst of the three, because it doesn't fail". The native API
+fails. That is worth more than it sounds for a wizard that has to tell
+someone what is wrong.
+
 ## Order of work
 
-1. **A probe, like `mac-probe` was for FFmpeg.** Can we open a
-   `VTCompressionSession`, feed it one `CVPixelBuffer` and get an H.264
-   access unit, from Rust? *Check:* the probe prints the NAL types of one
-   encoded frame.
+1. **A probe, like `mac-probe` was for FFmpeg.** **Done** — see above.
+   *Check:* the probe prints the NAL types of one encoded frame.
+1b. **Grant Screen Recording to `oxdesk-host`** in System Settings, which
+   is also what makes the Mac a screen host again. Only the machine's
+   owner can do it ([[019-one-onboarding]], the floor). *Check:*
+   `oxdesk-host --conferir` says `gravacao-de-tela: ok`, and
+   `oxdesk-host --probe-nativo` prints a frame.
 2. **Encoder behind a flag**, same frames in, both paths measured.
    *Check:* a table of fps, p50/p95 and bitrate for both, on the
    reference Mac.
