@@ -199,9 +199,13 @@ handful of commands, and they run here:
 ```bash
 bash scripts/build-binaries.sh linux
 bash scripts/build-binaries.sh windows
+# `deploy.sh` rsyncs the crates to the Mac and NOT `scripts/`, so the script
+# has to travel too:
+ssh mac 'mkdir -p ~/oxdesk/scripts'
+scp scripts/build-binaries.sh mac:oxdesk/scripts/
 # No cross-compile to macOS, and the copy over there has no .git, so the
 # stamp travels in the environment:
-ssh mac 'cd ~/oxdesk && OXDESK_BUILD=<hash> OXDESK_BUILD_N=<n> bash scripts/build-binaries.sh mac'
+ssh mac 'cd ~/oxdesk && PATH=$HOME/.cargo/bin:/opt/homebrew/bin:$PATH OXDESK_BUILD=<hash> OXDESK_BUILD_N=<n> bash scripts/build-binaries.sh mac'
 scp mac:oxdesk/dist/oxdesk-mac-*.tar.gz dist/
 # In a directory holding ONLY the three packages of THIS build: `dist/` keeps
 # old ones, and the release job requires exactly three.
