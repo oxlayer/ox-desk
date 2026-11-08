@@ -37,8 +37,9 @@ pub fn path_to(h: &HostCfg) -> String {
     let Some(ip) = resolve(&h.addr) else { return "unknown".into() };
     match classify(ip) {
         Class::Overlay => match tailscale_peer_direct(ip) {
-            Some(true) => "overlay-direct".into(),
-            Some(false) => "overlay-relay".into(),
+            Some(Direct::Lan) => "overlay-lan".into(),
+            Some(Direct::Internet) => "overlay-direct".into(),
+            Some(Direct::Relay) => "overlay-relay".into(),
             None => "overlay".into(),
         },
         Class::Lan => "lan".into(),
@@ -104,9 +105,18 @@ fn tailscale_bin() -> Option<PathBuf> {
     candidates.iter().map(PathBuf::from).find(|p| p.exists())
 }
 
-/// `Some(true)` if Tailscale reaches this peer directly, `Some(false)` if
-/// through a DERP relay, `None` if it cannot tell.
-fn tailscale_peer_direct(ip: IpAddr) -> Option<bool> {
+/// How Tailscale reaches a peer. At home the overlay still goes peer to
+/// peer, but over the LAN: telling that apart from "direct across the
+/// internet" is the whole point of measuring (home vs away).
+#[derive(Debug, PartialEq)]
+enum Direct {
+    Lan,
+    Internet,
+    Relay,
+}
+
+/// `None` if it cannot tell.
+fn tailscale_peer_direct(ip: IpAddr) -> Option<Direct> {
     let bin = tailscale_bin()?;
     let out = crate::sys::child(&bin.to_string_lossy())
         .args(["status", "--json"])
@@ -117,7 +127,7 @@ fn tailscale_peer_direct(ip: IpAddr) -> Option<bool> {
     peer_direct(&String::from_utf8_lossy(&out.stdout), ip)
 }
 
-fn peer_direct(status_json: &str, ip: IpAddr) -> Option<bool> {
+fn peer_direct(status_json: &str, ip: IpAddr) -> Option<Direct> {
     let v: serde_json::Value = serde_json::from_str(status_json).ok()?;
     let want = ip.to_string();
     v.get("Peer")?.as_object()?.values().find_map(|p| {
@@ -125,8 +135,19 @@ fn peer_direct(status_json: &str, ip: IpAddr) -> Option<bool> {
         if !ips.iter().any(|x| x.as_str() == Some(want.as_str())) {
             return None;
         }
-        // `CurAddr` is the direct endpoint in use; empty means DERP.
-        Some(p.get("CurAddr").and_then(|c| c.as_str()).is_some_and(|c| !c.is_empty()))
+        // `CurAddr` is the direct endpoint in use ("ip:port"); empty means DERP.
+        let cur = p.get("CurAddr").and_then(|c| c.as_str()).unwrap_or("");
+        if cur.is_empty() {
+            return Some(Direct::Relay);
+        }
+        let host = cur.rsplit_once(':').map_or(cur, |(h, _)| h).trim_matches(['[', ']']);
+        // A link-local IPv6 carries its zone (`fe80::1%en0`), which IpAddr
+        // does not parse.
+        let host = host.split('%').next().unwrap_or(host);
+        Some(match host.parse::<IpAddr>().map(classify) {
+            Ok(Class::Lan) => Direct::Lan,
+            _ => Direct::Internet,
+        })
     })
 }
 
@@ -171,10 +192,17 @@ mod tests {
     fn reads_direct_or_relay_from_tailscale_status() {
         let j = r#"{"Peer":{
             "a":{"TailscaleIPs":["100.1.1.1","fd7a:115c:a1e0::1"],"CurAddr":"177.11.24.9:41641","Relay":"gru"},
-            "b":{"TailscaleIPs":["100.2.2.2"],"CurAddr":"","Relay":"gru"}}}"#;
-        assert_eq!(peer_direct(j, "100.1.1.1".parse().unwrap()), Some(true));
-        assert_eq!(peer_direct(j, "fd7a:115c:a1e0::1".parse().unwrap()), Some(true));
-        assert_eq!(peer_direct(j, "100.2.2.2".parse().unwrap()), Some(false));
+            "b":{"TailscaleIPs":["100.2.2.2"],"CurAddr":"","Relay":"gru"},
+            "c":{"TailscaleIPs":["100.4.4.4"],"CurAddr":"192.168.0.10:41641"},
+            "d":{"TailscaleIPs":["100.5.5.5"],"CurAddr":"[2804:14c::1]:41641"},
+            "e":{"TailscaleIPs":["100.6.6.6"],"CurAddr":"[fe80::1%en0]:41641"}}}"#;
+        let at = |s: &str| peer_direct(j, s.parse().unwrap());
+        assert_eq!(at("100.1.1.1"), Some(Direct::Internet));
+        assert_eq!(at("fd7a:115c:a1e0::1"), Some(Direct::Internet));
+        assert_eq!(at("100.2.2.2"), Some(Direct::Relay));
+        assert_eq!(at("100.4.4.4"), Some(Direct::Lan));
+        assert_eq!(at("100.5.5.5"), Some(Direct::Internet));
+        assert_eq!(at("100.6.6.6"), Some(Direct::Lan), "link-local with a zone");
         assert_eq!(peer_direct(j, "100.3.3.3".parse().unwrap()), None);
         assert_eq!(peer_direct("not json", "100.1.1.1".parse().unwrap()), None);
     }
