@@ -104,12 +104,23 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let mut r = Reassembler::default();
+    // Asks for a keyframe while there is nothing drawable (net::KeyframeWatch).
+    let mut watch = net::KeyframeWatch::new(std::time::Instant::now());
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
     loop {
         tokio::select! {
             d = conn.read_datagram() => {
-                let Some((header, unit)) = r.push(&d?) else { continue };
+                let pushed = r.push(&d?);
+                watch.losses(r.lost, std::time::Instant::now());
+                let Some((header, unit)) = pushed else { continue };
+                watch.frame(header.keyframe);
                 let m = wrap(header.keyframe, header.captured_at_ns, &unit);
                 ws.send(Message::Binary(m.into())).await?;
+            }
+            _ = tick.tick() => {
+                if watch.should_request(std::time::Instant::now()) {
+                    let _ = conn.send_datagram(bytes::Bytes::from_static(net::KEYFRAME_REQUEST));
+                }
             }
             m = ws.next() => match m {
                 Some(Ok(Message::Binary(b))) if b.len() <= MAX_EVENT => {

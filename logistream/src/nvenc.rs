@@ -217,6 +217,39 @@ impl NvencEncoder {
         }
     }
 
+    /// Encodes the last frame AGAIN, as an IDR.
+    ///
+    /// The input buffer still holds the last frame written by `encode`, so
+    /// a capture that only delivers on change (Mutter) can answer a
+    /// keyframe request on a still screen. Without this the request would
+    /// wait for the next screen change, which on an idle desktop is never.
+    pub fn reencode_idr(&mut self) -> anyhow::Result<Vec<u8>> {
+        anyhow::ensure!(self.n > 0, "no frame encoded yet");
+        let (Some(session), Some(input), Some(output)) =
+            (self.session.take(), self.input.take(), self.output.take())
+        else {
+            anyhow::bail!("encoder without buffers");
+        };
+        let n = self.n;
+        let r = session.encode_picture(
+            input,
+            output,
+            EncodePictureParams { input_timestamp: n, force_idr: true },
+        );
+        self.session = Some(session);
+        match r.and_then(|s| s.finish()) {
+            Ok((data, i2, s2)) => {
+                self.input = Some(i2);
+                self.output = Some(s2);
+                self.n += 1;
+                self.idr = false;
+                self.last_was_idr = true;
+                Ok(data)
+            }
+            Err(e) => Err(anyhow::anyhow!("encode: {e}")),
+        }
+    }
+
     /// Asks for the NEXT frame to come out IDR.
     ///
     /// The caller is the network, when a client connects: it has no

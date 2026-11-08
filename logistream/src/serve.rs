@@ -107,6 +107,13 @@ impl Signals {
 
     /// Consumes the keyframe request. Returns `true` once per request --
     /// the caller passes it on to the encoder.
+    /// A keyframe was asked for and nobody has produced it yet. For a
+    /// capture that only delivers on change (Linux), this is what tells it
+    /// to re-encode the last frame instead of waiting for one.
+    pub fn idr_pending(&self) -> bool {
+        self.idr.load(Ordering::SeqCst)
+    }
+
     pub fn take_idr(&self) -> bool {
         self.idr.swap(false, Ordering::SeqCst)
     }
@@ -257,16 +264,44 @@ pub async fn serve_video(
         let mut refused = 0u64;
         let t0 = Instant::now();
 
+        let mut last_request: Option<Instant> = None;
+        let mut requests = 0u64;
         loop {
-            let c = match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
-                Ok(Some(c)) => c,
-                Ok(None) => break,
-                Err(_) => {
-                    if conn.close_reason().is_some() {
-                        break;
+            let c = tokio::select! {
+                // The viewer asking for a keyframe (`net::KeyframeWatch`):
+                // it lost the one that opened the session, or a frame the
+                // following ones reference. On a still screen nothing else
+                // would ever come, so the request is the only way out.
+                d = conn.read_datagram() => {
+                    match d {
+                        Ok(d) if d.as_ref() == net::KEYFRAME_REQUEST => {
+                            // The viewer already spaces its requests; this
+                            // only stops a broken one from turning every
+                            // frame into an IDR.
+                            if last_request.map_or(true, |t| t.elapsed() >= Duration::from_millis(200)) {
+                                last_request = Some(Instant::now());
+                                signals.idr.store(true, Ordering::SeqCst);
+                                requests += 1;
+                                if requests <= 5 || requests % 50 == 0 {
+                                    println!("  keyframe requested by the client ({requests})");
+                                }
+                            }
+                            continue;
+                        }
+                        Ok(_) => continue,
+                        Err(_) => break,
                     }
-                    continue;
                 }
+                r = tokio::time::timeout(Duration::from_millis(200), rx.recv()) => match r {
+                    Ok(Some(c)) => c,
+                    Ok(None) => break,
+                    Err(_) => {
+                        if conn.close_reason().is_some() {
+                            break;
+                        }
+                        continue;
+                    }
+                },
             };
 
             if awaiting_key {
@@ -409,5 +444,56 @@ pub async fn serve_input(
             s.input_left();
             println!("  input disconnected");
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The viewer's keyframe request reaches the encoder flag, over a real
+    /// QUIC connection. Without it a lost keyframe on a still screen left
+    /// the tab black for good (2026-11-07).
+    #[tokio::test]
+    async fn a_keyframe_request_from_the_viewer_raises_the_idr_flag() {
+        let dir = std::env::temp_dir().join(format!("logi-serve-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let host = crate::identity::load_or_create(&dir.join("host")).unwrap();
+        let ep = net::server_with("127.0.0.1:0".parse().unwrap(), host).unwrap();
+        let addr = ep.local_addr().unwrap();
+        let signals = std::sync::Arc::new(Signals::default());
+        let (_tx, mut rx) = tokio::sync::mpsc::channel::<EncodedFrame>(2);
+
+        let s2 = std::sync::Arc::clone(&signals);
+        let server = tokio::spawn(async move {
+            let _ = serve_video(&ep, &mut rx, &s2, |_| tokio::spawn(async {})).await;
+        });
+
+        let cli = net::client_with("127.0.0.1:0".parse().unwrap(), None, None).unwrap();
+        let conn = cli.connect(addr, "logistream").unwrap().await.unwrap();
+
+        // Connecting already asks for one; consume it, as the capture would.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !signals.take_idr() {
+            assert!(Instant::now() < deadline, "connecting did not ask for a keyframe");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!signals.idr_pending());
+
+        conn.send_datagram(bytes::Bytes::from_static(net::KEYFRAME_REQUEST)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !signals.idr_pending() {
+            assert!(Instant::now() < deadline, "the request did not reach the flag");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // Anything else on that connection is ignored.
+        assert!(signals.take_idr());
+        conn.send_datagram(bytes::Bytes::from_static(b"x")).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!signals.idr_pending(), "a stray datagram must not ask for an IDR");
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

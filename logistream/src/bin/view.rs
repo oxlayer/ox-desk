@@ -552,16 +552,27 @@ mod visual {
 
         let mut r = Reassembler::default();
         let mut frames = 0u64;
+        // Asks for a keyframe while there is nothing drawable
+        // (net::KeyframeWatch). The read below times out so this gets a
+        // chance to run on a still screen, where nothing arrives at all.
+        let mut watch = net::KeyframeWatch::new(std::time::Instant::now());
 
         loop {
-            let d = match conn.read_datagram().await {
-                Ok(d) => d,
-                Err(e) => {
+            if watch.should_request(std::time::Instant::now()) {
+                let _ = conn.send_datagram(bytes::Bytes::from_static(net::KEYFRAME_REQUEST));
+            }
+            let d = match tokio::time::timeout(std::time::Duration::from_millis(100), conn.read_datagram()).await {
+                Err(_) => continue,
+                Ok(Ok(d)) => d,
+                Ok(Err(e)) => {
                     println!("connection closed: {e}");
                     return Ok(());
                 }
             };
-            let Some((hdr, unit)) = r.push(&d) else { continue };
+            let pushed = r.push(&d);
+            watch.losses(r.lost, std::time::Instant::now());
+            let Some((hdr, unit)) = pushed else { continue };
+            watch.frame(hdr.keyframe);
             // The first frames, one by one.
             //
             // "The image does not show up" has different causes with the

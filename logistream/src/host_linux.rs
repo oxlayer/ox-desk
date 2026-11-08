@@ -211,6 +211,12 @@ pub fn run(port: u16, connector: &str) -> anyhow::Result<()> {
     let size_fmt = Cell::new((0u32, 0u32));
     let enc_proc = Rc::clone(&enc);
     let dropped_proc = Rc::clone(&dropped);
+    // For the keyframe-request timer below: Mutter only delivers on change,
+    // so on a still screen the timer is what answers the request.
+    let enc_timer = Rc::clone(&enc);
+    let tx_timer = tx.clone();
+    let last_encoded = Rc::new(Cell::new(Instant::now()));
+    let last_encoded_proc = Rc::clone(&last_encoded);
     let signals_proc = std::sync::Arc::clone(&signals);
 
     let _listener = stream
@@ -285,6 +291,7 @@ pub fn run(port: u16, connector: &str) -> anyhow::Result<()> {
                 // is dropped HERE instead of becoming a queue. A late frame
                 // has no value on a remote screen.
                 Ok(data) => {
+                    last_encoded_proc.set(Instant::now());
                     let keyframe = c.last_was_idr();
                     if tx.try_send(EncodedFrame { data, keyframe, captured_at_ns: captured }).is_err() {
                         dropped_proc.set(dropped_proc.get() + 1);
@@ -344,10 +351,34 @@ pub fn run(port: u16, connector: &str) -> anyhow::Result<()> {
     let timer = mainloop.loop_().add_timer(move |_| {
         if signals_timer.should_exit() {
             ml.quit();
+            return;
+        }
+        // A keyframe was requested and no frame came to carry it: the
+        // screen is still. Re-encode the last frame as an IDR. `take_idr`
+        // goes last so the request is only consumed when we answer it.
+        if signals_timer.has_client()
+            && signals_timer.idr_pending()
+            && last_encoded.get().elapsed() >= Duration::from_millis(80)
+            && signals_timer.take_idr()
+        {
+            let mut g = enc_timer.borrow_mut();
+            let Some(c) = g.as_mut() else { return };
+            match c.reencode_idr() {
+                Ok(data) => {
+                    last_encoded.set(Instant::now());
+                    let frame = EncodedFrame { data, keyframe: true, captured_at_ns: now_ns() };
+                    if tx_timer.try_send(frame).is_err() {
+                        eprintln!("  keyframe for a still screen dropped: the network queue is full");
+                    }
+                }
+                Err(e) => eprintln!("  keyframe for a still screen: {e}"),
+            }
         }
     });
+    // 100 ms: it also answers keyframe requests on a still screen, and the
+    // viewer asks every 300 ms.
     timer
-        .update_timer(Some(Duration::from_millis(500)), Some(Duration::from_millis(500)))
+        .update_timer(Some(Duration::from_millis(100)), Some(Duration::from_millis(100)))
         .into_result()?;
 
     println!("  host on port {port}; ctrl-c to stop");
