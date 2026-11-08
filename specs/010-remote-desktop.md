@@ -411,6 +411,10 @@ this reason.
 On Linux it is different: we ask Mutter for `cursor-mode: 1` and it embeds
 the cursor in the frame. The inconsistency is known and accepted.
 
+> Superseded twice since. First by `cursor.rs`, which composes an arrow into
+> the frame for the KVM case. Then by `cursor_win.rs`, which draws it on the
+> desktop itself -- see *The cursor nobody drew* at the end of this file.
+
 ### The round trip through the CPU is deliberate
 
 The right thing would be to register the D3D11 texture directly in NVENC
@@ -560,3 +564,79 @@ The second pattern: two of the three survived because the number that
 would have exposed them was not printed anywhere (the target on Windows) or
 had never been measured (the cost of the conversion). Instrumenting cost
 minutes and pointed straight at them.
+
+## The cursor nobody drew (2026-11-07)
+
+The receiver came off the Windows machine, and with it the cursor. Not from
+the video -- from the **monitor**. The person drove the machine from the
+other side through the LAN KVM, looked at its physical screen, and saw
+hover effects answering with nothing to say where the pointer was.
+
+### Measured, not guessed
+
+With no pointing device installed, Windows stops drawing the pointer.
+`GetCursorInfo` says it plainly: `flags = 0`, `hCursor = 0` -- **and the
+position is still correct**. `GetCursorPos` answers whether or not anything
+is drawn, which is exactly what we needed. The ghost devices confirm the
+other half: `Get-PnpDevice -Class Mouse` lists thirteen
+`HID-compliant mouse`, every one of them `Unknown` -- that is, absent.
+
+`SendInput` moving the position does not bring the cursor back. Injection
+changes where the pointer *is*, not whether the OS paints it.
+
+### Two paths, and only one of them was covered
+
+| Who is looking | Where the arrow has to be | Who draws it |
+|---|---|---|
+| Viewer on another machine | inside the captured frame | `cursor.rs`, composed into the staging texture |
+| **Somebody in front of the Windows monitor** | **on the desktop** | **`cursor_win.rs`, a layered window** |
+
+The second row was empty, and it is the one that hurt. There is no frame of
+ours in that path at all: the host log of the session that triggered this
+shows `input connected` plus eight `MouseRel` and **not one
+`sending frame`** -- nobody was watching a video, so composing into the
+frame drew for an audience of zero.
+
+### Why a window and not a bigger composite
+
+A layered window is a real desktop window, so DXGI captures it like any
+other -- one mechanism serves the physical monitor *and* every viewer. The
+cost is that the two would now both draw, so `capture_win` asks
+`cursor_win::drawing()` and backs off while the overlay is up. Two arrows
+on the viewer would be worse than none: you would not know which one is the
+pointer.
+
+Four `WS_EX` flags make it a cursor instead of a window: `LAYERED` for
+per-pixel alpha, `TRANSPARENT` so clicks reach what is underneath,
+`NOACTIVATE` so it never steals focus from what the person is typing into,
+`TOOLWINDOW` to stay out of Alt-Tab and the taskbar.
+
+Both paths read the **same** `ARROW` table. `builtin_arrow` renders it as
+DXGI's monochrome AND/XOR, `arrow_bgra` as premultiplied BGRA for
+`UpdateLayeredWindow`. One picture, two formats -- a second table would let
+the cursor on the desktop and the cursor in the frame drift apart.
+
+### It only draws while someone is driving
+
+A fullscreen game hides the pointer **on purpose**, and an arrow we paint
+over it is us intruding. So the lifetime is the input session and not the
+host's: `driving(true)` when an input connection arrives, `false` through a
+`Drop` guard when it ends -- `receive_input` leaves through several doors,
+and the one that forgot would leave an arrow stuck on the screen forever.
+The counter is not a bool because there are two doors for input (the viewer
+sends over the video connection, the KVM over the input port); with a bool,
+whichever hung up first would turn off the arrow of whoever was still
+typing.
+
+### Knobs and limits
+
+- `LOGI_CURSOR_ESCALA` repeats each pixel N times. Default 1, which is the
+  classic Windows arrow (12x19 of visible arrow inside its 32x32 bitmap).
+  It is an env var and not a config field because it is tuned by eye, on
+  the machine, and a rebuild to discover that 1 was too small would be
+  absurd.
+- The shape is always the arrow. The system's text bar and resize arrows
+  only exist when the system has a cursor -- and then it is drawing it
+  itself and we are hidden.
+- Still not covered: a genuinely locked session. The secure desktop belongs
+  to another desktop and neither our window nor DXGI reaches it (specs/014).

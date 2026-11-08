@@ -91,6 +91,10 @@ pub fn run(port: u16, monitor: u32) -> anyhow::Result<()> {
     // dismiss it, because `SendInput` goes to the calling thread's desktop.
     crate::input_win::end_screensaver();
 
+    // The cursor this machine does not draw by itself. It only appears
+    // while someone is sending input -- see `cursor_win`.
+    crate::cursor_win::start();
+
     // ORDER MATTERS: the encoder first, the duplication after.
     //
     // Holding the DXGI duplication while CUDA initialized hung the process
@@ -322,6 +326,10 @@ fn run_network(
 /// and one of them is the one the user types with.
 async fn receive_input(conn: quinn::Connection, origin: Arc<Mutex<(i32, i32)>>) {
     let Ok(mut recv) = conn.accept_uni().await else { return };
+    // From here on the arrow on this desktop is ours: whoever is driving
+    // has to see where the pointer is, and with no mouse installed Windows
+    // draws nothing.
+    let _arrow = CursorWhileDriving::new();
     let mut injector = Injector::new(origin);
     let mut reader = Reader::default();
     let mut buf = vec![0u8; 4096];
@@ -340,5 +348,27 @@ async fn receive_input(conn: quinn::Connection, origin: Arc<Mutex<(i32, i32)>>) 
                 println!("  {n} input events applied");
             }
         }
+    }
+}
+
+/// Keeps the desktop arrow on for as long as the input connection lives.
+///
+/// A guard and not two calls: `receive_input` leaves through several doors
+/// (stream closed, read error, the connection dropping), and the one that
+/// forgot to turn it off would leave an arrow stuck on someone's screen
+/// forever. Turning it ON lives in `new` for the same reason -- so there is
+/// no way to raise the counter without something that lowers it.
+struct CursorWhileDriving;
+
+impl CursorWhileDriving {
+    fn new() -> Self {
+        crate::cursor_win::driving(true);
+        CursorWhileDriving
+    }
+}
+
+impl Drop for CursorWhileDriving {
+    fn drop(&mut self) {
+        crate::cursor_win::driving(false);
     }
 }
