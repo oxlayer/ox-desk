@@ -35,44 +35,91 @@ does not authorize B to see A.
 
 ## The name: oxdesk
 
-"oxdesk" and "oxdesk-stream" come from Logitech, from the time when the project was about switching
+"logid" and "logistream" came from Logitech, from the time when the project was about switching
 keyboard and mouse between PCs. In the product, Logitech is **one feature** (Easy-Switch
 channel switching for whoever has their keyboard and mouse and several PCs), and the
-name becomes **oxdesk**.
+name became **oxdesk**.
 
-| Today | After |
+| Before | Now |
 |---|---|
-| `oxdesk` | `oxdesk` (daemon and CLI) |
-| `oxdesk-host`, `-view`, `-ponte`, `-kvm` | `oxdesk-host`, `-view`, `-ponte`, `-kvm` |
-| `oxdesk-ota` | `oxdesk-ota` |
-| `~/.config/oxdesk`, `%APPDATA%\oxdesk` | `~/.config/oxdesk`, `%APPDATA%\oxdesk` |
-| `%LOCALAPPDATA%\oxdesk` | `%LOCALAPPDATA%\oxdesk` |
-| `app.oxdesk.*` (launchd), task `oxdesk`, `oxdesk.service` | `app.oxdesk.*`, task `oxdesk`, `oxdesk.service` |
-| `OXDESK_*` (`OXDESK_PIN`, `OXDESK_BRIDGE_TOKEN`...) | `OXDESK_*` in English (`OXDESK_PIN`, `OXDESK_BRIDGE_TOKEN`...), accepting the old one for a while |
+| `logid` | `oxdesk` (daemon and CLI) |
+| `logistream-host`, `-view`, `-ponte`, `-kvm` | `oxdesk-host`, `-view`, `-ponte`, `-kvm` |
+| `logi-ota` | `oxdesk-ota` |
+| `~/.config/logi`, `%APPDATA%\logi` | `~/.config/oxdesk`, `%APPDATA%\oxdesk` |
+| `%LOCALAPPDATA%\logid` | `%LOCALAPPDATA%\oxdesk` |
+| `ai.logi.*` (launchd), task `logid`, `logid.service` | `app.oxdesk.*`, task `oxdesk`, `oxdesk.service` |
+| `LOGI_*` (`LOGI_PAR`, `LOGI_PONTE_TOKEN`...) | `OXDESK_*` in English (`OXDESK_PIN`, `OXDESK_BRIDGE_TOKEN`...), accepting the old one for a while |
 | crate `hidpp` | stays: it is Logitech's protocol, and the name is theirs |
 
-It is a two-sided change, and it has three traps measured beforehand:
+> The left column is the point of this table, and it was lost once: the
+> cutover ran a blind replacement over the repository and this table came out
+> saying `oxdesk` → `oxdesk`, the English paragraph below saying
+> `sign.sh` → `sign.sh`. A rename that rewrites its own record leaves nobody
+> able to read the old name in a log, a backup or an old machine. Restored
+> from `git show 9b226cf^`.
+
+It was a two-sided change, and it had three traps measured beforehand:
 - **The installed OTA only knows the old names.** A transition version
   has to know how to install the new one and swap its own supervisor. Without it, the
   machine that updates itself (Windows, Mac) stops at the old version.
 - **On the Mac, the Screen Recording and Accessibility permissions belong to the
   binary.** With the new name, the person grants them again, by hand.
-- **On Windows, the Defender exclusion is for the path** `%LOCALAPPDATA%\oxdesk`.
+- **On Windows, the Defender exclusion is for the path** `%LOCALAPPDATA%\logid`.
   The new folder needs the exclusion before the binary arrives, or it is
   deleted on write (spec 008).
 
 **And everything that is not on-screen text is in English:** file name, script,
 binary, module, identifier, environment variable, config key, launchd
 and task label. Portuguese only in what the person reads on screen, in the logs
-they read and in the specs. It goes into the same PR as the rename: `sign.sh` →
-`sign.sh`, `build-binaries.sh` → `build-binaries.sh`, `ponte.rs` →
+they read and in the specs. It went into the same PR as the rename: `assinar.sh` →
+`sign.sh`, `construir-binarios.sh` → `build-binaries.sh`, `ponte.rs` →
 `bridge.rs`, `qualidade.rs` → `quality.rs`, `setup_comum.rs` →
-`setup_common.rs`, `install-virtual-display.ps1` → `install-virtual-display.ps1`,
+`setup_common.rs`, `instalar-tela-virtual.ps1` → `install-virtual-display.ps1`,
 and so on. Whatever is called from outside (deploy, OTA, tasks, launchd)
 changes along with it, and searching for the old name has to return zero at the end.
 
 The config and the identity migrate on first start: if the new folder does not
 exist and the old one does, it is moved, and the log says so.
+
+### What the cutover left behind (2026-11-08)
+
+The three machines moved over and answered `/healthz` on the new name, which
+is where it looked finished. It was not, and the leftovers say something about
+how this kind of move fails.
+
+**The migration is skipped where it is most needed.** Every step moves only
+when the destination does not exist (`legacy.rs`, and `mvif` in the cutover
+scripts). On the two remote machines the daemon had already created
+`~/.config/oxdesk` by itself before the script ran, so the move of the config
+dir was skipped -- and skipping is silent, by design. Result: a second config
+dir, left with the old name, and a **new identity** generated at the new path.
+The Mac went from `4c6d828f` to `76dbb4057625`, Windows from `20153c6a` to
+`436ff272b762`.
+
+**What saved the pairing was that it does not trust its own state.**
+`pair_peers` runs on every start and re-authorizes this machine on each peer,
+so the three new fingerprints reached the three `authorized` lists without
+anyone noticing the identities had changed. A pairing that only authorized
+once, at install, would have left the triangle broken by a rename.
+
+**The leftover was not decoration.** In each old dir: `identidade.der`, a
+private key, now superseded; and a `config.toml` belonging to **another
+machine** (the Ubuntu one, with `local = true` on `ubuntu-host`), in the
+exact path `legacy.rs` reads. Inert only while nothing reads it -- a reinstall
+would move it in and the daemon would think it is the other machine, which is
+the trap the config file's own comment warns about.
+
+So `--cleanup` removes the old directory only **against evidence** that the
+new one is in place (a non-empty `identity.der`), and prints `KEPT <path>`
+when the proof is missing. The same reasoning as `verify-what-arrived`:
+"it was migrated" is a claim, a file at the new path is a measurement.
+
+Not migrated on purpose: `~/.local/state/`. The updater's `estado.json` is
+rewritten on the next tick, and its `anterior/` is a rollback copy of
+binaries named `logid`/`logistream-*` -- restoring those would roll back to
+something no supervisor launches. The Ubuntu updater ran with no state at all
+and answered `mais-novo-aqui`: it compares `/healthz` against the Release, not
+its own memory, so a lost state file cannot make it downgrade.
 
 It goes in its own PR, after pairing phase A is live.
 
