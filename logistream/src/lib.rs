@@ -35,3 +35,4 @@ pub mod net;
 pub mod nvenc;
 pub mod quality;
 pub mod serve;
+pub mod telemetry;

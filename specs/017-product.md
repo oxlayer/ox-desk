@@ -194,6 +194,21 @@ The event is written to a local file (`<estado>/telemetria.jsonl`). That already
 answers the path question with Tailscale: `tailscale status --json`
 says whether the peer is direct or on relay (DERP).
 
+### As built (2026-11-07)
+
+- The bridge writes the line when the session ends, closed, dropped or refused
+  (`logistream/src/telemetry.rs`); `logid` decides the path when it starts and passes
+  it, with the build and the host OS (`logid/src/telemetry.rs`).
+- Path: `lan`, `overlay-direct`, `overlay-relay`, `overlay` (Tailscale could not tell),
+  `internet` or `unknown`. Direct or relay comes from `tailscale status --json`
+  (`CurAddr` empty means DERP), using the brew CLI on the Mac and never the app.
+- Off: `telemetry = false` at the top of `config.toml`, or `LOGI_TELEMETRY=0`. Off
+  means the bridge gets no file and writes nothing.
+- `GET /api/telemetry` returns the count per path and the last 50 events. It is what
+  the panel will show; there is no screen for it yet.
+- Not yet: the random installation id (it only matters once events leave the machine)
+  and the line in the panel that shows what is recorded.
+
 ## 3. Rendezvous and relay
 
 A single binary, `logi-encontro`, and a Docker image:

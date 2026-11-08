@@ -86,11 +86,44 @@ async fn main() -> anyhow::Result<()> {
     let dest = *addrs.first().ok_or_else(|| anyhow::anyhow!("could not resolve {target}"))?;
     let bind: std::net::SocketAddr =
         if dest.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
+    // Telemetry (spec 017): on only when logid passes the file.
+    let telemetry_file = std::env::var_os("LOGI_TELEMETRY_FILE").map(std::path::PathBuf::from);
+    let mut stats = logistream::telemetry::Session::new(
+        std::env::var("LOGI_VERSION").unwrap_or_default(),
+        std::env::var("LOGI_HOST_OS").unwrap_or_default(),
+        std::env::consts::OS.into(),
+        std::env::var("LOGI_PATH").unwrap_or_else(|_| "unknown".into()),
+    );
+    let started = std::time::Instant::now();
     let ep = net::client(bind)?;
-    let conn = ep.connect(dest, "logistream")?.await?;
+    let conn = match ep.connect(dest, "logistream")?.await {
+        Ok(c) => c,
+        Err(e) => {
+            if let Some(f) = &telemetry_file {
+                stats.append(f, logistream::telemetry::End::Refused, started.elapsed());
+            }
+            return Err(e.into());
+        }
+    };
+    let started = std::time::Instant::now();
+    let end = run(&conn, &mut ws, &mut stats).await;
+    if let Some(f) = &telemetry_file {
+        stats.append(f, end, started.elapsed());
+    }
+    Ok(())
+}
+
+/// The session itself. Returns how it ended, for telemetry; every exit path
+/// goes through here so no session goes unrecorded.
+async fn run(
+    conn: &quinn::Connection,
+    ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    stats: &mut logistream::telemetry::Session,
+) -> logistream::telemetry::End {
+    use logistream::telemetry::End;
     // stderr, not stdout: whoever launched us reads only the port and closes
     // the pipe, and a `println!` on a closed pipe kills the process mid-session.
-    eprintln!("connected to {dest}");
+    eprintln!("connected to {}", conn.remote_address());
 
     let (tx_in, mut rx_in) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
     let conn_in = conn.clone();
@@ -107,26 +140,38 @@ async fn main() -> anyhow::Result<()> {
     // Asks for a keyframe while there is nothing drawable (net::KeyframeWatch).
     let mut watch = net::KeyframeWatch::new(std::time::Instant::now());
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
+    let mut ticks = 0u64;
     loop {
         tokio::select! {
             d = conn.read_datagram() => {
-                let pushed = r.push(&d?);
+                let Ok(d) = d else { return End::Dropped };
+                let pushed = r.push(&d);
+                stats.frames_lost = r.lost;
                 watch.losses(r.lost, std::time::Instant::now());
                 let Some((header, unit)) = pushed else { continue };
+                stats.frames += 1;
+                stats.bytes += unit.len() as u64;
                 watch.frame(header.keyframe);
                 let m = wrap(header.keyframe, header.captured_at_ns, &unit);
-                ws.send(Message::Binary(m.into())).await?;
+                if ws.send(Message::Binary(m.into())).await.is_err() {
+                    return End::Closed;
+                }
             }
             _ = tick.tick() => {
                 if watch.should_request(std::time::Instant::now()) {
+                    stats.keyframe_requests += 1;
                     let _ = conn.send_datagram(bytes::Bytes::from_static(net::KEYFRAME_REQUEST));
+                }
+                ticks += 1;
+                if ticks % 10 == 0 {
+                    stats.rtt_sample(conn.rtt());
                 }
             }
             m = ws.next() => match m {
                 Some(Ok(Message::Binary(b))) if b.len() <= MAX_EVENT => {
                     let _ = tx_in.send(b.to_vec()).await;
                 }
-                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return Ok(()),
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return End::Closed,
                 _ => {}
             },
         }
