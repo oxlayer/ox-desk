@@ -1,4 +1,4 @@
-# 010 — Our own remote screen (`logistream`)
+# 010 — Our own remote screen (`oxdesk-stream`)
 
 User request, after seeing the dependency on the Windows App:
 *"I want our own implementation, maybe based on rustdesk, written in rust
@@ -98,10 +98,10 @@ one existing.
 
 ## Where it lives
 
-New crate `logistream/`, separate from `logid`. The daemon remains the
+New crate `stream/`, separate from `oxdesk`. The daemon remains the
 control plane — status, files, processes, keyboard switching — and does
-not become a video server. `logid` learns to **launch** and **pair**
-`logistream`, as it already launches the screen client today.
+not become a video server. `oxdesk` learns to **launch** and **pair**
+`oxdesk-stream`, as it already launches the screen client today.
 
 ## The Parsec Virtual Display Adapter is not junk to sweep away
 
@@ -369,7 +369,7 @@ of being launched by hand.
 ## v4, half done: Windows became a host (2026-11-04)
 
 Windows serves its own screen over our protocol. Measured from Ubuntu, with
-`logistream-sink` against `windows-host.local:9777`:
+`oxdesk-sink` against `windows-host.local:9777`:
 
 | | |
 |---|---|
@@ -397,7 +397,7 @@ taking over someone's screen.
 `SendInput` reaches no desktop at all. The process **would start without
 failing** and deliver a screen nobody is looking at. That is why the Windows
 host starts via a scheduled task with `/it`, woken by `schtasks /run` — the
-same mechanism that brings up `logid`.
+same mechanism that brings up `oxdesk`.
 
 ### The cursor does not come in the image
 
@@ -426,7 +426,7 @@ change.
 
 ### What is missing to retire RDP
 
-Only the **viewer** outside macOS. `logistream-view` decodes with
+Only the **viewer** outside macOS. `oxdesk-view` decodes with
 `ffmpeg-next`, and neither Ubuntu nor Windows has `libavcodec` installed.
 Meanwhile:
 
@@ -630,7 +630,7 @@ typing.
 
 ### Knobs and limits
 
-- `LOGI_CURSOR_ESCALA` repeats each pixel N times. Default 1, which is the
+- `OXDESK_CURSOR_SCALE` repeats each pixel N times. Default 1, which is the
   classic Windows arrow (12x19 of visible arrow inside its 32x32 bitmap).
   It is an env var and not a config field because it is tuned by eye, on
   the machine, and a rebuild to discover that 1 was too small would be

@@ -170,8 +170,8 @@ mod tests {
     /// package check actually asks for.
     #[test]
     fn one_bit_changes_everything() {
-        let a = hex(b"logi-linux-x86_64-124-abc1234.tar.gz");
-        let b = hex(b"logi-linux-x86_64-124-abc1235.tar.gz");
+        let a = hex(b"oxdesk-linux-x86_64-124-abc1234.tar.gz");
+        let b = hex(b"oxdesk-linux-x86_64-124-abc1235.tar.gz");
         assert_ne!(a, b);
         assert_eq!(a.len(), 64);
     }

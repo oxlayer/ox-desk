@@ -9,7 +9,7 @@
 [Spec 008](008-security.md) says "everything on the LAN, no account, no
 cloud". This spec opens a narrow exception and states the price.
 
-What does **not** change: `logid` keeps listening only on `127.0.0.1`. The
+What does **not** change: `oxdesk` keeps listening only on `127.0.0.1`. The
 panel from outside arrives over an SSH tunnel (`ssh -L 8787:127.0.0.1:8787 …`),
 which is literally what 008 already said to do. No control
 port starts listening on the network.
@@ -50,7 +50,7 @@ not as an oversight.
 ## The exposure this creates, and what was done
 
 The screen channel **encrypts and does not authenticate**. The client accepts any
-certificate (`AceitaQualquer`, in `logistream/src/net.rs`, marked as
+certificate (`AceitaQualquer`, in `stream/src/net.rs`, marked as
 temporary since it was written) and the host never asked the client for anything.
 Whoever reaches 9777 watches; whoever reaches 9778 types.
 
@@ -61,7 +61,7 @@ it serves screen and keyboard to the whole hotel network.
 ### Done: `--bind`
 
 ```
-logistream-host [porta] [tela] [--bind todas|overlay|<endereço>] [--mbps N]
+oxdesk-host [porta] [tela] [--bind todas|overlay|<endereço>] [--mbps N]
 ```
 
 - `todas` (all, the default) — `0.0.0.0`, exactly as always. No machine
@@ -136,7 +136,7 @@ If it ever breaks: `sudo tailscale set --accept-dns=false`.
 
 ```bash
 # Ubuntu (needs sudo -- the daemon does not install packages on its own)
-sudo bash scripts/instalar-tailscale.sh
+sudo bash scripts/install-tailscale.sh
 sudo tailscale up
 
 # Windows (done: MSI with TS_UNATTENDEDMODE=always)
@@ -145,7 +145,7 @@ sudo tailscale up
 #   in when I want to reach it from outside.
 
 # check, on BOTH sides -- "direct" is a property of the pair
-bash scripts/conferir-overlay.sh
+bash scripts/check-overlay.sh
 ```
 
 ## The test that counts
@@ -156,7 +156,7 @@ home Wi-Fi) and opening a real screen. What matters to measure there:
 
 - does `tailscale ping` say `direct` or `via DERP`? Relay = CGNAT on both
   sides; it works, but the screen feels it.
-- fps and dropped frames in `logistream-sink`.
+- fps and dropped frames in `oxdesk-sink`.
 - pointer latency, which is what the person notices first.
 
 ## The Mac — via brew, never via the app
@@ -185,7 +185,7 @@ The path that worked is brew's `tailscaled` as root, with `utun`:
 
 ```bash
 brew install tailscale
-sudo bash logid/setup/instalar-tailscale-mac.sh
+sudo bash oxdesk/setup/install-tailscale-mac.sh
 ```
 
 The wizard's `tailscale` step does this on its own: the script ships inside the

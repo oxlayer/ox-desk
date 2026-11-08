@@ -3,7 +3,7 @@
 #
 # It exists because breaking what is not compiled is silent: renaming
 # `battery_level` to `battery_status` left `hidpp/src/bin/probe.rs` broken
-# for hours, because I had only been building `logid` and `agent`. A loud
+# for hours, because I had only been building `oxdesk` and `agent`. A loud
 # error at the right moment costs less than a quiet one found later.
 #
 # usage:  bash scripts/check.sh
@@ -37,20 +37,20 @@ run() {
 # compiles EMPTY because of `#![cfg(windows)]`, and the agent cannot find
 # the functions. Not a regression, just no native target here.
 echo "== native (linux) =="
-for c in hidpp logid ota logistream; do
+for c in hidpp oxdesk ota stream; do
   run "$c: build" cargo build --release --manifest-path "$c/Cargo.toml"
 done
-# `logistream` tests here and not only in the cross: 85 of them exist and
+# `oxdesk-stream` tests here and not only in the cross: 85 of them exist and
 # NONE of them ran in this suite -- including the pixel ones in `cursor.rs`,
 # which were moved out of `capture_win.rs` precisely so they would run.
-for c in hidpp logid ota logistream; do
+for c in hidpp oxdesk ota stream; do
   run "$c: test" cargo test --release --manifest-path "$c/Cargo.toml"
 done
 
 echo "== cross (windows) =="
-# agent and winput only exist on Windows; logid runs on both.
+# agent and winput only exist on Windows; oxdesk runs on both.
 #
-# `logistream` is here for the reason in this file's header: half of it
+# `stream` is here for the reason in this file's header: half of it
 # (`capture_win`, `input_win`, `host_win`, `cursor_win`) is compiled ONLY
 # for Windows, so until this line existed those files were verified by
 # whoever remembered to cross-build by hand before a deploy -- and the
@@ -60,7 +60,7 @@ echo "== cross (windows) =="
 # themselves (`capture-probe`, `v1-record` and `kvm` carry a stub `main`
 # for other targets), so there is no hand-picked list of binaries here --
 # a list is a thing that quietly stops covering the file you just added.
-for c in hidpp logid agent winput ota logistream; do
+for c in hidpp oxdesk agent winput ota stream; do
   run "$c: build windows" cargo build --release --target x86_64-pc-windows-gnu \
       --manifest-path "$c/Cargo.toml"
 done

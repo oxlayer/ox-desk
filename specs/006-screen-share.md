@@ -5,7 +5,7 @@
 Building a RustDesk means capture (ScreenCast portal on Wayland, DXGI on
 Windows), hardware H.264/AV1 encoding, latency-tuned transport, NAT
 traversal, input injection and the crypto layer. Product-sized scope,
-years of work — and three open projects have already solved it. `logid`
+years of work — and three open projects have already solved it. `oxdesk`
 orchestrates **lifecycle and credentials**, not protocol.
 
 ## What already exists on this LAN
@@ -25,7 +25,7 @@ grdctl rdp disable     # turn off
 ```
 
 > ⚠️ It is a password-protected RDP server open to the whole LAN, on the
-> main machine. `logid` should **show this as a risk** in the panel, not
+> main machine. `oxdesk` should **show this as a risk** in the panel, not
 > as a silent feature.
 
 ### Windows seen from Ubuntu
@@ -44,7 +44,7 @@ encoding, latency an order of magnitude below RDP or RustDesk.
 **Self-hosted RustDesk** (`hbbs`/`hbbr`). "Our own and secure" without
 writing anything. On the LAN it does not even need a relay.
 
-## What `logid` does
+## What `oxdesk` does
 
 | Does | Does not |
 |---|---|
@@ -91,7 +91,7 @@ protocol. There is no single one all three serve out of the box:
 | Windows | RDP | native `TermService` | turned on 2026-11-03, NLA mandatory, firewall LAN-only |
 | macOS | VNC | Screen Sharing | to be enabled by the user |
 
-### [`logid/src/screen.rs`](../logid/src/screen.rs) does not implement a protocol
+### [`oxdesk/src/screen.rs`](../oxdesk/src/screen.rs) does not implement a protocol
 
 It answers two questions — *is that host's screen reachable?* and *is
 there a client here to talk to it?* — and, on request, launches the

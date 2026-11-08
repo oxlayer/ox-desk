@@ -12,7 +12,7 @@ internet is Deskflow's opt-in update check, which ships with
 
 ## Why localhost only
 
-`logid` listens on `127.0.0.1`, not on `0.0.0.0`. It **reads ports,
+`oxdesk` listens on `127.0.0.1`, not on `0.0.0.0`. It **reads ports,
 runs SSH and triggers HID++ channel switches** — it is privilege
 surface, not a website. Whoever reaches the API reaches both machines.
 
@@ -36,7 +36,7 @@ friction to eliminate: it is the only defense against someone on the same LAN po
 as the other machine. A "one-click pairing" that accepts a fingerprint
 on its own removes the whole protection.
 
-**Rule:** `logid` may *show* the fingerprints side by side to
+**Rule:** `oxdesk` may *show* the fingerprints side by side to
 make comparison easier. It may never accept on your behalf.
 
 ## Risks enabled today, consciously
@@ -67,7 +67,7 @@ it is access control.
 ## Defender deleted the daemon, and was being reasonable (2026-11-04)
 
 `Trojan:Win32/Bearfoos.A!ml` — **quarantine and removal** of
-`logid.exe`, plus deletion of the scheduled task and the corresponding
+`oxdesk.exe`, plus deletion of the scheduled task and the corresponding
 `TaskCache` keys. In the middle of a test session, which incidentally
 explained the "it hangs and won't budge no matter what": there was no daemon.
 
@@ -100,7 +100,7 @@ sign it. It is a race that cannot be won on that side.
 So the binary now arrives **already signed**, via
 [`scripts/sign-windows.sh`](../scripts/sign-windows.sh):
 
-- key pair generated **here** with openssl (`~/.config/logi/signing`, `600`, outside
+- key pair generated **here** with openssl (`~/.config/oxdesk/signing`, `600`, outside
   the repo). The private key never leaves this machine — better than exporting
   the private key of a certificate created on Windows.
 - `osslsigncode` (installed via linuxbrew, no sudo) signs with SHA-256 and a
@@ -114,7 +114,7 @@ Result checked by Windows itself:
 
 ```
 assinatura: [Valid] Assinatura verificada.
-assinante:  O=infra pessoal, CN=logi (assinatura local)
+assinante:  O=infra pessoal, CN=oxdesk (assinatura local)
 carimbo:    CN=DigiCert SHA256 RSA4096 Timestamp Responder 2026 1
 ```
 
@@ -139,18 +139,18 @@ it comes back, the ways out are, in order of least damage:
 ## Defender exclusion, and why it was necessary (2026-11-04)
 
 Defender acted three times on our binaries — its history
-lists `logid.exe` and `logid.new.exe` as **`Trojan:Win32/Bearfoos.A!ml`**.
+lists `oxdesk.exe` and `oxdesk.new.exe` as **`Trojan:Win32/Bearfoos.A!ml`**.
 The `!ml` suffix is a model's guess, not a known-malware signature;
 the silhouette (new executable, no reputation, that creates a scheduled task,
 runs remote commands and reads an input device in raw mode) is
 genuinely similar.
 
-Signing solved it for `logid.exe`. **It did not solve it for
-`logid-agent.exe`**: the same signed bytes were accepted under another
+Signing solved it for `oxdesk.exe`. **It did not solve it for
+`oxdesk-agent.exe`**: the same signed bytes were accepted under another
 name and silently reverted under the right name. Windows spent an hour
 running the previous version while the deploy said `ok`.
 
-The user authorized the exclusion of `%LOCALAPPDATA%\logid`. The cost is
+The user authorized the exclusion of `%LOCALAPPDATA%\oxdesk`. The cost is
 real and is written down here: **Defender stopped scanning that folder**,
 so whatever lands there is not checked. In exchange, delivery stopped
 depending on a heuristic that changes its mind between signature versions.
@@ -166,7 +166,7 @@ failed:
 
 ```
 ERRO: gravou mas o arquivo tem 458792 bytes, esperado 999999
-      -- antivirus revertendo? confira a exclusao de C:\...\logid
+      -- antivirus revertendo? confira a exclusao de C:\...\oxdesk
 ```
 
 A check that has never failed is not a known check. This applies to the

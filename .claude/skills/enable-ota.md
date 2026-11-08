@@ -24,8 +24,8 @@ has `repo` and `workflow`, i.e. write access to everything — and this
 file goes to a laptop that leaves the house.
 
 ```bash
-install -m600 /dev/null ~/.config/logi/ota-token
-printf '%s' 'github_pat_...' > ~/.config/logi/ota-token
+install -m600 /dev/null ~/.config/oxdesk/ota-token
+printf '%s' 'github_pat_...' > ~/.config/oxdesk/ota-token
 ```
 
 `deploy.sh` distributes it to Windows and the Mac from here (and does
@@ -53,10 +53,10 @@ nothing to download — it says `igual` (same) forever. Recipe and cost in
 ## Asking by hand
 
 ```bash
-logi-ota --conferir   # only looks, changes nothing
-logi-ota --estado     # the JSON of the last check
-logi-ota              # checks and applies, if there is something new
-logi-ota --forcar     # reinstalls the published one even if it's the same build
+oxdesk-ota --conferir   # only looks, changes nothing
+oxdesk-ota --estado     # the JSON of the last check
+oxdesk-ota              # checks and applies, if there is something new
+oxdesk-ota --forcar     # reinstalls the published one even if it's the same build
 ```
 
 On **Windows** none of them swaps the binary: the Authenticode key
@@ -71,9 +71,9 @@ the deploy.
 |---|---|
 | `o GitHub respondeu: Not Found` | the token is missing, or it doesn't grant `Contents: read` on this repo |
 | `o GitHub respondeu: Bad credentials` | invalid or expired token |
-| `nenhum pacote comecando com logi-mac-...` | the Release went out without that package (Mac job without a runner?) |
+| `nenhum pacote comecando com oxdesk-mac-...` | the Release went out without that package (Mac job without a runner?) |
 | `o pacote nao confere` | corrupted download; the next round tries again |
-| `revertido` | the new build didn't answer `/healthz`; the previous one came back. The copy stays in `~/.local/state/logi-ota/anterior/` |
+| `revertido` | the new build didn't answer `/healthz`; the previous one came back. The copy stays in `~/.local/state/oxdesk-ota/anterior/` |
 | `o relógio não está acordando` | the last check was more than 6 h ago — the scheduler went down |
 
 After a boot, the Mac may take **up to an hour** to look: the

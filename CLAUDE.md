@@ -1,4 +1,4 @@
-# logi — entry point for agents
+# oxdesk — entry point for agents
 
 Personal infrastructure for **three** computers on the same LAN: Ubuntu
 (main), Windows next to it, and a MacBook Air. It started as "a Logitech
@@ -48,12 +48,12 @@ screen, and control of everything from a single panel.
 
 | Dir | What |
 |---|---|
-| [`logid/`](logid/) | Control plane in Rust: API, panel, machine switching, probes |
-| [`logistream/`](logistream/) | Remote screen and KVM: capture, NVENC/NVDEC, QUIC, input |
+| [`oxdesk/`](oxdesk/) | Control plane in Rust: API, panel, machine switching, probes |
+| [`stream/`](stream/) | Remote screen and KVM: capture, NVENC/NVDEC, QUIC, input |
 | [`hidpp/`](hidpp/) | HID++ 2.0 over raw HID — Easy-Switch channel switching |
 | [`gui/`](gui/) | Electron shell: window and tray. **No logic** |
 | [`agent/`](agent/) | Windows side: CLI over SSH |
-| [`ota/`](ota/) | `logi-ota`: downloads the Release, verifies, signs, swaps and rolls back |
+| [`ota/`](ota/) | `oxdesk-ota`: downloads the Release, verifies, signs, swaps and rolls back |
 
 ## Decisions not to be undone without justification
 
@@ -89,7 +89,7 @@ the pairing follows the dongle, not the machine. See [`specs/005`](specs/005-inp
    than what works, because they avoid repeating the lost afternoon.
 4. **UI in pt-BR; code, commits and file names in English.** Scripts,
    binaries, modules, environment variables and config keys too
-   (`sign.sh`, not `assinar.sh`). The old Portuguese names go away along
+   (`sign.sh`, not `sign.sh`). The old Portuguese names go away along
    with the switch to oxdesk ([`specs/017`](specs/017-product.md)).
 5. **Minimal telemetry that can be turned off; cloud optional; LAN
    always.** Since 2026-11-07 ox-desk is a product

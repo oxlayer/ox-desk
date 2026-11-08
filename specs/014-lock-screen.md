@@ -22,7 +22,7 @@ not serve a screen.
 
 ## What was measured
 
-With `logistream-probe-sistema`, on this machine (Windows 10 Pro,
+With `oxdesk-probe-system`, on this machine (Windows 10 Pro,
 2560x1440):
 
 **As the user, through the SSH session:**
@@ -99,8 +99,8 @@ an explicit request, not something to do alone.
 ```powershell
 # lock, wait, run as SYSTEM, read
 rundll32 user32.dll,LockWorkStation
-schtasks /run /tn ox-probe-sistema
-Get-Content C:\ProgramData\logid\probe-sistema.log
+schtasks /run /tn oxdesk-probe-system
+Get-Content C:\ProgramData\oxdesk\probe-sistema.log
 ```
 
 ## Proposed design
@@ -116,7 +116,7 @@ A new binary, not the current host:
 ### The decision that is not obvious
 
 Running the host **always** as SYSTEM is more privilege than it needs
-95% of the time, and this machine has already had `logid.exe` deleted by
+95% of the time, and this machine has already had `oxdesk.exe` deleted by
 Defender once (spec 008). A permanent SYSTEM binary that captures the
 screen and injects keystrokes is exactly the profile an antivirus hates
 — with reason.
@@ -141,7 +141,7 @@ assembling the pipeline.
 
 ## Minor pending items
 
-- The probe log (`C:\ProgramData\logid\probe-sistema.log`) is written in
+- The probe log (`C:\ProgramData\oxdesk\probe-sistema.log`) is written in
   UTF-8 and PowerShell reads it as ANSI: accents arrive garbled.
   Cosmetic and it does not affect the measurement, but it will confuse
   someone.

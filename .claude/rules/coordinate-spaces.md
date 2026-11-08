@@ -2,7 +2,7 @@
 
 The protocol carries `Evento::Mouse` in **frame pixels**: the viewer
 knows the size of what it receives and maps the window onto it
-(`remote_point`, in `logistream/src/bin/view.rs`). The host, on the
+(`remote_point`, in `stream/src/bin/view.rs`). The host, on the
 other side, injects in the **system's** coordinate space — and the two
 are not the same space on every machine.
 
@@ -20,7 +20,7 @@ window throws the cursor to the bottom-right corner, because double of
 everything is larger than the screen and the system clamps at the edge.
 It arrived as *"the cursor position on the mac didn't match"*.
 
-The conversion is `point_from_pixel` in `logistream/src/input.rs`
+The conversion is `point_from_pixel` in `stream/src/input.rs`
 (platform-neutral, with tests), and the scale comes from the **video
 mode**:
 
@@ -49,7 +49,7 @@ DPI-unaware. DXGI captures in physical. Outside 100% scale,
 `input_win::move_to` would be dividing physical by logical and be off by
 the scale.
 
-Measured on 2026-11-04 with `windows/sondas/ler-cursor.ps1` (`/IT` task,
+Measured on 2026-11-04 with `windows/probes/read-cursor.ps1` (`/IT` task,
 because over SSH you read session 0 and the number is invalid):
 
 ```
@@ -77,7 +77,7 @@ corner, which the clamp disguises, and not relative movement, which
 doesn't even go through the conversion.
 
 ```bash
-logistream-input-send <host>:<porta+1> --abs 1680 1050   # middle of the frame
+oxdesk-input-send <host>:<porta+1> --abs 1680 1050   # middle of the frame
 ```
 
 ## See also

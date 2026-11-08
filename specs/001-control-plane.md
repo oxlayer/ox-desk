@@ -1,6 +1,6 @@
-# 001 — Control plane (`logid`)
+# 001 — Control plane (`oxdesk`)
 
-Implemented in Rust in [`logid/`](../logid/). The Python prototype
+Implemented in Rust in [`oxdesk/`](../oxdesk/). The Python prototype
 (`monitor.py`) was replaced in phase 1 — see
 [`000`](000-overview.md#language-rust).
 
@@ -21,7 +21,7 @@ on Windows as an agent". That was wrong for two reasons:
 
 ### The model
 
-Every node runs the **same** `logid`. No fixed role. The state that
+Every node runs the **same** `oxdesk`. No fixed role. The state that
 matters is derived, not configured:
 
 | Question | Who answers |
@@ -63,9 +63,9 @@ bootstrap.
 
 ## The same binary on both OSes
 
-This spec had claimed "every node runs the **same** `logid`" since 2026-11-03. It was
+This spec had claimed "every node runs the **same** `oxdesk`" since 2026-11-03. It was
 an aspiration: the daemon only compiled on Linux. Windows had
-`logid-agent`, a one-shot CLI, with no API, no tray, no window — and
+`oxdesk-agent`, a one-shot CLI, with no API, no tray, no window — and
 the Ubuntu GUI reached the other machine over SSH, calling the CLI by hand.
 
 The user noticed through the gap this leaves: *"why is there no GUI and
@@ -87,9 +87,9 @@ portable as they are** (`agent`, `config`, `focus`, `follow`, `hidpp`,
 | log source | `journalctl --user -u` | file in `%LOCALAPPDATA%` |
 | HID access | `uaccess` ACL on `/dev/hidraw` | open the receiver |
 | edge detection | `Mutter.InputCapture` barrier | `GetCursorPos` |
-| config directory | `~/.config/logi` | `%APPDATA%\logi` |
+| config directory | `~/.config/oxdesk` | `%APPDATA%\oxdesk` |
 
-Hence [`logid/src/sys/`](../logid/src/sys/): one place for whatever diverges,
+Hence [`oxdesk/src/sys/`](../oxdesk/src/sys/): one place for whatever diverges,
 instead of a second daemon in `agent/` duplicating the other six
 modules. The alternative — growing the agent until it became a daemon — would cost
 two copies of `focus`, `follow` and `peers` that would have to agree.
@@ -111,8 +111,8 @@ receiver is exactly what the single-instance lock exists to prevent
 (it has happened: three simultaneous `watch-edge` tripling the radio
 traffic).
 
-That is why [`border_win.rs`](../logid/src/border_win.rs) claims the
-**same mutex name** as `watch-edge`, `logid-agent-watch-edge`. It is not
+That is why [`border_win.rs`](../oxdesk/src/border_win.rs) claims the
+**same mutex name** as `watch-edge`, `oxdesk-agent-watch-edge`. It is not
 a coincidence: it is what guarantees that the old shortcut and the new daemon never
 poll together, even if someone forgets to remove the shortcut from
 `shell:startup`.
@@ -145,7 +145,7 @@ session. It is a **scheduled task** with `/IT` (*interactive only*), which runs
 in the user's session at login and does not ask for a stored password:
 
 ```powershell
-schtasks /create /tn logid /tr "%LOCALAPPDATA%\logid\logid.exe" /sc onlogon /it /f
+schtasks /create /tn oxdesk /tr "%LOCALAPPDATA%\oxdesk\oxdesk.exe" /sc onlogon /it /f
 ```
 
 Verified: `pid 2356 sessão 1`, listening on 8787.
@@ -162,7 +162,7 @@ affect the JSON over SSH — the subsystem decides whether a console is *allocat
 where stdout goes; with a pipe from the parent, the output keeps arriving
 (verified with `Start-Process -RedirectStandardOutput`).
 
-The GUI is the same Electron as on Ubuntu, in `%LOCALAPPDATA%\logid\gui`, with
+The GUI is the same Electron as on Ubuntu, in `%LOCALAPPDATA%\oxdesk\gui`, with
 two shortcuts — Start Menu (pinnable to the taskbar) and `Startup` — pointing
 to `electron.exe .` with a multi-resolution `icon.ico`. The paths that
 change per OS are in `paths()` in [`gui/main.js`](../gui/main.js), and must
@@ -207,9 +207,9 @@ escaped this by not going through `focus` — it worked, but without the gates.
 
 Two pieces were missing, and neither was loosening the check:
 
-1. **`logid` also became the "agent" of its own host.** `logid devices`,
+1. **`oxdesk` also became the "agent" of its own host.** `oxdesk devices`,
    `host-info`, `set-host` answer a line of JSON, same as
-   `logid-agent`. The format lives in
+   `oxdesk-agent`. The format lives in
    [`hidpp/src/protocol.rs`](../hidpp/src/protocol.rs), shared
    by both binaries: it is the contract *between the machines*, the worst
    possible place for two copies. (It was `survey()` inside the agent; the second
@@ -275,10 +275,10 @@ Prefix `/api`. JSON everywhere. Always on `127.0.0.1` (see
 Two levels, separated on purpose:
 
 - **Config** — what you chose. A versionable, readable file,
-  editable by hand: `~/.config/logi/config.toml`. We never write
+  editable by hand: `~/.config/oxdesk/config.toml`. We never write
   secrets here.
 - **Runtime** — what was discovered. Disposable cache in
-  `~/.local/state/logi/`. Deleting it loses nothing beyond a re-read.
+  `~/.local/state/oxdesk/`. Deleting it loses nothing beyond a re-read.
 
 Secrets (SSH key, TLS cert) go into **neither**: they stay
 where the owning tool already keeps them (`~/.ssh`, `~/.config/Deskflow/tls`) and
@@ -305,7 +305,7 @@ function.
 
 The Electron shell in [`gui/`](../gui/) already handles
 window, tray, single instance and reuses the systemd backend.
-It **does not duplicate logic**: every rule lives in `logid`.
+It **does not duplicate logic**: every rule lives in `oxdesk`.
 
 Recorded trap: the VS Code extension host exports
 `ELECTRON_RUN_AS_NODE=1`, and with it the Electron binary runs as plain

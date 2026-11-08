@@ -1,13 +1,13 @@
 //! The protocol between peers: one line of JSON per command.
 //!
-//! Who speaks: `logid-agent` on Windows and `logid` on any OS, each
-//! invoked over SSH by the peer (see `logid/src/agent.rs`). Who reads:
+//! Who speaks: `oxdesk-agent` on Windows and `oxdesk` on any OS, each
+//! invoked over SSH by the peer (see `oxdesk/src/agent.rs`). Who reads:
 //! the `agent.rs` on the other side, which looks for the first line
 //! starting with `{`.
 //!
 //! ## Why it lives in the shared crate
 //!
-//! This used to be `survey()` inside `agent/src/main.rs`. When `logid`
+//! This used to be `survey()` inside `agent/src/main.rs`. When `oxdesk`
 //! started needing to answer the same commands -- so Windows could probe
 //! Ubuntu the way Ubuntu already probed Windows -- the choice was copy or
 //! share. Two copies of the **contract between the machines** would
@@ -29,7 +29,7 @@ pub enum Handled {
     /// Known command; this is the JSON to print.
     Json(Value),
     /// Not a protocol command -- the caller handles it (the agent has
-    /// `watch-edge` and `guard`; logid, serving HTTP).
+    /// `watch-edge` and `guard`; oxdesk, serving HTTP).
     Unknown,
 }
 
@@ -154,18 +154,18 @@ pub fn fail(msg: impl Into<String>) -> Value {
 /// paired to the Windows receiver, and lose an hour investigating a
 /// pairing problem that did not exist. The device was paired, just away.
 ///
-/// The Linux side already kept names inside `logid`; the agent had
+/// The Linux side already kept names inside `oxdesk`; the agent had
 /// nothing. Now it lives here, in the crate both use, because the
 /// question ("empty or absent?") is the same for both.
 fn cache_path() -> Option<std::path::PathBuf> {
     let base = if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from)?.join("logid")
+        std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from)?.join("oxdesk")
     } else {
         match std::env::var_os("XDG_CACHE_HOME") {
             Some(v) => std::path::PathBuf::from(v),
             None => std::path::PathBuf::from(std::env::var_os("HOME")?).join(".cache"),
         }
-        .join("logi")
+        .join("oxdesk")
     };
     Some(base.join("slot-names.json"))
 }

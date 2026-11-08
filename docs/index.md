@@ -1,4 +1,4 @@
-# logi — domain knowledge
+# oxdesk — domain knowledge
 
 The [`specs/`](../specs/) describe **what we built and why**. This is
 what doesn't fit in a spec: the state of the machines, the names that

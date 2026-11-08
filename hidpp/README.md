@@ -1,6 +1,6 @@
 # `hidpp`
 
-HID++ 2.0 over raw HID. Used by [`logid`](../logid/) (Linux) and by
+HID++ 2.0 over raw HID. Used by [`oxdesk`](../oxdesk/) (Linux) and by
 [`agent`](../agent/) (Windows) — **a single copy** of the protocol.
 
 It replaced the `solaar`-based backend on Linux. Measured:

@@ -8,7 +8,7 @@ passes green because the file wasn't even read.
 For Windows this was never a problem — there is a cross target:
 
 ```bash
-cargo check --target x86_64-pc-windows-gnu --manifest-path logid/Cargo.toml
+cargo check --target x86_64-pc-windows-gnu --manifest-path oxdesk/Cargo.toml
 ```
 
 For the Mac there is no SDK here. But most of these modules are pure
@@ -17,10 +17,10 @@ For the Mac there is no SDK here. But most of these modules are pure
 by switching the `cfg` for a minute:
 
 ```bash
-cp logid/src/main.rs /tmp/main.rs.bak
-sed -i 's/#\[cfg(target_os = "macos")\]\nmod setup_mac;/#[allow(dead_code)]\nmod setup_mac;/' logid/src/main.rs
-cargo check --manifest-path logid/Cargo.toml
-cp /tmp/main.rs.bak logid/src/main.rs
+cp oxdesk/src/main.rs /tmp/main.rs.bak
+sed -i 's/#\[cfg(target_os = "macos")\]\nmod setup_mac;/#[allow(dead_code)]\nmod setup_mac;/' oxdesk/src/main.rs
+cargo check --manifest-path oxdesk/Cargo.toml
+cp /tmp/main.rs.bak oxdesk/src/main.rs
 ```
 
 That is how the `setup_mac.rs` of [`015`](../../specs/015-ota.md) was

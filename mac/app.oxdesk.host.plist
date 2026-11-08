@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Mac's screen host.
+
+  A LaunchAgent and not a launch over SSH, and the reason is hard: macOS
+  screen capture depends on a TCC permission (Screen Recording), which is
+  granted to whoever LAUNCHED the process. A process coming from SSH has no
+  grant at all -- and AVFoundation, instead of failing, **hangs**.
+  Measured: `ffmpeg -f avfoundation -i 1` itself hangs forever when called
+  over SSH, and the same command runs in the graphical session.
+
+  It is the same boundary that forces Windows to use a scheduled task with
+  /IT instead of a service: what depends on the user's session sees
+  nothing from outside it.
+
+  RunAtLoad false: it only starts when someone asks for the screen, via
+  `launchctl kickstart`. Capturing and encoding with nobody watching would
+  waste the laptop's battery.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>app.oxdesk.host</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/user/.local/bin/oxdesk-host</string>
+    <string>9777</string>
+    <string>Capture screen 0</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>/Users/user/.local/state/oxdesk-host.log</string>
+  <key>StandardErrorPath</key><string>/Users/user/.local/state/oxdesk-host.log</string>
+</dict>
+</plist>

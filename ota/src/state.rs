@@ -15,7 +15,7 @@
 //!
 //! The JSON field names (`quando_unix`, `resultado`, ...) and the
 //! `resultado` values are read by the wizard and by
-//! `scripts/distribuir-token-ota.sh`; the phrases from `line()` are shown
+//! `scripts/distribute-ota-token.sh`; the phrases from `line()` are shown
 //! in the panel, so they stay in Portuguese.
 
 use serde::{Deserialize, Serialize};
@@ -128,7 +128,7 @@ mod tests {
         e.tag = "v0.1.0".into();
         e.n_there = 125;
         e.build_there = "def5678".into();
-        e.package = "logi-mac-arm64-unsigned-125-def5678.tar.gz".into();
+        e.package = "oxdesk-mac-arm64-unsigned-125-def5678.tar.gz".into();
         e.result = "atualizado".into();
         e.message = "trocado e conferido".into();
         e
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn round_trip_through_disk() {
-        let dir = std::env::temp_dir().join(format!("logi-ota-teste-{}", now()));
+        let dir = std::env::temp_dir().join(format!("oxdesk-ota-teste-{}", now()));
         std::fs::create_dir_all(&dir).unwrap();
         let e = sample();
         write(&dir, &e).unwrap();
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn garbage_in_the_file_does_not_crash() {
-        let dir = std::env::temp_dir().join(format!("logi-ota-lixo-{}", now()));
+        let dir = std::env::temp_dir().join(format!("oxdesk-ota-lixo-{}", now()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(path(&dir), "nao e json").unwrap();
         assert!(read(&dir).is_none());
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn no_file_returns_none() {
-        assert!(read(Path::new("/tmp/nao-existe-logi-ota-xyz")).is_none());
+        assert!(read(Path::new("/tmp/nao-existe-oxdesk-ota-xyz")).is_none());
     }
 
     /// The wire names are a contract with the wizard and with the file
@@ -218,7 +218,7 @@ mod tests {
     /// the history.
     #[test]
     fn old_state_without_new_fields_still_reads() {
-        let dir = std::env::temp_dir().join(format!("logi-ota-velho-{}", now()));
+        let dir = std::env::temp_dir().join(format!("oxdesk-ota-velho-{}", now()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             path(&dir),

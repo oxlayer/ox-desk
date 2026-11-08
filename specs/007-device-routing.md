@@ -20,7 +20,7 @@ libnss-mdns:         0.15.1-5
 
 `getent hosts windows-host.local` → `192.168.1.42`, stable. All configs
 use the name: `Deskflow.conf`, `~/.ssh/config` and
-`~/.config/logi/config.toml`.
+`~/.config/oxdesk/config.toml`.
 
 Quirks paid for:
 
@@ -35,7 +35,7 @@ Quirks paid for:
   to the new name and checking the fingerprint — never a blind
   `accept-new`.
 
-## What `logid` must do
+## What `oxdesk` must do
 
 1. **Always resolve on the spot.** Never cache an IP in config; at most
    cache it at runtime, with a short TTL.
@@ -66,7 +66,7 @@ What it needs, when its turn comes:
 |---|---|
 | sshd | ships with the system, just enable it in Settings |
 | mDNS | native (Bonjour) — `.local` works out of the box |
-| HID++ | needs a `logid` build for arm64/x86_64 Darwin |
+| HID++ | needs a `oxdesk` build for arm64/x86_64 Darwin |
 | Easy-Switch channel | 3, already paired and confirmed |
 
 The symmetric model ([`001`](001-control-plane.md#symmetric-every-node-is-a-peer-none-is-central))

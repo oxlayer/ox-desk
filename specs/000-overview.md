@@ -64,7 +64,7 @@ machine in charge is the one where the person is. See
   ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
   │ GUI          │        │ GUI          │        │ GUI          │
   │  ↕           │        │  ↕           │        │  ↕           │
-  │ logid        │◀─SSH──▶│ logid        │◀─SSH──▶│ logid        │
+  │ oxdesk        │◀─SSH──▶│ oxdesk        │◀─SSH──▶│ oxdesk        │
   │  ├ input     │        │  ├ input     │        │  ├ input     │
   │  ├ hidpp     │        │  ├ hidpp     │        │  ├ hidpp     │
   │  └ adapters  │        │  └ adapters  │        │  └ adapters  │
@@ -79,7 +79,7 @@ holder**, because only it reaches the device over radio.
 
 ## Language: Rust
 
-The control plane is **Rust** ([`logid/`](../logid/)), a decision made on
+The control plane is **Rust** ([`oxdesk/`](../oxdesk/)), a decision made on
 2026-11-03 and already implemented in phase 1.
 
 The prototype was Python stdlib, and it worked. The migration happened
@@ -115,7 +115,7 @@ side.
 |---|---|---|
 | **0** | Manual setup working, documented | ✅ done — see [README](../README.md) |
 | **—** | Deskflow and Solaar **removed** from both sides | ✅ the switch is physical; neither is needed anymore |
-| **1** | `logid` serving status + editable config | ✅ done — Rust, `PATCH /api/config` validated |
+| **1** | `oxdesk` serving status + editable config | ✅ done — Rust, `PATCH /api/config` validated |
 | **2** | SSH + automatic bootstrap of both machines | [`002`](002-ssh.md) |
 | **3** | Input routing: LAN × physical receiver | 🚧 `GET /api/devices` and `POST /api/focus` (dry-run) ready; edge detection and the Windows agent are missing |
 | **4** | Clipboard and file browser | [`003`](003-files.md), [`004`](004-clipboard.md) |

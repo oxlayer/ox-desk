@@ -7,7 +7,7 @@ that it became a rule.
 ```bash
 # ✅ do
 cat > "$S/tarefa.ps1" <<'PS1'
-$p = Get-Process -Name logid -ErrorAction SilentlyContinue
+$p = Get-Process -Name oxdesk -ErrorAction SilentlyContinue
 if ($p) { "pid " + $p.Id } else { "nao esta rodando" }
 PS1
 ENC=$(iconv -f UTF-8 -t UTF-16LE < "$S/tarefa.ps1" | base64 -w0)
@@ -38,7 +38,7 @@ said "ok" because the error went to stderr.
 The most expensive of the four, because it **doesn't fail — it rolls
 the dice**.
 
-`logid.exe` is `windows_subsystem = "windows"`, without a console, so
+`oxdesk.exe` is `windows_subsystem = "windows"`, without a console, so
 the daemon doesn't flash a window when started by the scheduled task.
 But the same binary serves as the CLI, and PowerShell **doesn't wait**
 for a GUI process to finish. Two chained harms:
@@ -48,27 +48,27 @@ for a GUI process to finish. Two chained harms:
 2. The SSH session closes while the process is still reading stdin. Who
    wins the race depends on the payload size.
 
-Measured on 2026-11-04, three text sends to `logid clip-set`:
+Measured on 2026-11-04, three text sends to `oxdesk clip-set`:
 
 | Remote command | Arrived |
 |---|---|
-| `& "...\logid.exe" clip-set` | **2 of 3** |
-| `& "...\logid.exe" clip-set \| Out-String \| Write-Output` | 3 of 3 |
+| `& "...\oxdesk.exe" clip-set` | **2 of 3** |
+| `& "...\oxdesk.exe" clip-set \| Out-String \| Write-Output` | 3 of 3 |
 
 Consuming the output forces PowerShell to wait for the process to end.
 Without it, the text clipboard to Windows had been **intermittent
 forever** and nobody noticed: a line of text usually wins the race, and
 it was a 50 KB `tar` — which always loses — that revealed the problem.
 
-Use [`remote::logid_command`](../../logid/src/remote.rs), which already
+Use [`remote::oxdesk_command`](../../oxdesk/src/remote.rs), which already
 builds the right line per system. Don't build it by hand.
 
 ```rust
 // ✅ do
-.arg(crate::remote::logid_command(&host, "clip-arq-set"))
+.arg(crate::remote::oxdesk_command(&host, "clip-arq-set"))
 
 // ❌ don't
-.arg(r#"& "$env:LOCALAPPDATA\logid\logid.exe" clip-arq-set"#)
+.arg(r#"& "$env:LOCALAPPDATA\oxdesk\oxdesk.exe" clip-arq-set"#)
 ```
 
 ### Corollary: binary stdin to a child doesn't survive
@@ -79,7 +79,7 @@ stdin *inside* the process works — it's what `clip-set` always did, and
 that's why it is also the path used in `clip-arq-set`, which writes a
 temporary `.tar` instead of letting `tar` inherit the descriptor.
 
-Verification in the interactive session: `windows/sondas/ler-clipboard.ps1`
+Verification in the interactive session: `windows/probes/read-clipboard.ps1`
 via an `/IT` task (over SSH you read the session 0 clipboard, always
 empty).
 

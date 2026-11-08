@@ -10,7 +10,7 @@ license = "MIT"
 # Integrate instead of reimplementing ~300 lines of FFI per platform.
 hidapi = "2"
 # The JSON protocol between peers lives here (protocol.rs). It was
-# duplicated in the agent and would have had a second copy in logid -- it is
+# duplicated in the agent and would have had a second copy in oxdesk -- it is
 # precisely the contract between the two machines, the worst place for two
 # versions.
 serde_json = "1.0"

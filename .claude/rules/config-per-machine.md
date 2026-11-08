@@ -6,11 +6,11 @@ thinking you changed them all is the standard mistake.
 
 | Machine | Path |
 |---|---|
-| Ubuntu | `~/.config/logi/config.toml` |
-| macOS | `~/.config/logi/config.toml` (via `ssh mac`) |
-| Windows | `%APPDATA%\logi\config.toml` (`C:/Users/user/AppData/Roaming/logi/`) |
+| Ubuntu | `~/.config/oxdesk/config.toml` |
+| macOS | `~/.config/oxdesk/config.toml` (via `ssh mac`) |
+| Windows | `%APPDATA%\oxdesk\config.toml` (`C:/Users/user/AppData/Roaming/oxdesk/`) |
 
-`logid/default-config.toml` is only the seed for a new installation.
+`oxdesk/default-config.toml` is only the seed for a new installation.
 Editing it does **not** change any machine that is already running.
 
 ## How this came up
