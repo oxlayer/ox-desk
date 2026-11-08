@@ -47,4 +47,23 @@ else
   echo "  signed WITHOUT timestamp (the TSA did not answer in 25s)"
 fi
 mv "$TMP" "$EXE"
-osslsigncode verify "$EXE" 2>&1 | grep -E 'Signature verification|Subject|Timestamp' | sed 's/^/  /' || true
+
+# `-CAfile` with OUR certificate, and the result is CHECKED.
+#
+# Without it, `osslsigncode verify` builds the chain against the system
+# store (`/etc/ssl/certs/ca-certificates.crt`), which of course does not
+# contain our self-signed certificate -- so it printed
+# `Signature verification: failed` on every single deploy while the
+# digests matched perfectly. A line that always says the same thing is not
+# a check, it is decoration, and this one said "failed" in a deploy log for
+# weeks ([[../.claude/rules/verify-what-arrived]]).
+#
+# The question worth asking is "is this signed by OUR key and intact", and
+# with the right CA the same binary answers `Signature verification: ok`.
+if saida=$(osslsigncode verify -CAfile "$DIR/cert.pem" "$EXE" 2>&1); then
+  printf '%s\n' "$saida" | grep -E 'Signature verification|Subject:|Timestamp time' | sed 's/^/  /'
+else
+  echo "ERROR: the signature did not verify against $DIR/cert.pem" >&2
+  printf '%s\n' "$saida" | tail -20 >&2
+  exit 1
+fi

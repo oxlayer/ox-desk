@@ -387,6 +387,17 @@ a measurement.
 5. **Purge personal identifiers from code and scripts**, leaving the specs
    as the record under an alias. *Check:* the grep table above reads zero
    outside `specs/`.
+5b. **Reissue the Windows signing certificate.** Its subject is
+   `CN=logi (assinatura local), O=infra pessoal` — the old name, in
+   Portuguese, saying "personal infra" — and it is **embedded in every
+   Windows binary we publish**, valid until 2031. Windows shows the
+   publisher name in its own dialogs, so this is user-visible text, not
+   metadata. Reissuing means a new key and certificate, re-importing into
+   that machine's Trusted Root and Trusted Publishers stores, and
+   re-signing; binaries signed with the old one keep working while the old
+   certificate stays trusted ([[008-security]]). *Check:*
+   `openssl x509 -subject` shows the project's name in English, and
+   `Get-AuthenticodeSignature` on Windows still says `Valid`.
 6. **Translate `oxdesk/src`.** *Check:* no accented line outside test
    fixtures and specs.
 7. **Add `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`.** `LICENSE`

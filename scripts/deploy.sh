@@ -138,10 +138,26 @@ PS1
 # Sends a signed binary to Windows as `<name>.new.exe`, clearing the way
 # first and naming the file when it cannot.
 envia() {
-  local src="$1" nome="$2" limpo
+  local src="$1" nome="$2" limpo saida codigo
   limpo=$(limpa_novos)
   if printf '%s' "$limpo" | grep -q 'ERROR'; then printf '%s\n' "$limpo"; return 1; fi
-  timeout 180 scp -q "$src" "windows-host:C:/Users/user/AppData/Local/oxdesk/$nome.new.exe" 2>&1
+  saida=$(timeout 180 scp -q "$src" "windows-host:C:/Users/user/AppData/Local/oxdesk/$nome.new.exe" 2>&1)
+  codigo=$?
+  [ "$codigo" -eq 0 ] && return 0
+  # The upload failed, and `scp`'s message names no file -- which is how one
+  # cause looked like three unrelated failures. So the step reports WHAT IS
+  # THERE, from the machine itself, instead of leaving the reader to guess.
+  printf '%s\n' "$saida"
+  printf 'ERRO: o upload de %s falhou (exit %s). Estado em %%LOCALAPPDATA%%\\oxdesk:\n' "$nome" "$codigo"
+  { cat <<'PS1' | psrun; } 2>&1 | sed 's/^/    /'
+$d = Join-Path $env:LOCALAPPDATA 'oxdesk'
+Get-ChildItem $d -Filter '*.exe' -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 8 |
+  ForEach-Object { $_.LastWriteTime.ToString('HH:mm:ss') + '  ' + $_.Length.ToString().PadLeft(9) + '  ' + $_.Name }
+Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'oxdesk*' } |
+  ForEach-Object { 'rodando: ' + $_.Name + ' pid ' + $_.Id }
+PS1
+  return 1
 }
 
 passo "windows: build"
