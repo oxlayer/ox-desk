@@ -84,6 +84,70 @@ pub fn slice(packet: &[u8], header: SliceHeader, max_datagram: usize) -> Vec<Byt
         .collect()
 }
 
+/// The one message a viewer sends on the VIDEO connection: "I cannot draw,
+/// send a keyframe". The host reads nothing else from the viewer on this
+/// connection (input travels on its own port), so one byte is enough.
+pub const KEYFRAME_REQUEST: &[u8] = b"K";
+
+/// When the viewer should ask the host for a keyframe.
+///
+/// Two ways to end up with nothing to draw, both measured on 2026-11-07:
+/// the keyframe that opens the session is lost on the way, or a later frame
+/// is lost and every P after it references what never arrived. On a moving
+/// screen the next IDR fixes it within the GOP; on a STILL screen the host
+/// sends nothing more and the tab stays black for good (Ubuntu, three
+/// sessions: 2.7 KB, 71 KB, 363 KB received, the 89 KB IDR sent every time).
+pub struct KeyframeWatch {
+    synced: bool,
+    lost_seen: u64,
+    since: std::time::Instant,
+    last_request: Option<std::time::Instant>,
+}
+
+/// Wait this long without a usable keyframe before asking, and between asks.
+pub const KEYFRAME_RETRY: std::time::Duration = std::time::Duration::from_millis(300);
+
+impl KeyframeWatch {
+    pub fn new(now: std::time::Instant) -> Self {
+        Self { synced: false, lost_seen: 0, since: now, last_request: None }
+    }
+
+    /// A whole frame arrived.
+    pub fn frame(&mut self, keyframe: bool) {
+        if keyframe {
+            self.synced = true;
+        }
+    }
+
+    /// The reassembler's loss counter, after each push. Any new loss breaks
+    /// the reference chain until the next keyframe.
+    pub fn losses(&mut self, lost: u64, now: std::time::Instant) {
+        if lost > self.lost_seen {
+            self.lost_seen = lost;
+            if self.synced {
+                self.synced = false;
+                self.since = now;
+                // The wait restarts from the loss, not from a request made
+                // before the last sync.
+                self.last_request = None;
+            }
+        }
+    }
+
+    /// Should a request go out now? Records it when the answer is yes.
+    pub fn should_request(&mut self, now: std::time::Instant) -> bool {
+        if self.synced {
+            return false;
+        }
+        let from = self.last_request.unwrap_or(self.since);
+        if now.duration_since(from) < KEYFRAME_RETRY {
+            return false;
+        }
+        self.last_request = Some(now);
+        true
+    }
+}
+
 /// Reassembles a frame from the slices that arrived.
 ///
 /// Holds one frame at a time: as soon as a slice of a newer frame arrives,
@@ -158,7 +222,7 @@ pub fn server(bind: SocketAddr) -> Result<quinn::Endpoint> {
     server_with(bind, id)
 }
 
-fn server_with(bind: SocketAddr, id: crate::identity::Identity) -> Result<quinn::Endpoint> {
+pub(crate) fn server_with(bind: SocketAddr, id: crate::identity::Identity) -> Result<quinn::Endpoint> {
     println!("  host identity: {}", crate::identity::short(&id.fingerprint()));
     let crypto = rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
         .with_client_cert_verifier(Arc::new(crate::identity::ObservedClient))
@@ -192,7 +256,7 @@ pub fn client(bind: SocketAddr) -> Result<quinn::Endpoint> {
     client_with(bind, id, pinned)
 }
 
-fn client_with(
+pub(crate) fn client_with(
     bind: SocketAddr,
     id: Option<crate::identity::Identity>,
     pinned: Option<String>,
@@ -335,6 +399,29 @@ mod tests {
         assert!(seen[0].ends_with(" authorized") && !seen[0].contains("unknown"), "{seen:?}");
         assert_eq!(seen[1], "no certificate");
         let _ = std::fs::remove_dir_all(dir_cli);
+    }
+
+    #[test]
+    fn keyframe_watch_asks_until_a_keyframe_arrives() {
+        let t0 = std::time::Instant::now();
+        let ms = |n| t0 + std::time::Duration::from_millis(n);
+        let mut w = KeyframeWatch::new(t0);
+        assert!(!w.should_request(ms(100)), "too early");
+        assert!(w.should_request(ms(300)), "nothing drawable after 300 ms");
+        assert!(!w.should_request(ms(400)), "spaced out");
+        assert!(w.should_request(ms(600)));
+        w.frame(false);
+        assert!(w.should_request(ms(900)), "a P frame does not sync");
+        w.frame(true);
+        assert!(!w.should_request(ms(5000)), "synced: no requests");
+        w.losses(0, ms(5000));
+        assert!(!w.should_request(ms(6000)), "no new loss");
+        w.losses(1, ms(6000));
+        assert!(!w.should_request(ms(6100)));
+        assert!(w.should_request(ms(6300)), "a loss breaks the chain");
+        w.frame(true);
+        w.losses(1, ms(7000));
+        assert!(!w.should_request(ms(8000)), "same loss count is not a new loss");
     }
 
     fn header() -> SliceHeader {
