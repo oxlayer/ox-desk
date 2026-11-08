@@ -459,7 +459,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("logi-serve-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let host = crate::identity::load_or_create(&dir.join("host")).unwrap();
-        let ep = net::server_with("127.0.0.1:0".parse().unwrap(), host).unwrap();
+        let ep = net::server_with("127.0.0.1:0".parse().unwrap(), host, dir.join("host")).unwrap();
         let addr = ep.local_addr().unwrap();
         let signals = std::sync::Arc::new(Signals::default());
         let (_tx, mut rx) = tokio::sync::mpsc::channel::<EncodedFrame>(2);

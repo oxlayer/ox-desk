@@ -381,7 +381,7 @@ pub fn open_session(cfg: &Config, host: &str) -> Result<Session, String> {
 
 /// This machine's own host binary, which knows this machine's identity.
 /// A missing one only costs the self-authorization step (see `pairing`).
-fn local_host_bin() -> PathBuf {
+pub fn local_host_bin() -> PathBuf {
     let name = if cfg!(windows) { "logistream-host.exe" } else { "logistream-host" };
     find_program(name).unwrap_or_else(|| PathBuf::from(name))
 }
@@ -447,7 +447,12 @@ pub(crate) fn wake_host(h: &crate::config::HostCfg, port: u16) -> Result<(), Str
                 // setsid still matters: it takes the process out of the
                 // SSH session, and without it the process goes down when
                 // the connection closes.
-                r#"(S=; command -v setsid >/dev/null 2>&1 && S=setsid; "#,
+                // The previous session's log is kept as `.1`: a session that
+                // failed is usually diagnosed after the next one started,
+                // and overwriting it lost the one case that mattered
+                // (2026-11-07, a session with zero bytes and no log).
+                r#"(mv -f "$HOME/.local/state/logistream-host.log" "$HOME/.local/state/logistream-host.log.1" 2>/dev/null; "#,
+                r#"S=; command -v setsid >/dev/null 2>&1 && S=setsid; "#,
                 r#"$S nohup "$HOME/.local/bin/logistream-host" {} "#,
                 r#">"$HOME/.local/state/logistream-host.log" 2>&1 &); "#,
                 r#"sleep 1; pgrep -x logistream-host >/dev/null && echo vivo || echo morto"#

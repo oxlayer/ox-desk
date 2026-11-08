@@ -163,10 +163,46 @@ fn authorize_on(h: &HostCfg, fp: &str) -> Result<(), String> {
 /// is logged and does not block the session: phase C is not on yet, and the
 /// next first-use (after deleting the pin) retries it.
 pub fn pin_for(h: &HostCfg, host_bin: &Path) -> Result<String, String> {
+    pin(h, host_bin, false)
+}
+
+/// Pin the host AND make sure it authorizes this machine, every time.
+///
+/// For startup (`pair_peers`): the KVM and the native viewer connect without
+/// going through `pin_for`, so before phase C a machine that never opened a
+/// tab on its peers would be refused by them. Re-authorizing is idempotent
+/// (the remote side appends only when the line is missing) and repairs a
+/// peer whose list was wiped.
+fn ensure_paired(h: &HostCfg, host_bin: &Path) -> Result<String, String> {
+    pin(h, host_bin, true)
+}
+
+/// Pair with every peer this machine reaches over SSH and serves screens on.
+/// In a thread of its own: an offline peer costs an SSH timeout, and the
+/// daemon must answer the panel meanwhile.
+pub fn pair_peers(hosts: Vec<HostCfg>, host_bin: std::path::PathBuf) {
+    std::thread::spawn(move || {
+        for h in hosts.iter().filter(|h| {
+            !h.is_local() && h.ssh.is_some() && h.screen.as_ref().is_some_and(|s| s.kind == "logistream")
+        }) {
+            match ensure_paired(h, &host_bin) {
+                Ok(fp) => say!("pairing: {} is {} and authorizes this machine", h.name, short(&fp)),
+                Err(e) => say!("pairing: {} not paired at startup: {e}", h.name),
+            }
+        }
+    });
+}
+
+fn pin(h: &HostCfg, host_bin: &Path, always_authorize: bool) -> Result<String, String> {
     let dir = identity_dir();
     let reported = remote_fingerprint(h)?;
     match judge(pinned(&dir, &h.name).as_deref(), &reported) {
-        Verdict::Same => Ok(reported),
+        Verdict::Same => {
+            if always_authorize {
+                local_fingerprint(host_bin).and_then(|me| authorize_on(h, &me))?;
+            }
+            Ok(reported)
+        }
         Verdict::Changed { pinned } => Err(format!(
             "a identidade de {} mudou: era {}, agora e {}. Se voce reinstalou ou apagou a config \
              la, tire a linha de {} em {} e conecte de novo",

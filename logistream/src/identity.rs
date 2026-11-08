@@ -229,25 +229,54 @@ impl ServerCertVerifier for PinnedHost {
     }
 }
 
-/// Host side, phase A: ask for the client certificate, never require it.
-/// Who it was is logged after the handshake (`describe_peer`), because a
-/// client that sends nothing never reaches this verifier.
-#[derive(Debug)]
-pub struct ObservedClient;
+/// The file whose presence turns phase C on for this host: clients without
+/// a certificate, or with one not in `autorizados`, are refused.
+pub const ENFORCE_FILE: &str = "enforce";
 
-impl ClientCertVerifier for ObservedClient {
+/// Host side. Phase A/B (no `enforce` file): ask for the client certificate,
+/// never require it; who it was is logged after the handshake
+/// (`describe_peer`), because a client that sends nothing never reaches
+/// this verifier. Phase C (`enforce` present): require it, and refuse any
+/// fingerprint not in the authorized list.
+///
+/// Both files are read on every handshake, not once: the host of the KVM
+/// lives for hours, and authorizing a machine or turning enforcement on
+/// must not need a restart. It is two small reads per connection.
+#[derive(Debug)]
+pub struct ClientPolicy {
+    pub dir: PathBuf,
+}
+
+impl ClientPolicy {
+    pub fn enforcing(&self) -> bool {
+        self.dir.join(ENFORCE_FILE).exists()
+    }
+}
+
+impl ClientCertVerifier for ClientPolicy {
     fn root_hint_subjects(&self) -> &[DistinguishedName] {
         &[]
     }
     fn client_auth_mandatory(&self) -> bool {
-        false
+        self.enforcing()
     }
     fn verify_client_cert(
         &self,
-        _end_entity: &CertificateDer<'_>,
+        end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
         _now: UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
+        if self.enforcing() {
+            let fp = fingerprint(end_entity);
+            if !authorized(&self.dir).contains(&fp) {
+                // pt-BR on purpose: it travels in the TLS alert and the
+                // viewer shows it to the person.
+                return Err(rustls::Error::General(format!(
+                    "este computador ({}) nao esta autorizado neste host",
+                    short(&fp)
+                )));
+            }
+        }
         Ok(ClientCertVerified::assertion())
     }
     fn verify_tls12_signature(

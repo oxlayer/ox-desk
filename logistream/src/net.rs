@@ -219,13 +219,17 @@ pub fn server(bind: SocketAddr) -> Result<quinn::Endpoint> {
             ephemeral()?
         }
     };
-    server_with(bind, id)
+    server_with(bind, id, crate::identity::dir())
 }
 
-pub(crate) fn server_with(bind: SocketAddr, id: crate::identity::Identity) -> Result<quinn::Endpoint> {
+pub(crate) fn server_with(
+    bind: SocketAddr,
+    id: crate::identity::Identity,
+    policy_dir: std::path::PathBuf,
+) -> Result<quinn::Endpoint> {
     println!("  host identity: {}", crate::identity::short(&id.fingerprint()));
     let crypto = rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
-        .with_client_cert_verifier(Arc::new(crate::identity::ObservedClient))
+        .with_client_cert_verifier(Arc::new(crate::identity::ClientPolicy { dir: policy_dir }))
         .with_single_cert(vec![id.cert], id.key)
         .context("server config")?;
     let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(
@@ -301,7 +305,8 @@ mod tests {
     /// a time.
     #[tokio::test]
     async fn datagram_really_gets_through() {
-        let srv = server_with("127.0.0.1:0".parse().unwrap(), temp_id("dg-host").1).expect("server");
+        let (dg_dir, dg_host) = temp_id("dg-host");
+        let srv = server_with("127.0.0.1:0".parse().unwrap(), dg_host, dg_dir).expect("server");
         let addr = srv.local_addr().expect("port");
 
         let accepted = tokio::spawn(async move {
@@ -357,14 +362,14 @@ mod tests {
     /// host learns who the client is.
     #[tokio::test]
     async fn pairing_by_fingerprint() {
-        let (_, host) = temp_id("host");
+        let (host_dir, host) = temp_id("host");
         let (_, other) = temp_id("other");
         let (dir_cli, cli) = temp_id("cli");
         let fp_host = host.fingerprint();
         let fp_other = other.fingerprint();
         let fp_cli = cli.fingerprint();
 
-        let srv = server_with("127.0.0.1:0".parse().unwrap(), host).expect("server");
+        let srv = server_with("127.0.0.1:0".parse().unwrap(), host, host_dir).expect("server");
         let addr = srv.local_addr().unwrap();
         let seen_task = tokio::spawn(async move {
             let mut seen = Vec::new();
@@ -399,6 +404,55 @@ mod tests {
         assert!(seen[0].ends_with(" authorized") && !seen[0].contains("unknown"), "{seen:?}");
         assert_eq!(seen[1], "no certificate");
         let _ = std::fs::remove_dir_all(dir_cli);
+    }
+
+    /// Is this client let in? In TLS 1.3 the server checks the client's
+    /// certificate after the client already considers the handshake done,
+    /// so a refusal shows up as the connection being closed right after,
+    /// not as `connect` failing.
+    async fn let_in(addr: SocketAddr, id: Option<crate::identity::Identity>, pin: String) -> bool {
+        let ep = client_with("127.0.0.1:0".parse().unwrap(), id, Some(pin)).unwrap();
+        let Ok(c) = ep.connect(addr, "logistream").unwrap().await else { return false };
+        tokio::time::timeout(std::time::Duration::from_millis(700), c.closed()).await.is_err()
+    }
+
+    /// Spec 017, phase C: with `enforce` present, only authorized clients
+    /// get in; without it, everybody does (phase A/B), so the switch is the
+    /// file and nothing else.
+    #[tokio::test]
+    async fn enforcement_refuses_strangers_and_clients_without_identity() {
+        let (host_dir, host) = temp_id("enf-host");
+        let (_, friend) = temp_id("enf-friend");
+        let (_, stranger) = temp_id("enf-stranger");
+        let fp_host = host.fingerprint();
+        let fp_friend = friend.fingerprint();
+        std::fs::write(host_dir.join(crate::identity::AUTHORIZED_FILE), format!("{fp_friend}\n")).unwrap();
+
+        let srv = server_with("127.0.0.1:0".parse().unwrap(), host, host_dir.clone()).expect("server");
+        let addr = srv.local_addr().unwrap();
+        let acceptor = tokio::spawn(async move {
+            while let Some(e) = srv.accept().await {
+                tokio::spawn(async move {
+                    if let Ok(c) = e.await {
+                        let _ = c.closed().await;
+                    }
+                });
+            }
+        });
+
+        // Phase A/B: no `enforce`, a stranger gets in.
+        let stranger_id = || crate::identity::Identity { cert: stranger.cert.clone(), key: stranger.key.clone_key() };
+        let friend_id = || crate::identity::Identity { cert: friend.cert.clone(), key: friend.key.clone_key() };
+        assert!(let_in(addr, Some(stranger_id()), fp_host.clone()).await, "observe mode lets a stranger in");
+
+        // Phase C.
+        std::fs::write(host_dir.join(crate::identity::ENFORCE_FILE), "").unwrap();
+        assert!(let_in(addr, Some(friend_id()), fp_host.clone()).await, "an authorized client gets in");
+        assert!(!let_in(addr, Some(stranger_id()), fp_host.clone()).await, "a stranger is refused");
+        assert!(!let_in(addr, None, fp_host.clone()).await, "a client without identity is refused");
+
+        acceptor.abort();
+        let _ = std::fs::remove_dir_all(host_dir);
     }
 
     #[test]
