@@ -199,7 +199,8 @@ says whether the peer is direct or on relay (DERP).
 - The bridge writes the line when the session ends, closed, dropped or refused
   (`logistream/src/telemetry.rs`); `logid` decides the path when it starts and passes
   it, with the build and the host OS (`logid/src/telemetry.rs`).
-- Path: `lan`, `overlay-direct`, `overlay-relay`, `overlay` (Tailscale could not tell),
+- Path: `lan`, `overlay-lan` (Tailscale, peer to peer inside the LAN), `overlay-direct` (peer
+  to peer across the internet), `overlay-relay`, `overlay` (Tailscale could not tell),
   `internet` or `unknown`. Direct or relay comes from `tailscale status --json`
   (`CurAddr` empty means DERP), using the brew CLI on the Mac and never the app.
 - Off: `telemetry = false` at the top of `config.toml`, or `LOGI_TELEMETRY=0`. Off
