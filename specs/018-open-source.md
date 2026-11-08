@@ -130,17 +130,22 @@ Every Rust dependency is permissive (`MIT`, `Apache-2.0`, `Unicode-3.0`,
 `Unlicense`; no GPL-2.0-**only** anywhere, which would have been
 incompatible). Details in [[../THIRD-PARTY]].
 
-### Open question: a CLA, decided now or not at all
+### The CLA: decided, in [[021-licensing-and-contributions]]
 
-AGPL is normally paired with a contributor licence agreement when the
-owner wants to offer the same code under other terms — which is the
-standard business model behind an Enterprise relay. Without a CLA, we hold
-only AGPL rights to contributed code, so **we could not offer a
-proprietary licence either**, and collecting agreements retroactively from
-contributors is the kind of task that does not finish.
+This spec used to leave it open. It is decided: **a contributor licence
+agreement with a sublicensable grant, in place before the repository
+becomes public.**
 
-This spec does not decide it. It records that the window is now: the first
-outside contribution closes it.
+The fact that settled it is that we own everything today — `git log --all`
+returns a single author, nothing is vendored, so the right to relicense
+exists right now and unconditionally. It is not lost by a decision, it is
+lost by one merged pull request we do not own. So the instrument goes in
+before step 10, not after.
+
+And one constraint no agreement can fix: the macOS packages link
+GPL-3.0-or-later FFmpeg, which binds **what we distribute** regardless of
+who owns our source. That makes [[020-native-mac]] a prerequisite for
+licensing freedom rather than dependency hygiene.
 
 ## What the audit found
 
@@ -428,11 +433,16 @@ a measurement.
    `Get-AuthenticodeSignature` on Windows still says `Valid`.
 6. **Translate `oxdesk/src`.** *Check:* no accented line outside test
    fixtures and specs.
-7. **Add `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`.** `LICENSE`
-   (AGPL-3.0), `hidpp/LICENSE` (MIT) and [[../THIRD-PARTY]] are **done
-   2026-11-08**; the crate metadata moved with them. *Check:* GitHub shows
-   the license in the sidebar once public, and `grep -h '^license' */Cargo.toml`
-   shows AGPL everywhere except `hidpp`.
+7. **Add `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`. Done 2026-11-08.**
+   `LICENSE` (AGPL-3.0), `hidpp/LICENSE` (MIT), [[../THIRD-PARTY]],
+   [[../CONTRIBUTING]] — which carries the inbound grant of
+   [[021-licensing-and-contributions]] — and [[../SECURITY]], which points
+   at GitHub private advisories rather than a personal address, because a
+   security contact has to be a role and `no-personal-data` forbids
+   shipping one. *Check:* GitHub shows the licence in the sidebar once
+   public, `grep -h '^license' */Cargo.toml` shows AGPL everywhere except
+   `hidpp`, and no link in those files is dangling. Still open from 021:
+   SPDX headers, `NOTICE`, and the CLA bot.
 8. **Run a real secret scanner over all history.** *Check:* clean report
    attached to the PR that flips visibility.
 9. **Add the `pull_request` trigger** under the constraints of adversarial
