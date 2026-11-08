@@ -26,12 +26,38 @@ The maintainer half stays shell and that is fine: a contributor never runs
 `deploy.sh` to install the product, and a release pipeline written in Rust
 would be worse, not better. **The user half is the subject of this spec.**
 
-**And the wizard already exists.** `oxdesk/src/setup*.rs` is 2,831 lines
-with roughly 126 steps — 29 Linux, 44 macOS, 23 Windows, 30 shared — each
-a `Check` that detects, explains and sometimes repairs. The daemon even
-carries two scripts inside the binary with `include_str!` and writes them
-out when a step needs them (`install-virtual-display.ps1`,
-`install-tailscale-mac.sh`).
+**And the wizard already exists.** `oxdesk/src/setup*.rs` is 2,831 lines,
+and what it shows a person is **24 items** — not the "126 steps" an
+earlier draft of this spec claimed, which was a count of `Check::`
+constructions in the source and not of anything a user sees. Corrected,
+by label:
+
+| | Items | Which |
+|---|---:|---|
+| Linux | 6 | `wayland`, `receptor`, `input-kvm`, `nvenc`, `binarios`, `daemon` |
+| **macOS** | **9** | `ffmpeg`, `identidade`, `assinatura`, `gravacao-de-tela`, `acessibilidade`, `launchagent`, `tailscale`, `binarios`, `daemon` |
+| Windows | 5 | `sshd`, `chave-admin`, `tela-virtual`, `protetor-de-tela`, `binarios` |
+| Shared | 4 | |
+
+The daemon even carries two scripts inside the binary with `include_str!`
+and writes them out when a step needs them
+(`install-virtual-display.ps1`, `install-tailscale-mac.sh`).
+
+### The Mac is the worst of the three, and that is readable in the table
+
+Nine items against five and six, and the extra ones are not arbitrary:
+
+| Item | Why it exists | Can it go? |
+|---|---|---|
+| `ffmpeg` | The only platform that links it, for capture and encode | **Yes** — both are Apple frameworks underneath. [[020-native-mac]] |
+| `identidade` + `assinatura` | A local signing identity keeps the binary's designated requirement stable, so a rebuild does not lose the TCC grant | No, but they are **one** concern and should be one item |
+| `gravacao-de-tela` + `acessibilidade` | TCC grants, which Apple does not let software give itself | No. Present them as "do this in Settings, I will re-check" and never claim to have fixed them |
+| `launchagent`, `binarios`, `daemon` | Same as the other platforms | No |
+| `tailscale` | Optional, for reaching the machine outside the LAN | Should be behind "do you want this?", not in the main list |
+
+So nine becomes six: drop `ffmpeg`, merge the signing pair, and move
+`tailscale` out of the default path. The two TCC items stay, and the
+wizard's job there is to be honest rather than clever.
 
 So this is **consolidation, not greenfield**. The question is not "should
 there be a wizard" — there is one. It is "why does a person still paste
