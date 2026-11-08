@@ -213,7 +213,13 @@ fn identity() -> Check {
             ) {
                 return Check::error(
                     "identidade",
-                    format!("o chaveiro não abriu com a senha de {}: {e}", passfile.display()),
+                    // The length, never the value: enough to tell "read the
+                    // wrong file" from "right file, wrong password".
+                    format!(
+                        "o chaveiro não abriu com a senha de {} ({} caracteres): {e}",
+                        passfile.display(),
+                        pass.trim().len()
+                    ),
                 );
             }
         }
