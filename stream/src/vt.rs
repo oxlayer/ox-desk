@@ -119,19 +119,19 @@ const CODEC_H264: u32 = u32::from_be_bytes(*b"avc1");
 /// One encoded access unit, in AVCC form: each NAL unit prefixed by its
 /// 4-byte big-endian length.
 #[derive(Default, Clone)]
-pub struct Quadro {
+pub struct Frame {
     pub bytes: Vec<u8>,
     /// SPS and PPS, which VideoToolbox keeps in the format description and
     /// NOT in the frame data -- the same split NVENC has. A decoder needs
     /// them before the first frame.
-    pub parametros: Vec<Vec<u8>>,
+    pub parameter_sets: Vec<Vec<u8>>,
 }
 
 #[derive(Default)]
-struct Caixa {
-    pronto: Option<Quadro>,
+struct Mailbox {
+    ready: Option<Frame>,
     status: OSStatus,
-    chamadas: usize,
+    calls: usize,
 }
 
 /// A compression session. `encode` is synchronous on purpose: it hands the
@@ -139,11 +139,11 @@ struct Caixa {
 /// easy to reason about. Pipelining comes later, with a measurement to
 /// justify it.
 pub struct Encoder {
-    sessao: *mut c_void,
-    caixa: Arc<Mutex<Caixa>>,
+    session: *mut c_void,
+    mailbox: Arc<Mutex<Mailbox>>,
 }
 
-extern "C" fn pronto(
+extern "C" fn on_encoded(
     refcon: *mut c_void,
     _source_frame: *mut c_void,
     status: OSStatus,
@@ -152,12 +152,12 @@ extern "C" fn pronto(
 ) {
     // The refcon is an `Arc` we leaked into the session; it stays alive as
     // long as the session does, and `Drop` below takes it back.
-    let caixa = unsafe { &*(refcon as *const Mutex<Caixa>) };
-    let mut c = match caixa.lock() {
+    let mailbox = unsafe { &*(refcon as *const Mutex<Mailbox>) };
+    let mut c = match mailbox.lock() {
         Ok(c) => c,
         Err(e) => e.into_inner(),
     };
-    c.chamadas += 1;
+    c.calls += 1;
     c.status = status;
     if status != 0 || sample.is_null() {
         return;
@@ -172,7 +172,7 @@ extern "C" fn pronto(
         if CMBlockBufferCopyDataBytes(bbuf, 0, len, bytes.as_mut_ptr() as *mut c_void) != 0 {
             return;
         }
-        let mut parametros = Vec::new();
+        let mut parameter_sets = Vec::new();
         let desc = CMSampleBufferGetFormatDescription(sample);
         if !desc.is_null() {
             for i in 0..2usize {
@@ -185,11 +185,11 @@ extern "C" fn pronto(
                 ) == 0
                     && !p.is_null()
                 {
-                    parametros.push(std::slice::from_raw_parts(p, n).to_vec());
+                    parameter_sets.push(std::slice::from_raw_parts(p, n).to_vec());
                 }
             }
         }
-        c.pronto = Some(Quadro { bytes, parametros });
+        c.ready = Some(Frame { bytes, parameter_sets });
     }
 }
 
@@ -197,9 +197,9 @@ impl Encoder {
     /// A null encoder specification means "VideoToolbox chooses", which on
     /// Apple Silicon is the hardware encoder.
     pub fn new(width: i32, height: i32) -> Result<Encoder, String> {
-        let caixa = Arc::new(Mutex::new(Caixa::default()));
-        let refcon = Arc::as_ptr(&caixa) as *mut c_void;
-        let mut sessao: *mut c_void = std::ptr::null_mut();
+        let mailbox = Arc::new(Mutex::new(Mailbox::default()));
+        let refcon = Arc::as_ptr(&mailbox) as *mut c_void;
+        let mut session: *mut c_void = std::ptr::null_mut();
         let st = unsafe {
             VTCompressionSessionCreate(
                 std::ptr::null(),
@@ -209,27 +209,27 @@ impl Encoder {
                 std::ptr::null(),
                 std::ptr::null(),
                 std::ptr::null(),
-                Some(pronto),
+                Some(on_encoded),
                 refcon,
-                &mut sessao,
+                &mut session,
             )
         };
-        if st != 0 || sessao.is_null() {
+        if st != 0 || session.is_null() {
             return Err(format!("VTCompressionSessionCreate: OSStatus {st}"));
         }
-        Ok(Encoder { sessao, caixa })
+        Ok(Encoder { session, mailbox })
     }
 
     /// Encodes one `CVPixelBuffer`. The buffer is borrowed, not consumed.
-    pub fn encode(&mut self, pixels: *mut c_void, pts: CMTime, dur: CMTime) -> Result<Quadro, String> {
+    pub fn encode(&mut self, pixels: *mut c_void, pts: CMTime, dur: CMTime) -> Result<Frame, String> {
         {
-            let mut c = self.caixa.lock().map_err(|e| e.to_string())?;
-            c.pronto = None;
+            let mut c = self.mailbox.lock().map_err(|e| e.to_string())?;
+            c.ready = None;
             c.status = 0;
         }
         let st = unsafe {
             VTCompressionSessionEncodeFrame(
-                self.sessao,
+                self.session,
                 pixels,
                 pts,
                 dur,
@@ -242,13 +242,13 @@ impl Encoder {
             return Err(format!("VTCompressionSessionEncodeFrame: OSStatus {st}"));
         }
         // Blocks until every pending callback has run, which is what makes
-        // reading `caixa` right after this sound.
-        unsafe { VTCompressionSessionCompleteFrames(self.sessao, CMTime::invalid()) };
-        let c = self.caixa.lock().map_err(|e| e.to_string())?;
+        // reading `mailbox` right after this sound.
+        unsafe { VTCompressionSessionCompleteFrames(self.session, CMTime::invalid()) };
+        let c = self.mailbox.lock().map_err(|e| e.to_string())?;
         if c.status != 0 {
             return Err(format!("callback: OSStatus {}", c.status));
         }
-        c.pronto.clone().ok_or_else(|| "o encoder nao devolveu quadro".to_string())
+        c.ready.clone().ok_or_else(|| "the encoder returned no frame".to_string())
     }
 }
 
@@ -256,26 +256,26 @@ impl Drop for Encoder {
     fn drop(&mut self) {
         // Invalidate FIRST: it waits for callbacks in flight, and only then
         // is it safe to let the refcon's `Arc` go.
-        unsafe { VTCompressionSessionInvalidate(self.sessao) };
+        unsafe { VTCompressionSessionInvalidate(self.session) };
     }
 }
 
 #[cfg(test)]
-mod teste {
+mod tests {
     use super::*;
 
     /// The four-character codes are bytes, and a wrong endianness here
     /// would ask VideoToolbox for a codec nobody has.
     #[test]
-    fn os_codigos_de_quatro_letras_sao_os_bytes() {
+    fn four_character_codes_are_the_bytes() {
         assert_eq!(PIXEL_BGRA, 0x42475241);
         assert_eq!(CODEC_H264, 0x61766331);
     }
 
     #[test]
-    fn cmtime_valido_tem_a_flag() {
+    fn a_valid_cmtime_carries_the_flag() {
         let t = CMTime::new(3, 60);
         assert_eq!((t.value, t.timescale, t.flags), (3, 60, 1));
-        assert_eq!(CMTime::invalid().flags, 0, "sem a flag de valido");
+        assert_eq!(CMTime::invalid().flags, 0, "the invalid time must not carry the valid flag");
     }
 }

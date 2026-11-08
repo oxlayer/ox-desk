@@ -40,14 +40,14 @@ fn main() {
             .ok()
             .and_then(|t| t.trim().parse().ok())
             .unwrap_or(0);
-        let contados: u64 = std::process::Command::new("git")
+        let counted: u64 = std::process::Command::new("git")
             .args(["rev-list", "--count", "HEAD"])
             .output()
             .ok()
             .filter(|o| o.status.success())
             .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
             .unwrap_or(0);
-        (base + contados).to_string()
+        (base + counted).to_string()
     });
     println!("cargo:rustc-env=OXDESK_BUILD_N={n}");
 }

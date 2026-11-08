@@ -18,6 +18,7 @@ pub fn probe() -> Result<(), String> {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
+    use crate::vt;
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::AnyThread;
@@ -25,58 +26,61 @@ pub fn probe() -> Result<(), String> {
     use objc2_screen_capture_kit::{
         SCContentFilter, SCScreenshotManager, SCShareableContent, SCStreamConfiguration, SCWindow,
     };
-    use crate::vt;
 
-    println!("== ScreenCaptureKit -> VideoToolbox, do Rust, sem nada instalado ==");
+    println!("== ScreenCaptureKit -> VideoToolbox, from Rust, nothing installed ==");
 
     // ---- 1. what can be captured. The completion handler runs on another
     // ---- thread, so the channel is both the wait and the hand-off.
     let (tx, rx) = mpsc::channel::<Result<Retained<SCShareableContent>, String>>();
-    let bloco = RcBlock::new(move |conteudo: *mut SCShareableContent, erro: *mut NSError| {
-        let r = if !conteudo.is_null() {
-            match unsafe { Retained::retain(conteudo) } {
+    let handler = RcBlock::new(move |content: *mut SCShareableContent, error: *mut NSError| {
+        let r = if !content.is_null() {
+            match unsafe { Retained::retain(content) } {
                 Some(c) => Ok(c),
-                None => Err("SCShareableContent veio nulo depois do retain".to_string()),
+                None => Err("SCShareableContent came back null after retain".to_string()),
             }
-        } else if !erro.is_null() {
-            let e = unsafe { &*erro };
-            Err(format!("{} (codigo {})", e.localizedDescription(), e.code()))
+        } else if !error.is_null() {
+            let e = unsafe { &*error };
+            Err(format!("{} (code {})", e.localizedDescription(), e.code()))
         } else {
-            Err("sem conteudo e sem erro".to_string())
+            Err("no content and no error".to_string())
         };
         let _ = tx.send(r);
     });
     let t0 = Instant::now();
-    unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&bloco) };
+    unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&handler) };
 
-    let conteudo = match rx.recv_timeout(Duration::from_secs(15)) {
+    let content = match rx.recv_timeout(Duration::from_secs(15)) {
         Ok(Ok(c)) => c,
         Ok(Err(e)) => {
             return Err(format!(
-                "ScreenCaptureKit recusou: {e}\n  \
-                 A Gravacao de Tela pertence ao BINARIO. Se este e novo, aprove-o em \
-                 Ajustes > Privacidade e Seguranca > Gravacao de Tela. Ver specs/019."
+                "ScreenCaptureKit refused: {e}\n  \
+                 Screen Recording belongs to the BINARY. If this one is new, approve it in \
+                 Settings > Privacy & Security > Screen Recording. See specs/019."
             ));
         }
         Err(_) => {
-            return Err("o handler de SCShareableContent nao respondeu em 15s".into());
+            return Err("the SCShareableContent handler did not answer within 15s".into());
         }
     };
-    println!("  SCShareableContent: respondeu em {} ms", t0.elapsed().as_millis());
+    println!("  SCShareableContent: answered in {} ms", t0.elapsed().as_millis());
 
-    let telas = unsafe { conteudo.displays() };
-    if telas.is_empty() {
-        return Err("nenhuma tela compartilhavel -- quase sempre falta de permissao".into());
+    let displays = unsafe { content.displays() };
+    if displays.is_empty() {
+        return Err("no shareable display -- almost always a missing permission".into());
     }
-    let tela = telas.firstObject().expect("a lista nao esta vazia");
-    let (w, h) = unsafe { (tela.width(), tela.height()) };
-    println!("  tela: {w}x{h}, {} tela(s) disponivel(is)", telas.len());
+    let display = displays.firstObject().expect("the list is not empty");
+    let (w, h) = unsafe { (display.width(), display.height()) };
+    println!("  display: {w}x{h}, {} display(s) available", displays.len());
 
     // ---- 2. filter and configuration. BGRA because that is what the
     // ---- encoder takes without a conversion.
-    let vazio = NSArray::<SCWindow>::new();
-    let filtro = unsafe {
-        SCContentFilter::initWithDisplay_excludingWindows(SCContentFilter::alloc(), &tela, &vazio)
+    let no_windows = NSArray::<SCWindow>::new();
+    let filter = unsafe {
+        SCContentFilter::initWithDisplay_excludingWindows(
+            SCContentFilter::alloc(),
+            &display,
+            &no_windows,
+        )
     };
     let config = unsafe { SCStreamConfiguration::init(SCStreamConfiguration::alloc()) };
     unsafe {
@@ -88,17 +92,17 @@ pub fn probe() -> Result<(), String> {
         // unlike DXGI -- which is why Windows needs an overlay (specs/010).
         config.setShowsCursor(true);
     }
-    println!("  configuracao: BGRA, cursor desenhado pelo compositor");
+    println!("  configuration: BGRA, cursor drawn by the compositor");
 
     // ---- 3. one frame.
     let (tx2, rx2) = mpsc::channel::<Result<usize, String>>();
-    let bloco2 = RcBlock::new(
-        move |amostra: *mut objc2_core_media::CMSampleBuffer, erro: *mut NSError| {
-            if amostra.is_null() {
-                let msg = if erro.is_null() {
-                    "sem amostra e sem erro".to_string()
+    let frame_handler = RcBlock::new(
+        move |sample: *mut objc2_core_media::CMSampleBuffer, error: *mut NSError| {
+            if sample.is_null() {
+                let msg = if error.is_null() {
+                    "no sample and no error".to_string()
                 } else {
-                    let e = unsafe { &*erro };
+                    let e = unsafe { &*error };
                     format!("{}", e.localizedDescription())
                 };
                 let _ = tx2.send(Err(msg));
@@ -106,44 +110,47 @@ pub fn probe() -> Result<(), String> {
             }
             // The pointer is only valid inside the handler, so the frame is
             // encoded here rather than sent across the channel.
-            let _ = tx2.send(encode_aqui(amostra as *mut std::ffi::c_void));
+            let _ = tx2.send(encode_in_place(sample as *mut std::ffi::c_void));
         },
     );
     let t1 = Instant::now();
     unsafe {
         SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
-            &filtro,
+            &filter,
             &config,
-            Some(&bloco2),
+            Some(&frame_handler),
         )
     };
     match rx2.recv_timeout(Duration::from_secs(20)) {
         Ok(Ok(bytes)) => {
-            println!("  captura + encode: {} ms, {bytes} bytes de H.264", t1.elapsed().as_millis());
+            println!(
+                "  capture + encode: {} ms, {bytes} bytes of H.264",
+                t1.elapsed().as_millis()
+            );
             println!();
-            println!("  => cadeia nativa completa: captura e encode sem FFmpeg e sem Homebrew");
+            println!("  => the whole native chain: capture and encode with no FFmpeg and no Homebrew");
         }
         Ok(Err(e)) => return Err(e),
-        Err(_) => return Err("a captura nao respondeu em 20s".into()),
+        Err(_) => return Err("the capture did not answer within 20s".into()),
     }
     Ok(())
 }
 
 /// Encodes the frame while the sample buffer is still valid, and prints what
 /// came out. Returns the access unit's size.
-fn encode_aqui(amostra: *mut std::ffi::c_void) -> Result<usize, String> {
+fn encode_in_place(sample: *mut std::ffi::c_void) -> Result<usize, String> {
     use crate::vt;
-    let pixels = unsafe { vt::CMSampleBufferGetImageBuffer(amostra) };
+    let pixels = unsafe { vt::CMSampleBufferGetImageBuffer(sample) };
     if pixels.is_null() {
-        return Err("a amostra nao tem CVPixelBuffer".into());
+        return Err("the sample carries no CVPixelBuffer".into());
     }
     let (w, h) = unsafe {
         (vt::CVPixelBufferGetWidth(pixels) as i32, vt::CVPixelBufferGetHeight(pixels) as i32)
     };
-    println!("  CVPixelBuffer da captura: {w}x{h} (sem conversao, vai direto pro encoder)");
+    println!("  CVPixelBuffer from the capture: {w}x{h} (no conversion, straight to the encoder)");
     let mut enc = vt::Encoder::new(w, h)?;
-    let q = enc.encode(pixels, vt::CMTime::new(0, 60), vt::CMTime::new(1, 60))?;
-    for (i, p) in q.parametros.iter().enumerate() {
+    let frame = enc.encode(pixels, vt::CMTime::new(0, 60), vt::CMTime::new(1, 60))?;
+    for (i, p) in frame.parameter_sets.iter().enumerate() {
         let nal = p.first().map(|b| b & 0x1f).unwrap_or(0);
         println!(
             "  parameter set {i}: {} bytes, nal {nal} ({})",
@@ -155,7 +162,7 @@ fn encode_aqui(amostra: *mut std::ffi::c_void) -> Result<usize, String> {
             }
         );
     }
-    let b = &q.bytes;
+    let b = &frame.bytes;
     let mut i = 0usize;
     let mut n = 0;
     while i + 4 <= b.len() && n < 4 {
@@ -165,7 +172,7 @@ fn encode_aqui(amostra: *mut std::ffi::c_void) -> Result<usize, String> {
         }
         let nal = b[i + 4] & 0x1f;
         println!(
-            "  nal {n}: tipo {nal} ({}), {len} bytes",
+            "  nal {n}: type {nal} ({}), {len} bytes",
             match nal {
                 1 => "non-IDR slice",
                 5 => "IDR slice",

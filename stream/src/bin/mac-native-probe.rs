@@ -24,7 +24,7 @@
 // per-OS from Cargo.toml -- the same shape as the Linux-only probes here.
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!("oxdesk-probe-mac-native so roda no macOS: ele fala com VideoToolbox, que so existe la");
+    eprintln!("oxdesk-probe-mac-native only runs on macOS: it talks to VideoToolbox, which only exists there");
     std::process::exit(1);
 }
 
@@ -131,29 +131,29 @@ const CODEC_H264: u32 = u32::from_be_bytes(*b"avc1");
 
 #[cfg(target_os = "macos")]
 #[derive(Default)]
-struct Saida {
-    chamadas: usize,
+struct Output {
+    calls: usize,
     status: OSStatus,
     bytes: Vec<u8>,
 }
 
 /// Called by VideoToolbox on its own thread, once per encoded frame.
 ///
-/// `refcon` is the `&mut Saida` handed to `VTCompressionSessionCreate`. It
+/// `refcon` is the `&mut Output` handed to `VTCompressionSessionCreate`. It
 /// stays alive because `VTCompressionSessionCompleteFrames` below blocks
 /// until every callback has run, and the session is invalidated before the
 /// struct goes out of scope.
 #[cfg(target_os = "macos")]
-extern "C" fn pronto(
+extern "C" fn on_encoded(
     refcon: *mut c_void,
     _source_frame: *mut c_void,
     status: OSStatus,
     _flags: u32,
     sample: *mut c_void,
 ) {
-    let saida = unsafe { &mut *(refcon as *mut Saida) };
-    saida.chamadas += 1;
-    saida.status = status;
+    let out = unsafe { &mut *(refcon as *mut Output) };
+    out.calls += 1;
+    out.status = status;
     if status != 0 || sample.is_null() {
         return;
     }
@@ -165,7 +165,7 @@ extern "C" fn pronto(
         let len = CMBlockBufferGetDataLength(bbuf);
         let mut v = vec![0u8; len];
         if CMBlockBufferCopyDataBytes(bbuf, 0, len, v.as_mut_ptr() as *mut c_void) == 0 {
-            saida.bytes = v;
+            out.bytes = v;
         }
         // SPS and PPS live in the format description, not in the frame data
         // -- the same split as NVENC's header. Printed here because a
@@ -199,7 +199,7 @@ extern "C" fn pronto(
 #[cfg(target_os = "macos")]
 fn main() {
     let (w, h) = (1280i32, 720i32);
-    println!("== VideoToolbox direto do Rust, sem dependencia de midia ==");
+    println!("== VideoToolbox straight from Rust, with no media dependency ==");
     println!("  {w}x{h} BGRA -> H.264 (avc1)");
 
     unsafe {
@@ -215,7 +215,7 @@ fn main() {
             &mut px,
         );
         if r != 0 || px.is_null() {
-            eprintln!("ERRO: CVPixelBufferCreate devolveu {r}");
+            eprintln!("ERROR: CVPixelBufferCreate returned {r}");
             std::process::exit(1);
         }
         CVPixelBufferLockBaseAddress(px, 0);
@@ -235,8 +235,8 @@ fn main() {
 
         // ---- the session. Null specification means "let VideoToolbox
         // ---- choose", which on Apple Silicon is the hardware encoder.
-        let mut saida = Saida::default();
-        let mut sessao: *mut c_void = std::ptr::null_mut();
+        let mut out = Output::default();
+        let mut session: *mut c_void = std::ptr::null_mut();
         let st = VTCompressionSessionCreate(
             std::ptr::null(),
             w,
@@ -245,21 +245,21 @@ fn main() {
             std::ptr::null(),
             std::ptr::null(),
             std::ptr::null(),
-            Some(pronto),
-            &mut saida as *mut Saida as *mut c_void,
-            &mut sessao,
+            Some(on_encoded),
+            &mut out as *mut Output as *mut c_void,
+            &mut session,
         );
-        if st != 0 || sessao.is_null() {
-            eprintln!("ERRO: VTCompressionSessionCreate devolveu OSStatus {st}");
+        if st != 0 || session.is_null() {
+            eprintln!("ERROR: VTCompressionSessionCreate returned OSStatus {st}");
             CVPixelBufferRelease(px);
             std::process::exit(1);
         }
-        println!("  VTCompressionSession: criada");
+        println!("  VTCompressionSession: created");
 
         let pts = CMTime { value: 0, timescale: 60, flags: K_CMTIME_FLAGS_VALID, epoch: 0 };
         let dur = CMTime { value: 1, timescale: 60, flags: K_CMTIME_FLAGS_VALID, epoch: 0 };
         let st = VTCompressionSessionEncodeFrame(
-            sessao,
+            session,
             px,
             pts,
             dur,
@@ -268,29 +268,29 @@ fn main() {
             std::ptr::null_mut(),
         );
         if st != 0 {
-            eprintln!("ERRO: VTCompressionSessionEncodeFrame devolveu OSStatus {st}");
-            VTCompressionSessionInvalidate(sessao);
+            eprintln!("ERROR: VTCompressionSessionEncodeFrame returned OSStatus {st}");
+            VTCompressionSessionInvalidate(session);
             CVPixelBufferRelease(px);
             std::process::exit(1);
         }
 
         // Blocks until every callback has run, which is what makes the
-        // `&mut saida` above sound.
-        let fim = CMTime { value: i64::MAX, timescale: 60, flags: 0, epoch: 0 };
-        VTCompressionSessionCompleteFrames(sessao, fim);
-        VTCompressionSessionInvalidate(sessao);
+        // `&mut out` above sound.
+        let until_end = CMTime { value: i64::MAX, timescale: 60, flags: 0, epoch: 0 };
+        VTCompressionSessionCompleteFrames(session, until_end);
+        VTCompressionSessionInvalidate(session);
         CVPixelBufferRelease(px);
 
-        println!("  callback: {} chamada(s), OSStatus {}", saida.chamadas, saida.status);
-        if saida.bytes.is_empty() {
-            eprintln!("ERRO: nenhum byte codificado");
+        println!("  callback: {} call(s), OSStatus {}", out.calls, out.status);
+        if out.bytes.is_empty() {
+            eprintln!("ERROR: not a single encoded byte");
             std::process::exit(1);
         }
-        println!("  access unit: {} bytes", saida.bytes.len());
+        println!("  access unit: {} bytes", out.bytes.len());
 
         // AVCC: each NAL unit is prefixed by its 4-byte big-endian length.
         // Walking it proves we got real H.264 and not an opaque blob.
-        let b = &saida.bytes;
+        let b = &out.bytes;
         let mut i = 0usize;
         let mut n = 0;
         while i + 4 <= b.len() && n < 6 {
@@ -300,7 +300,7 @@ fn main() {
             }
             let nal = b[i + 4] & 0x1f;
             println!(
-                "  nal {n}: tipo {nal} ({}), {len} bytes",
+                "  nal {n}: type {nal} ({}), {len} bytes",
                 match nal {
                     1 => "non-IDR slice",
                     5 => "IDR slice",
@@ -314,6 +314,6 @@ fn main() {
             n += 1;
         }
         println!();
-        println!("  => encode H.264 por hardware, do Rust, sem FFmpeg e sem crate de midia");
+        println!("  => hardware H.264 encode, from Rust, with no FFmpeg and no media crate");
     }
 }

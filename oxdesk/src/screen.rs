@@ -500,8 +500,8 @@ mod tests {
             vec!["/v:pc.local:3389", "+clipboard"]
         );
         assert_eq!(
-            render(&args, "pc.local", 3389, Some("user")),
-            vec!["/v:pc.local:3389", "/u:user", "+clipboard"]
+            render(&args, "pc.local", 3389, Some("alice")),
+            vec!["/v:pc.local:3389", "/u:alice", "+clipboard"]
         );
     }
 

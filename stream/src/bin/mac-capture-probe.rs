@@ -7,14 +7,14 @@
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!("oxdesk-probe-mac-capture so roda no macOS: ScreenCaptureKit so existe la");
+    eprintln!("oxdesk-probe-mac-capture only runs on macOS: ScreenCaptureKit only exists there");
     std::process::exit(1);
 }
 
 #[cfg(target_os = "macos")]
 fn main() {
     if let Err(e) = oxdesk_stream::mac_native::probe() {
-        eprintln!("ERRO: {e}");
+        eprintln!("ERROR: {e}");
         std::process::exit(1);
     }
 }
