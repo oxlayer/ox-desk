@@ -10,31 +10,55 @@
 //!
 //!   cargo run --release --bin v1-record -- [frames] [connector]
 
-use std::cell::RefCell;
-use std::io::Write;
-use std::rc::Rc;
-use std::time::{Duration, Instant};
+// The whole file is Linux -- one `cfg` over the group, not one per line.
+// The stub `main` below is the only thing that survives on another target.
+#[cfg(target_os = "linux")]
+use {
+    std::cell::RefCell,
+    std::io::Write,
+    std::rc::Rc,
+    std::time::{Duration, Instant},
 
-use cudarc::driver::CudaContext;
-use dbus::blocking::Connection;
-use dbus::message::MatchRule;
-use dbus::Path;
-use moq_nvenc::sys::nvEncodeAPI::{
-    NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID, NV_ENC_PARAMS_RC_MODE, NV_ENC_PRESET_P4_GUID, NV_ENC_TUNING_INFO,
+    cudarc::driver::CudaContext,
+    dbus::blocking::Connection,
+    dbus::message::MatchRule,
+    dbus::Path,
+    moq_nvenc::sys::nvEncodeAPI::{
+        NV_ENC_BUFFER_FORMAT, NV_ENC_CODEC_H264_GUID, NV_ENC_PARAMS_RC_MODE,
+        NV_ENC_PRESET_P4_GUID, NV_ENC_TUNING_INFO,
+    },
+    moq_nvenc::{EncodePictureParams, Encoder, EncoderInitParams},
+
+    pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType},
+    pipewire::spa::param::video::VideoFormat,
+    pipewire::spa::pod::{self, Pod},
+    pipewire::spa::utils::{Direction, SpaTypes},
+    pipewire::stream::{Stream, StreamFlags},
 };
-use moq_nvenc::{EncodePictureParams, Encoder, EncoderInitParams};
-use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
-use pipewire::spa::param::video::VideoFormat;
-use pipewire::spa::pod::{self, Pod};
-use pipewire::spa::utils::{Direction, SpaTypes};
-use pipewire::stream::{Stream, StreamFlags};
 
+#[cfg(target_os = "linux")]
 const SC: &str = "org.gnome.Mutter.ScreenCast";
+#[cfg(target_os = "linux")]
 const SC_OBJ: &str = "/org/gnome/Mutter/ScreenCast";
+#[cfg(target_os = "linux")]
 const SESSION: &str = "org.gnome.Mutter.ScreenCast.Session";
+#[cfg(target_os = "linux")]
 const STREAM: &str = "org.gnome.Mutter.ScreenCast.Stream";
+#[cfg(target_os = "linux")]
 const T: Duration = Duration::from_secs(10);
 
+// Only on Linux, and the stub says so instead of the crate failing to
+// build: it captures through Mutter and PipeWire, which do not exist on
+// Windows. Same shape as `kvm.rs`, which solved this first -- and it is
+// what lets check.sh cross-build the WHOLE crate instead of a hand-picked
+// list of binaries.
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("oxdesk-record so roda no Linux: ele captura pelo Mutter/PipeWire, que so existem la");
+    std::process::exit(1);
+}
+
+#[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let target: u64 = a.first().and_then(|v| v.parse().ok()).unwrap_or(180);
