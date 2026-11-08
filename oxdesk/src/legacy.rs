@@ -47,6 +47,27 @@ pub fn apply(moves: &[(PathBuf, PathBuf)]) -> Vec<String> {
     done
 }
 
+/// Values inside `config.toml` that name the old programs. Replaced as
+/// whole quoted values, so comments and anything else stay as written.
+const CONFIG_VALUES: &[(&str, &str)] = &[
+    ("kind = \"logistream\"", "kind = \"oxdesk-stream\""),
+    ("\"logid.service\"", "\"oxdesk.service\""),
+    ("\"logi-ota.timer\"", "\"oxdesk-ota.timer\""),
+    ("\"ai.logi.logid\"", "\"app.oxdesk.daemon\""),
+    ("\"ai.logi.logistream-host\"", "\"app.oxdesk.host\""),
+    ("\"ai.logi.ota\"", "\"app.oxdesk.ota\""),
+    ("\\\\logid\\\\logid-agent.exe", "\\\\oxdesk\\\\oxdesk-agent.exe"),
+];
+
+/// The config text with the old values replaced, or `None` if nothing changed.
+pub fn rewrite_config(text: &str) -> Option<String> {
+    let mut out = text.to_string();
+    for (old, new) in CONFIG_VALUES {
+        out = out.replace(old, new);
+    }
+    (out != text).then_some(out)
+}
+
 /// The real run: this machine's config and cache bases.
 pub fn migrate() -> Vec<String> {
     let config_dir = crate::sys::config_dir();
@@ -58,7 +79,19 @@ pub fn migrate() -> Vec<String> {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
     };
-    apply(&plan(config_base, cache_base.as_deref()))
+    let mut log = apply(&plan(config_base, cache_base.as_deref()));
+
+    // The values, after the move: a backup first, then the new text.
+    let cfg = config_dir.join("config.toml");
+    if let Some(new) = std::fs::read_to_string(&cfg).ok().as_deref().and_then(rewrite_config) {
+        let backup = config_dir.join("config.toml.before-oxdesk");
+        let r = std::fs::copy(&cfg, &backup).and_then(|_| std::fs::write(&cfg, new));
+        log.push(match r {
+            Ok(()) => format!("rewrote the old program names in {} (backup {})", cfg.display(), backup.display()),
+            Err(e) => format!("could not rewrite {}: {e}", cfg.display()),
+        });
+    }
+    log
 }
 
 #[cfg(test)]
@@ -99,6 +132,26 @@ mod tests {
         // Idempotent: nothing left to do.
         assert!(apply(&plan(&base.join("cfg"), Some(&base.join("cache")))).is_empty());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rewrites_only_the_old_values_in_the_config() {
+        let old = concat!(
+            "# Config do logid NESTE MAC.\n",
+            "units = [\"logid.service\"]\n",
+            "agent = \"%LOCALAPPDATA%\\\\logid\\\\logid-agent.exe\"\n",
+            "[hosts.screen]\n  kind = \"logistream\"\n",
+            "units = [\"ai.logi.logid\"]\n",
+        );
+        let new = rewrite_config(old).expect("changed");
+        assert!(new.contains("units = [\"oxdesk.service\"]"), "{new}");
+        assert!(new.contains("agent = \"%LOCALAPPDATA%\\\\oxdesk\\\\oxdesk-agent.exe\""), "{new}");
+        assert!(new.contains("  kind = \"oxdesk-stream\""), "{new}");
+        assert!(new.contains("units = [\"app.oxdesk.daemon\"]"), "{new}");
+        assert!(new.starts_with("# Config do logid NESTE MAC."), "comments are not touched");
+        assert_eq!(rewrite_config(&new), None, "idempotent");
+        // The result must still be a valid config for the new code.
+        assert!(!new.contains("logistream\"\n  "), "{new}");
     }
 
     #[test]

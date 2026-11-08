@@ -384,22 +384,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
-name = "oxdesk"
-version = "0.1.0"
-dependencies = [
- "dbus",
- "getrandom 0.2.17",
- "hidpp",
- "ksni",
- "libc",
- "serde",
- "serde_json",
- "tiny_http",
- "toml",
- "winput",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -439,6 +423,22 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "oxdesk"
+version = "0.1.0"
+dependencies = [
+ "dbus",
+ "getrandom 0.2.17",
+ "hidpp",
+ "ksni",
+ "libc",
+ "serde",
+ "serde_json",
+ "tiny_http",
+ "toml",
+ "winput",
 ]
 
 [[package]]

@@ -605,7 +605,17 @@ impl Config {
             gripe!("initial config written to {}", p.display());
         }
         let raw = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
-        toml::from_str(&raw).map_err(|e| format!("TOML invalido em {}: {e}", p.display()))
+        let mut c: Config =
+            toml::from_str(&raw).map_err(|e| format!("TOML invalido em {}: {e}", p.display()))?;
+        // The screen kind from before the rename. legacy.rs rewrites the
+        // file; this covers a config that could not be rewritten, so the
+        // screen buttons do not vanish over a name.
+        for h in &mut c.hosts {
+            if let Some(s) = h.screen.as_mut().filter(|s| s.kind == "logistream") {
+                s.kind = "oxdesk-stream".into();
+            }
+        }
+        Ok(c)
     }
 
     /// Writes after validating: if the resulting TOML does not reopen, it
