@@ -236,29 +236,42 @@ Written down so nobody repeats the search:
 - **No private keys and no tailnet names committed.** Only the two public
   keys of Blocker 1.
 
-## History: rotate, do not rewrite
+## History: rotated first, then squashed
 
-A force-push to clean history was on the table. It is the wrong tool for
-what was found.
+This section argued against rewriting, and the argument lost on a point of
+fact. Both halves are kept, because the reasoning is the useful part.
 
-The only credential in the repo is the keychain password, and it is
-**rotatable**: create the keychain with a fresh random value, stop
-hardcoding it, and the published string becomes worthless. Rotation makes
-history harmless without touching it. A rewrite makes history *different*,
-and that costs:
+**The original position.** The only credential found was rotatable, so
+rotation made every published copy worthless without touching history —
+and a rewrite would turn each commit hash the specs cite into a dead
+reference, in a repo where the history is documentation.
 
-- The specs cite commit hashes as evidence — `git show 9b226cf^` in
-  [[017-product]], `aa6d4ed` and `2fc748b` in [[013-ci-cd]]. A rewrite
-  turns each citation into a dead reference, and here history is
-  documentation.
-- A rewrite un-publishes nothing. Anything that ever left this machine is
-  gone already; the decision is about future exposure.
-- Author emails become public either way, unless those are rewritten too —
-  a separate and louder change.
+**What changed it.** Two things, in order:
 
-**Decision: rotate the password, parameterize the key, keep the history.**
-If a real scanner finds something that cannot be rotated, rewriting is
-still available, and then it is the right tool.
+1. **The rotation happened** (step 3), so nothing published in the old
+   commits still works: the keychain password is a new random value and
+   the SSH public key never granted anything by being published.
+2. **The citations survive anyway.** Measured before doing it:
+   `9b226cf`, `aa6d4ed` and `2fc748b` — the hashes cited in
+   [[017-product]] and [[013-ci-cd]] — are all **ancestors of the
+   `v0.2.8` tag**, and there are eleven release tags from `v0.1.0` to
+   `v0.2.8`. Git keeps everything a tag reaches, so `git show 9b226cf^`
+   still resolves after the branch is rewritten.
+
+So the squash is narrower than it sounds: **it cleans the branch, not the
+history.** Anyone who wants the old commits can still walk them from a
+tag, which is also why it does not qualify as erasure — and if erasure
+were the goal, the tags would have to go too, and with them the
+provenance of every published Release. That trade was not taken.
+
+**What it does cost, and what was done about it:** the commit messages.
+A squash collapses them, and today's carried measurements that were not
+anywhere else. Those were moved into documents first —
+[[../.claude/rules/windows-uploads]] for the upload failure and its four
+dead hypotheses, [[019-one-onboarding]] and [[020-native-mac]] for the
+Mac, [[../.claude/rules/verify-what-arrived]] for the pipe that ate three
+exit codes. A finding that lives only in a commit message is one rebase
+away from gone.
 
 ## Adversarial review
 

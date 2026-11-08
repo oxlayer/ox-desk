@@ -105,8 +105,8 @@ This file used to be a 901-line runbook about a Deskflow-based setup that
 no longer exists, with IP addresses, a MAC address and three machines'
 hostnames in it. Every lesson in it already lives in the specs above —
 Deskflow alone is discussed in eight of them — so it was deleted rather
-than anonymized. `git show HEAD:README.md` on any commit before 2026-11-08
-still has it.
+than anonymized. It is still there in the history the release tags reach:
+`git show v0.2.8:README.md`.
 
 ## Contributing
 

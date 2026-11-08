@@ -40,6 +40,7 @@ secrets in source, English only.
 11. [Nothing shipped identifies a person, a machine or a household](.claude/rules/no-personal-data.md)
 12. [No credential and no authorized identity lives in source](.claude/rules/no-secrets-in-source.md)
 13. [Every word a contributor reads is English](.claude/rules/english-only.md)
+14. [Uploading to Windows: one cause can look like three failures](.claude/rules/windows-uploads.md)
 
 ## Skills (procedures)
 
