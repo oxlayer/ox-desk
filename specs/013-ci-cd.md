@@ -102,8 +102,20 @@ in `target/`.
   already left `oxdesk-kvm` out of a deploy; merging the two lists
   is deferred until the deploy starts consuming the packages.
 - **The Mac host and view link against brew's ffmpeg.** The run used
-  9.0.2. The package only runs with the same major installed on the MacBook, which
-  was not checked.
+  9.0.2, and the package only runs with the same major installed on the
+  MacBook. That IS checked now, on both ends: `FFMPEG_SONAME` in
+  `build-binaries.sh` breaks the build if the major moves, and `check_links`
+  in the OTA refuses a package whose `/opt/...` paths do not exist on the
+  machine. What remains is that the MacBook **cannot hold the `ffmpeg@7`
+  keg**: macOS 14 is Tier 3 for Homebrew, there is no bottle, and building
+  from source fails there (`make: *** [frameworkinstallapps] Error 2`,
+  measured 2026-11-08). So `opt/ffmpeg@7` is an alias to the same keg as
+  `opt/ffmpeg`, anything built there records the UNVERSIONED path, and the
+  package path rewrites the recorded paths to the versioned prefix with
+  `install_name_tool` — only after measuring that both prefixes are the same
+  inode, and refusing if they are not. A package has to pin the versioned
+  prefix because that is what makes it installable on a machine that has only
+  the keg, which is every runner and the next Mac.
 - **Tests run only on Linux**, and for `oxdesk-stream` only `--lib`. On the Mac
   it would cost ten times more per minute.
 - **The conversion budget does not block CI.**
@@ -159,6 +171,48 @@ That is 50 to 70 code pushes per month. The Linux job barely gains
 from the cache: the tests recompile in release. The Mac is more than two thirds
 of the bill. If the budget gets tight, the first cut is taking it off
 push and leaving it on tag and `workflow_dispatch`.
+
+### When the minutes run out (2026-11-08)
+
+The allowance ended between 02:51 and 03:10, and from then on **every job
+fails in 2 to 3 seconds**: `runner_id: 0`, no runner name, zero steps, no
+log. Worth telling apart from the capacity case above, which *waits* and is
+cancelled after 15 minutes — here nothing is ever scheduled.
+
+What rules out our own code: the workflow file is byte-identical between the
+run that succeeded at 02:37 and the one that failed at 03:10 on the same
+branch (`git diff aa6d4ed 2fc748b -- .github/workflows/`), and `gh run rerun`
+reproduces it on attempt 2. Reading the cause needs `admin:org` on the
+billing endpoint, which the `gh` token here does not carry; the page is
+`github.com/organizations/oxlayer/settings/billing`.
+
+The first cut named in **Cost** above — taking the Mac off `push` and leaving
+it on tag and `workflow_dispatch` — is still the cheapest lever, and it is a
+job-level `if`, not a new workflow.
+
+### Publishing a Release without CI
+
+The fleet is kept current by `deploy.sh`, so a dead CI blocks only OTA — and
+OTA is what the Mac has when it is away from home. The release job is a
+handful of commands, and they run here:
+
+```bash
+bash scripts/build-binaries.sh linux
+bash scripts/build-binaries.sh windows
+# No cross-compile to macOS, and the copy over there has no .git, so the
+# stamp travels in the environment:
+ssh mac 'cd ~/oxdesk && OXDESK_BUILD=<hash> OXDESK_BUILD_N=<n> bash scripts/build-binaries.sh mac'
+scp mac:oxdesk/dist/oxdesk-mac-*.tar.gz dist/
+# In a directory holding ONLY the three packages of THIS build: `dist/` keeps
+# old ones, and the release job requires exactly three.
+sha256sum *.tar.gz > SHA256SUMS
+gh release create v0.2.8 *.tar.gz SHA256SUMS --verify-tag --generate-notes
+```
+
+Done this way for **v0.2.8** (#229 `b5ffb99`), after which the three machines
+answered `igual: em dia no build #229 b5ffb99`. The packages are unsigned,
+exactly like CI's: the Mac signs with its local identity after downloading,
+and the Windows key never leaves the LAN ([[008-security]]).
 
 ## See also
 

@@ -52,6 +52,14 @@ WIN=x86_64-pc-windows-gnu
 FFMPEG_FORMULA="ffmpeg@7"
 FFMPEG_PREFIXO="/opt/homebrew/opt/$FFMPEG_FORMULA"
 FFMPEG_SONAME="libavcodec.61.dylib"
+# The script CHECKS this prefix, so it also SETS it: relying on the caller
+# leaves `bash scripts/build-binaries.sh mac` by hand behaving differently
+# from CI, and the header of this file exists because the packaging logic
+# cannot live only in a YAML nobody runs locally.
+if [ "$ALVO" = mac ]; then
+  export PKG_CONFIG_PATH="$FFMPEG_PREFIXO/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+fi
+
 case "$ALVO" in
   linux)
     PACOTE="oxdesk-linux-x86_64"
@@ -86,6 +94,48 @@ ota/target/release/oxdesk-ota"
     ;;
   *) echo "unknown target: $ALVO" >&2; exit 2 ;;
 esac
+
+# The MacBook cannot hold the `ffmpeg@7` keg: macOS 14 is Tier 3 for
+# Homebrew, there is no bottle, and building it from source fails there
+# (measured: `make: *** [frameworkinstallapps] Error 2`). So on that machine
+# `opt/ffmpeg@7` is an ALIAS to the same keg as `opt/ffmpeg`, the dylibs
+# carry the UNVERSIONED install_name, and every binary built there records
+# it -- no PKG_CONFIG_PATH changes that, because the path comes from the
+# dylib and not from pkg-config. `deploy.sh` documents the same thing and
+# tolerates it, because for a binary that stays on THAT machine both paths
+# resolve.
+#
+# A package is different: it has to pin the versioned prefix, which is what
+# makes it installable on a machine that has only the keg -- a CI runner, or
+# the next Mac. So the recorded paths are rewritten on the COPY that goes
+# into the package, and only after measuring that both prefixes are the SAME
+# FILE. If they ever stop being, this refuses: a package that lies about
+# what it was linked against is worse than one that fails to build.
+fixar_prefixo_ffmpeg() {
+  [ "$ALVO" = mac ] || return 0
+  local f="$1" nome="$2" d novo a b
+  # Both prefixes come from the ONE declaration: `@7` is the declared one
+  # and `${FFMPEG_PREFIXO%@*}` is the same formula unversioned. Deriving
+  # them beats writing the paths twice, and beats a substitution with
+  # escaped slashes -- which is what broke here first, putting a literal
+  # `opt\/ffmpeg@7\/` in the message.
+  local sem="${FFMPEG_PREFIXO%@*}"
+  for d in $(otool -L "$f" | grep -o "$sem/[^ ]*"); do
+    novo="$FFMPEG_PREFIXO/${d#"$sem"/}"
+    a=$(stat -f %i "$d" 2>/dev/null)
+    b=$(stat -f %i "$novo" 2>/dev/null)
+    if [ -z "$a" ] || [ -z "$b" ]; then
+      falha "$nome: $novo does not exist -- install the $FFMPEG_FORMULA keg, or fix the alias"
+      return 1
+    fi
+    if [ "$a" != "$b" ]; then
+      falha "$nome: $d and $novo are DIFFERENT files; not rewriting the package's linkage"
+      return 1
+    fi
+    install_name_tool -change "$d" "$novo" "$f" || { falha "$nome: install_name_tool on $d"; return 1; }
+    echo "  $nome: $d -> $novo (same keg, inode $a)"
+  done
+}
 
 compilar() {
   case "$ALVO" in
@@ -182,13 +232,21 @@ LINHAS=""
 while IFS= read -r b; do
   nome=$(basename "$b")
   [ -f "$b" ] || { falha "$nome does not exist at $b"; continue; }
-  tipo=$(file -b "$b")
+  # Copy FIRST, then check: `fixar_prefixo_ffmpeg` edits the copy, so
+  # checking and hashing the original would describe a file that is not the
+  # one in the package. The build output in target/ is never touched.
+  cp "$b" "$SAIDA/" || { falha "$nome: copy failed"; continue; }
+  d="$SAIDA/$nome"
+  tipo=$(file -b "$d")
   printf '%s' "$tipo" | grep -qE "$FORMATO" || falha "$nome: unexpected format: $tipo"
-  bytes=$(wc -c < "$b" | tr -d ' ')
+  fixar_prefixo_ffmpeg "$d" "$nome"
+  # After the rewrite, not before: `install_name_tool` writing a longer path
+  # can change the file's size, and a table that reports the size of a file
+  # nobody ships is a table that lies.
+  bytes=$(wc -c < "$d" | tr -d ' ')
   [ "$bytes" -gt 100000 ] || falha "$nome: only $bytes bytes"
-  conferir_dependencias "$b" "$nome"
-  cp "$b" "$SAIDA/" || falha "$nome: copy failed"
-  soma=$(shasum -a 256 "$b" | cut -d' ' -f1)
+  conferir_dependencias "$d" "$nome"
+  soma=$(shasum -a 256 "$d" | cut -d' ' -f1)
   printf '%-24s %12s  %s\n' "$nome" "$bytes" "$soma"
   printf '%s  %s\n' "$soma" "$nome" >> "$SAIDA/SHA256SUMS"
   LINHAS="$LINHAS| \`$nome\` | $bytes | \`${soma:0:16}\` |
