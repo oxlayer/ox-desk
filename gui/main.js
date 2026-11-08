@@ -396,9 +396,9 @@ async function checkSetup() {
   // If the daemon does not answer, open nothing: a wizard that shows up
   // because the measurement failed is worse than no wizard.
   const d = await getJson('/api/setup', 90000);
-  if (!d || !d.passos) return;
-  const local = d.passos.filter(
-    (p) => p.essencial && p.id !== 'pares' && p.estado !== 'ok' && p.estado !== 'fora'
+  if (!d || !d.steps) return;
+  const local = d.steps.filter(
+    (p) => p.essential && p.id !== 'peers' && p.state !== 'ok' && p.state !== 'not_applicable'
   );
   if (!local.length) return;
   console.log(`setup: missing ${local.map((p) => p.id).join(', ')} -- opening the setup page`);
@@ -447,7 +447,7 @@ if (!app.requestSingleInstanceLock()) {
     // for it before opening the window would make the app look frozen
     // every time. The window is born on the panel and switches if needed.
     //
-    // And `pares` does NOT count for opening on its own. It is about the
+    // And `peers` does NOT count for opening on its own. It is about the
     // OTHER machines: with the MacBook asleep, a perfectly set-up machine
     // would land on the setup page at every login -- and by the second
     // time the person has learned to close it without reading. A real

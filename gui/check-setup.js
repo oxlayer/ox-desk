@@ -13,8 +13,8 @@
 // the Electron binary runs as plain Node and `require('electron')`
 // returns undefined.
 //
-// The output markers (`ESTADO`, `APOS_CLICAR`, `ESTREITO`, `ERROS`) are
-// kept as they are: the docs say "it passes when it prints `ERROS []`".
+// The output markers (`STATE`, `AFTER_CLICK`, `NARROW`, `ERRORS`) are what
+// the docs tell people to look for: it passes when it prints `ERRORS []`.
 const { app, BrowserWindow } = require('electron');
 const http = require('node:http');
 const errors = [];
@@ -43,40 +43,58 @@ app.whenReady().then(async () => {
   // the daemon measured with what the screen shows. Without that it would
   // say "10 lines, great" about ten wrong lines.
   const api = await getJson('/api/setup');
-  if (!api) { console.log('ERROS ["/api/setup did not respond"]'); app.exit(1); return; }
+  if (!api) { console.log('ERRORS ["/api/setup did not respond"]'); app.exit(1); return; }
 
   await win.loadURL('http://127.0.0.1:8787/setup');
   // The daemon-side measurement opens SSH to every peer: it can take
   // seconds, and the page only draws when it comes back.
   await new Promise((r) => setTimeout(r, 45000));
 
+  // Unfold every finished phase FIRST. A folded phase legitimately hides
+  // its rows, so counting them against the API without this would report a
+  // defect that is the feature working.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll('#list li.phase.folded')].forEach(h => h.click()); true`);
+  await new Promise((r) => setTimeout(r, 400));
+
   const state = () => win.webContents.executeJavaScript(`(() => ({
-    title: document.querySelector('#maquina').textContent,
+    title: document.querySelector('#machine').textContent,
     lead: document.querySelector('#lead').textContent,
-    rows: document.querySelectorAll('#lista li').length,
-    ids: [...document.querySelectorAll('#lista li')].map(li =>
-      li.querySelector('.tit .n') ? li.querySelector('.tit .n').textContent : '?'),
-    empty: [...document.querySelectorAll('#lista li .tit .d')].filter(d => !d.textContent.trim()).length,
-    ok: document.querySelectorAll('#lista li.ok').length,
-    now: document.querySelectorAll('#lista li.agora').length,
-    open: document.querySelectorAll('#lista li.aberto').length,
-    buttons: document.querySelectorAll('#lista button').length,
-    bar: document.querySelector('#barra').style.width,
-    ready: document.querySelector('#prontos').textContent,
+    rows: document.querySelectorAll('#list li.step').length,
+    phases: document.querySelectorAll('#list li.phase').length,
+    folded: document.querySelectorAll('#list li.phase.folded').length,
+    other: [...document.querySelectorAll('#list li.phase h2')]
+      .filter(h => h.textContent === 'Other').length,
+    ids: [...document.querySelectorAll('#list li.step')].map(li => li.dataset.id),
+    empty: [...document.querySelectorAll('#list li.step .tit .state')]
+      .filter(d => !d.textContent.trim()).length,
+    now: document.querySelectorAll('#list li.now').length,
+    open: document.querySelectorAll('#list li.open').length,
+    buttons: document.querySelectorAll('#list button').length,
+    bar: document.querySelector('#barfill').style.width,
+    ready: document.querySelector('#done').textContent,
     total: document.querySelector('#total').textContent,
-    time: document.querySelector('#hora').textContent,
+    time: document.querySelector('#clock').textContent,
     horizontalScroll: document.documentElement.scrollWidth > window.innerWidth + 1
   }))()`);
 
   const r = await state();
-  console.log('ESTADO ' + JSON.stringify(r));
+  console.log('STATE ' + JSON.stringify(r));
 
   // --- checks against the API ------------------------------------------
-  const expected = api.passos.length;
+  const expected = api.steps.length;
   if (r.rows !== expected) errors.push(`the page drew ${r.rows} steps and the API sent ${expected}`);
-  if (r.empty) errors.push(`${r.empty} step(s) with no detail on screen`);
-  if (Number(r.ready) !== api.resumo.prontos) errors.push('ready counter diverges');
-  if (Number(r.total) !== api.resumo.total) errors.push('total counter diverges');
+  if (r.empty) errors.push(`${r.empty} step(s) with no state word on screen`);
+  if (Number(r.ready) !== api.summary.done) errors.push('ready counter diverges');
+  if (Number(r.total) !== api.summary.total) errors.push('total counter diverges');
+  // Every step the daemon measures belongs to a named phase. A step landing
+  // in "Other" is not a crash and not visible as one -- it is a row sitting
+  // under a heading that tells the person nothing, which is how Windows'
+  // `screen-task` went unnoticed. Catch it here.
+  if (r.other) errors.push('a step fell into the "Other" phase: add its id to PHASES in setup.html');
+  const drawn = new Set(r.ids);
+  const unseen = api.steps.map((p) => p.id).filter((id) => !drawn.has(id));
+  if (unseen.length) errors.push('the API sent steps the page never drew: ' + unseen.join(', '));
   // The time is only a plausibility check, NOT equality: the test measures
   // once and the page measures again seconds later, so the clocks rightly
   // differ. The first version of this line compared the two and reported a
@@ -87,20 +105,20 @@ app.whenReady().then(async () => {
 
   // A pending step with NO highlight and no action is a dead-end screen:
   // the person reads "this is missing" and has nothing to click.
-  if (api.resumo.proximo && r.now !== 1) errors.push(`the API points to ${api.resumo.proximo} and the screen highlighted ${r.now}`);
-  if (api.resumo.proximo && r.open !== 1) errors.push('the next step did not open by itself');
-  if (api.resumo.proximo && !r.buttons) errors.push('pending step open and no button on screen');
+  if (api.summary.next && r.now !== 1) errors.push(`the API points to ${api.summary.next} and the screen highlighted ${r.now}`);
+  if (api.summary.next && r.open !== 1) errors.push('the next step did not open by itself');
+  if (api.summary.next && !r.buttons) errors.push('pending step open and no button on screen');
   if (r.horizontalScroll) errors.push('horizontal scroll at full width');
 
   // --- open and close by hand ------------------------------------------
   // Opening a step by hand must CLOSE the previous one: two bodies open at
   // once push the list and take the step the wizard was pointing at out of
   // view.
-  await win.webContents.executeJavaScript(`document.querySelector('#lista li .head').click()`);
+  await win.webContents.executeJavaScript(`document.querySelector('#list li.step .head').click()`);
   await new Promise((r) => setTimeout(r, 300));
   const clicked = await win.webContents.executeJavaScript(
-    `document.querySelectorAll('#lista li.aberto').length`);
-  console.log('APOS_CLICAR ' + JSON.stringify({ open: clicked }));
+    `document.querySelectorAll('#list li.open').length`);
+  console.log('AFTER_CLICK ' + JSON.stringify({ open: clicked }));
   if (clicked > 1) errors.push(`${clicked} steps open at the same time`);
 
   // --- narrow window ----------------------------------------------------
@@ -110,9 +128,9 @@ app.whenReady().then(async () => {
     horizontalScroll: document.documentElement.scrollWidth > window.innerWidth + 1,
     width: Math.round(document.querySelector('.wrap').getBoundingClientRect().width)
   }))()`);
-  console.log('ESTREITO ' + JSON.stringify(narrow));
+  console.log('NARROW ' + JSON.stringify(narrow));
   if (narrow.horizontalScroll) errors.push('horizontal scroll at 420 px');
 
-  console.log('ERROS ' + JSON.stringify(errors));
+  console.log('ERRORS ' + JSON.stringify(errors));
   app.exit(errors.length ? 1 : 0);
 });

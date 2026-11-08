@@ -39,7 +39,7 @@ pub fn run_timed(prog: &str, args: &[&str], seconds: u64) -> Result<String, Stri
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("{prog} passou de {seconds}s e foi morto"));
+                return Err(format!("{prog} ran past {seconds}s and was killed"));
             }
             Err(e) => return Err(format!("{prog}: {e}")),
         }
@@ -55,7 +55,7 @@ pub fn run_timed(prog: &str, args: &[&str], seconds: u64) -> Result<String, Stri
         .map(str::trim)
         .find(|l| !l.is_empty())
         .or_else(|| text.lines().map(str::trim).find(|l| !l.is_empty()))
-        .unwrap_or("falhou sem mensagem");
+        .unwrap_or("failed with no message");
     Err(line.to_string())
 }
 
@@ -65,8 +65,8 @@ pub fn this_machine_config(cfg: &Config) -> Check {
     let locals: Vec<&str> =
         cfg.hosts.iter().filter(|h| h.is_local()).map(|h| h.name.as_str()).collect();
     match locals.len() {
-        1 => Check::ok("config", format!("{} é esta máquina ({})", locals[0], p.display())),
-        0 => Check::missing("config", format!("nenhum host marcado como local em {}", p.display())),
+        1 => Check::ok("config", format!("{} is this machine ({})", locals[0], p.display())),
+        0 => Check::missing("config", format!("no host marked as local in {}", p.display())),
         // Two "local" hosts make the panel, the border and input routing
         // disagree about who is "here", and each picks the first one it
         // finds -- which is not necessarily the same one.
@@ -82,7 +82,7 @@ pub fn this_machine_config(cfg: &Config) -> Check {
 pub fn peers(cfg: &Config) -> Check {
     let targets: Vec<&crate::config::HostCfg> = cfg.hosts.iter().filter(|h| !h.is_local()).collect();
     if targets.is_empty() {
-        return Check::not_applicable("pares", "nenhum outro host na config");
+        return Check::not_applicable("peers", "no other host in the config");
     }
     let results: Vec<(String, Result<String, String>)> = std::thread::scope(|s| {
         let hs: Vec<_> = targets
@@ -105,9 +105,9 @@ pub fn peers(cfg: &Config) -> Check {
         .collect();
 
     if bad.is_empty() {
-        Check::ok("pares", format!("{} de {} alcançáveis", results.len(), targets.len()))
+        Check::ok("peers", format!("{} of {} reachable", results.len(), targets.len()))
     } else {
-        Check::missing("pares", bad.join("; "))
+        Check::missing("peers", bad.join("; "))
     }
 }
 
@@ -129,33 +129,64 @@ pub fn tailscale_verdict(json: &str, app_installed: bool) -> Check {
     if app_installed {
         return Check::missing(
             ID,
-            "o app Tailscale.app está instalado: apague pelo Finder e negue o pedido de VPN",
+            "Tailscale.app is installed: delete it in Finder and deny the VPN prompt",
         );
     }
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
-        return Check::error(ID, "o `tailscale status` não devolveu JSON");
+        return Check::error(ID, "`tailscale status` did not return JSON");
     };
     let ip = v["Self"]["TailscaleIPs"][0].as_str();
     match (v["BackendState"].as_str(), ip) {
         (Some("Running"), Some(ip)) => {
             let name = v["Self"]["HostName"].as_str().unwrap_or("?");
-            Check::ok(ID, format!("no tailnet como {name} ({ip})"))
+            Check::ok(ID, format!("on the tailnet as {name} ({ip})"))
         }
-        (Some("Running"), None) => Check::error(ID, "conectado, mas sem endereço no tailnet"),
-        (Some("NeedsLogin"), _) => Check::missing(ID, "o serviço está de pé e falta o login"),
-        (Some(state), _) => Check::missing(ID, format!("estado do Tailscale: {state}")),
-        (None, _) => Check::error(ID, "o `tailscale status` não trouxe o estado"),
+        (Some("Running"), None) => Check::error(ID, "connected, but with no tailnet address"),
+        (Some("NeedsLogin"), _) => Check::missing(ID, "the service is up, the login is missing"),
+        (Some(state), _) => Check::missing(ID, format!("Tailscale state: {state}")),
+        (None, _) => Check::error(ID, "`tailscale status` reported no state"),
     }
 }
 
-/// Reads the count of present monitors that PowerShell returned.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub fn monitors_verdict(output: &str) -> Check {
-    const ID: &str = "tela-virtual";
+/// Reads a count of present monitors, from whatever counted them.
+///
+/// The id is a parameter because the same question has a different answer
+/// per OS: on Windows a machine with no monitor can grow one in software
+/// (`virtual-display`), and on macOS it cannot -- someone has to plug
+/// something in (`display`).
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+pub fn monitors_verdict(id: &str, output: &str) -> Check {
     match output.trim().parse::<u32>() {
-        Ok(0) => Check::missing(ID, "nenhum monitor presente: a tela remota não recebe quadros"),
-        Ok(n) => Check::ok(ID, format!("{n} monitor(es) presente(s)")),
-        Err(_) => Check::error(ID, "não consegui contar os monitores"),
+        Ok(0) => Check::missing(id, "no monitor present: the remote screen receives no frames"),
+        Ok(n) => Check::ok(id, format!("{n} monitor(s) present")),
+        Err(_) => Check::error(id, "could not count the monitors"),
+    }
+}
+
+/// Is there a drawable display at all?
+///
+/// Separate from [`monitors_verdict`] because the number comes from an API
+/// and not from a command's text, so there is nothing to parse -- and
+/// because the two failures are different: `err != 0` means the question
+/// could not be asked, which is [`State::Error`], never "no display".
+///
+/// Why this check exists: a MacBook whose panel broke reported **zero**
+/// active displays while every other step on the list was green. The
+/// screen host had its grant, was signed, was loaded -- and could not have
+/// served a frame, because there was no framebuffer to read. Nothing on
+/// the wizard said so. That is the silence the honesty rule is about.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn displays_verdict(id: &str, err: i32, count: u32) -> Check {
+    if err != 0 {
+        return Check::error(id, format!("CGGetActiveDisplayList: error {err}"));
+    }
+    match count {
+        0 => Check::missing(
+            id,
+            "no active display: there is no framebuffer to capture, so the screen host \
+             cannot serve a frame even with every permission granted",
+        ),
+        n => Check::ok(id, format!("{n} active display(s)")),
     }
 }
 
@@ -163,7 +194,7 @@ pub fn clipboard() -> Check {
     match crate::clip::watch_status() {
         Some((true, d)) => Check::ok("clipboard", d),
         Some((false, d)) => Check::missing("clipboard", d),
-        None => Check::error("clipboard", "a vigilância ainda não reportou nada"),
+        None => Check::error("clipboard", "the watcher has not reported anything yet"),
     }
 }
 
@@ -177,17 +208,17 @@ pub fn write_config() -> Result<String, String> {
         // has no undo: this is where the Easy-Switch channels, the grid
         // and the SSH aliases live, all written by hand.
         let bak = p.with_extension("toml.bak");
-        std::fs::copy(&p, &bak).map_err(|e| format!("copiar para {}: {e}", bak.display()))?;
+        std::fs::copy(&p, &bak).map_err(|e| format!("copy to {}: {e}", bak.display()))?;
     }
     if let Some(dir) = p.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
     std::fs::write(&p, crate::config::DEFAULT_TOML)
-        .map_err(|e| format!("gravar {}: {e}", p.display()))?;
+        .map_err(|e| format!("write {}: {e}", p.display()))?;
     // Reopen before saying it worked: a default that does not parse would
     // leave the daemon without a config on the next start.
-    Config::load().map_err(|e| format!("gravei e não reabriu: {e}"))?;
-    Ok(format!("config padrão em {} (a anterior ficou em .toml.bak)", p.display()))
+    Config::load().map_err(|e| format!("written, but it did not reopen: {e}"))?;
+    Ok(format!("default config at {} (the previous one is at .toml.bak)", p.display()))
 }
 
 /// Forces a clipboard sample and returns what it measured.
@@ -201,8 +232,8 @@ pub fn test_clipboard() -> Result<String, String> {
         // Ctrl+V.
         match crate::clip::watch_status() {
             Some((true, d)) => Ok(d),
-            Some((false, d)) => Err(format!("{d}. Reinicie o daemon para tentar de novo.")),
-            None => Err("a thread do clipboard não reportou: veja o journal do oxdesk".into()),
+            Some((false, d)) => Err(format!("{d}. Restart the daemon to try again.")),
+            None => Err("the clipboard thread did not report: check oxdesk's log".into()),
         }
     }
     #[cfg(not(target_os = "linux"))]
@@ -214,7 +245,7 @@ pub fn test_clipboard() -> Result<String, String> {
         match crate::clip::watch_status() {
             Some((true, d)) => Ok(d),
             Some((false, d)) => Err(d),
-            None => Err("a leitura não reportou nada".into()),
+            None => Err("the read reported nothing".into()),
         }
     }
 }
@@ -238,17 +269,17 @@ pub fn process_alive(name: &str) -> bool {
 
 // ---------------------------------------------------------------- OTA
 
-/// "há 12 min", "há 3 h", "há 2 dias" (pt-BR: shown on the panel).
+/// "12 min ago", "3 h ago", "2 days ago" (pt-BR: shown on the panel).
 ///
 /// `saturating_add` in the rounding: the age can arrive here as
 /// `u64::MAX` when the field was unreadable, and a bare `+ 43_200` brings
 /// the daemon down in a debug build. The test found it.
 pub fn human_age(s: u64) -> String {
     match s {
-        0..=89 => format!("há {s}s"),
-        90..=5399 => format!("há {} min", s.saturating_add(30) / 60),
-        5400..=172_799 => format!("há {} h", s.saturating_add(1800) / 3600),
-        _ => format!("há {} dias", s.saturating_add(43_200) / 86_400),
+        0..=89 => format!("{s}s ago"),
+        90..=5399 => format!("{} min ago", s.saturating_add(30) / 60),
+        5400..=172_799 => format!("{} h ago", s.saturating_add(1800) / 3600),
+        _ => format!("{} days ago", s.saturating_add(43_200) / 86_400),
     }
 }
 
@@ -264,24 +295,25 @@ pub fn human_age(s: u64) -> String {
 /// launchd `StartInterval`, scheduled task.
 pub fn ota(bin: &std::path::Path, token: &std::path::Path, clock: Result<String, String>) -> Check {
     if !bin.is_file() {
-        return Check::missing("ota", format!("{} não está instalado; rode o deploy", bin.display()));
+        return Check::missing("ota", format!("{} is not installed; run the deploy", bin.display()));
     }
     // The clock is THIS machine's configuration; the token is a
     // credential. Both can be missing at once, and reporting only one
     // hides the other: whoever reads the panel fixes what is written and
     // thinks they are done.
     //
-    // The concrete case: without a token, all three machines say "falta
-    // o token" -- and that phrase would fit a machine with no clock at
-    // all, which will never check anything even after the token arrives.
+    // The concrete case: without a token, all three machines say the
+    // token is missing -- and that phrase would fit a machine with no
+    // clock at all, which will never check anything even after the token
+    // arrives.
     // It is a masked pending item, not a diagnosis error, and that is why
     // the message now adds both.
     let (clock, clock_missing) = match clock {
         Ok(t) => (t, None),
-        Err(e) => (String::new(), Some(format!("o relógio não está de pé: {e}"))),
+        Err(e) => (String::new(), Some(format!("the timer is not up: {e}"))),
     };
     let and_also = |s: String| match &clock_missing {
-        Some(r) => format!("{s}; e {r}"),
+        Some(r) => format!("{s}; and {r}"),
         None => s,
     };
 
@@ -292,7 +324,7 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, clock: Result<String,
         return Check::missing(
             "ota",
             and_also(format!(
-                "falta o token de leitura em {}: o repo é privado e a API responde \"Not Found\" sem ele",
+                "the read token is missing at {}: the repo is private and the API answers \"Not Found\" without it",
                 token.display()
             )),
         );
@@ -308,7 +340,7 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, clock: Result<String,
                 return Check::missing(
                     "ota",
                     and_also(format!(
-                        "{} está com modo {:o}: só o dono deve ler (chmod 600)",
+                        "{} has mode {:o}: only the owner should read it (chmod 600)",
                         token.display(),
                         m.permissions().mode() & 0o777
                     )),
@@ -324,7 +356,7 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, clock: Result<String,
         Ok(l) => l.trim().to_string(),
         // Exits != 0 when it never checked. That is a legitimate state
         // right after installing, not an error.
-        Err(_) => return Check::missing("ota", format!("{clock}, mas ainda não conferiu nenhuma vez")),
+        Err(_) => return Check::missing("ota", format!("{clock}, but it has never checked yet")),
     };
     verdict(&line, &clock)
 }
@@ -339,7 +371,7 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, clock: Result<String,
 pub fn verdict(line: &str, clock: &str) -> Check {
     let fields: Vec<&str> = line.split('\t').collect();
     if fields.len() != 3 {
-        return Check::error("ota", format!("não sei ler o estado do oxdesk-ota: {line:?}"));
+        return Check::error("ota", format!("cannot read oxdesk-ota's state: {line:?}"));
     }
     let (result, age, phrase) =
         (fields[0], fields[1].parse::<u64>().unwrap_or(u64::MAX), fields[2]);
@@ -349,7 +381,7 @@ pub fn verdict(line: &str, clock: &str) -> Check {
         "erro" | "revertido" => Check::error("ota", format!("{when}: {phrase}")),
         _ if age > 6 * 3600 => Check::missing(
             "ota",
-            format!("{clock}, mas a última checagem foi {when} -- o relógio não está acordando"),
+            format!("{clock}, but the last check was {when} -- the timer is not firing"),
         ),
         // An update published and not applied is pending, not success: on
         // Windows it is the permanent state (we do not sign there), and
@@ -382,8 +414,8 @@ pub fn stamp_verdict(live: (u64, &str), on_disk: (u64, &str)) -> Option<String> 
         return None;
     }
     Some(format!(
-        "quem responde é o #{n_live} {b_live}, mas o arquivo instalado é o #{n_disk} {b_disk}: \
-         algum processo antigo está com a porta"
+        "the one answering is #{n_live} {b_live}, but the installed file is #{n_disk} {b_disk}: \
+         some older process is holding the port"
     ))
 }
 
@@ -428,7 +460,7 @@ pub fn parse_stamp(json: &str) -> Option<(u64, String)> {
 /// The old check only failed the "process alive outside launchd" case and
 /// passed the reverse: job loaded, `state = spawn scheduled`,
 /// `last exit code = 1`, dying in a loop. That was exactly the Mac's
-/// state while the panel said "carregado na sessão gráfica".
+/// state while the panel said "loaded in the graphical session".
 // Only the Mac has launchd; its test runs on any machine.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn launchd_verdict(print: &str) -> Option<String> {
@@ -448,8 +480,8 @@ pub fn launchd_verdict(print: &str) -> Option<String> {
     let nonzero = !output.is_empty() && output != "0";
     if nonzero {
         return Some(format!(
-            "carregado mas não roda: state = {state}, last exit code = {output} \
-             (porta ocupada por outro processo é a causa de sempre)"
+            "loaded but not running: state = {state}, last exit code = {output} \
+             (the port taken by another process is the usual cause)"
         ));
     }
     if state.is_empty() {
@@ -457,7 +489,7 @@ pub fn launchd_verdict(print: &str) -> Option<String> {
         // invent a failure.
         return None;
     }
-    Some(format!("carregado mas não está rodando agora: state = {state}"))
+    Some(format!("loaded but not running right now: state = {state}"))
 }
 
 #[cfg(test)]
@@ -470,13 +502,13 @@ mod tests {
     /// head.
     #[test]
     fn age_in_words() {
-        assert_eq!(human_age(0), "há 0s");
-        assert_eq!(human_age(89), "há 89s");
-        assert_eq!(human_age(90), "há 2 min");
-        assert_eq!(human_age(3600), "há 60 min");
-        assert_eq!(human_age(5400), "há 2 h");
-        assert_eq!(human_age(90_000), "há 25 h");
-        assert_eq!(human_age(172_800), "há 2 dias");
+        assert_eq!(human_age(0), "0s ago");
+        assert_eq!(human_age(89), "89s ago");
+        assert_eq!(human_age(90), "2 min ago");
+        assert_eq!(human_age(3600), "60 min ago");
+        assert_eq!(human_age(5400), "2 h ago");
+        assert_eq!(human_age(90_000), "25 h ago");
+        assert_eq!(human_age(172_800), "2 days ago");
     }
 
     /// A missing binary is the first question, before token and clock:
@@ -484,12 +516,12 @@ mod tests {
     #[test]
     fn no_binary_does_not_ask_for_token() {
         let m = ota(
-            std::path::Path::new("/nao/existe/oxdesk-ota"),
-            std::path::Path::new("/nao/existe/token"),
-            Ok("relógio ok".into()),
+            std::path::Path::new("/does/not/exist/oxdesk-ota"),
+            std::path::Path::new("/does/not/exist/token"),
+            Ok("timer ok".into()),
         );
         assert_eq!(m.state, crate::setup::State::Missing);
-        assert!(m.detail.contains("não está instalado"), "{}", m.detail);
+        assert!(m.detail.contains("is not installed"), "{}", m.detail);
     }
 
     /// A stopped clock cannot show up as "ok" just because the last check
@@ -502,7 +534,7 @@ mod tests {
 
         let stopped = verdict("igual\t25000\tem dia no build #124 abc1234", "a cada 1 h");
         assert_eq!(stopped.state, crate::setup::State::Missing);
-        assert!(stopped.detail.contains("não está acordando"), "{}", stopped.detail);
+        assert!(stopped.detail.contains("is not firing"), "{}", stopped.detail);
     }
 
     #[test]
@@ -520,7 +552,7 @@ mod tests {
     fn line_outside_the_contract_is_an_error() {
         let m = verdict("so um campo", "x");
         assert_eq!(m.state, crate::setup::State::Error);
-        assert!(m.detail.contains("não sei ler"), "{}", m.detail);
+        assert!(m.detail.contains("cannot read"), "{}", m.detail);
     }
 
     /// An unreadable age counts as old, never as fresh.
@@ -530,7 +562,7 @@ mod tests {
     }
     /// Token and clock missing together must show up together.
     ///
-    /// Without a token all three machines say "falta o token", and that
+    /// Without a token all three machines say the token is missing, and that
     /// phrase would fit a machine with no clock at all -- which will not
     /// check anything even after the token arrives. Whoever reads the
     /// panel fixes what is written and thinks they are done.
@@ -538,13 +570,13 @@ mod tests {
     fn missing_token_and_clock_both_show_up() {
         let m = ota(
             std::path::Path::new("/bin/sh"), // exists, to get past the first check
-            std::path::Path::new("/nao/existe/token"),
-            Err("tarefa 'ota' não existe".into()),
+            std::path::Path::new("/does/not/exist/token"),
+            Err("task 'ota' does not exist".into()),
         );
         assert_eq!(m.state, crate::setup::State::Missing);
-        assert!(m.detail.contains("falta o token"), "{}", m.detail);
-        assert!(m.detail.contains("relógio não está de pé"), "{}", m.detail);
-        assert!(m.detail.contains("tarefa 'ota' não existe"), "{}", m.detail);
+        assert!(m.detail.contains("read token is missing"), "{}", m.detail);
+        assert!(m.detail.contains("timer is not up"), "{}", m.detail);
+        assert!(m.detail.contains("task 'ota' does not exist"), "{}", m.detail);
     }
 
     /// The Mac case: the GUI started a `oxdesk` as its child, the child
@@ -553,7 +585,7 @@ mod tests {
     /// it, not the deploy.
     #[test]
     fn diverging_stamp_shows_up() {
-        let p = stamp_verdict((121, "2f1409d"), (131, "25512f1")).expect("tem de reprovar");
+        let p = stamp_verdict((121, "2f1409d"), (131, "25512f1")).expect("has to fail");
         assert!(p.contains("#121 2f1409d"), "{p}");
         assert!(p.contains("#131 25512f1"), "{p}");
     }
@@ -574,17 +606,17 @@ mod tests {
     #[test]
     fn unreadable_stamp_does_not_raise_an_alarm() {
         assert!(parse_stamp("{}").is_none());
-        assert!(parse_stamp("nao e json").is_none());
+        assert!(parse_stamp("not json").is_none());
         assert_eq!(parse_stamp("{\"build\":\"abc\",\"n\":7}\n"), Some((7, "abc".to_string())));
     }
 
     /// Real `launchctl print` output from the Mac while it served the old
-    /// build. The panel said "carregado na sessão gráfica" because it only
+    /// build. The panel said "loaded in the graphical session" because it only
     /// looked at whether the command succeeded.
     #[test]
     fn job_loaded_and_dying_is_not_ok() {
         let print = "\tstate = spawn scheduled\n\tpath = /Users/x/Library/LaunchAgents/app.oxdesk.daemon.plist\n\tlast exit code = 1\n";
-        let p = launchd_verdict(print).expect("tem de reprovar");
+        let p = launchd_verdict(print).expect("has to fail");
         assert!(p.contains("last exit code = 1"), "{p}");
         assert!(p.contains("spawn scheduled"), "{p}");
     }
@@ -639,9 +671,30 @@ mod tests {
 
     #[test]
     fn zero_monitors_is_missing_and_no_number_is_error() {
-        assert_eq!(monitors_verdict("1\r\n").state, State::Ok);
-        assert_eq!(monitors_verdict("0").state, State::Missing);
-        assert_eq!(monitors_verdict("").state, State::Error);
-        assert_eq!(monitors_verdict("Get-PnpDevice: erro").state, State::Error);
+        assert_eq!(monitors_verdict("virtual-display", "1\r\n").state, State::Ok);
+        assert_eq!(monitors_verdict("virtual-display", "0").state, State::Missing);
+        assert_eq!(monitors_verdict("virtual-display", "").state, State::Error);
+        assert_eq!(monitors_verdict("virtual-display", "Get-PnpDevice: error").state, State::Error);
+    }
+
+    /// A failed call is "I don't know", not "no display". Reporting zero
+    /// on an error would tell someone to go buy a monitor they already
+    /// have plugged in.
+    #[test]
+    fn a_failed_display_query_is_an_error_not_an_absence() {
+        let m = displays_verdict("display", -1, 0);
+        assert_eq!(m.state, State::Error);
+        assert!(m.detail.contains("-1"), "{}", m.detail);
+    }
+
+    #[test]
+    fn zero_displays_is_missing_and_one_is_ok() {
+        let none = displays_verdict("display", 0, 0);
+        assert_eq!(none.state, State::Missing);
+        // The phrase has to name the consequence, because every other step
+        // on that Mac was green and the screen still did not work.
+        assert!(none.detail.contains("framebuffer"), "{}", none.detail);
+        assert_eq!(displays_verdict("display", 0, 1).state, State::Ok);
+        assert_eq!(displays_verdict("display", 0, 2).state, State::Ok);
     }
 }

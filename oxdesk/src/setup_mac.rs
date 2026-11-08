@@ -18,7 +18,7 @@
 //!
 //! ## Order matters, and the catalog enforces it
 //!
-//! `gravacao-de-tela` and `acessibilidade` depend on `assinatura`. It is
+//! `screen-recording` and `accessibility` depend on `signature`. It is
 //! not fussiness: with an ad-hoc binary the binding is by cdhash, which
 //! changes on every build, so granting before signing **wastes** the
 //! grant -- and only the machine's owner can give it back, by hand, in
@@ -48,6 +48,18 @@ extern "C" {
     fn getuid() -> u32;
 }
 
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    /// Fills `displays` with the ids of the ACTIVE displays -- the ones
+    /// with a framebuffer that can be drawn into and therefore read. A
+    /// display that is attached but asleep still counts; a panel that is
+    /// electrically gone does not.
+    ///
+    /// Enumerating is not capturing, so this needs no TCC grant and
+    /// answers the same over SSH as inside the session.
+    fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
+}
+
 pub fn measure(cfg: &Config) -> Vec<Check> {
     // Both permissions come from ONE run of the host: they are two lines
     // of the same output, and running the binary twice would double the
@@ -64,6 +76,7 @@ pub fn measure(cfg: &Config) -> Vec<Check> {
         tcc.0,
         tcc.1,
         launchagent(),
+        display(),
         crate::setup_common::clipboard(),
         remote_login(),
         tailscale(),
@@ -99,8 +112,8 @@ fn clock() -> Result<String, String> {
         .and_then(|l| l.split('=').nth(1))
         .map(|v| v.trim().to_string());
     Ok(match s {
-        Some(secs) => format!("LaunchAgent a cada {secs} s"),
-        None => format!("{label} carregado (o launchd não informou intervalo)"),
+        Some(secs) => format!("LaunchAgent every {secs} s"),
+        None => format!("{label} loaded (launchd reported no interval)"),
     })
 }
 
@@ -108,15 +121,15 @@ fn binaries() -> Check {
     let dir = bin_dir();
     let absent: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
     if !absent.is_empty() {
-        return Check::missing("binarios", format!("faltam: {}", absent.join(", ")));
+        return Check::missing("binaries", format!("missing: {}", absent.join(", ")));
     }
     // Existing on disk is not being live. See
     // `setup_common::stamp_verdict`: a deploy can install the new file
     // and nobody runs it.
     if let Some(p) = crate::setup_common::daemon_on_disk(&dir.join("oxdesk")) {
-        return Check::missing("binarios", p);
+        return Check::missing("binaries", p);
     }
-    Check::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
+    Check::ok("binaries", format!("{} binaries in {}", BINS.len(), dir.display()))
 }
 
 fn daemon() -> Check {
@@ -128,15 +141,58 @@ fn daemon() -> Check {
         // see `setup_common::launchd_verdict`.
         Ok(output) => match crate::setup_common::launchd_verdict(&output) {
             Some(p) => Check::missing("daemon", format!("{label}: {p}")),
-            None => Check::ok("daemon", format!("{label} rodando na sessão gráfica")),
+            None => Check::ok("daemon", format!("{label} running in the graphical session")),
         },
         // A live process without a LaunchAgent is the misleading case: it
         // works now and does not come back on the next login.
         Err(_) if crate::setup_common::process_alive("oxdesk") => {
-            Check::missing("daemon", "o processo está rodando, mas fora do launchd: não volta no próximo login")
+            Check::missing("daemon", "the process is running, but outside launchd: it will not come back at the next login")
         }
-        Err(e) => Check::missing("daemon", format!("{label}: {e}")),
+        Err(e) => match console_owner() {
+            // No Aqua session for this user is a different problem from a
+            // job that failed to load, and `launchctl print`'s error does
+            // not say which one it is. Measured on a Mac where the console
+            // belonged to another account: every LaunchAgent was installed
+            // and none could run.
+            Some(who) => Check::missing(
+                "daemon",
+                format!(
+                    "no graphical session for this user: the console belongs to \"{who}\". \
+                     Log in as this user (or switch user) and the LaunchAgents load by themselves"
+                ),
+            ),
+            None => Check::missing("daemon", format!("{label}: {e}")),
+        },
     }
+}
+
+/// Who owns the console, when this user has no Aqua session.
+///
+/// `None` means there is a session (so the caller's error is about the job
+/// itself) or that the question could not be answered -- which must not be
+/// reported as a diagnosis.
+fn console_owner() -> Option<String> {
+    if run_timed("/bin/launchctl", &["print", &format!("gui/{}", uid())], 5).is_ok() {
+        return None;
+    }
+    let who = run_timed("/usr/bin/stat", &["-f%Su", "/dev/console"], 5).ok()?;
+    let who = who.trim();
+    if who.is_empty() { None } else { Some(who.to_string()) }
+}
+
+/// Is there a display to capture?
+///
+/// Measured because a broken panel is invisible to every other step: the
+/// grant, the signature and the LaunchAgent were all green on a Mac that
+/// could not have produced a single frame. See
+/// [`crate::setup_common::displays_verdict`].
+fn display() -> Check {
+    // 16 is far past any Mac: the call fills what fits and reports the
+    // real count either way, and `count` is what we read.
+    let mut ids = [0u32; 16];
+    let mut n: u32 = 0;
+    let err = unsafe { CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut n) };
+    crate::setup_common::displays_verdict("display", err, n)
 }
 
 /// Do the brew dylibs the installed binaries ask for exist here?
@@ -152,7 +208,7 @@ fn daemon() -> Check {
 fn ffmpeg() -> Check {
     let host = bin_dir().join("oxdesk-host");
     if !host.exists() {
-        return Check::missing("ffmpeg", "sem o oxdesk-host instalado para perguntar");
+        return Check::missing("ffmpeg", "no installed oxdesk-host to ask");
     }
     let output = match run_timed("/usr/bin/otool", &["-L", &host.to_string_lossy()], 10) {
         Ok(s) => s,
@@ -170,25 +226,25 @@ fn ffmpeg() -> Check {
         return Check::missing(
             "ffmpeg",
             format!(
-                "{} dylib(s) que o host pede não existem aqui, a começar por {}",
+                "{} dylib(s) the host asks for do not exist here, starting with {}",
                 absent.len(),
                 absent[0]
             ),
         );
     }
     match requested.iter().find(|c| c.contains("libavcodec")) {
-        Some(c) => Check::ok("ffmpeg", format!("{} dylib(s) do brew resolvem; {c}", requested.len())),
+        Some(c) => Check::ok("ffmpeg", format!("{} brew dylib(s) resolve; {c}", requested.len())),
         // Without libavcodec the binary is not even the screen host -- or
         // it is a build for another platform. Saying "ok" here would pass
         // what was not measured.
-        None => Check::missing("ffmpeg", "o oxdesk-host instalado não pede libavcodec"),
+        None => Check::missing("ffmpeg", "the installed oxdesk-host does not ask for libavcodec"),
     }
 }
 
 fn identity() -> Check {
     let kc = crate::sys::home_dir().join(KEYCHAIN);
     if !kc.exists() {
-        return Check::missing("identidade", format!("sem o chaveiro {}", kc.display()));
+        return Check::missing("identity", format!("no keychain at {}", kc.display()));
     }
     // Unlock before asking. Over SSH the keychain is locked and
     // `security` answers "User interaction is not allowed" -- which is
@@ -212,11 +268,11 @@ fn identity() -> Check {
                 8,
             ) {
                 return Check::error(
-                    "identidade",
+                    "identity",
                     // The length, never the value: enough to tell "read the
                     // wrong file" from "right file, wrong password".
                     format!(
-                        "o chaveiro não abriu com a senha de {} ({} caracteres): {e}",
+                        "the keychain did not unlock with the password at {} ({} characters): {e}",
                         passfile.display(),
                         pass.trim().len()
                     ),
@@ -225,8 +281,8 @@ fn identity() -> Check {
         }
         Err(_) => {
             return Check::missing(
-                "identidade",
-                format!("sem a senha do chaveiro em {} -- rode create-identity.sh", passfile.display()),
+                "identity",
+                format!("no keychain password at {} -- run create-identity.sh", passfile.display()),
             )
         }
     }
@@ -246,17 +302,17 @@ fn identity() -> Check {
     // `create-identity.sh` is idempotent to avoid.
     match run_timed("/usr/bin/security", &["find-identity", &kc.to_string_lossy()], 8) {
         Ok(s) if s.contains(SIGNING_IDENTITY) => {
-            Check::ok("identidade", format!("\"{SIGNING_IDENTITY}\" no chaveiro próprio"))
+            Check::ok("identity", format!("\"{SIGNING_IDENTITY}\" in its own keychain"))
         }
-        Ok(_) => Check::missing("identidade", format!("o chaveiro existe mas não tem \"{SIGNING_IDENTITY}\"")),
-        Err(e) => Check::error("identidade", format!("security: {e}")),
+        Ok(_) => Check::missing("identity", format!("the keychain exists but has no \"{SIGNING_IDENTITY}\"")),
+        Err(e) => Check::error("identity", format!("security: {e}")),
     }
 }
 
 fn signature() -> Check {
     let target = host_bin();
     if !target.exists() {
-        return Check::missing("assinatura", "o host de tela não está instalado");
+        return Check::missing("signature", "the screen host is not installed");
     }
     // `codesign -dvvv`, not `-dv`.
     //
@@ -271,7 +327,7 @@ fn signature() -> Check {
         .args(["-dvvv", &target.to_string_lossy()])
         .output();
     let Ok(o) = output else {
-        return Check::error("assinatura", "não consegui executar o codesign");
+        return Check::error("signature", "could not run codesign");
     };
     let text = format!(
         "{}{}",
@@ -279,16 +335,16 @@ fn signature() -> Check {
         String::from_utf8_lossy(&o.stderr)
     );
     if text.contains(SIGNING_IDENTITY) {
-        Check::ok("assinatura", "assinado com a identidade estável")
+        Check::ok("signature", "signed with the stable identity")
     } else if text.contains("adhoc") || text.contains("linker-signed") {
         Check::missing(
-            "assinatura",
-            "ad-hoc / linker-signed: a permissão de tela morre no próximo deploy",
+            "signature",
+            "ad-hoc / linker-signed: the screen grant dies on the next deploy",
         )
     } else if text.contains("not signed") {
-        Check::missing("assinatura", "sem assinatura nenhuma")
+        Check::missing("signature", "no signature at all")
     } else {
-        Check::error("assinatura", "não reconheci a saída do codesign")
+        Check::error("signature", "did not recognize codesign's output")
     }
 }
 
@@ -326,7 +382,7 @@ fn check_outside_daemon(target: &std::path::Path) -> Result<String, String> {
     let _ = run_timed("/bin/launchctl", &["remove", LABEL], 5);
     let _ = std::fs::remove_file(&file);
     if text.is_empty() {
-        return Err("o host não respondeu em 8 s".into());
+        return Err("the host did not answer within 8 s".into());
     }
     Ok(text)
 }
@@ -334,8 +390,8 @@ fn check_outside_daemon(target: &std::path::Path) -> Result<String, String> {
 fn check_permissions() -> (Check, Check) {
     let target = host_bin();
     if !target.exists() {
-        let m = |id: &str| Check::error(id, "o host de tela não está instalado: não há a quem perguntar");
-        return (m("gravacao-de-tela"), m("acessibilidade"));
+        let m = |id: &str| Check::error(id, "the screen host is not installed: there is nobody to ask");
+        return (m("screen-recording"), m("accessibility"));
     }
     // 10 s because the binary only prints two lines and exits; if it
     // takes longer, something is hung, and hung is not "ok".
@@ -350,21 +406,21 @@ fn check_permissions() -> (Check, Check) {
         Ok(text) => {
             let one = |id: &str, kind: &str| match read(&text, id) {
                 Some(true) => Check::ok(id, format!("concedida a {}", target.display())),
-                Some(false) => Check::missing(id, format!("o host não tem {kind}")),
+                Some(false) => Check::missing(id, format!("the host does not have {kind}")),
                 // An old binary, from before `--conferir`: not measuring
                 // is different from measuring "missing", and saying which
                 // case it is saves the afternoon I would lose looking in
                 // the wrong place.
-                None => Check::error(id, "o host instalado não entende --conferir: rode o deploy"),
+                None => Check::error(id, "the installed host does not understand --conferir: run the deploy"),
             };
             (
-                one("gravacao-de-tela", "Gravação de Tela"),
-                one("acessibilidade", "Acessibilidade"),
+                one("screen-recording", "Screen Recording"),
+                one("accessibility", "Acessibilidade"),
             )
         }
         Err(e) => (
-            Check::error("gravacao-de-tela", format!("--conferir: {e}")),
-            Check::error("acessibilidade", format!("--conferir: {e}")),
+            Check::error("screen-recording", format!("--conferir: {e}")),
+            Check::error("accessibility", format!("--conferir: {e}")),
         ),
     }
 }
@@ -384,10 +440,10 @@ fn remote_login() -> Check {
     // question. What answers "does this Mac accept SSH?" is the socket.
     let (up, ms) = crate::probe::tcp_probe("127.0.0.1", 22);
     Check::when(
-        "login-remoto",
+        "remote-login",
         up,
-        format!("sshd responde em {:.0} ms", ms.unwrap_or(0.0)),
-        "nada escutando na porta 22",
+        format!("sshd answers in {:.0} ms", ms.unwrap_or(0.0)),
+        "nothing listening on port 22",
     )
 }
 
@@ -401,11 +457,11 @@ fn tailscale() -> Check {
         .into_iter()
         .find(|c| std::path::Path::new(c).exists());
     let Some(cli) = cli else {
-        return Check::missing("tailscale", "tailscale do brew não instalado");
+        return Check::missing("tailscale", "brew's tailscale is not installed");
     };
     match run_timed(cli, &["status", "--json"], 5) {
         Ok(json) => crate::setup_common::tailscale_verdict(&json, app),
-        Err(e) => Check::missing("tailscale", format!("o tailscaled não respondeu: {e}")),
+        Err(e) => Check::missing("tailscale", format!("tailscaled did not answer: {e}")),
     }
 }
 
@@ -433,10 +489,10 @@ pub fn repair(id: &str, _cfg: &Config) -> Result<String, String> {
         ),
         "ota" => install_clock(),
         "tailscale" => install_tailscale(),
-        "assinatura" => sign(),
-        "gravacao-de-tela" => request_permission("gravacao-de-tela", "Privacy_ScreenCapture"),
-        "acessibilidade" => request_permission("acessibilidade", "Privacy_Accessibility"),
-        _ => Err(format!("'{id}' não se arruma sozinho nesta máquina")),
+        "signature" => sign(),
+        "screen-recording" => request_permission("screen-recording", "Privacy_ScreenCapture"),
+        "accessibility" => request_permission("accessibility", "Privacy_Accessibility"),
+        _ => Err(format!("'{id}' has no automatic fix on this machine")),
     }
 }
 
@@ -454,7 +510,7 @@ fn install_agent(
 ) -> Result<String, String> {
     let home = crate::sys::home_dir();
     let log = home.join(".local/state").join(format!("{}.log", label.rsplit('.').next().unwrap_or(label)));
-    std::fs::create_dir_all(home.join(".local/state")).map_err(|e| format!("criar ~/.local/state: {e}"))?;
+    std::fs::create_dir_all(home.join(".local/state")).map_err(|e| format!("create ~/.local/state: {e}"))?;
 
     let args: String = argv
         .iter()
@@ -507,7 +563,7 @@ fn install_agent(
     // Check that it really loaded. A `bootstrap` that returns 0 and an
     // agent that does not show up in `print` is a pair I have seen.
     run_timed("/bin/launchctl", &["print", &format!("{target}/{label}")], 5)
-        .map_err(|e| format!("carreguei e o launchd não o lista: {e}"))?;
+        .map_err(|e| format!("loaded, and launchd does not list it: {e}"))?;
     Ok(format!("{label} instalado e carregado"))
 }
 
@@ -525,7 +581,7 @@ fn install_agent(
 fn install_clock() -> Result<String, String> {
     let bin = bin_dir().join("oxdesk-ota");
     if !bin.is_file() {
-        return Err(format!("não achei {}: rode o deploy", bin.display()));
+        return Err(format!("could not find {}: run the deploy", bin.display()));
     }
     install_agent(
         "app.oxdesk.ota",
@@ -567,12 +623,12 @@ fn install_tailscale() -> Result<String, String> {
     std::fs::write(&opener, command).map_err(|e| format!("gravar {opener:?}: {e}"))?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700))
-        .map_err(|e| format!("permissão de {opener:?}: {e}"))?;
+        .map_err(|e| format!("permissions on {opener:?}: {e}"))?;
     run_timed("/usr/bin/open", &[&opener.to_string_lossy()], 10)?;
     let m = tailscale();
     match m.state {
         State::Ok => Ok(m.detail),
-        _ => Err(format!("{} -- termine no Terminal que abriu e meça de novo", m.detail)),
+        _ => Err(format!("{} -- finish in the Terminal that opened and measure again", m.detail)),
     }
 }
 
@@ -584,15 +640,15 @@ fn sign() -> Result<String, String> {
     let script = bin_dir().join("sign.sh");
     let target = host_bin();
     if !script.exists() {
-        return Err(format!("não achei {}: rode o deploy", script.display()));
+        return Err(format!("could not find {}: run the deploy", script.display()));
     }
     // The script is deliberately non-fatal (it does not break the deploy
     // when the identity is missing), so its exit code does not say
     // whether it signed. The measurement afterwards decides.
     let _ = run_timed("/bin/bash", &[&script.to_string_lossy(), &target.to_string_lossy()], 30);
     match signature().state {
-        State::Ok => Ok("assinado com a identidade estável".into()),
-        _ => Err("rodei o sign.sh e o binário continua sem a identidade; \
+        State::Ok => Ok("signed with the stable identity".into()),
+        _ => Err("sign.sh ran and the binary still has no identity; \
                   veja ~/.local/state/sign.log"
             .into()),
     }
@@ -609,14 +665,14 @@ fn sign() -> Result<String, String> {
 fn request_permission(id: &str, pane: &str) -> Result<String, String> {
     let target = host_bin();
     if !target.exists() {
-        return Err("o host de tela não está instalado".into());
+        return Err("the screen host is not installed".into());
     }
     let _ = run_timed(&target.to_string_lossy(), &["--pedir"], 20);
     let url = format!("x-apple.systempreferences:com.apple.preference.security?{pane}");
     let _ = run_timed("/usr/bin/open", &[&url], 10);
 
     let (screen, input) = check_permissions();
-    let m = if id == "gravacao-de-tela" { screen } else { input };
+    let m = if id == "screen-recording" { screen } else { input };
     match m.state {
         State::Ok => Ok(m.detail),
         // NOT an error: the normal flow is the person ticking the box in
@@ -625,7 +681,7 @@ fn request_permission(id: &str, pane: &str) -> Result<String, String> {
         // that is right.
 
         _ => Err(format!(
-            "{} -- marque a caixa na janela que abriu e meça de novo",
+            "{} -- tick the box in the window that opened and measure again",
             m.detail
         )),
     }

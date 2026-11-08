@@ -1112,7 +1112,7 @@ fn deliver(port: u16, dir: &Path) -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     let body = serde_json::json!({ "paths": items }).to_string().into_bytes();
-    match post(port, "/api/clipboard-arquivos", &body) {
+    match post(port, "/api/clipboard-files", &body) {
         Ok(()) => {
             println!("{} file(s) on the clipboard", items.len());
             std::process::ExitCode::SUCCESS

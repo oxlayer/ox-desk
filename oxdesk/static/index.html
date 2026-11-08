@@ -1099,7 +1099,7 @@ async function openTab(host){
   if (typeof VideoDecoder === 'undefined') return false;
   let d;
   try{
-    const r = await fetch('/api/sessao', {method:'POST',
+    const r = await fetch('/api/session', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({host})});
     if (!r.ok) return false;
     d = await r.json();
@@ -1206,7 +1206,7 @@ async function xferQueue(){
 async function xferCopy(from, to){
   const o = XFER[from], e = o.d.entries[o.sel];
   XFER.error = '';
-  const r = await fetch('/api/files/transferir', {method:'POST',
+  const r = await fetch('/api/files/transfer', {method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({de:o.host, caminho:o.path.replace(/[\/\\]+$/, '') + '/' + e.name,
       para:XFER[to].host, pasta:XFER[to].path})});

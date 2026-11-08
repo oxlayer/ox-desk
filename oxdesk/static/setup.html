@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <!-- Same CSP as the panel, for the same reason: the page is a single
      file embedded in the daemon binary, uses no eval, and the only place
      it reads from is 127.0.0.1:port. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Configurar esta maquina</title>
+<title>Set up this machine</title>
 <style>
   /* Same tokens as the panel: the two pages are the same house, and
      diverging here would make setup look like another program. */
@@ -15,7 +15,6 @@
     --line:#e5e8ec; --inset:#f8f9fb;
     --up:#0f7a3d; --down:#c02626; --warn:#8a6100;
     --upbg:#e6f6ec; --downbg:#fdeaea; --warnbg:#fdf3e3;
-    --shadow:0 1px 2px rgba(16,20,28,.05), 0 8px 24px rgba(16,20,28,.05);
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
     --accent:#2563eb;
   }
@@ -24,167 +23,172 @@
     --line:#242932; --inset:#1b1f26;
     --up:#45d483; --down:#ff6b6b; --warn:#f0b429;
     --upbg:#0c2c1a; --downbg:#2d1113; --warnbg:#2b2210;
-    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.3);
     --accent:#60a5fa;
   }}
   *{box-sizing:border-box}
   html,body{height:100%}
+  /* No gradient, no card shadows. Eleven raised cards in a column read as
+     noise, and the glow around the active one had to shout over them. One
+     hairline per row, and the only accent on the page is the step that
+     wants acting on. */
   body{margin:0;background:var(--bg);color:var(--fg);
-    background-image:radial-gradient(1200px 600px at 12% -10%,
-      color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%);
-    font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     -webkit-font-smoothing:antialiased}
-  .wrap{max-width:720px;margin:0 auto;padding:40px 16px 72px}
+  .wrap{max-width:680px;margin:0 auto;padding:48px 20px 80px}
 
   /* ---- header ---- */
-  header{margin-bottom:26px}
-  .eyebrow{font:11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;
-    color:var(--faint);margin-bottom:10px}
-  h1{font-size:26px;font-weight:660;margin:0 0 6px;letter-spacing:-.02em}
-  .lead{color:var(--dim);margin:0;font-size:14px}
-  .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:18px}
-  .bar i{display:block;height:100%;background:var(--up);border-radius:3px;
-    transition:width .45s ease;width:0}
-  .barlbl{display:flex;justify-content:space-between;margin-top:7px;
-    font-size:12px;color:var(--dim)}
-  .barlbl b{color:var(--fg);font-weight:620}
+  header{margin-bottom:32px}
+  .eyebrow{font:11px/1 var(--mono);letter-spacing:.06em;color:var(--faint);
+    margin-bottom:10px}
+  h1{font-size:24px;font-weight:620;margin:0 0 5px;letter-spacing:-.02em}
+  .lead{color:var(--dim);margin:0;font-size:13.5px}
+  .bar{height:3px;border-radius:2px;background:var(--line);overflow:hidden;
+    margin-top:20px}
+  .bar i{display:block;height:100%;background:var(--up);
+    transition:width .5s cubic-bezier(.2,.7,.2,1);width:0}
+  .barlbl{display:flex;justify-content:space-between;margin-top:8px;
+    font-size:12px;color:var(--faint)}
+  .barlbl b{color:var(--dim);font-weight:560}
 
   /* ---- "ready" banner ---- */
-  .pronto{display:none;margin:0 0 22px;padding:16px 18px;border-radius:12px;
-    background:var(--upbg);border:1px solid color-mix(in srgb,var(--up) 28%,var(--line));
-    color:var(--fg)}
-  .pronto.on{display:block}
-  .pronto b{color:var(--up)}
+  .ready{display:none;margin:0 0 24px;padding:13px 15px;border-radius:10px;
+    background:var(--upbg);border:1px solid color-mix(in srgb,var(--up) 22%,var(--line));
+    font-size:13px}
+  .ready.on{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+  .ready b{color:var(--up);font-weight:600}
 
   /* ---- phases ----
-     Fourteen cards in one flat list is a wall, and the counter said
-     "11 of 12" next to it. Grouping gives the eye somewhere to rest and
-     lets a finished group collapse into one line. */
-  li.fase{margin:18px 0 2px;display:flex;align-items:baseline;gap:10px;
-    background:none;border:0;box-shadow:none;border-radius:0;padding:0 2px}
-  li.fase:first-child{margin-top:0}
-  li.fase h2{font-size:12px;font-weight:620;letter-spacing:.04em;text-transform:uppercase;
-    color:var(--dim);margin:0}
-  li.fase .conta{font:11px/1 var(--mono);color:var(--faint)}
-  li.fase.fechada{cursor:pointer;padding:7px 10px;border-radius:9px;
-    background:color-mix(in srgb,var(--card) 70%,transparent);border:1px solid var(--line)}
-  li.fase.fechada:hover{background:var(--card)}
-  li.fase.fechada:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-  li.fase .ver{margin-left:auto;font-size:11px;color:var(--faint)}
-  li.fase .conta.tudook{color:var(--up)}
+     Eleven rows in one flat list is a wall, and the counter said "4 of 5"
+     next to it. A phase is a rule above a label: it divides without adding
+     another box. A finished one folds into that single line. */
+  ol{list-style:none;margin:0;padding:0}
+  li.phase{display:flex;align-items:center;gap:10px;margin:26px 0 8px;
+    padding:0 2px 7px;border-bottom:1px solid var(--line)}
+  li.phase:first-child{margin-top:0}
+  li.phase h2{font-size:11px;font-weight:650;letter-spacing:.07em;
+    text-transform:uppercase;color:var(--dim);margin:0}
+  li.phase .count{font:11px/1 var(--mono);color:var(--faint);margin-left:auto}
+  li.phase .count.alldone{color:var(--up)}
+  li.phase.folded{cursor:pointer;border-bottom-color:transparent;
+    margin-bottom:2px}
+  li.phase.folded h2{color:var(--faint)}
+  li.phase.folded:hover h2,li.phase.folded:hover .count{color:var(--dim)}
+  li.phase.folded:focus-visible{outline:2px solid var(--accent);
+    outline-offset:3px;border-radius:4px}
+  li.phase .expand{font-size:11px;color:var(--faint)}
 
   /* ---- steps ---- */
-  ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  li.step{border-bottom:1px solid var(--line)}
+  li.step:last-child{border-bottom:0}
+  /* The step where acting makes a difference NOW is the one thing tinted.
+     A wizard that highlights everything highlights nothing. */
+  li.now{background:color-mix(in srgb,var(--accent) 5%,transparent);
+    border-radius:10px;border-bottom-color:transparent;
+    box-shadow:inset 2px 0 0 var(--accent)}
+  li.waiting{opacity:.55}
+  li.na{opacity:.45}
+
+  .head{display:flex;gap:11px;align-items:center;padding:11px 12px;
+    cursor:pointer;user-select:none;border-radius:8px}
+  .head:hover{background:color-mix(in srgb,var(--fg) 3%,transparent)}
+  .head:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  /* A dot, not a badge: at this size a glyph in a circle is a smudge, and
+     the word beside it already says the state. */
+  .dot{flex:none;width:7px;height:7px;border-radius:50%;
+    background:var(--faint)}
+  .dot.ok{background:var(--up)}
+  .dot.missing{background:var(--down)}
+  .dot.error{background:var(--warn)}
+  .dot.na{background:transparent;box-shadow:inset 0 0 0 1px var(--faint)}
+  .tit{min-width:0;flex:1;display:flex;gap:10px;align-items:baseline;
+    flex-wrap:wrap}
+  .tit .n{font-weight:540;font-size:14px;letter-spacing:-.005em}
+  .tit .opt{font-weight:400;color:var(--faint);font-size:11px;
+    text-transform:uppercase;letter-spacing:.05em}
   /* A one-word state, not a log line. The paths, the dylib list and the
      tailnet address were in every subtitle; the person already knows which
      machine they are on. They live behind the expansion now. */
-  .tit .est{font-weight:520;font-size:12.5px;color:var(--dim)}
-  .tit .est.falta{color:var(--down)}
-  .tit .est.erro{color:var(--warn)}
-  .tit .est.ok{color:var(--up)}
-  .tecnico{margin:0 0 10px;font:11.5px/1.5 var(--mono);color:var(--faint);
-    background:var(--inset);border:1px solid var(--line);border-radius:8px;
-    padding:8px 10px;overflow-wrap:anywhere}
-  li{background:var(--card);border:1px solid var(--line);border-radius:12px;
-    box-shadow:var(--shadow);overflow:hidden}
-  /* The step where acting makes a difference NOW gets the ring. A wizard
-     that highlights everything highlights nothing. */
-  li.agora{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));
-    box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 22%,transparent), var(--shadow)}
-  /* A done step takes LESS space. On an almost-set-up machine the list
-     is nine greens and one red, and with all the same size the only one
-     asking for action falls off the screen. */
-  li.ok{background:color-mix(in srgb,var(--card) 92%,var(--upbg))}
-  li.ok .head{padding:9px 16px}
-  li.ok .tit .n{font-size:13.5px}
-  li.ok .tit .d{font-size:12px}
-  li.ok .marca{width:19px;height:19px;font-size:11px}
-  li.espera{opacity:.62}
-  li.fora{opacity:.5}
-
-  .head{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;
-    cursor:pointer;user-select:none}
-  .head:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-  .marca{flex:none;width:22px;height:22px;border-radius:50%;margin-top:1px;
-    display:grid;place-items:center;font-size:12px;font-weight:700;
-    background:var(--inset);border:1px solid var(--line);color:var(--faint)}
-  .marca.ok{background:var(--upbg);border-color:color-mix(in srgb,var(--up) 30%,var(--line));color:var(--up)}
-  .marca.falta{background:var(--downbg);border-color:color-mix(in srgb,var(--down) 30%,var(--line));color:var(--down)}
-  .marca.erro{background:var(--warnbg);border-color:color-mix(in srgb,var(--warn) 32%,var(--line));color:var(--warn)}
-  .tit{min-width:0;flex:1}
-  .tit .n{font-weight:620;font-size:14.5px;letter-spacing:-.01em}
-  .tit .n .op{font-weight:460;color:var(--faint);font-size:12px;margin-left:7px}
-  .tit .d{color:var(--dim);font-size:12.5px;margin-top:2px;overflow-wrap:anywhere}
-  .tit .d.falta{color:var(--down)}
-  .tit .d.erro{color:var(--warn)}
-  .chev{flex:none;color:var(--faint);font-size:11px;margin-top:5px;
+  .tit .state{font-size:12.5px;color:var(--faint);margin-left:auto;
+    white-space:nowrap}
+  .tit .state.missing{color:var(--down)}
+  .tit .state.error{color:var(--warn)}
+  .tit .state.ok{color:var(--up)}
+  li.now .tit .n{font-weight:600}
+  .chev{flex:none;color:var(--faint);font-size:9px;width:9px;
     transition:transform .18s ease}
-  li.aberto .chev{transform:rotate(90deg)}
+  li.open .chev{transform:rotate(90deg)}
 
-  .corpo{display:none;padding:0 16px 16px 50px;border-top:1px solid var(--line);
-    margin-top:-1px;padding-top:14px}
-  li.aberto .corpo{display:block}
-  .porque{color:var(--dim);font-size:13px;margin:0 0 14px}
-  .onde{font-size:12.5px;color:var(--dim);margin:0 0 12px}
-  .onde b{font-weight:600;color:var(--fg)}
+  .body{display:none;padding:2px 12px 16px 30px}
+  li.open .body{display:block}
+  .why{color:var(--dim);font-size:13px;margin:0 0 13px;max-width:56ch}
+  .where{font-size:12.5px;color:var(--dim);margin:0 0 12px}
+  .where b{font-weight:600;color:var(--fg)}
+  .detail{margin:0 0 12px;font:11.5px/1.55 var(--mono);color:var(--dim);
+    background:var(--inset);border-radius:7px;padding:8px 10px;
+    overflow-wrap:anywhere;border-left:2px solid var(--line)}
 
   pre{margin:0 0 12px;background:var(--inset);border:1px solid var(--line);
-    border-radius:9px;padding:11px 12px;font:12px/1.6 var(--mono);
+    border-radius:7px;padding:10px 11px;font:12px/1.6 var(--mono);
     white-space:pre-wrap;overflow-wrap:anywhere;color:var(--fg)}
 
-  .acoes{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  button{font:inherit;font-size:13px;font-weight:550;padding:7px 13px;
-    border-radius:8px;border:1px solid var(--line);background:var(--card);
-    color:var(--fg);cursor:pointer}
+  .actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+  button{font:inherit;font-size:12.5px;font-weight:520;height:30px;
+    padding:0 12px;border-radius:7px;border:1px solid var(--line);
+    background:var(--card);color:var(--fg);cursor:pointer}
   button:hover:not(:disabled){border-color:var(--faint)}
-  button:disabled{opacity:.55;cursor:default}
+  button:disabled{opacity:.5;cursor:default}
   button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
-  button.pri:hover:not(:disabled){filter:brightness(1.07)}
-  .msg{font-size:12.5px;overflow-wrap:anywhere}
+  button.pri:hover:not(:disabled){filter:brightness(1.08)}
+  .msg{font-size:12.5px;overflow-wrap:anywhere;color:var(--dim)}
   .msg.ok{color:var(--up)} .msg.no{color:var(--warn)}
 
   /* ---- footer ---- */
-  footer{margin-top:26px;display:flex;gap:12px;align-items:center;
-    flex-wrap:wrap;color:var(--faint);font-size:12px}
+  footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);
+    display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+    color:var(--faint);font-size:12px}
   footer .stamp{font-family:var(--mono)}
-  a{color:var(--accent)}
-  .vazio{padding:40px 0;text-align:center;color:var(--dim)}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .empty{padding:40px 0;text-align:center;color:var(--faint);font-size:13px}
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+  @media (max-width:520px){
+    .wrap{padding:32px 16px 64px}
+    .tit .state{margin-left:0;flex-basis:100%}
+  }
 </style>
 </head><body>
 <div class="wrap">
   <header>
-    <div class="eyebrow" id="eyebrow">configurando</div>
-    <h1 id="maquina">Configurar esta máquina</h1>
-    <p class="lead" id="lead">Medindo o que falta…</p>
-    <div class="bar"><i id="barra"></i></div>
+    <div class="eyebrow" id="eyebrow">measuring</div>
+    <h1 id="machine">Set up this machine</h1>
+    <p class="lead" id="lead">Measuring what is missing…</p>
+    <div class="bar"><i id="barfill"></i></div>
     <div class="barlbl">
-      <span><b id="prontos">0</b> de <b id="total">0</b> essenciais prontos</span>
-      <span id="opcionais"></span>
+      <span><b id="done">0</b> of <b id="total">0</b> essentials ready</span>
+      <span id="optional"></span>
     </div>
   </header>
 
-  <div class="pronto" id="pronto">
-    <b>Esta máquina está pronta.</b>
-    <span id="prontotxt"></span>
-    <a href="/">Abrir o painel</a>
+  <div class="ready" id="ready">
+    <b>This machine is ready.</b>
+    <span id="readytxt"></span>
+    <a href="/">Open the panel</a>
   </div>
 
-  <ol id="lista"><li class="vazio" style="box-shadow:none;border:0;background:none">
-    <div class="vazio">medindo…</div></li></ol>
+  <ol id="list"><li class="empty">measuring…</li></ol>
 
   <footer>
-    <button id="remedir">Medir de novo</button>
-    <span>medido às <span class="stamp" id="hora">--:--:--</span></span>
+    <button id="remeasure">Measure again</button>
+    <span>measured at <span class="stamp" id="clock">--:--:--</span></span>
     <span class="stamp" id="build"></span>
     <span style="flex:1"></span>
-    <a href="/">painel</a>
+    <a href="/">panel</a>
   </footer>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
-const OS_LABEL = { linux:'Ubuntu', mac:'macOS', windows:'Windows' };
+const OS_LABEL = { linux:'Linux', mac:'macOS', windows:'Windows' };
 
 // Which step is open. Kept OUTSIDE the render: the list is redrawn after
 // every fix, and without this the step the person is working on would
@@ -193,15 +197,60 @@ let openId = null;
 let touched = false;   // has the person opened something by hand?
 let lastNext = null;
 
-function badge(state){
-  if (state === 'ok')   return ['ok','✓'];
-  if (state === 'erro') return ['erro','?'];
-  if (state === 'fora') return ['','–'];
-  return ['falta','!'];
+// A state is a word, not a sentence. The sentence is the machine's and
+// lives behind the expansion.
+const WORD = {
+  ok: 'done',
+  missing: 'to do',
+  error: 'error',
+  not_applicable: 'n/a',
+};
+
+// Finished phases fold into their header. A healthy machine showed eleven
+// green rows, and the one asking for action scrolled off -- the same
+// reasoning as a done row taking less room, carried to the group.
+// Clicking a header opens it; the choice is remembered while the page is.
+const unfolded = new Set();
+
+// Which group each step belongs to. It is a question about reading order
+// for a person, which is why it lives here and not in the daemon.
+//
+// Grouping by the `essential` flag was tried first and was wrong: on Linux
+// the Logitech receiver, the KVM input access, Wayland and NVENC all come
+// back `essential: false`, so the product's own core feature landed in a
+// bucket called "Optional". Optional is a property of the STEP -- the row
+// already carries that word -- not a place in the list.
+const PHASES = [
+  ['Install',               ['binaries', 'daemon', 'config', 'launchagent', 'tray']],
+  ['Permissions & signing', ['identity', 'signature', 'screen-recording',
+                             'accessibility', 'admin-key']],
+  ['Keyboard & mouse',      ['receiver', 'input-kvm']],
+  ['Screen & video',        ['display', 'wayland', 'nvenc', 'ffmpeg',
+                             'screen-task', 'virtual-display', 'screen-lock']],
+  ['Network & machines',    ['remote-login', 'sshd', 'peers', 'clipboard', 'tailscale']],
+  ['Updates',               ['ota']],
+];
+const PHASE_OTHER = 'Other';
+
+// Groups in a fixed order, keeping every unknown id rather than dropping
+// it: a step the daemon gains tomorrow has to appear even if nobody
+// updated this file. It landing in "Other" is the signal to come back here
+// -- which is how `screen-task` was found sitting on its own on Windows.
+function group(steps){
+  const seen = new Set();
+  const groups = [];
+  for (const [name, ids] of PHASES) {
+    const items = ids.map(id => steps.find(x => x.id === id)).filter(Boolean);
+    items.forEach(p => seen.add(p.id));
+    if (items.length) groups.push([name, items]);
+  }
+  const rest = steps.filter(p => !seen.has(p.id));
+  if (rest.length) groups.push([PHASE_OTHER, rest]);
+  return groups;
 }
 
 function copyText(text, button){
-  const done = () => { button.textContent = 'copiado'; setTimeout(()=>button.textContent='Copiar',1400); };
+  const done = () => { button.textContent = 'copied'; setTimeout(()=>button.textContent='Copy',1400); };
   if (navigator.clipboard) { navigator.clipboard.writeText(text).then(done, ()=>{}); return; }
   // Without the API (http on a non-secure origin, depending on the browser):
   // select in a textarea and let the person press Ctrl+C. Better than a
@@ -214,15 +263,18 @@ function copyText(text, button){
 
 function row(p, isCurrent){
   const li = document.createElement('li');
-  const [cls, sign] = badge(p.estado);
-  const waiting = p.esperando && p.estado !== 'ok';
+  const waiting = p.waiting_on && p.state !== 'ok';
   li.className = [
-    p.estado === 'ok' ? 'ok' : '',
-    p.estado === 'fora' ? 'fora' : '',
-    waiting ? 'espera' : '',
-    isCurrent ? 'agora' : '',
-    openId === p.id ? 'aberto' : '',
+    'step',
+    p.state === 'not_applicable' ? 'na' : '',
+    waiting ? 'waiting' : '',
+    isCurrent ? 'now' : '',
+    openId === p.id ? 'open' : '',
   ].filter(Boolean).join(' ');
+  // The id, so a redraw can find this row again without counting
+  // children: the phase headers share the list, so an index into the
+  // steps array points at the wrong element.
+  li.dataset.id = p.id;
 
   const head = document.createElement('div');
   head.className = 'head';
@@ -230,93 +282,93 @@ function row(p, isCurrent){
   head.setAttribute('role','button');
   head.setAttribute('aria-expanded', openId === p.id ? 'true' : 'false');
 
-  const m = document.createElement('div');
-  m.className = 'marca ' + cls;
-  m.textContent = sign;
-  m.setAttribute('aria-hidden','true');
+  const dot = document.createElement('span');
+  dot.className = 'dot ' + (p.state === 'not_applicable' ? 'na' : p.state);
+  dot.setAttribute('aria-hidden','true');
 
   const title = document.createElement('div');
   title.className = 'tit';
-  const n = document.createElement('div');
+  const n = document.createElement('span');
   n.className = 'n';
-  n.textContent = p.titulo;
-  if (!p.essencial) {
+  n.textContent = p.title;
+  title.appendChild(n);
+  if (!p.essential) {
     const op = document.createElement('span');
-    op.className = 'op';
-    op.textContent = 'opcional';
-    n.appendChild(op);
+    op.className = 'opt';
+    op.textContent = 'optional';
+    title.appendChild(op);
   }
-  const d = document.createElement('div');
-  d.className = 'est ' + (p.estado === 'falta' ? 'falta' : p.estado === 'erro' ? 'erro' : p.estado === 'ok' ? 'ok' : '');
-  d.textContent = waiting ? ('espera por ' + p.esperando) : PALAVRA[p.estado] || p.estado;
-  title.append(n, d);
+  const st = document.createElement('span');
+  st.className = 'state ' + (p.state === 'not_applicable' ? '' : p.state);
+  st.textContent = waiting ? ('waiting for ' + p.waiting_on) : (WORD[p.state] || p.state);
+  title.appendChild(st);
 
-  const ch = document.createElement('div');
+  const ch = document.createElement('span');
   ch.className = 'chev';
   ch.textContent = '▶';
   ch.setAttribute('aria-hidden','true');
 
-  head.append(m, title, ch);
+  head.append(dot, title, ch);
 
   const body = document.createElement('div');
-  body.className = 'corpo';
+  body.className = 'body';
   const why = document.createElement('p');
-  why.className = 'porque';
-  why.textContent = p.porque;
+  why.className = 'why';
+  why.textContent = p.why;
   body.appendChild(why);
 
   // What used to be the subtitle. It is the machine's own words -- paths,
   // dylib names, the error a tool printed -- and it belongs to whoever
   // opened the step, not to everyone scrolling past.
-  if (p.detalhe) {
+  if (p.detail) {
     const t = document.createElement('p');
-    t.className = 'tecnico';
-    t.textContent = p.detalhe;
+    t.className = 'detail';
+    t.textContent = p.detail;
     body.appendChild(t);
   }
 
-  const fix = p.arrumo || {};
-  if (fix.onde) {
+  const fix = p.fix || {};
+  if (fix.location) {
     const o = document.createElement('p');
-    o.className = 'onde';
+    o.className = 'where';
     const b = document.createElement('b');
-    b.textContent = fix.onde;
-    o.append(document.createTextNode('Na interface do sistema: '), b);
+    b.textContent = fix.location;
+    o.append(document.createTextNode('In the system UI: '), b);
     body.appendChild(o);
   }
-  if (fix.linha) {
+  if (fix.line) {
     const pre = document.createElement('pre');
-    pre.textContent = fix.linha;
+    pre.textContent = fix.line;
     body.appendChild(pre);
   }
 
   const actions = document.createElement('div');
-  actions.className = 'acoes';
+  actions.className = 'actions';
   const msg = document.createElement('span');
   msg.className = 'msg';
 
-  if (p.estado !== 'ok' && p.estado !== 'fora' && !waiting) {
-    if (fix.tipo === 'sozinho' || fix.tipo === 'clique') {
+  if (p.state !== 'ok' && p.state !== 'not_applicable' && !waiting) {
+    if (fix.kind === 'auto' || fix.kind === 'click') {
       const bt = document.createElement('button');
       bt.className = 'pri';
-      bt.textContent = fix.rotulo || 'Arrumar';
+      bt.textContent = fix.label || 'Fix it';
       bt.onclick = async () => {
         bt.disabled = true;
         const before = bt.textContent;
-        bt.textContent = 'fazendo…';
+        bt.textContent = 'working…';
         msg.className = 'msg';
         msg.textContent = '';
         try {
-          const r = await fetch('/api/setup/arrumar', {
+          const r = await fetch('/api/setup/fix', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({id: p.id}),
           });
           const j = await r.json().catch(()=>({}));
           msg.className = 'msg ' + (r.ok ? 'ok' : 'no');
-          msg.textContent = r.ok ? (j.detalhe || 'feito') : (j.error || j.detalhe || 'não resolveu');
+          msg.textContent = r.ok ? (j.detail || 'done') : (j.error || j.detail || 'did not fix it');
         } catch (e) {
           msg.className = 'msg no';
-          msg.textContent = 'o daemon não respondeu: ' + e;
+          msg.textContent = 'the daemon did not answer: ' + e;
         }
         bt.disabled = false;
         bt.textContent = before;
@@ -327,14 +379,14 @@ function row(p, isCurrent){
       };
       actions.appendChild(bt);
     }
-    if (fix.linha) {
+    if (fix.line) {
       const cp = document.createElement('button');
-      cp.textContent = 'Copiar';
-      cp.onclick = () => copyText(fix.linha, cp);
+      cp.textContent = 'Copy';
+      cp.onclick = () => copyText(fix.line, cp);
       actions.appendChild(cp);
     }
     const rm = document.createElement('button');
-    rm.textContent = 'Medir este';
+    rm.textContent = 'Measure again';
     rm.onclick = () => measure();
     actions.appendChild(rm);
   }
@@ -348,17 +400,17 @@ function row(p, isCurrent){
     //
     // The first version set `openId = p.id` and toggled the class only
     // on the clicked item: the state said "one open" and the screen
-    // showed two. check-setup.js caught it by counting `li.aberto` --
-    // by eye I would have read it as "it keeps the previous one open,
+    // showed two. check-setup.js caught it by counting open rows -- by
+    // eye I would have read it as "it keeps the previous one open,
     // maybe on purpose".
-    for (const other of document.querySelectorAll('#lista li.aberto')) {
+    for (const other of document.querySelectorAll('#list li.open')) {
       if (other !== li) {
-        other.classList.remove('aberto');
+        other.classList.remove('open');
         const c = other.querySelector('.head');
         if (c) c.setAttribute('aria-expanded', 'false');
       }
     }
-    li.classList.toggle('aberto', openId === p.id);
+    li.classList.toggle('open', openId === p.id);
     head.setAttribute('aria-expanded', openId === p.id ? 'true' : 'false');
   };
   head.onclick = toggle;
@@ -368,132 +420,81 @@ function row(p, isCurrent){
   return li;
 }
 
-// A state is a word, not a sentence. The sentence is the machine's and
-// lives behind the expansion.
-// Finished phases collapse to their header. A healthy machine showed
-// fourteen green cards, and the one asking for action scrolled off -- the
-// same reasoning as `li.ok` taking less room, carried to the group.
-// Clicking a header opens it; the choice is remembered while the page is.
-const abertas = new Set();
-
-const PALAVRA = {
-  ok: 'pronto',
-  falta: 'falta fazer',
-  erro: 'com erro',
-  espera: 'esperando',
-  fora: 'não se aplica',
-};
-
-// Which group each step belongs to. It is a question about reading order
-// for a person, which is why it lives here and not in the daemon.
-//
-// Grouping by the `essencial` flag was tried first and was wrong: on Linux
-// the Logitech receiver, the KVM input access, Wayland and NVENC all come
-// back `essencial: false`, so the product's own core feature landed in a
-// bucket called "Optional". Optional is a property of the STEP -- the row
-// already carries that badge -- not a place in the list.
-const FASES = [
-  ['Instalação',              ['binarios', 'daemon', 'config', 'launchagent', 'bandeja']],
-  ['Permissões e assinatura', ['identidade', 'assinatura', 'gravacao-de-tela',
-                               'acessibilidade', 'chave-admin', 'protetor-de-tela']],
-  ['Teclado e mouse',         ['receptor', 'input-kvm']],
-  ['Tela e vídeo',            ['wayland', 'nvenc', 'ffmpeg', 'tela-virtual']],
-  ['Rede e máquinas',         ['login-remoto', 'sshd', 'pares', 'clipboard', 'tailscale']],
-  ['Atualização',             ['ota']],
-];
-const FASE_OUTROS = 'Outros';
-
-/// Groups in a fixed order, keeping every unknown id rather than dropping
-/// it: a step the daemon gains tomorrow has to appear even if nobody
-/// updated this file.
-function agrupa(passos){
-  const vistos = new Set();
-  const grupos = [];
-  for (const [nome, ids] of FASES) {
-    const itens = ids.map(id => passos.find(x => x.id === id)).filter(Boolean);
-    itens.forEach(p => vistos.add(p.id));
-    if (itens.length) grupos.push([nome, itens]);
-  }
-  const sobra = passos.filter(p => !vistos.has(p.id));
-  if (sobra.length) grupos.push([FASE_OUTROS, sobra]);
-  return grupos;
-}
-
 function render(d, extra){
-  const r = d.resumo || {};
-  // The role already names the OS ("Ubuntu 26.04 - este PC"); repeating
-  // the label only padded the line. The label shows only when there is no role.
-  $('#eyebrow').textContent = d.papel || OS_LABEL[d.sistema] || d.sistema || '';
-  $('#maquina').textContent = d.maquina || 'Esta máquina';
-  $('#hora').textContent = d.medido || '--:--:--';
+  const r = d.summary || {};
+  // The role already names the OS ("Ubuntu 26.04 - this PC"); repeating
+  // the label only padded the line. The label shows only when there is no
+  // role.
+  $('#eyebrow').textContent = d.role || OS_LABEL[d.system] || d.system || '';
+  $('#machine').textContent = d.machine || 'This machine';
+  $('#clock').textContent = d.measured || '--:--:--';
   $('#build').textContent = d.build ? ('build ' + d.build) : '';
-  $('#prontos').textContent = r.prontos ?? 0;
+  $('#done').textContent = r.done ?? 0;
   $('#total').textContent = r.total ?? 0;
-  const pct = r.total ? Math.round(100 * r.prontos / r.total) : 0;
-  $('#barra').style.width = pct + '%';
+  const pct = r.total ? Math.round(100 * r.done / r.total) : 0;
+  $('#barfill').style.width = pct + '%';
 
-  const steps = d.passos || [];
-  const pendingOptional = steps.filter(p => !p.essencial && p.estado !== 'ok' && p.estado !== 'fora');
-  $('#opcionais').textContent = pendingOptional.length
-    ? (pendingOptional.length + ' opcional(is) pendente(s)') : '';
+  const steps = d.steps || [];
+  const pendingOptional = steps.filter(p => !p.essential && p.state !== 'ok' && p.state !== 'not_applicable');
+  $('#optional').textContent = pendingOptional.length
+    ? (pendingOptional.length + ' optional pending') : '';
 
-  const missing = steps.filter(p => p.estado !== 'ok' && p.estado !== 'fora').length;
-  $('#lead').textContent = r.pronto
-    ? (missing ? 'O essencial está de pé. O que sobra é opcional.' : 'Nada pendente.')
-    : (missing === 1 ? 'Falta uma coisa.' : 'Faltam ' + missing + ' coisas.');
-  $('#pronto').classList.toggle('on', !!r.pronto);
-  $('#prontotxt').textContent = r.pronto
-    ? (missing ? 'Os ' + missing + ' itens abaixo são opcionais. ' : '') : '';
+  const missing = steps.filter(p => p.state !== 'ok' && p.state !== 'not_applicable').length;
+  $('#lead').textContent = r.ready
+    ? (missing ? 'The essentials are up. What is left is optional.' : 'Nothing pending.')
+    : (missing === 1 ? 'One thing is missing.' : missing + ' things are missing.');
+  $('#ready').classList.toggle('on', !!r.ready);
+  $('#readytxt').textContent = r.ready
+    ? (missing ? 'The ' + missing + ' items below are optional.' : '') : '';
 
   // Open the next actionable step UNTIL the person opens something by hand.
   // After that, respect their choice: changing the screen under someone
   // who is reading is the fastest way to lose their trust.
-  if (!touched) openId = r.proximo || null;
+  if (!touched) openId = r.next || null;
 
-  const list = $('#lista');
+  const list = $('#list');
   list.textContent = '';
   if (!steps.length) {
     const li = document.createElement('li');
-    li.className = 'vazio';
-    li.textContent = 'nada a configurar';
+    li.className = 'empty';
+    li.textContent = 'nothing to set up';
     list.appendChild(li);
     return;
   }
-  for (const [nome, itens] of agrupa(steps)) {
-    const prontos = itens.filter(x => x.estado === 'ok' || x.estado === 'fora').length;
-    const cab = document.createElement('li');
-    cab.className = 'fase';
-    const h = document.createElement('h2');
-    h.textContent = nome;
-    const c = document.createElement('span');
-    c.className = 'conta' + (prontos === itens.length ? ' tudook' : '');
-    c.textContent = prontos === itens.length
-      ? (itens.length + '/' + itens.length + ' ok')
-      : (prontos + '/' + itens.length);
-    const tudoOk = prontos === itens.length;
+  for (const [name, items] of group(steps)) {
+    const done = items.filter(x => x.state === 'ok' || x.state === 'not_applicable').length;
+    const allDone = done === items.length;
     // An actionable step always shows, even inside a finished phase: the
-    // ring means nothing if the card is hidden.
-    const temAtual = itens.some(x => x.id === r.proximo);
-    const fechada = tudoOk && !abertas.has(nome) && !temAtual;
-    if (fechada) {
-      cab.classList.add('fechada');
-      cab.tabIndex = 0;
-      cab.setAttribute('role', 'button');
-      cab.setAttribute('aria-expanded', 'false');
-      const abre = () => { abertas.add(nome); touched = true; render(d, extra); };
-      cab.onclick = abre;
-      cab.onkeydown = (ev) => {
-        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); abre(); }
+    // accent means nothing if the row is hidden.
+    const hasCurrent = items.some(x => x.id === r.next);
+    const folded = allDone && !unfolded.has(name) && !hasCurrent;
+
+    const header = document.createElement('li');
+    header.className = 'phase' + (folded ? ' folded' : '');
+    const h = document.createElement('h2');
+    h.textContent = name;
+    const c = document.createElement('span');
+    c.className = 'count' + (allDone ? ' alldone' : '');
+    c.textContent = allDone ? (items.length + '/' + items.length + ' done')
+                            : (done + '/' + items.length);
+    header.append(h, c);
+    if (folded) {
+      header.tabIndex = 0;
+      header.setAttribute('role', 'button');
+      header.setAttribute('aria-expanded', 'false');
+      const open = () => { unfolded.add(name); touched = true; render(d, extra); };
+      header.onclick = open;
+      header.onkeydown = (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
       };
-      const ver = document.createElement('span');
-      ver.className = 'ver';
-      ver.textContent = 'ver';
-      cab.appendChild(ver);
+      const expand = document.createElement('span');
+      expand.className = 'expand';
+      expand.textContent = 'show';
+      header.appendChild(expand);
     }
-    cab.append(h, c);
-    list.appendChild(cab);
-    if (fechada) continue;
-    for (const p of itens) list.appendChild(row(p, p.id === r.proximo));
+    list.appendChild(header);
+    if (folded) continue;
+    for (const p of items) list.appendChild(row(p, p.id === r.next));
   }
 
   // Scroll the active step into view WHEN IT CHANGES, not on every
@@ -501,45 +502,44 @@ function render(d, extra){
   // is worse than one that does not. Changed = either the first load, or
   // the previous one just turned green -- the two cases where they want
   // to see the next one.
-  if (r.proximo && r.proximo !== lastNext) {
-    const target = list.querySelector('li.agora');
+  if (r.next && r.next !== lastNext) {
+    const target = list.querySelector('li.now');
     if (target && target.scrollIntoView) {
       const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
       target.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
     }
   }
-  lastNext = r.proximo || null;
+  lastNext = r.next || null;
 
   // Put back the last fix's message after the redraw: it is the only
-  // thing on screen that the measurement cannot reproduce.
+  // thing on screen that the measurement cannot reproduce. By id, never
+  // by position -- the phase headers sit in the same list.
   if (extra && extra.msgId) {
-    const i = steps.findIndex(p => p.id === extra.msgId);
-    if (i >= 0) {
-      const target = list.children[i].querySelector('.msg');
-      if (target) { target.className = extra.msgClass || 'msg'; target.textContent = extra.keep || ''; }
-    }
+    const li = list.querySelector('li.step[data-id="' + extra.msgId + '"]');
+    const target = li && li.querySelector('.msg');
+    if (target) { target.className = extra.msgClass || 'msg'; target.textContent = extra.keep || ''; }
   }
 }
 
 async function measure(extra){
-  const bt = $('#remedir');
+  const bt = $('#remeasure');
   bt.disabled = true;
   const before = bt.textContent;
-  bt.textContent = 'medindo…';
+  bt.textContent = 'measuring…';
   try {
     const r = await fetch('/api/setup');
     const d = await r.json();
     render(d, extra);
   } catch (e) {
-    $('#lead').textContent = 'não consegui falar com o daemon local: ' + e;
+    $('#lead').textContent = 'could not reach the local daemon: ' + e;
   }
   bt.disabled = false;
   bt.textContent = before;
 }
 
-$('#remedir').onclick = () => measure();
+$('#remeasure').onclick = () => measure();
 measure();
-// No auto-refresh, on purpose: measuring `pares` opens SSH to every
+// No auto-refresh, on purpose: measuring `peers` opens SSH to every
 // machine, and a timer would turn a monthly question into a storm of
 // connections.
 </script>

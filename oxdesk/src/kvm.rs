@@ -274,7 +274,7 @@ fn remote_release_command(h: &crate::config::HostCfg) -> String {
 /// process nor `CURRENT`.
 pub fn cli_release(port: u16) -> std::process::ExitCode {
     use std::io::{Read, Write};
-    let request = "POST /api/kvm/soltar HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let request = "POST /api/kvm/release HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
         eprintln!("kvm-soltar: the local oxdesk did not answer on port {port}");
         return std::process::ExitCode::FAILURE;

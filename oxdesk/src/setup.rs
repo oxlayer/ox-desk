@@ -75,35 +75,28 @@ impl System {
 /// macOS TCC or Windows UAC asking for human consent. Mixing the two is
 /// promising automation that does not exist.
 ///
-/// The wire names (`tipo`, `sozinho`, `rotulo`, ...) are read by
-/// `static/setup.html`.
+/// The wire names are the Rust names: `static/setup.html` reads
+/// `kind`, `auto`, `label` and so on, so renaming a variant here changes
+/// the page's contract and nothing else.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "tipo", rename_all = "lowercase")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Fix {
     /// The daemon does it now, on its own, and measures again.
-    #[serde(rename = "sozinho")]
     Auto {
-        #[serde(rename = "rotulo")]
         label: &'static str,
     },
     /// Needs root. We show the exact line to copy.
     Sudo {
-        #[serde(rename = "linha")]
         line: &'static str,
     },
     /// Needs a human click in a system window. The daemon opens the
     /// right window; the person decides.
-    #[serde(rename = "clique")]
     Click {
-        #[serde(rename = "rotulo")]
         label: &'static str,
-        #[serde(rename = "onde")]
         location: &'static str,
     },
     /// There is no honest automation here. The recipe is written down.
-    #[serde(rename = "receita")]
     Recipe {
-        #[serde(rename = "linha")]
         line: &'static str,
     },
 }
@@ -111,46 +104,36 @@ pub enum Fix {
 #[derive(Debug, Clone, Serialize)]
 pub struct Step {
     pub id: &'static str,
-    #[serde(rename = "titulo")]
     pub title: &'static str,
     /// One line saying what breaks without this.
     ///
     /// It exists because "enable this" without a reason becomes an
     /// automatic click, and three months later not even I remember why
     /// the step is on the list.
-    #[serde(rename = "porque")]
     pub why: &'static str,
-    #[serde(rename = "arrumo")]
     pub fix: Fix,
     /// Ids that must be `Ok` before this one makes sense.
-    #[serde(rename = "depende")]
     pub depends_on: &'static [&'static str],
     /// `false` = the set works without this, it only loses a part.
-    #[serde(rename = "essencial")]
     pub essential: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum State {
     Ok,
-    #[serde(rename = "falta")]
     Missing,
     /// Measuring failed. It is not "ok" and not "missing": it is "I don't
     /// know".
-    #[serde(rename = "erro")]
     Error,
     /// Does not apply to this machine (no GPU, no receiver).
-    #[serde(rename = "fora")]
     NotApplicable,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Check {
     pub id: String,
-    #[serde(rename = "estado")]
     pub state: State,
-    #[serde(rename = "detalhe")]
     pub detail: String,
 }
 
@@ -181,16 +164,12 @@ impl Check {
 pub struct Summary {
     /// Essential steps that apply to this machine.
     pub total: usize,
-    #[serde(rename = "prontos")]
     pub done: usize,
     /// Every applicable essential step is `Ok`.
-    #[serde(rename = "pronto")]
     pub ready: bool,
     /// First step where acting makes a difference now.
-    #[serde(rename = "proximo")]
     pub next: Option<String>,
     /// Steps that fail but depend on another one that fails earlier.
-    #[serde(rename = "esperando")]
     pub waiting: Vec<String>,
 }
 
@@ -264,43 +243,45 @@ pub fn catalog(s: System) -> Vec<Step> {
 fn linux() -> Vec<Step> {
     vec![
         Step {
-            id: "binarios",
-            title: "Binários instalados",
-            why: "o daemon, o host de tela e o KVM vivem em ~/.local/bin. \
-                     Faltou o oxdesk-kvm uma vez e o botão da bandeja \
-                     falhava com \"não consegui executar\" -- compilado, \
-                     nunca instalado.",
-            fix: Fix::Recipe { line: "bash install.sh   # ou ./scripts/deploy.sh" },
+            id: "binaries",
+            title: "Binaries installed",
+            why: "the daemon, the screen host and the KVM live in \
+                     ~/.local/bin. oxdesk-kvm went missing once and the tray \
+                     button failed with \"could not execute\" -- compiled, \
+                     never installed.",
+            fix: Fix::Recipe { line: "bash install.sh   # or ./scripts/deploy.sh" },
             depends_on: &[],
             essential: true,
         },
         Step {
             id: "config",
-            title: "Config desta máquina",
-            why: "cada máquina tem a própria config e nada sincroniza. \
-                     Sem a entrada desta máquina marcada como local, o \
-                     painel não sabe quem é \"aqui\".",
-            fix: Fix::Auto { label: "Escrever a config padrão" },
+            title: "This machine's config",
+            why: "every machine has its own config and nothing syncs it. \
+                     Without this machine's entry marked as local, the panel \
+                     does not know who \"here\" is.",
+            fix: Fix::Auto { label: "Write the default config" },
             depends_on: &[],
             essential: true,
         },
         Step {
             id: "daemon",
-            title: "Serviço de usuário ativo",
-            why: "o oxdesk.service é quem sobe o painel no logon. Rodando \
-                     na mão funciona até a primeira vez que você reinicia.",
-            fix: Fix::Auto { label: "Habilitar e iniciar" },
-            depends_on: &["binarios"],
+            title: "User service running",
+            why: "oxdesk.service is what starts the panel at login. Running \
+                     it by hand works until the first reboot.",
+            fix: Fix::Auto { label: "Enable and start" },
+            depends_on: &["binaries"],
             essential: true,
         },
         Step {
-            id: "receptor",
-            title: "Acesso ao receptor (HID++)",
-            why: "é por /dev/hidraw que trocamos o canal Easy-Switch do \
-                     teclado e do mouse. Sem acesso o painel simplesmente \
-                     não acha dispositivo -- não diz \"sem permissão\".",
+            id: "receiver",
+            title: "Access to the receiver (HID++)",
+            why: "/dev/hidraw is how we switch the keyboard's and the \
+                     mouse's Easy-Switch channel. Without access the panel \
+                     simply finds no device -- it does not say \"permission \
+                     denied\".",
             fix: Fix::Sudo {
-                line: "sudo install -m644 ~/dev/oxdesk/oxdesk/udev/70-oxdesk-hidraw.rules /etc/udev/rules.d/\n\
+                line: "# from the repo root:\n\
+                        sudo install -m644 oxdesk/udev/70-oxdesk-hidraw.rules /etc/udev/rules.d/\n\
                         sudo udevadm control --reload\n\
                         sudo udevadm trigger --subsystem-match=hidraw --action=add",
             },
@@ -309,14 +290,15 @@ fn linux() -> Vec<Step> {
         },
         Step {
             id: "input-kvm",
-            title: "Acesso ao teclado e mouse (KVM por LAN)",
-            why: "o KVM lê /dev/input/event* e chama EVIOCGRAB. A regra usa \
-                     TAG+=\"uaccess\" restrito ao vendor 046d, e NÃO o grupo \
-                     input: o grupo daria a qualquer processo da conta acesso \
-                     permanente a todos os dispositivos de entrada -- um \
-                     keylogger passivo de graça.",
+            title: "Access to keyboard and mouse (KVM over LAN)",
+            why: "the KVM reads /dev/input/event* and calls EVIOCGRAB. The \
+                     rule uses TAG+=\"uaccess\" restricted to vendor 046d, and \
+                     NOT the input group: the group would give every process \
+                     on the account permanent access to every input device -- \
+                     a passive keylogger for free.",
             fix: Fix::Sudo {
-                line: "sudo install -m644 ~/dev/oxdesk/oxdesk/udev/70-oxdesk-input.rules /etc/udev/rules.d/\n\
+                line: "# from the repo root:\n\
+                        sudo install -m644 oxdesk/udev/70-oxdesk-input.rules /etc/udev/rules.d/\n\
                         sudo udevadm control --reload\n\
                         sudo udevadm trigger --subsystem-match=input",
             },
@@ -325,64 +307,68 @@ fn linux() -> Vec<Step> {
         },
         Step {
             id: "wayland",
-            title: "Sessão Wayland",
-            why: "a detecção de borda usa a API privada do Mutter \
-                     (org.gnome.Mutter.InputCapture), e o clipboard usa a \
-                     RemoteDesktop do mesmo Mutter. No X11 nenhum dos dois \
-                     foi validado.",
-            fix: Fix::Recipe { line: "escolha \"GNOME\" (não \"GNOME on Xorg\") na tela de login" },
+            title: "Wayland session",
+            why: "edge detection uses Mutter's private API \
+                     (org.gnome.Mutter.InputCapture), and the clipboard uses \
+                     the same Mutter's RemoteDesktop. Neither has been \
+                     validated on X11.",
+            fix: Fix::Recipe {
+                line: "pick \"GNOME\" (not \"GNOME on Xorg\") on the login screen",
+            },
             depends_on: &[],
             essential: false,
         },
         Step {
             id: "clipboard",
-            title: "Clipboard entre as máquinas",
-            why: "o Mutter precisa aceitar a sessão de RemoteDesktop para \
-                     observarmos a área de transferência. Sem isso a cópia \
-                     não atravessa.",
-            fix: Fix::Auto { label: "Testar agora" },
+            title: "Clipboard across machines",
+            why: "Mutter has to accept the RemoteDesktop session for us to \
+                     watch the clipboard. Without it a copy does not cross.",
+            fix: Fix::Auto { label: "Test it now" },
             depends_on: &["daemon"],
             essential: true,
         },
         Step {
-            id: "pares",
-            title: "SSH alcança as outras máquinas",
-            why: "SSH é o transporte de tudo que cruza máquina -- troca de \
-                     tela, clipboard, arquivos. Sem chave autorizada o painel \
-                     mostra as outras como mortas.",
-            fix: Fix::Recipe { line: "ssh-copy-id <alias>   # alias é o campo `ssh` de cada host na config" },
+            id: "peers",
+            title: "SSH reaches the other machines",
+            why: "SSH carries everything that crosses a machine -- screen \
+                     switching, clipboard, files. Without an authorized key \
+                     the panel shows the others as dead.",
+            fix: Fix::Recipe {
+                line: "ssh-copy-id <alias>   # alias is each host's `ssh` field in the config",
+            },
             depends_on: &["config"],
             essential: true,
         },
         Step {
             id: "nvenc",
-            title: "Codificador de vídeo por hardware",
-            why: "esta máquina só pode ser ASSISTIDA se tiver NVENC. Sem \
-                     ele o painel cai no caminho de software, que é mais \
-                     lento e esquenta.",
-            fix: Fix::Recipe { line: "driver NVIDIA proprietário instalado; confira com nvidia-smi" },
-            depends_on: &["binarios"],
+            title: "Hardware video encoder",
+            why: "this machine can only be WATCHED if it has NVENC. Without \
+                     it the panel falls back to the software path, which is \
+                     slower and runs hot.",
+            fix: Fix::Recipe {
+                line: "install the proprietary NVIDIA driver; check with nvidia-smi",
+            },
+            depends_on: &["binaries"],
             essential: false,
         },
         Step {
-            id: "bandeja",
-            title: "Ícone na bandeja",
-            why: "é o caminho mais curto para trazer o teclado de volta \
-                     quando ele está em outra máquina. Sem ele você depende \
-                     de lembrar os dois Ctrl.",
-            fix: Fix::Auto { label: "Lançar agora" },
+            id: "tray",
+            title: "Tray icon",
+            why: "it is the shortest way to bring the keyboard back when it \
+                     is on another machine. Without it you depend on \
+                     remembering the double Ctrl.",
+            fix: Fix::Auto { label: "Launch it now" },
             depends_on: &["daemon"],
             essential: false,
         },
         Step {
             id: "ota",
-            title: "Atualização automática (OTA)",
-            why: "esta máquina se atualiza sozinha pelas Releases do \
-                     GitHub -- é o que mantém o Mac em dia quando ele \
-                     está longe de casa e ninguém pode rodar o deploy. \
-                     Sem o relógio, o build velho fica.",
-            fix: Fix::Auto { label: "Instalar o relógio e conferir agora" },
-            depends_on: &["binarios"],
+            title: "Automatic updates (OTA)",
+            why: "this machine updates itself from GitHub Releases -- it is \
+                     what keeps a travelling machine current when nobody can \
+                     run the deploy. Without the timer, the old build stays.",
+            fix: Fix::Auto { label: "Install the timer and check now" },
+            depends_on: &["binaries"],
             essential: false,
         },
     ]
@@ -391,159 +377,181 @@ fn linux() -> Vec<Step> {
 fn mac() -> Vec<Step> {
     vec![
         Step {
-            id: "binarios",
-            title: "Binários instalados",
-            why: "o Mac é cliente E host de tela. Deixar o host para trás \
-                     já aconteceu: a máquina assistia as outras e nunca era \
-                     assistida, e o painel caía no VNC sem dizer por quê.",
-            fix: Fix::Recipe { line: "./scripts/deploy.sh   # compila no próprio Mac, sem cross-compile" },
+            id: "binaries",
+            title: "Binaries installed",
+            why: "the Mac is both a client AND a screen host. Leaving the \
+                     host behind has happened: the machine watched the others \
+                     and was never watched itself, and the panel fell back to \
+                     VNC without saying why.",
+            fix: Fix::Recipe {
+                line: "./scripts/deploy.sh   # builds on the Mac itself, no cross-compile",
+            },
             depends_on: &[],
             essential: true,
         },
         Step {
             id: "config",
-            title: "Config desta máquina",
-            why: "cada máquina tem a própria config e nada sincroniza.",
-            fix: Fix::Auto { label: "Escrever a config padrão" },
+            title: "This machine's config",
+            why: "every machine has its own config and nothing syncs it.",
+            fix: Fix::Auto { label: "Write the default config" },
             depends_on: &[],
             essential: true,
         },
         Step {
             id: "daemon",
-            title: "LaunchAgent do daemon",
-            why: "o oxdesk tem de nascer na sessão gráfica. Lançado por SSH \
-                     ele não enxerga nem o chaveiro nem as permissões.",
-            fix: Fix::Auto { label: "Instalar e carregar" },
-            depends_on: &["binarios"],
+            title: "Daemon LaunchAgent",
+            why: "oxdesk has to start inside the graphical session. Launched \
+                     over SSH it sees neither the keychain nor the \
+                     permissions.",
+            fix: Fix::Auto { label: "Install and load" },
+            depends_on: &["binaries"],
             essential: true,
         },
         Step {
             id: "ffmpeg",
-            title: "ffmpeg que os binários pedem",
-            why: "o Mac é a única máquina que liga no ffmpeg -- captura \
-                     por avfoundation, codificação por h264_videotoolbox -- \
-                     e o soname entra NO BINÁRIO: compilado contra o major \
-                     9 ele não carrega com o major 7 instalado. Sem a \
-                     formula certa a tela não sobe e o OTA recusa o update \
-                     inteiro: está certo, mas chega como recusa de hora em \
-                     hora, e não como uma linha aqui.",
+            title: "The ffmpeg the binaries ask for",
+            why: "the Mac is the only machine that links ffmpeg -- capture \
+                     through avfoundation, encoding through \
+                     h264_videotoolbox -- and the soname goes INTO THE \
+                     BINARY: built against major 9 it will not load against \
+                     an installed major 7. With the wrong formula the screen \
+                     does not come up and the OTA refuses the whole update: \
+                     correct, but it arrives as an hourly refusal instead of \
+                     as one line here.",
             fix: Fix::Recipe { line: "brew install ffmpeg@7" },
-            depends_on: &["binarios"],
+            depends_on: &["binaries"],
             essential: true,
         },
         Step {
-            id: "identidade",
-            title: "Identidade local de assinatura",
-            why: "sem ela o binário é ad-hoc, a amarração do TCC é pelo \
-                     cdhash e a permissão de tela MORRE a cada compilação. \
-                     Medido: conceder, rodar um deploy, e o host voltar a \
-                     travar sem erro nenhum no log.",
+            id: "identity",
+            title: "Local signing identity",
+            why: "without it the binary is ad-hoc, TCC binds the grant to \
+                     the cdhash, and screen permission DIES on every build. \
+                     Measured: grant it, run a deploy, and watch the host \
+                     hang again with no error anywhere in the log.",
             fix: Fix::Recipe {
-                line: "bash ~/.local/bin/create-identity.sh   # no Terminal do Mac: por SSH o chaveiro está trancado",
+                line: "bash ~/.local/bin/create-identity.sh   # in the Mac's Terminal: over SSH the keychain is locked",
             },
             depends_on: &[],
             essential: true,
         },
         Step {
-            id: "assinatura",
-            title: "Host de tela assinado",
-            why: "é o que faz a permissão sobreviver ao próximo deploy. \
-                     Conceder a permissão ANTES de assinar desperdiça a \
-                     concessão -- e só o dono da máquina pode dar de volta, \
-                     à mão.",
-            fix: Fix::Auto { label: "Assinar agora" },
-            depends_on: &["binarios", "identidade"],
+            id: "signature",
+            title: "Screen host signed",
+            why: "this is what makes the grant survive the next deploy. \
+                     Granting permission BEFORE signing wastes the grant -- \
+                     and only the machine's owner can give it back, by hand.",
+            fix: Fix::Auto { label: "Sign it now" },
+            depends_on: &["binaries", "identity"],
             essential: true,
         },
         Step {
-            id: "gravacao-de-tela",
-            title: "Permissão de Gravação de Tela",
-            why: "sem ela o AVFoundation TRAVA em vez de falhar: o log \
-                     para em \"abrindo a tela 1\" e a última linha é uma \
-                     mensagem do ffmpeg sobre formato de pixel, que não tem \
-                     nada a ver com o problema. Cuidado: a PRIMEIRA \
-                     abertura depois de trocar o binário levou ~30 s, com o \
-                     log parado nessa mesma frase (as seguintes, ~3 s). \
-                     Espere 30 s antes de culpar o TCC.",
+            id: "screen-recording",
+            title: "Screen Recording permission",
+            why: "without it AVFoundation HANGS instead of failing: the log \
+                     stops at \"opening display 1\" and the last line is an \
+                     ffmpeg message about pixel format that has nothing to do \
+                     with the problem. Careful: the FIRST open after swapping \
+                     the binary took ~30 s, with the log stuck on that same \
+                     sentence (later ones, ~3 s). Wait 30 s before blaming \
+                     TCC.",
             fix: Fix::Click {
-                label: "Pedir a permissão",
-                location: "Ajustes > Privacidade e Segurança > Gravação de Tela > oxdesk-host",
+                label: "Ask for the permission",
+                location: "Settings > Privacy & Security > Screen Recording > oxdesk-host",
             },
-            depends_on: &["assinatura"],
+            depends_on: &["signature"],
             essential: true,
         },
         Step {
-            id: "acessibilidade",
-            title: "Permissão de Acessibilidade",
-            why: "é o que permite injetar teclado e mouse. Sem ela a tela \
-                     aparece e o ponteiro não anda -- mesmo sintoma de \"não \
-                     funcionou\", causa diferente.",
+            id: "accessibility",
+            title: "Accessibility permission",
+            why: "this is what allows injecting keyboard and mouse. Without \
+                     it the screen appears and the pointer does not move -- \
+                     same \"it didn't work\" symptom, different cause.",
             fix: Fix::Click {
-                label: "Pedir a permissão",
-                location: "Ajustes > Privacidade e Segurança > Acessibilidade > oxdesk-host",
+                label: "Ask for the permission",
+                location: "Settings > Privacy & Security > Accessibility > oxdesk-host",
             },
-            depends_on: &["assinatura"],
+            depends_on: &["signature"],
             essential: true,
         },
         Step {
             id: "launchagent",
-            title: "LaunchAgent do host de tela",
-            why: "o host sobe por launchctl na sessão gráfica, nunca por \
-                     SSH. RunAtLoad false de propósito: capturar sem ninguém \
-                     assistindo gastaria bateria à toa.",
-            fix: Fix::Auto { label: "Instalar e carregar" },
-            depends_on: &["binarios"],
+            title: "Screen host LaunchAgent",
+            why: "the host starts through launchctl inside the graphical \
+                     session, never over SSH. RunAtLoad is false on purpose: \
+                     capturing with nobody watching would waste battery.",
+            fix: Fix::Auto { label: "Install and load" },
+            depends_on: &["binaries"],
             essential: true,
         },
         Step {
+            id: "display",
+            title: "A display to capture",
+            why: "with no display attached macOS has no framebuffer, and \
+                     the screen host cannot serve a frame however many \
+                     permissions it holds. Measured on a MacBook whose panel \
+                     broke: zero active displays, every other step green, \
+                     and nothing on this page said why the screen was dead. \
+                     Unlike Windows there is no software display here -- an \
+                     external monitor, or a cheap HDMI dummy plug, is what \
+                     brings one back.",
+            fix: Fix::Recipe {
+                line: "attach a monitor (or an HDMI display emulator) -- there is no software fix on macOS",
+            },
+            depends_on: &[],
+            essential: false,
+        },
+        Step {
             id: "clipboard",
-            title: "Clipboard entre as máquinas",
-            why: "a leitura do clipboard do Mac passa por JXA, e isso só \
-                     roda na sessão gráfica.",
-            fix: Fix::Auto { label: "Testar agora" },
+            title: "Clipboard across machines",
+            why: "reading the Mac's clipboard goes through JXA, and that \
+                     only runs inside the graphical session.",
+            fix: Fix::Auto { label: "Test it now" },
             depends_on: &["daemon"],
             essential: true,
         },
         Step {
-            id: "login-remoto",
-            title: "Login Remoto (SSH de entrada)",
-            why: "é o que deixa o deploy e o painel alcançarem este Mac. \
-                     Sem isso ele só fala, nunca escuta.",
+            id: "remote-login",
+            title: "Remote Login (inbound SSH)",
+            why: "this is what lets the deploy and the panel reach this Mac. \
+                     Without it the machine only talks, never listens.",
             fix: Fix::Sudo { line: "sudo systemsetup -f -setremotelogin on" },
             depends_on: &[],
             essential: true,
         },
         Step {
             id: "tailscale",
-            title: "Tailscale (fora da LAN)",
-            why: "é o que alcança as outras máquinas fora de casa. Vai pelo \
-                     brew, com serviço próprio, e nunca pelo app: a extensão \
-                     de rede do app, sem login, derrubou a internet do Mac.",
+            title: "Tailscale (off the LAN)",
+            why: "this is what reaches the other machines from outside the \
+                     house. Install it through brew, with its own service, \
+                     and never through the app: the app's network extension, \
+                     without a login, took the Mac's internet down.",
             fix: Fix::Click {
-                label: "Instalar pelo brew",
-                location: "o Terminal que vai abrir: digite a senha e abra o link de login",
+                label: "Install through brew",
+                location: "the Terminal that will open: type the password and open the login link",
             },
             depends_on: &[],
             essential: false,
         },
         Step {
-            id: "pares",
-            title: "SSH alcança as outras máquinas",
-            why: "SSH é o transporte de tudo que cruza máquina.",
+            id: "peers",
+            title: "SSH reaches the other machines",
+            why: "SSH carries everything that crosses a machine.",
             fix: Fix::Recipe { line: "ssh-copy-id <alias>" },
             depends_on: &["config"],
             essential: true,
         },
         Step {
             id: "ota",
-            title: "Atualização automática (OTA)",
-            why: "é o passo que faz este Mac se manter em dia longe de \
-                     casa. O agente baixa o build publicado, **assina com a \
-                     identidade local** e só então troca -- é isso que \
-                     preserva a Gravação de Tela, que um binário ad-hoc da \
-                     CI perderia.",
-            fix: Fix::Auto { label: "Instalar o relógio e conferir agora" },
-            depends_on: &["binarios", "identidade"],
+            title: "Automatic updates (OTA)",
+            why: "this is the step that keeps a travelling Mac current. The \
+                     agent downloads the published build, **signs it with the \
+                     local identity** and only then swaps it -- which is what \
+                     preserves Screen Recording, and what an ad-hoc binary \
+                     from CI would lose.",
+            fix: Fix::Auto { label: "Install the timer and check now" },
+            depends_on: &["binaries", "identity"],
             essential: false,
         },
     ]
@@ -552,57 +560,61 @@ fn mac() -> Vec<Step> {
 fn windows() -> Vec<Step> {
     vec![
         Step {
-            id: "binarios",
-            title: "Binários instalados",
-            why: "o daemon, o agente, o host e o visualizador vivem em \
-                     %LOCALAPPDATA%\\oxdesk. O deploy assina cada um -- sem \
-                     assinatura o Defender come o executável sem avisar.",
-            fix: Fix::Recipe { line: "./scripts/deploy.sh   # do Ubuntu: cross-compile, assina e troca" },
+            id: "binaries",
+            title: "Binaries installed",
+            why: "the daemon, the agent, the host and the viewer live in \
+                     %LOCALAPPDATA%\\oxdesk. The deploy signs each one -- \
+                     unsigned, Defender eats the executable without a word.",
+            fix: Fix::Recipe {
+                line: "./scripts/deploy.sh   # from Linux: cross-compiles, signs and swaps",
+            },
             depends_on: &[],
             essential: true,
         },
         Step {
             id: "config",
-            title: "Config desta máquina",
-            why: "cada máquina tem a própria config e nada sincroniza.",
-            fix: Fix::Auto { label: "Escrever a config padrão" },
+            title: "This machine's config",
+            why: "every machine has its own config and nothing syncs it.",
+            fix: Fix::Auto { label: "Write the default config" },
             depends_on: &[],
             essential: true,
         },
         Step {
             id: "daemon",
-            title: "Tarefa de logon do daemon",
-            why: "no Windows o oxdesk sobe por tarefa agendada com /IT, não \
-                     por serviço: serviço nasce na sessão 0 e de lá não se vê \
-                     teclado, mouse nem área de transferência.",
-            fix: Fix::Auto { label: "Criar a tarefa" },
-            depends_on: &["binarios"],
+            title: "Daemon logon task",
+            why: "on Windows oxdesk starts from a scheduled task with /IT, \
+                     not from a service: a service is born in session 0, and \
+                     from there it cannot see keyboard, mouse or clipboard.",
+            fix: Fix::Auto { label: "Create the task" },
+            depends_on: &["binaries"],
             essential: true,
         },
         Step {
-            id: "tarefa-tela",
-            title: "Tarefa interativa do host de tela",
-            why: "mesma fronteira: sem /IT o DXGI devolve E_ACCESSDENIED \
-                     ou captura preto, e o sintoma não diz nada sobre sessão.",
-            fix: Fix::Auto { label: "Criar a tarefa" },
-            depends_on: &["binarios"],
+            id: "screen-task",
+            title: "Interactive task for the screen host",
+            why: "same boundary: without /IT, DXGI returns E_ACCESSDENIED or \
+                     captures black, and the symptom says nothing about \
+                     sessions.",
+            fix: Fix::Auto { label: "Create the task" },
+            depends_on: &["binaries"],
             essential: true,
         },
         Step {
             id: "clipboard",
-            title: "Clipboard entre as máquinas",
-            why: "ler a área de transferência exige estar na sessão \
-                     interativa. Pelo SSH se lê a sessão 0, que está sempre \
-                     vazia -- e \"vazio\" parece \"nada copiado\".",
-            fix: Fix::Auto { label: "Testar agora" },
+            title: "Clipboard across machines",
+            why: "reading the clipboard requires being in the interactive \
+                     session. Over SSH you read session 0, which is always \
+                     empty -- and \"empty\" looks like \"nothing copied\".",
+            fix: Fix::Auto { label: "Test it now" },
             depends_on: &["daemon"],
             essential: true,
         },
         Step {
             id: "sshd",
-            title: "Servidor OpenSSH",
-            why: "é por onde o Ubuntu manda deploy, clipboard e arquivos. \
-                     Sem ele esta máquina some do painel.",
+            title: "OpenSSH server",
+            why: "it is how the other machines send deploys, clipboard and \
+                     files. Without it this machine disappears from the \
+                     panel.",
             fix: Fix::Sudo {
                 line: "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0; Set-Service sshd -StartupType Automatic; Start-Service sshd",
             },
@@ -610,46 +622,49 @@ fn windows() -> Vec<Step> {
             essential: true,
         },
         Step {
-            id: "chave-admin",
-            title: "Chave autorizada",
-            why: "o OpenSSH do Windows lê a chave de um administrador em \
-                     ProgramData\\ssh\\administrators_authorized_keys, NÃO no \
-                     ~/.ssh do usuário. Põr no lugar errado falha com \
-                     \"Permission denied\" e nenhuma pista.",
+            id: "admin-key",
+            title: "Authorized key",
+            why: "Windows OpenSSH reads an administrator's key from \
+                     ProgramData\\ssh\\administrators_authorized_keys, NOT \
+                     from the user's ~/.ssh. Putting it in the wrong place \
+                     fails with \"Permission denied\" and no hint at all.",
             fix: Fix::Recipe {
-                line: "ssh-copy-id não existe aqui: ver .claude/rules/remote-powershell.md",
+                line: "ssh-copy-id does not exist here: see .claude/rules/remote-powershell.md",
             },
             depends_on: &["sshd"],
             essential: true,
         },
         Step {
-            id: "pares",
-            title: "SSH alcança as outras máquinas",
-            why: "SSH é o transporte de tudo que cruza máquina.",
-            fix: Fix::Recipe { line: "ssh-keygen e copiar a pública para o outro lado" },
+            id: "peers",
+            title: "SSH reaches the other machines",
+            why: "SSH carries everything that crosses a machine.",
+            fix: Fix::Recipe {
+                line: "ssh-keygen, then copy the public key to the other side",
+            },
             depends_on: &["config"],
             essential: true,
         },
         Step {
-            id: "tela-virtual",
-            title: "Tela sem monitor ligado",
-            why: "sem monitor o Windows não tem o que capturar: o visualizador \
-                     conecta, o clique passa e nenhum quadro chega. Uma tela \
-                     virtual mantém o acesso com a máquina sozinha.",
+            id: "virtual-display",
+            title: "A screen with no monitor attached",
+            why: "with no monitor Windows has nothing to capture: the viewer \
+                     connects, the click goes through and no frame ever \
+                     arrives. A virtual display keeps access to a machine \
+                     sitting on its own.",
             fix: Fix::Click {
-                label: "Instalar a tela virtual",
-                location: "o pedido de administrador do Windows",
+                label: "Install the virtual display",
+                location: "the Windows administrator prompt",
             },
             depends_on: &[],
             essential: false,
         },
         Step {
-            id: "protetor-de-tela",
-            title: "Protetor de tela e bloqueio",
-            why: "com a sessão bloqueada o DXGI devolve E_ACCESSDENIED e a \
-                     tela remota morre sozinha depois de alguns minutos. A \
-                     escolha é sua: desligar o bloqueio, ou saber que a tela \
-                     cai quando ele entra.",
+            id: "screen-lock",
+            title: "Screen saver and lock",
+            why: "with the session locked DXGI returns E_ACCESSDENIED and \
+                     the remote screen dies on its own after a few minutes. \
+                     The choice is yours: turn the lock off, or know that \
+                     the screen drops when it kicks in.",
             fix: Fix::Recipe {
                 line: "powercfg /setacvalueindex SCHEME_CURRENT SUB_NONE CONSOLELOCK 0",
             },
@@ -658,14 +673,14 @@ fn windows() -> Vec<Step> {
         },
         Step {
             id: "ota",
-            title: "Atualização automática (OTA)",
-            why: "aqui o OTA **só confere e relata**: a chave do \
-                     Authenticode não sai do Ubuntu, e `.exe` sem assinatura \
-                     válida é o que o Defender apaga na escrita. Serve para \
-                     o painel dizer quando esta máquina ficou atrás -- quem \
-                     troca é o deploy.",
-            fix: Fix::Auto { label: "Instalar a tarefa e conferir agora" },
-            depends_on: &["binarios"],
+            title: "Automatic updates (OTA)",
+            why: "here the OTA **only checks and reports**: the Authenticode \
+                     key never leaves the build machine, and an `.exe` without \
+                     a valid signature is what Defender deletes as it is \
+                     written. It exists so the panel can say when this \
+                     machine fell behind -- the deploy is what swaps it.",
+            fix: Fix::Auto { label: "Install the task and check now" },
+            depends_on: &["binaries"],
             essential: false,
         },
     ]
@@ -742,7 +757,7 @@ mod tests {
 
     #[test]
     fn next_skips_steps_waiting_on_a_dependency() {
-        // `daemon` depends on `binarios`. With both missing, the offered
+        // `daemon` depends on `binaries`. With both missing, the offered
         // action must be installing the binaries -- telling the person to
         // enable a service whose executable does not exist fixes nothing
         // and teaches them to distrust the wizard.
@@ -750,12 +765,12 @@ mod tests {
         let checks: Vec<_> = steps
             .iter()
             .map(|p| {
-                let missing = p.id == "daemon" || p.id == "binarios";
+                let missing = p.id == "daemon" || p.id == "binaries";
                 m(p.id, if missing { State::Missing } else { State::Ok })
             })
             .collect();
         let r = summarize(&steps, &checks);
-        assert_eq!(r.next.as_deref(), Some("binarios"));
+        assert_eq!(r.next.as_deref(), Some("binaries"));
         assert!(r.waiting.contains(&"daemon".to_string()));
     }
 

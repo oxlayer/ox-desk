@@ -12,8 +12,8 @@
 // (the case here), the Electron binary runs as plain Node and
 // `require('electron')` returns undefined.
 //
-// The output markers (`ESTADO`, `APOS_CLICAR_LOG`, `FAVORITO`, `ESTREITO`,
-// `ERROS`) are kept as they are: the docs tell people to look for them.
+// The output markers (`STATE`, `AFTER_LOG_CLICK`, `FAVORITE`, `NARROW`,
+// `ERRORS`) are what the docs tell people to look for.
 const { app, BrowserWindow } = require('electron');
 const errors = [];
 app.whenReady().then(async () => {
@@ -44,13 +44,13 @@ app.whenReady().then(async () => {
   }))()`);
 
   const r = await state();
-  console.log('ESTADO ' + JSON.stringify(r));
+  console.log('STATE ' + JSON.stringify(r));
 
   // --- switch panel ----------------------------------------------------
   await win.webContents.executeJavaScript(
     `document.querySelector('.navit[data-sec="log"]').click()`);
   const onLog = await state();
-  console.log('APOS_CLICAR_LOG ' + JSON.stringify(
+  console.log('AFTER_LOG_CLICK ' + JSON.stringify(
     { visible: onLog.visible, activeNav: onLog.activeNav }));
 
   // --- favorite a machine ----------------------------------------------
@@ -78,8 +78,8 @@ app.whenReady().then(async () => {
     return { sidebarWidth: Math.round(s.width), sidebarHeight: Math.round(s.height),
              horizontalScroll: document.documentElement.scrollWidth > window.innerWidth + 1 };
   })()`);
-  console.log('ESTREITO ' + JSON.stringify(narrow));
+  console.log('NARROW ' + JSON.stringify(narrow));
 
-  console.log('ERROS ' + JSON.stringify(errors));
+  console.log('ERRORS ' + JSON.stringify(errors));
   app.exit(errors.length ? 1 : 0);
 });

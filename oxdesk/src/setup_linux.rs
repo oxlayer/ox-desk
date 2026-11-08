@@ -62,7 +62,7 @@ fn clock() -> Result<String, String> {
         .map(|s| s.success())
         .unwrap_or(false);
     if !active {
-        return Err("oxdesk-ota.timer não está ativo".into());
+        return Err("oxdesk-ota.timer is not active".into());
     }
     let enabled = Command::new("systemctl")
         .args(["--user", "is-enabled", "--quiet", "oxdesk-ota.timer"])
@@ -70,24 +70,24 @@ fn clock() -> Result<String, String> {
         .map(|s| s.success())
         .unwrap_or(false);
     if !enabled {
-        return Err("oxdesk-ota.timer roda agora mas não está habilitado: no próximo boot não sobe".into());
+        return Err("oxdesk-ota.timer runs now but is not enabled: it will not come up on the next boot".into());
     }
-    Ok("timer do systemd a cada 1 h".into())
+    Ok("systemd timer, hourly".into())
 }
 
 fn binaries() -> Check {
     let dir = bin_dir();
     let absent: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
     if !absent.is_empty() {
-        return Check::missing("binarios", format!("faltam: {}", absent.join(", ")));
+        return Check::missing("binaries", format!("missing: {}", absent.join(", ")));
     }
     // Existing on disk is not being live. See
     // `setup_common::stamp_verdict`: a deploy can install the new file
     // and nobody runs it.
     if let Some(p) = crate::setup_common::daemon_on_disk(&dir.join("oxdesk")) {
-        return Check::missing("binarios", p);
+        return Check::missing("binaries", p);
     }
-    Check::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
+    Check::ok("binaries", format!("{} binaries in {}", BINS.len(), dir.display()))
 }
 
 fn daemon() -> Check {
@@ -98,10 +98,10 @@ fn daemon() -> Check {
         .map(|s| s.success())
         .unwrap_or(false);
     match (state.as_str(), enabled) {
-        ("active", true) => Check::ok("daemon", "ativo e habilitado no logon"),
+        ("active", true) => Check::ok("daemon", "active and enabled at login"),
         // Active but not enabled is the treacherous case: it works today
         // and disappears on the next boot. It must weigh as missing.
-        ("active", false) => Check::missing("daemon", "ativo, mas NÃO habilitado: não volta no próximo logon"),
+        ("active", false) => Check::missing("daemon", "active, but NOT enabled: it will not come back at the next login"),
         (other, _) => Check::missing("daemon", format!("unit {other}")),
     }
 }
@@ -185,21 +185,21 @@ fn receiver() -> Check {
         // panel once told the person to "run udevadm" when the receiver
         // was on the other machine -- fixing a permission that was not
         // broken.
-        return Check::not_applicable("receptor", "nenhum hidraw Logitech agora: receptor desplugado?");
+        return Check::not_applicable("receiver", "no Logitech hidraw right now: receiver unplugged?");
     }
     let rule = hidraw_rule();
     match (openable > 0, rule) {
-        (true, Some(r)) => Check::ok("receptor", format!("{openable} de {total} nós abrem; regra {r}")),
+        (true, Some(r)) => Check::ok("receiver", format!("{openable} of {total} nodes open; rule {r}")),
         (true, None) => Check::missing(
-            "receptor",
-            format!("{openable} de {total} nós abrem AGORA, mas nenhuma regra cobre hidraw+046d: \
-                     a ACL some no próximo replug"),
+            "receiver",
+            format!("{openable} of {total} nodes open NOW, but no rule covers hidraw+046d: \
+                     the ACL disappears on the next replug"),
         ),
         (false, Some(r)) => Check::missing(
-            "receptor",
-            format!("{r} existe e nenhum dos {total} nós abre: falta um udevadm trigger"),
+            "receiver",
+            format!("{r} exists and none of the {total} nodes open: a udevadm trigger is missing"),
         ),
-        (false, None) => Check::missing("receptor", format!("nenhum dos {total} nós de /dev/hidraw abre")),
+        (false, None) => Check::missing("receiver", format!("none of the {total} /dev/hidraw nodes open")),
     }
 }
 
@@ -210,7 +210,7 @@ fn receiver() -> Check {
 /// right today and wrong tomorrow.
 fn input_kvm() -> Check {
     let Ok(entries) = std::fs::read_dir("/dev/input") else {
-        return Check::error("input-kvm", "não consegui ler /dev/input");
+        return Check::error("input-kvm", "could not read /dev/input");
     };
     let mut total = 0;
     let mut readable = 0;
@@ -233,21 +233,21 @@ fn input_kvm() -> Check {
         }
     }
     if total == 0 {
-        return Check::not_applicable("input-kvm", "nenhum dispositivo Logitech em /dev/input agora");
+        return Check::not_applicable("input-kvm", "no Logitech device in /dev/input right now");
     }
     Check::when(
         "input-kvm",
         readable == total,
-        format!("{readable} de {total} dispositivos Logitech legíveis"),
-        format!("só {readable} de {total} dispositivos Logitech são legíveis"),
+        format!("{readable} of {total} Logitech devices readable"),
+        format!("only {readable} of {total} Logitech devices are readable"),
     )
 }
 
 fn wayland() -> Check {
     match std::env::var("XDG_SESSION_TYPE").unwrap_or_default().as_str() {
         "wayland" => Check::ok("wayland", "Wayland"),
-        "" => Check::error("wayland", "XDG_SESSION_TYPE vazio: o daemon não herdou o ambiente da sessão"),
-        other => Check::missing("wayland", format!("sessão {other}: borda e clipboard não foram validados aqui")),
+        "" => Check::error("wayland", "XDG_SESSION_TYPE empty: the daemon did not inherit the session environment"),
+        other => Check::missing("wayland", format!("{other} session: edge detection and clipboard were never validated here")),
     }
 }
 
@@ -257,7 +257,7 @@ fn nvenc() -> Check {
     // NVIDIA driver loaded? Without it the probe fails anyway, and with
     // it the screen path has already been exercised for real by use.
     if !std::path::Path::new("/dev/nvidiactl").exists() {
-        return Check::not_applicable("nvenc", "sem GPU NVIDIA: esta máquina pode assistir, não ser assistida");
+        return Check::not_applicable("nvenc", "no NVIDIA GPU: this machine can watch, not be watched");
     }
     match crate::setup_common::run_timed("nvidia-smi", &["--query-gpu=name", "--format=csv,noheader"], 5) {
         Ok(s) => {
@@ -277,7 +277,7 @@ fn tray() -> Check {
         .output()
         .map(|o| !o.stdout.is_empty())
         .unwrap_or(false);
-    Check::when("bandeja", alive, "rodando", "não está rodando")
+    Check::when("tray", alive, "running", "not running")
 }
 
 // ------------------------------------------------------------------ repairs
@@ -297,9 +297,9 @@ pub fn repair(id: &str, cfg: &Config) -> Result<String, String> {
             Ok("unit habilitada".into())
         }
         "clipboard" => crate::setup_common::test_clipboard(),
-        "bandeja" => launch_tray(),
+        "tray" => launch_tray(),
         "ota" => install_clock(),
-        _ => Err(format!("'{id}' não se arruma sozinho nesta máquina")),
+        _ => Err(format!("'{id}' has no automatic fix on this machine")),
     }
     .map(|s| {
         let _ = cfg;
@@ -321,7 +321,7 @@ pub fn repair(id: &str, cfg: &Config) -> Result<String, String> {
 fn install_clock() -> Result<String, String> {
     let bin = bin_dir().join("oxdesk-ota");
     if !bin.is_file() {
-        return Err(format!("não achei {}: rode o deploy", bin.display()));
+        return Err(format!("could not find {}: run the deploy", bin.display()));
     }
     let dir = crate::sys::home_dir().join(".config/systemd/user");
     std::fs::create_dir_all(&dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
@@ -390,7 +390,7 @@ fn install_clock() -> Result<String, String> {
 fn launch_tray() -> Result<String, String> {
     let dir = crate::sys::home_dir().join("dev/oxdesk/gui");
     if !dir.join("main.js").exists() {
-        return Err(format!("não achei a casca em {}", dir.display()));
+        return Err(format!("could not find the shell at {}", dir.display()));
     }
     let log = crate::sys::state_dir().join("oxdesk-gui.log");
     let output = std::fs::File::create(&log).map_err(|e| format!("abrir {}: {e}", log.display()))?;
@@ -401,7 +401,7 @@ fn launch_tray() -> Result<String, String> {
         .stdout(output)
         .stderr(error)
         .spawn()
-        .map_err(|e| format!("lançar: {e}"))?;
+        .map_err(|e| format!("launch: {e}"))?;
 
     // Measure after launching, do not announce the launch: electron dies
     // within ~200 ms when it dies, and an immediate "ready" would hide
@@ -409,8 +409,8 @@ fn launch_tray() -> Result<String, String> {
 
     std::thread::sleep(Duration::from_millis(1500));
     if tray().state == State::Ok {
-        Ok("bandeja no ar".into())
+        Ok("the tray is up".into())
     } else {
-        Err(format!("lancei e não ficou de pé; veja {}", log.display()))
+        Err(format!("launched and it did not stay up; see {}", log.display()))
     }
 }

@@ -42,7 +42,7 @@ pub fn measure(cfg: &Config) -> Vec<Check> {
         binaries(),
         crate::setup_common::this_machine_config(cfg),
         task("daemon", "oxdesk"),
-        task("tarefa-tela", "oxdesk-host"),
+        task("screen-task", "oxdesk-host"),
         crate::setup_common::clipboard(),
         sshd(),
         admin_key(),
@@ -75,15 +75,15 @@ fn binaries() -> Check {
     let dir = bin_dir();
     let absent: Vec<&str> = BINS.iter().copied().filter(|b| !dir.join(b).exists()).collect();
     if !absent.is_empty() {
-        return Check::missing("binarios", format!("faltam: {}", absent.join(", ")));
+        return Check::missing("binaries", format!("missing: {}", absent.join(", ")));
     }
     // Existing on disk is not being live. See
     // `setup_common::stamp_verdict`: a deploy can install the new file
     // and nobody runs it.
     if let Some(p) = crate::setup_common::daemon_on_disk(&dir.join("oxdesk.exe")) {
-        return Check::missing("binarios", p);
+        return Check::missing("binaries", p);
     }
-    Check::ok("binarios", format!("{} binários em {}", BINS.len(), dir.display()))
+    Check::ok("binaries", format!("{} binaries in {}", BINS.len(), dir.display()))
 }
 
 /// Does the task exist AND run in the interactive session?
@@ -99,7 +99,7 @@ fn task(id: &str, name: &str) -> Check {
     // not fail -- and the OS message goes along for the rare case.
     let xml = match run_timed("schtasks", &["/query", "/tn", name, "/xml", "ONE"], 10) {
         Ok(x) => x,
-        Err(e) => return Check::missing(id, format!("não achei a tarefa \"{name}\" ({e})")),
+        Err(e) => return Check::missing(id, format!("could not find the task \"{name}\" ({e})")),
     };
     // `/xml` comes out in UTF-16 and `run_timed` reads it as lossy UTF-8,
     // so the text arrives sprinkled with NULs. Stripping the zeros is
@@ -109,16 +109,16 @@ fn task(id: &str, name: &str) -> Check {
     if !clean.contains("InteractiveToken") {
         return Check::missing(
             id,
-            format!("\"{name}\" existe mas NÃO é interativa: cairia na sessão 0"),
+            format!("\"{name}\" exists but is NOT interactive: it would land in session 0"),
         );
     }
-    Check::ok(id, format!("\"{name}\" existe e roda na sessão interativa"))
+    Check::ok(id, format!("\"{name}\" exists and runs in the interactive session"))
 }
 
 fn sshd() -> Check {
     match crate::sys::unit_state("sshd").as_str() {
-        "active" => Check::ok("sshd", "serviço sshd rodando"),
-        "inactive" => Check::missing("sshd", "o serviço sshd existe e está parado"),
+        "active" => Check::ok("sshd", "the sshd service is running"),
+        "inactive" => Check::missing("sshd", "the sshd service exists and is stopped"),
         other => Check::missing("sshd", format!("sshd: {other}")),
     }
 }
@@ -148,10 +148,10 @@ fn admin_key() -> Check {
         (Ok(_), Ok(text)) => {
             let n = text.lines().filter(|l| l.trim_start().starts_with("ssh-")).count();
             Check::when(
-                "chave-admin",
+                "admin-key",
                 n > 0,
-                format!("{n} chave(s) em {}", p.display()),
-                format!("{} existe e não tem chave nenhuma", p.display()),
+                format!("{n} key(s) in {}", p.display()),
+                format!("{} exists and holds no key at all", p.display()),
             )
         }
         // Exists and we cannot read it: that is the EXPECTED state on a
@@ -161,24 +161,24 @@ fn admin_key() -> Check {
         // learns to ignore. What really checks the content is the
         // `pares` step of the OTHER machines, which come in through here.
         (Ok(m), Err(_)) => Check::ok(
-            "chave-admin",
+            "admin-key",
             format!(
-                "existe ({} bytes); só administradores leem, então as chaves não se contam daqui",
+                "exists ({} bytes); only administrators can read it, so the keys cannot be counted from here",
                 m.len()
             ),
         ),
         (Err(e), _) if e.kind() == std::io::ErrorKind::NotFound => {
-            Check::missing("chave-admin", format!("não achei {}", p.display()))
+            Check::missing("admin-key", format!("could not find {}", p.display()))
         }
-        (Err(e), _) => Check::error("chave-admin", format!("{}: {e}", p.display())),
+        (Err(e), _) => Check::error("admin-key", format!("{}: {e}", p.display())),
     }
 }
 
 fn virtual_display() -> Check {
     let count_cmd = "@(Get-PnpDevice -Class Monitor | Where-Object Present).Count";
     match run_timed("powershell", &["-NoProfile", "-Command", count_cmd], 15) {
-        Ok(output) => crate::setup_common::monitors_verdict(&output),
-        Err(e) => Check::error("tela-virtual", format!("não consegui contar os monitores: {e}")),
+        Ok(output) => crate::setup_common::monitors_verdict("virtual-display", &output),
+        Err(e) => Check::error("virtual-display", format!("could not count the monitors: {e}")),
     }
 }
 
@@ -187,7 +187,7 @@ fn virtual_display() -> Check {
 fn install_virtual_display() -> Result<String, String> {
     const SCRIPT: &str = include_str!("../setup/install-virtual-display.ps1");
     let target = bin_dir().join("install-virtual-display.ps1");
-    std::fs::write(&target, SCRIPT).map_err(|e| format!("gravar {target:?}: {e}"))?;
+    std::fs::write(&target, SCRIPT).map_err(|e| format!("write {target:?}: {e}"))?;
     let elevate = format!(
         "Start-Process powershell -Verb RunAs -Wait -ArgumentList \
          '-NoProfile','-ExecutionPolicy','Bypass','-File','\"{}\"'",
@@ -197,7 +197,7 @@ fn install_virtual_display() -> Result<String, String> {
     let m = virtual_display();
     match m.state {
         State::Ok => Ok(m.detail),
-        _ => Err(format!("{} -- aceite o pedido de administrador e meça de novo", m.detail)),
+        _ => Err(format!("{} -- accept the administrator prompt and measure again", m.detail)),
     }
 }
 
@@ -218,20 +218,20 @@ fn screen_saver() -> Check {
     let timeout: u64 = read("ScreenSaveTimeOut").and_then(|v| v.parse().ok()).unwrap_or(0);
 
     if active == "0" || timeout == 0 {
-        return Check::ok("protetor-de-tela", "protetor desligado: a tela remota não cai sozinha");
+        return Check::ok("screen-lock", "screen saver off: the remote screen will not drop on its own");
     }
     if secure == "0" {
         // A screen saver without a password does not lock the session,
         // and it is the lock -- not the screen saver -- that takes DXGI
         // down.
         return Check::ok(
-            "protetor-de-tela",
-            format!("protetor em {}min, sem bloqueio: o DXGI continua", timeout / 60),
+            "screen-lock",
+            format!("screen saver after {}min, no lock: DXGI keeps working", timeout / 60),
         );
     }
     Check::missing(
-        "protetor-de-tela",
-        format!("bloqueia em {}min: a tela remota morre com E_ACCESSDENIED", timeout / 60),
+        "screen-lock",
+        format!("locks after {}min: the remote screen dies with E_ACCESSDENIED", timeout / 60),
     )
 }
 
@@ -251,15 +251,15 @@ pub fn repair(id: &str, _cfg: &Config) -> Result<String, String> {
         // its own, only when someone asks for the screen (`schtasks
         // /run`). The host capturing with nobody watching would waste GPU
         // and power.
-        "tarefa-tela" => create_task(
-            "tarefa-tela",
+        "screen-task" => create_task(
+            "screen-task",
             "oxdesk-host",
             &bin_dir().join("oxdesk-host.exe").to_string_lossy(),
             &["/sc", "once", "/st", "00:00"],
         ),
         "ota" => install_clock(),
-        "tela-virtual" => install_virtual_display(),
-        _ => Err(format!("'{id}' não se arruma sozinho nesta máquina")),
+        "virtual-display" => install_virtual_display(),
+        _ => Err(format!("'{id}' has no automatic fix on this machine")),
     }
 }
 
@@ -277,13 +277,13 @@ fn install_clock() -> Result<String, String> {
     let first = run_timed(&exe.to_string_lossy(), &["--conferir"], 60);
     Ok(match first {
         Ok(s) => format!("tarefa criada; primeira checagem: {}", s.trim()),
-        Err(e) => format!("tarefa criada, mas a primeira checagem falhou: {e}"),
+        Err(e) => format!("task created, but the first check failed: {e}"),
     })
 }
 
 fn create_task(id: &str, name: &str, exe: &str, when: &[&str]) -> Result<String, String> {
     if !std::path::Path::new(exe).exists() {
-        return Err(format!("não achei {exe}: rode o deploy primeiro"));
+        return Err(format!("could not find {exe}: run the deploy first"));
     }
     let mut args: Vec<&str> = vec!["/create", "/tn", name, "/tr", exe];
     args.extend_from_slice(when);
@@ -303,6 +303,6 @@ fn create_task(id: &str, name: &str, exe: &str, when: &[&str]) -> Result<String,
     if m.state == crate::setup::State::Ok {
         Ok(m.detail)
     } else {
-        Err(format!("criei e a conferência diz: {}", m.detail))
+        Err(format!("created, and the check says: {}", m.detail))
     }
 }

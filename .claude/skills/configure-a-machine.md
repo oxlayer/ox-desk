@@ -104,7 +104,7 @@ cd gui && env -u ELECTRON_RUN_AS_NODE \
   ./node_modules/electron/dist/electron check-setup.js
 ```
 
-It prints `ERROS []` when it passes. The test compares the screen with
+It prints `ERRORS []` when it passes. The test compares the screen with
 what the API measured — counter, number of rows, highlight of the active
 step, no row without detail, no horizontal scroll at 420 px. It has
 already caught an accordion that kept two steps open while the state

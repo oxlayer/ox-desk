@@ -359,7 +359,7 @@ fn invalidate(cache: &Mutex<Cache>) {
 fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let incoming: serde_json::Value = match serde_json::from_str(&body) {
         Ok(v) => v,
@@ -405,7 +405,7 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 
     let body = match serde_json::to_string(&next) {
         Ok(b) => b,
-        Err(e) => return err_json(req, 500, &format!("serializar: {e}")),
+        Err(e) => return err_json(req, 500, &format!("serialize: {e}")),
     };
     match cfg.write() {
         Ok(mut g) => *g = next,
@@ -424,7 +424,7 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let fr: focus::FocusRequest = match serde_json::from_str(&body) {
         Ok(v) => v,
@@ -479,7 +479,7 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
                 .with_header(json_header())
                 .with_header(nostore()),
         ),
-        Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+        Err(e) => err_json(req, 500, &format!("serialize: {e}")),
     }
 }
 
@@ -509,7 +509,7 @@ fn post_remap(mut req: Request) {
 
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let b: Body = match serde_json::from_str(&body) {
         Ok(v) => v,
@@ -537,7 +537,7 @@ fn post_remap(mut req: Request) {
 fn post_clipboard(mut req: Request) {
     let mut text = String::new();
     if req.as_reader().read_to_string(&mut text).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     if text.len() > clip::LIMIT {
         return err_json(req, 413, "texto acima do limite");
@@ -548,7 +548,7 @@ fn post_clipboard(mut req: Request) {
     }
 }
 
-/// POST /api/clipboard-arquivos {"paths":[...]} -- received files.
+/// POST /api/clipboard-files {"paths":[...]} -- received files.
 ///
 /// JSON here, unlike the text clipboard, because the body is a LIST:
 /// separating paths by line break would fail on the first file with a
@@ -556,7 +556,7 @@ fn post_clipboard(mut req: Request) {
 fn post_clipboard_files(mut req: Request) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let paths: Vec<String> = v
@@ -573,7 +573,7 @@ fn post_clipboard_files(mut req: Request) {
     }
 }
 
-/// POST /api/clipboard-arquivos/enviar {"host":"<name>"} -- sends the
+/// POST /api/clipboard-files/send {"host":"<name>"} -- sends the
 /// pending large selection to ONE destination.
 ///
 /// It exists because above the cap we do not send on our own: 1.4 GB to
@@ -582,7 +582,7 @@ fn post_clipboard_files(mut req: Request) {
 fn post_clipboard_send(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(host) = v.get("host").and_then(|h| h.as_str()).map(String::from) else {
@@ -606,13 +606,13 @@ fn post_clipboard_send(mut req: Request, cfg: &RwLock<Config>) {
 fn post_transfer(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
-        Err(_) => return err_json(req, 500, "config travada"),
+        Err(_) => return err_json(req, 500, "config lock poisoned"),
     };
     match files::transfer(&snap, &field("de"), &field("caminho"), &field("para"), &field("pasta")) {
         Ok(id) => ok_json(req, serde_json::json!({ "id": id }).to_string()),
@@ -623,7 +623,7 @@ fn post_transfer(mut req: Request, cfg: &RwLock<Config>) {
 fn post_session(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(host) = v.get("host").and_then(|h| h.as_str()).map(String::from) else {
@@ -631,12 +631,12 @@ fn post_session(mut req: Request, cfg: &RwLock<Config>) {
     };
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
-        Err(_) => return err_json(req, 500, "config travada"),
+        Err(_) => return err_json(req, 500, "config lock poisoned"),
     };
     match screen::open_session(&snap, &host) {
         Ok(s) => match serde_json::to_string(&s) {
             Ok(b) => ok_json(req, b),
-            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            Err(e) => err_json(req, 500, &format!("serialize: {e}")),
         },
         Err(e) => err_json(req, 409, &e),
     }
@@ -645,7 +645,7 @@ fn post_session(mut req: Request, cfg: &RwLock<Config>) {
 fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(host) = v.get("host").and_then(|h| h.as_str()).map(String::from) else {
@@ -663,7 +663,7 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
     };
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
-        Err(_) => return err_json(req, 500, "config travada"),
+        Err(_) => return err_json(req, 500, "config lock poisoned"),
     };
     match screen::launch(&snap, &host, opts) {
         Ok(line) => {
@@ -682,7 +682,7 @@ fn post_screen(mut req: Request, cfg: &RwLock<Config>) {
 fn post_hidpp_pause(mut req: Request) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let min = v.get("minutes").and_then(|x| x.as_u64()).unwrap_or(10).min(60);
@@ -713,7 +713,7 @@ fn post_hidpp_pause(mut req: Request) {
 fn post_follow(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let current = cfg.read().map(|g| g.input.follow.enabled).unwrap_or(false);
@@ -747,7 +747,7 @@ fn post_follow(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(on) = v.get("enabled").and_then(|x| x.as_bool()) else {
@@ -788,7 +788,7 @@ fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(obj) = v.get("posicoes").and_then(|p| p.as_object()) else {
@@ -842,7 +842,7 @@ fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 fn post_kill(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let (Some(host), Some(pid)) = (
@@ -855,7 +855,7 @@ fn post_kill(mut req: Request, cfg: &RwLock<Config>) {
     let confirm = v.get("confirm").and_then(|c| c.as_bool()).unwrap_or(false);
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
-        Err(_) => return err_json(req, 500, "config travada"),
+        Err(_) => return err_json(req, 500, "config lock poisoned"),
     };
     match procs::kill(&snap, &host, pid, force, confirm) {
         Ok(detail) => {
@@ -868,13 +868,13 @@ fn post_kill(mut req: Request, cfg: &RwLock<Config>) {
 /// GET /api/setup -- what this machine still lacks.
 ///
 /// Measures on demand, and does NOT join the panel's refresh cycle: the
-/// `pares` step opens SSH to each host, and a panel repeating that every
+/// `peers` step opens SSH to each host, and a panel repeating that every
 /// 10 s would be a storm of connections to answer a question that changes
 /// once a month. The page shows the measurement time and a button.
 fn get_setup(req: Request, cfg: &RwLock<Config>) {
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
-        Err(_) => return err_json(req, 500, "config travada"),
+        Err(_) => return err_json(req, 500, "config lock poisoned"),
     };
     let steps = setup::local_catalog();
     let checks = setup::measure(&snap);
@@ -888,35 +888,35 @@ fn get_setup(req: Request, cfg: &RwLock<Config>) {
             let m = checks.iter().find(|m| m.id == p.id);
             serde_json::json!({
                 "id": p.id,
-                "titulo": p.title,
-                "porque": p.why,
-                "arrumo": p.fix,
-                "essencial": p.essential,
-                "depende": p.depends_on,
-                "estado": m.map(|m| m.state).unwrap_or(setup::State::Error),
-                "detalhe": m.map(|m| m.detail.clone()).unwrap_or_else(|| "nao medido".into()),
-                "esperando": setup::blocked_by(p, &checks),
+                "title": p.title,
+                "why": p.why,
+                "fix": p.fix,
+                "essential": p.essential,
+                "depends_on": p.depends_on,
+                "state": m.map(|m| m.state).unwrap_or(setup::State::Error),
+                "detail": m.map(|m| m.detail.clone()).unwrap_or_else(|| "not measured".into()),
+                "waiting_on": setup::blocked_by(p, &checks),
             })
         })
         .collect();
 
     let me = snap.hosts.iter().find(|h| h.is_local());
     let body = serde_json::json!({
-        "sistema": setup::System::this_machine(),
-        "maquina": me.map(|h| h.name.clone()),
-        "papel": me.map(|h| h.role.clone()),
+        "system": setup::System::this_machine(),
+        "machine": me.map(|h| h.name.clone()),
+        "role": me.map(|h| h.role.clone()),
         "build": env!("OXDESK_BUILD"),
-        "medido": sys::hhmmss(),
-        "passos": rows,
-        "resumo": summary,
+        "measured": sys::hhmmss(),
+        "steps": rows,
+        "summary": summary,
     });
     match serde_json::to_string(&body) {
         Ok(b) => ok_json(req, b),
-        Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+        Err(e) => err_json(req, 500, &format!("serialize: {e}")),
     }
 }
 
-/// POST /api/setup/arrumar {"id":"<step>"}
+/// POST /api/setup/fix {"id":"<step>"}
 ///
 /// Returns 409, not 500, when the repair does not solve it: it is not a
 /// server defect, it is the normal "I opened the window, now it is up to
@@ -925,27 +925,27 @@ fn get_setup(req: Request, cfg: &RwLock<Config>) {
 fn post_setup_repair(mut req: Request, cfg: &RwLock<Config>) {
     let mut body = String::new();
     if req.as_reader().read_to_string(&mut body).is_err() {
-        return err_json(req, 400, "corpo ilegivel");
+        return err_json(req, 400, "unreadable body");
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let Some(id) = v.get("id").and_then(|i| i.as_str()) else {
-        return err_json(req, 400, "informe {\"id\": \"<passo>\"}");
+        return err_json(req, 400, "send {\"id\": \"<step>\"}");
     };
     // Only ids from THIS machine's catalog. Without this, any id would
     // fall straight into the platform module's `match` -- which refuses
     // today, but nothing would guarantee that for the next step added.
     if !setup::local_catalog().iter().any(|p| p.id == id) {
-        return err_json(req, 404, &format!("'{id}' nao e um passo desta maquina"));
+        return err_json(req, 404, &format!("'{id}' is not a step on this machine"));
     }
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
-        Err(_) => return err_json(req, 500, "config travada"),
+        Err(_) => return err_json(req, 500, "config lock poisoned"),
     };
     say!("setup: repairing '{id}'");
     match setup::repair(id, &snap) {
         Ok(detail) => {
             say!("setup: '{id}' ok -- {detail}");
-            ok_json(req, serde_json::json!({"ok": true, "detalhe": detail}).to_string())
+            ok_json(req, serde_json::json!({"ok": true, "detail": detail}).to_string())
         }
         Err(e) => {
             say!("setup: '{id}' not solved -- {e}");
@@ -961,13 +961,13 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     if path == "/api/config" && method == "PATCH" {
         return patch_config(req, cfg, cache);
     }
-    if path == "/api/kvm/soltar" && method == "POST" {
+    if path == "/api/kvm/release" && method == "POST" {
         return match kvm::release() {
             Ok(()) => ok_json(req, "{\"ok\":true}".into()),
             Err(e) => err_json(req, 500, &e),
         };
     }
-    if path == "/api/setup/arrumar" && method == "POST" {
+    if path == "/api/setup/fix" && method == "POST" {
         return post_setup_repair(req, cfg);
     }
     if path == "/api/setup" && method == "GET" {
@@ -976,19 +976,19 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     if path == "/api/clipboard" && method == "POST" {
         return post_clipboard(req);
     }
-    if path == "/api/clipboard-arquivos" && method == "POST" {
+    if path == "/api/clipboard-files" && method == "POST" {
         return post_clipboard_files(req);
     }
-    if path == "/api/clipboard-arquivos/enviar" && method == "POST" {
+    if path == "/api/clipboard-files/send" && method == "POST" {
         return post_clipboard_send(req, cfg);
     }
     if path == "/api/screen" && method == "POST" {
         return post_screen(req, cfg);
     }
-    if path == "/api/sessao" && method == "POST" {
+    if path == "/api/session" && method == "POST" {
         return post_session(req, cfg);
     }
-    if path == "/api/files/transferir" && method == "POST" {
+    if path == "/api/files/transfer" && method == "POST" {
         return post_transfer(req, cfg);
     }
     if path == "/api/processes/kill" && method == "POST" {
@@ -1050,7 +1050,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         "/api/kvm" => {
             let mode = match cfg.read() {
                 Ok(g) => g.input.mode.clone(),
-                Err(_) => return err_json(req, 500, "config travada"),
+                Err(_) => return err_json(req, 500, "config lock poisoned"),
             };
             ok_json(
                 req,
@@ -1066,7 +1066,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             let snap = cached(&snap_cfg, cache);
             match serde_json::to_string(&*snap) {
                 Ok(b) => ok_json(req, b),
-                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+                Err(e) => err_json(req, 500, &format!("serialize: {e}")),
             }
         }
 
@@ -1080,7 +1080,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 .unwrap_or_else(logs::default_lines);
             match serde_json::to_string(&logs::tail(n)) {
                 Ok(b) => ok_json(req, b),
-                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+                Err(e) => err_json(req, 500, &format!("serialize: {e}")),
             }
         }
 
@@ -1097,7 +1097,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             };
             let snap = match cfg.read() {
                 Ok(g) => g.clone(),
-                Err(_) => return err_json(req, 500, "config travada"),
+                Err(_) => return err_json(req, 500, "config lock poisoned"),
             };
             // No `host`: this machine, which is the common case of opening
             // the panel and just looking.
@@ -1111,35 +1111,35 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             let path = param("path").unwrap_or_default();
             match serde_json::to_string(&files::list(&snap, &host, &path)) {
                 Ok(b) => ok_json(req, b),
-                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+                Err(e) => err_json(req, 500, &format!("serialize: {e}")),
             }
         }
 
         "/api/files/transferencias" => match serde_json::to_string(&files::transfers()) {
             Ok(b) => ok_json(req, b),
-            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            Err(e) => err_json(req, 500, &format!("serialize: {e}")),
         },
 
         "/api/screen" => {
             let snap = match cfg.read() {
                 Ok(g) => g.clone(),
-                Err(_) => return err_json(req, 500, "config travada"),
+                Err(_) => return err_json(req, 500, "config lock poisoned"),
             };
             match serde_json::to_string(&screen::plans(&snap)) {
                 Ok(b) => ok_json(req, b),
-                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+                Err(e) => err_json(req, 500, &format!("serialize: {e}")),
             }
         }
 
         "/api/changelog" => match serde_json::to_string(&changelog::entries()) {
             Ok(b) => ok_json(req, b),
-            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            Err(e) => err_json(req, 500, &format!("serialize: {e}")),
         },
 
         "/api/layout" => {
             let snap = match cfg.read() {
                 Ok(g) => g.clone(),
-                Err(_) => return err_json(req, 500, "config travada"),
+                Err(_) => return err_json(req, 500, "config lock poisoned"),
             };
             let hosts: Vec<_> = snap
                 .hosts
@@ -1174,7 +1174,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             let q = req.url().split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
             let snap = match cfg.read() {
                 Ok(g) => g.clone(),
-                Err(_) => return err_json(req, 500, "config travada"),
+                Err(_) => return err_json(req, 500, "config lock poisoned"),
             };
             let host = q
                 .split('&')
@@ -1190,23 +1190,23 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 });
             match serde_json::to_string(&procs::list(&snap, &host)) {
                 Ok(b) => ok_json(req, b),
-                Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+                Err(e) => err_json(req, 500, &format!("serialize: {e}")),
             }
         }
 
         "/api/controls" => match serde_json::to_string(&hidpp::controls()) {
             Ok(b) => ok_json(req, b),
-            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            Err(e) => err_json(req, 500, &format!("serialize: {e}")),
         },
 
         "/api/devices" => match serde_json::to_string(&hidpp::survey()) {
             Ok(b) => ok_json(req, b),
-            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            Err(e) => err_json(req, 500, &format!("serialize: {e}")),
         },
 
         "/api/config" => match serde_json::to_string(&snap_cfg) {
             Ok(b) => ok_json(req, b),
-            Err(e) => err_json(req, 500, &format!("serializar: {e}")),
+            Err(e) => err_json(req, 500, &format!("serialize: {e}")),
         },
 
         "/setup" | "/setup.html" => respond(
