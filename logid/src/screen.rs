@@ -356,6 +356,11 @@ pub fn open_session(cfg: &Config, host: &str) -> Result<Session, String> {
         .arg(format!("{}:{}", h.addr, plan.port))
         .env("LOGI_PONTE_TOKEN", &token)
         .env("LOGI_PAR", &pin)
+        // Telemetry (spec 017): the bridge records only if it gets the file.
+        .env("LOGI_PATH", crate::telemetry::path_to(h))
+        .env("LOGI_VERSION", env!("LOGI_BUILD"))
+        .env("LOGI_HOST_OS", format!("{:?}", h.os()).to_lowercase())
+        .envs(cfg.telemetry_env())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

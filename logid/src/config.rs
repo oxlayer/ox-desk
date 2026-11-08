@@ -307,6 +307,15 @@ pub struct Config {
     pub devices: Vec<DeviceCfg>,
     #[serde(default)]
     pub input: InputCfg,
+    /// Session telemetry (spec 017): one local line per screen session, with
+    /// the path and how it went, never who or what. On unless set to false;
+    /// `LOGI_TELEMETRY=0` in the environment also turns it off.
+    #[serde(default = "default_true")]
+    pub telemetry: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub const DEFAULT_TOML: &str = include_str!("../default-config.toml");

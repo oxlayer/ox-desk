@@ -52,6 +52,7 @@ mod setup_mac;
 #[cfg(windows)]
 mod setup_win;
 mod sys;
+mod telemetry;
 #[cfg(target_os = "linux")]
 mod tray;
 
@@ -1050,6 +1051,10 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             )
         }
 
+        "/api/telemetry" => {
+            ok_json(req, telemetry::summary_json(50));
+            return;
+        }
         "/api/status" | "/api/hosts" => {
             let snap = cached(&snap_cfg, cache);
             match serde_json::to_string(&*snap) {
