@@ -65,7 +65,7 @@ there be a wizard" — there is one. It is "why does a person still paste
 
 ## The floor: what cannot move into the GUI
 
-Three things, and no amount of architecture removes them. Any plan that
+Four things, and no amount of architecture removes them. Any plan that
 pretends otherwise will produce a wizard that lies about what it did.
 
 ### 1. Elevation
@@ -89,7 +89,29 @@ the *binary* and is lost on a rename. The wizard's only possible role is
 to detect the state, open the right Settings pane, and re-check — never to
 claim it fixed something.
 
-### 3. Third-party package managers
+### 3. Physical state
+
+The floor's hardest floor, found the hard way on 2026-11-08: the
+reference MacBook's panel broke, and `CGGetActiveDisplayList` answered
+**zero** active displays. No wizard, no API and no permission produces a
+framebuffer. On Windows the equivalent gap has a software answer -- a
+virtual display driver, already a step (`virtual-display`) -- and on
+macOS it does not: someone has to attach a monitor or an HDMI display
+emulator.
+
+This is worth stating as floor rather than as a bug, because the honest
+design follows from it: when a step's only fix is a person doing something
+physical, the wizard's job is to **name it in one line** and stop
+pretending. The `display` step's `why` says there is no software fix and
+names the dummy plug.
+
+The same accident found the second instance of the same shape: that Mac's
+console belonged to another account, so the five installed LaunchAgents
+could not run, and `launchctl print` only says `Could not print domain`.
+A wizard cannot log a person in. It can say who holds the console, which
+is what the `daemon` step does now.
+
+### 4. Third-party package managers
 
 Homebrew's `ffmpeg@7`, Tailscale, OpenSSH. The wizard can drive them and
 read their exit codes, but the work is still "ask a package manager", and

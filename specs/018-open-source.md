@@ -226,6 +226,16 @@ and messages. `stream`, `ota`, `hidpp`, `agent` and `gui` are already
 English. Bounded work, and [[../.claude/rules/english-only]] is what keeps
 it from coming back.
 
+**Corrected, 2026-11-08.** That count was accented lines, which flattered
+the estimate twice over. Unaccented Portuguese is wider than the accents
+(`nao`, `esta`, `faltam`, `igual`) and reaches `hidpp`, `ota` and
+`scripts/`; and the hardest part is not prose at all, it is the **wire
+format** -- `serde` renames, request fields, state values, CLI flags.
+Those have a reader on the other side, so each has to move with its
+consumer in the same commit or the daemon speaks one name and the panel
+reads another. The work is bounded but it is four or five coordinated
+commits, not one pass over the strings.
+
 ## What does **not** need fixing
 
 Written down so nobody repeats the search:
@@ -431,8 +441,33 @@ a measurement.
    certificate stays trusted ([[008-security]]). *Check:*
    `openssl x509 -subject` shows the project's name in English, and
    `Get-AuthenticodeSignature` on Windows still says `Valid`.
-6. **Translate `oxdesk/src`.** *Check:* no accented line outside test
-   fixtures and specs.
+6. **Translate what a contributor reads.** Four slices, because the wire
+   format moves with its consumer or not at all. *Check per slice:* no
+   Portuguese identifier, field name or string left in it, and
+   `scripts/check.sh` green.
+   - 6a. **The wizard. Done 2026-11-08** (`7dfefbb`): step ids, JSON
+     fields, six routes, ~145 measured messages, `setup.html`, and the
+     GUI's two consumers. *Checked:* zero accented lines in `setup*.rs`
+     except two comments that quote what a pt-BR Windows prints, which is
+     the point of them.
+   - 6b. **The API contract. Done 2026-11-08** (`a969c09`): 16
+     `serde(rename)`, 3 `hidpp` JSON keys, 5 request fields, 4 response
+     keys, the copy queue's state values with the panel's CSS classes, and
+     ~45 strings in `main.rs` and `hidpp`.
+   - 6c. **The panel's visible copy.** `index.html` still says
+     "copiando...", "chegou", "novidades". It is the page people actually
+     use, so it is the slice worth doing carefully rather than quickly.
+   - 6d. **The CLI and the OTA's vocabulary.** 29 flags and subcommands
+     (`--conferir`, `--estado`, `--forcar`, `--curto`, `--pedir`,
+     `--probe-nativo`, `kvm-soltar`, `clip-arq-*`, `esquerda/direita`),
+     the state words on the wire (`igual`, `mais-novo-aqui`,
+     `em dia no build`), and the build stamp's `-sujo`. This one is last
+     on purpose: `deploy.sh` stamps `-sujo` and `ota/src/release.rs`
+     strips exactly that suffix, so renaming one side changes what an
+     already-installed updater concludes about a published build. It
+     moves with its tests, or not at all.
+   - 6e. **`scripts/`.** `deploy.sh` (79 lines), `check.sh` (11),
+     `build-binaries.sh` (4) -- variable names, not protocol.
 7. **Add `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`. Done 2026-11-08.**
    `LICENSE` (AGPL-3.0), `hidpp/LICENSE` (MIT), [[../THIRD-PARTY]],
    [[../CONTRIBUTING]] — which carries the inbound grant of

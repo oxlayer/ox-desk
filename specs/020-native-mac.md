@@ -141,24 +141,54 @@ pixel conversion the final design does not have — the native chain hands a
 measurement would have been pessimistic and the plumbing thrown away.
 Capture and encode are therefore proved together.
 
-**Step 2 is blocked on a TCC grant, not on code.** `ScreenCaptureKit`
-answers `-3801 The user declined TCCs for application, window, display
-capture`, and it does so from three places: a fresh probe binary, from
-`oxdesk-host --probe-nativo` over SSH, and from `oxdesk-host` launched by
-a LaunchAgent **inside the graphical session**. The reason is not the
-session: `oxdesk-host --conferir` reports **`gravacao-de-tela: falta`**.
-The host simply does not hold the grant.
+**Step 2 was blocked on a TCC grant. It is now blocked on hardware.**
 
-Which is a finding about the fleet and not about this work: the grant
-belongs to the binary, the rename changed `logistream-host` into
-`oxdesk-host`, and `scripts/migrate-from-logi/mac.sh` says in its own
-header that Screen Recording and Accessibility have to be approved again
-by hand after that. Nobody did. **The Mac has not been able to serve its
-own screen since the cutover**, and the wizard has been saying so.
+First the grant: `ScreenCaptureKit` answered `-3801 The user declined TCCs
+for application, window, display capture` from three places -- a fresh
+probe binary, `oxdesk-host --probe-nativo` over SSH, and `oxdesk-host`
+launched by a LaunchAgent inside the graphical session. The owner then
+granted Screen Recording by hand, and the whole native chain ran:
+ScreenCaptureKit handed a `CVPixelBuffer` straight to VideoToolbox and an
+H.264 access unit came out, with no FFmpeg and no Homebrew anywhere in it.
+
+Then, the same day, **the reference MacBook fell and its panel broke** --
+and not only the glass. Measured over SSH, three ways that agree:
+
+| Question | Answer |
+|---|---|
+| `CGGetActiveDisplayList` | **0** displays |
+| `ioreg -rc IODisplayConnect` | **0** |
+| `system_profiler SPDisplaysDataType` | the M1 GPU, and no `Displays:` section at all |
+| `WindowServer` | running |
+| SSH, FileVault | reachable; FileVault off |
+
+So the machine is fine and has **no framebuffer**. Which means step 2's
+real measurement -- fps and p50/p95 per frame from `SCStream`, against the
+FFmpeg path on the same hardware -- cannot be taken on this Mac until a
+display is attached. An external monitor or an HDMI display emulator
+restores one; there is no software display on macOS, unlike Windows
+(checked: the practice for headless Macs is a dummy plug, and even
+Sequoia's high-performance screen sharing is reported to fail without
+one).
+
+Two things came out of that accident and are worth more than the delay.
+
+**One: the wizard would have called that Mac healthy.** Screen Recording
+granted, binary signed, LaunchAgent loaded, zero frames servable, and not
+one line on the page saying why. It is now a step -- `display`, with
+`setup_common::displays_verdict` keeping "the call failed" apart from
+"there is no display", because reporting zero on a failed query would send
+someone to buy a monitor they already have plugged in. See
+[[019-one-onboarding]].
+
+**Two: the same Mac had no graphical session at all** -- its console
+belonged to a different account, so uid 501's five installed LaunchAgents
+could not run, and `launchctl print`'s error does not say that. The
+`daemon` step now names who holds the console.
 
 One thing already learned in favour of the native path, by accident:
 ScreenCaptureKit **returns a loud error** where AVFoundation, per
-[[../.claude/rules/graphical-session]], simply *hangs* without the grant —
+[[../.claude/rules/graphical-session]], simply *hangs* without the grant --
 "macOS is the worst of the three, because it doesn't fail". The native API
 fails. That is worth more than it sounds for a wizard that has to tell
 someone what is wrong.
@@ -169,9 +199,12 @@ someone what is wrong.
    *Check:* the probe prints the NAL types of one encoded frame.
 1b. **Grant Screen Recording to `oxdesk-host`** in System Settings, which
    is also what makes the Mac a screen host again. Only the machine's
-   owner can do it ([[019-one-onboarding]], the floor). *Check:*
-   `oxdesk-host --conferir` says `gravacao-de-tela: ok`, and
-   `oxdesk-host --probe-nativo` prints a frame.
+   owner can do it ([[019-one-onboarding]], the floor). **Done** -- the
+   grant was given and the chain produced a frame.
+1c. **Attach a display.** Not a step anybody planned, and now the one that
+   blocks the measurement: a broken panel means zero active displays and
+   nothing to capture. *Check:* the wizard's `display` step says
+   `N active display(s)`.
 2. **Encoder behind a flag**, same frames in, both paths measured.
    *Check:* a table of fps, p50/p95 and bitrate for both, on the
    reference Mac.

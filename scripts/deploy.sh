@@ -686,5 +686,15 @@ for h in "${!visto[@]}"; do
 done
 
 echo
-[ "$falhas" -eq 0 ] && echo "tres maquinas no mesmo build: $BUILD" || echo "$falhas problema(s)"
+if [ "$falhas" -ne 0 ]; then
+  echo "$falhas problema(s)"
+elif [ "$PULAR_MAC" -eq 1 ]; then
+  # NOT "tres maquinas": with --pular-mac the mac was never asked, and
+  # saying three when two were measured is the same silence the rules are
+  # about. This is the line a person reads to decide the fleet is
+  # consistent, so it has to name what was left out.
+  echo "${#visto[@]} de 3 maquinas no mesmo build: $BUILD (mac fora: --pular-mac)"
+else
+  echo "tres maquinas no mesmo build: $BUILD"
+fi
 exit "$falhas"

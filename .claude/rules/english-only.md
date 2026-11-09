@@ -14,17 +14,34 @@ the part of a product that gets read under pressure.
 
 ## The state, measured
 
-On 2026-11-08, only one crate still had Portuguese text:
+Counting accented lines is the wrong measurement, and it was the first one
+taken. Portuguese without accents (`nao`, `esta`, `faltam`, `igual`,
+`sujo`) is wider than Portuguese with them, and **the hardest part is not
+prose**: it is the wire format. A `serde(rename = "estado")` is one line
+with a reader on the other side, so it costs more to move than a paragraph
+of comments.
 
-| Crate | Files with accented text | Accented lines |
-|---|---:|---:|
-| `oxdesk` | 15 | ~241 |
-| `stream` | 4 | ~0 |
-| `ota`, `hidpp`, `agent`, `gui` | 0 | 0 |
+Done (2026-11-08): the wizard end to end, and the whole API contract --
+16 `serde` renames, the request fields, the state values, `hidpp`'s JSON
+keys and its battery words. Zero Portuguese identifiers remain in any
+crate.
 
-So this is bounded, mostly user-facing strings and `say!`/`gripe!`
-messages in `oxdesk/src`. The rule exists to keep it from growing back
-while that work is staged ([[../../specs/018-open-source]], step 6).
+Left, in [[../../specs/018-open-source]] step 6: the panel's visible copy
+in `index.html`, 29 CLI flags and subcommands, the OTA's state vocabulary
+with the build stamp's `-sujo`, and the variable names in `scripts/`.
+
+## Move a wire name with its reader, or not at all
+
+A field name, a route, a step id, an enum value on the wire and a CLI flag
+are each a contract. Rename one and leave its consumer, and nothing fails
+to compile: the daemon writes `state` while the page reads `estado`, and
+the page shows a blank where a word used to be. Every such rename goes in
+the **same commit** as every reader of it, and the readers are found by
+enumerating them, not by grepping for what comes to mind.
+
+The one that bit: the copy queue's `andando`/`erro` reach the page as CSS
+class names. A rename that touched only the daemon would have left failed
+rows unstyled -- which reads as a design choice, not a bug.
 
 ## Translating, not transliterating
 
