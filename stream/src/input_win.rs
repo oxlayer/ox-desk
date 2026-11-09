@@ -24,7 +24,7 @@
 
 #![cfg(windows)]
 
-use crate::input::{scancode_from_evdev, Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use crate::input::{scancode_from_evdev, wheel_notches, Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOUSEEVENTF_ABSOLUTE,
@@ -40,12 +40,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SM_YVIRTUALSCREEN,
 };
 
-/// One wheel step. The client sends continuous movement in "pixels"
-/// (line = 15 px, see the viewer), so the conversion is
-/// `px / 15 * 120` -- with the remainder kept, otherwise trackpad scrolling
-/// (a fraction of a line per event) would never get past zero.
+/// One wheel notch, in the unit `SendInput` wants.
+///
+/// Only Windows' own number lives here. The conversion from the protocol's
+/// pixels is `input::wheel_notches`, next to the unit it converts from and
+/// to the tests that pin it.
 const WHEEL_DELTA: f64 = 120.0;
-const PX_PER_LINE: f64 = 15.0;
 
 /// Applies the client's events on this machine.
 ///
@@ -59,13 +59,13 @@ pub struct Injector {
     /// the right place. A copy would go stale silently, which is the worst
     /// way for this bug to show up.
     origin: std::sync::Arc<std::sync::Mutex<(i32, i32)>>,
-    rem_x: f64,
+    /// Fraction of a line left over from the last scroll event.
     rem_y: f64,
 }
 
 impl Injector {
     pub fn new(origin: std::sync::Arc<std::sync::Mutex<(i32, i32)>>) -> Self {
-        Injector { origin, rem_x: 0.0, rem_y: 0.0 }
+        Injector { origin, rem_y: 0.0 }
     }
 
     pub fn apply(&mut self, e: Event) {
@@ -130,31 +130,30 @@ impl Injector {
     }
 
     fn scroll(&mut self, dx: f64, dy: f64) {
-        // Inverted sign: in evdev a positive `dy` scrolls DOWN; on Windows
-        // a positive wheel goes UP.
-        self.rem_y += -dy / PX_PER_LINE * WHEEL_DELTA;
-        self.rem_x += -dx / PX_PER_LINE * WHEEL_DELTA;
-        let steps_y = (self.rem_y / WHEEL_DELTA).trunc();
-        if steps_y != 0.0 {
-            self.rem_y -= steps_y * WHEEL_DELTA;
-            let d = (steps_y * WHEEL_DELTA) as i32;
-            send(&[INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dx: 0,
-                        dy: 0,
-                        mouseData: d as u32,
-                        dwFlags: MOUSEEVENTF_WHEEL,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            }]);
+        // Horizontal scroll is left out for now: it needs MOUSEEVENTF_HWHEEL
+        // and few windows honor it. Dropped here instead of accumulated, so
+        // that no remainder pretends to be on its way somewhere.
+        let _ = dx;
+        // Inverted sign: in our protocol a positive `dy` scrolls DOWN; on
+        // Windows a positive wheel goes UP.
+        let notches = wheel_notches(-dy, &mut self.rem_y);
+        if notches == 0 {
+            return;
         }
-        // Horizontal scroll is left out for now: it needs
-        // MOUSEEVENTF_HWHEEL and few windows honor it.
-        self.rem_x = self.rem_x.clamp(-WHEEL_DELTA, WHEEL_DELTA);
+        let d = (f64::from(notches) * WHEEL_DELTA) as i32;
+        send(&[INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: d as u32,
+                    dwFlags: MOUSEEVENTF_WHEEL,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }]);
     }
 
     fn key(&self, keycode: u32, pressed: bool) {

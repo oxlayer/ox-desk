@@ -22,6 +22,38 @@ pub const BTN_LEFT: i32 = 0x110;
 pub const BTN_RIGHT: i32 = 0x111;
 pub const BTN_MIDDLE: i32 = 0x112;
 
+/// Scroll pixels in one line of text -- the unit `Event::Scroll` carries.
+///
+/// It lives here, with the protocol, because it is a **wire** unit: every
+/// end has to agree on it, and until 08/11 two of them did not. The viewer
+/// sends `LineDelta * 15` and the Windows injector divides by 15; the LAN
+/// KVM sent 120 px per notch -- Windows' own wheel unit -- so one click of
+/// the wheel scrolled EIGHT lines there. Measured on the windows-host machine.
+///
+/// 15 px is not a measurement of anything, it is a choice: Mutter wants a
+/// continuous offset and a line of text is about that tall. What matters is
+/// that there is exactly one of it.
+pub const SCROLL_PX_PER_LINE: f64 = 15.0;
+
+/// Whole wheel notches in `px` of scroll, with the fraction left in `rem`
+/// for the next call.
+///
+/// Windows counts the wheel in notches, not in pixels, so this is where the
+/// unit changes. It lives in this module and not next to `SendInput` so that
+/// a test can reach it: `input_win.rs` is `#![cfg(windows)]`, and a test
+/// written in there never runs in `scripts/check.sh` -- which is exactly how
+/// the eightfold error above survived.
+///
+/// The remainder is not a detail: a trackpad sends a fraction of a line per
+/// event, and truncating each one on its own would never reach a notch, so
+/// the page would not move at all.
+pub fn wheel_notches(px: f64, rem: &mut f64) -> i32 {
+    *rem += px / SCROLL_PX_PER_LINE;
+    let whole = rem.trunc();
+    *rem -= whole;
+    whole as i32
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Event {
     /// Absolute position in the space of the captured stream (pixels).
@@ -43,6 +75,10 @@ pub enum Event {
     ///   convert would be one more handshake to make the result worse.
     MouseRel { dx: f64, dy: f64 },
     Button { code: i32, pressed: bool },
+    /// Scroll offset in pixels, `SCROLL_PX_PER_LINE` to a line of text.
+    ///
+    /// Positive `dy` scrolls DOWN, as in Wayland. Every injector whose
+    /// target counts the wheel upwards inverts it on the way in.
     Scroll { dx: f64, dy: f64 },
     /// evdev keycode (what `NotifyKeyboardKeycode` receives).
     Key { keycode: u32, pressed: bool },
@@ -234,6 +270,35 @@ mod codec_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_line_of_scroll_is_one_wheel_notch() {
+        let mut rem = 0.0;
+        assert_eq!(wheel_notches(SCROLL_PX_PER_LINE, &mut rem), 1);
+        assert_eq!(wheel_notches(-SCROLL_PX_PER_LINE, &mut rem), -1);
+    }
+
+    #[test]
+    fn a_notch_from_the_kvm_is_one_notch_on_windows() {
+        // The regression. The KVM used to put 120 here -- Windows' wheel
+        // unit, not the protocol's pixel -- and 120/15 is eight. The page
+        // jumped eight lines per click of the wheel.
+        let mut rem = 0.0;
+        assert_eq!(wheel_notches(120.0, &mut rem), 8);
+        assert_eq!(wheel_notches(15.0, &mut rem), 1);
+    }
+
+    #[test]
+    fn fractions_of_a_line_accumulate_instead_of_vanishing() {
+        // The trackpad case: five events of a fifth of a line each have to
+        // add up to one notch, not to nothing.
+        let mut rem = 0.0;
+        let fifth = SCROLL_PX_PER_LINE / 5.0;
+        for _ in 0..4 {
+            assert_eq!(wheel_notches(fifth, &mut rem), 0);
+        }
+        assert_eq!(wheel_notches(fifth, &mut rem), 1);
+    }
 
     fn all() -> Vec<Event> {
         vec![

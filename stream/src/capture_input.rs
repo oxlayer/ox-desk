@@ -75,8 +75,13 @@ const EV_BTN_LEFT: u16 = 0x110;
 const EV_BTN_RIGHT: u16 = 0x111;
 const EV_BTN_MIDDLE: u16 = 0x112;
 
-/// One wheel step in scroll "pixels", as the rest of the protocol uses.
-const WHEEL_STEP: f64 = 120.0;
+/// One wheel notch, in the protocol's scroll pixels.
+///
+/// One notch is one line. It said 120 until 08/11 -- the number Windows uses
+/// for its OWN wheel unit -- while the protocol's line is 15 px and the
+/// injector on the other side divides by 15. The wheel therefore scrolled
+/// eight lines per notch on Windows. See `input::SCROLL_PX_PER_LINE`.
+const WHEEL_STEP: f64 = crate::input::SCROLL_PX_PER_LINE;
 
 /// A 64-bit `struct input_event`: 2x i64 of time, u16, u16, i32.
 const EVENT_SIZE: usize = 24;
@@ -377,6 +382,14 @@ mod tests {
         // you only find out by using it.
         let out = translate(&[rel(REL_WHEEL, 1)], true);
         assert_eq!(out, vec![Event::Scroll { dx: 0.0, dy: -WHEEL_STEP }]);
+    }
+
+    #[test]
+    fn one_notch_is_one_line() {
+        // The number and not the constant, on purpose: this is a wire unit,
+        // and the test is here to break if someone moves it on one end only.
+        let out = translate(&[rel(REL_WHEEL, 1)], true);
+        assert_eq!(out, vec![Event::Scroll { dx: 0.0, dy: -15.0 }]);
     }
 
     #[test]

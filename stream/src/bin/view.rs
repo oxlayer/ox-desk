@@ -43,7 +43,9 @@ mod visual {
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
-    use oxdesk_stream::input::{evdev_from_winit, Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+    use oxdesk_stream::input::{
+        evdev_from_winit, Event, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, SCROLL_PX_PER_LINE,
+    };
     use oxdesk_stream::net::{self, Reassembler};
     use winit::event::{ElementState, MouseButton, MouseScrollDelta};
     use winit::keyboard::PhysicalKey;
@@ -339,10 +341,15 @@ mod visual {
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
                     // The Mac trackpad sends pixels; the wheel sends
-                    // lines. Mutter wants a continuous offset, so a line
-                    // becomes a step of ~15 px.
+                    // lines. The protocol carries pixels, so a line becomes
+                    // `SCROLL_PX_PER_LINE` of them -- the constant and not a
+                    // 15 written here, which is how the KVM came to disagree
+                    // with this file.
                     let (dx, dy) = match delta {
-                        MouseScrollDelta::LineDelta(x, y) => (-x as f64 * 15.0, -y as f64 * 15.0),
+                        MouseScrollDelta::LineDelta(x, y) => (
+                            -x as f64 * SCROLL_PX_PER_LINE,
+                            -y as f64 * SCROLL_PX_PER_LINE,
+                        ),
                         MouseScrollDelta::PixelDelta(p) => (-p.x, -p.y),
                     };
                     self.send(Event::Scroll { dx, dy });
