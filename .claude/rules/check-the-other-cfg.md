@@ -37,11 +37,30 @@ waiting seven minutes of remote compilation — and the deploy would say
 - Behavior. Type-checking says the call exists, not that `launchctl`
   accepts that argument.
 
+## The cross target compiles a `cfg` file -- it still does not test it
+
+The cross target closes the compile hole and leaves the test hole open.
+`cargo test --target x86_64-pc-windows-gnu` would have to **execute** a
+Windows binary, which does not happen here, so `scripts/check.sh` builds
+`input_win.rs`, `capture_win.rs`, `host_win.rs` and `cursor_win.rs` and
+runs **none** of whatever `#[test]` they may contain. Green means
+compiled, not exercised.
+
+Not theoretical: that is how the eightfold wheel error in
+[[coordinate-spaces]] survived in a repo that tests its decisions.
+
+So: **a decision that deserves a test does not live in a `cfg`-gated
+file.** The arithmetic goes in a platform-neutral module -- for the input
+path, `stream/src/input.rs` -- and the `_win`/`_mac` file keeps only the
+call into the system. `point_from_pixel` and `wheel_notches` are both
+there for exactly this reason.
+
 In other words: "don't claim it works on the Mac without having run it
 there" still holds. What switching the `cfg` eliminates is the silliest
 class of error, which is exactly the one that costs the round trip.
 
 ## See also
 
+- [[coordinate-spaces]] — the bug this rule's second half was written for
 - [[verify-what-arrived]] — compiling is not arriving
 - [[graphical-session]] — what isn't born over SSH, and therefore can't be tested from here

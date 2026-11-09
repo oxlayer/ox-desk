@@ -68,6 +68,35 @@ which makes `GetSystemMetrics` return physical and makes the code's
 assumption true. It wasn't done now so as not to change, without being
 able to test it, a path that is working.
 
+## The wheel: the same mistake, in another unit (08/11)
+
+Position was not the only number crossing the wire with two conventions.
+`Event::Scroll` carries **pixels**, 15 to a line of text -- that is what
+the viewer sends (`LineDelta * 15`) and what `input_win` divides by before
+converting into Windows notches. The LAN KVM sent **120** px per notch,
+because 120 is the number Windows uses for its own wheel unit. The
+arithmetic on the other side came out `120/15*120 = 960`, or **eight
+notches per physical click**. On a wheel that free-spins, one flick sent
+the page to the end.
+
+It arrived as *"o mouse nao funciona direito"*, and movement and clicks
+were fine -- which is what made it hard to name. The host log settled it:
+every `MouseRel` arrived and the cursor overlay drew. The wheel was the
+only broken thing.
+
+Two things let it through, and both are already written above:
+
+- **The unit had no owner.** `Event::Scroll` was the one variant of the
+  protocol with no doc comment saying what its number means. The viewer
+  kept a literal `15.0`, `input_win` kept its own, and the KVM invented a
+  third. Fixed the way `point_from_pixel` was fixed:
+  `input::SCROLL_PX_PER_LINE` and `input::wheel_notches` now live in the
+  protocol module, platform-neutral, with tests.
+- **The conversion sat where no test runs.** See
+  [[check-the-other-cfg]]: `input_win.rs` is `#![cfg(windows)]`, so a test
+  written in that file never runs in `scripts/check.sh` -- the cross
+  target compiles it and nothing executes it.
+
 ## Rule
 
 New host, or a new screen on an existing host: **measure both spaces
@@ -79,6 +108,11 @@ doesn't even go through the conversion.
 ```bash
 oxdesk-input-send <host>:<porta+1> --abs 1680 1050   # middle of the frame
 ```
+
+And for any number the protocol carries: **the unit is named once, in
+`stream/src/input.rs`, next to the event that carries it.** A literal
+repeated at both ends is not a convention -- it is two conventions that
+happen to agree until one of them is edited.
 
 ## See also
 
