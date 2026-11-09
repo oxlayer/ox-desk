@@ -89,8 +89,8 @@ impl ksni::Tray for OxdeskTray {
             f.devices.join(" | ")
         };
         let location = match &f.target {
-            Some(a) => format!("input em {a}"),
-            None => "input aqui".into(),
+            Some(a) => format!("input on {a}"),
+            None => "input here".into(),
         };
         ksni::ToolTip {
             title: "oxdesk".into(),
@@ -149,7 +149,7 @@ impl ksni::Tray for OxdeskTray {
             // in the mode where it is the only way back.
             if let (Some(here), Some(_)) = (&f.here, &f.target) {
                 let name = here.clone();
-                let label = format!("Trazer para {here}");
+                let label = format!("Bring it to {here}");
                 items.push(
                     StandardItem {
                         label: label,
@@ -197,7 +197,7 @@ impl ksni::Tray for OxdeskTray {
         items.push(MenuItem::Separator);
         items.push(
             StandardItem {
-                label: "Abrir painel".into(),
+                label: "Open the panel".into(),
                 activate: Box::new(|b: &mut OxdeskTray| b.open_panel()),
                 ..Default::default()
             }
@@ -205,7 +205,7 @@ impl ksni::Tray for OxdeskTray {
         );
         items.push(
             StandardItem {
-                label: "Configurar esta máquina".into(),
+                label: "Set up this machine".into(),
                 activate: Box::new(|b: &mut OxdeskTray| b.open_route("/setup")),
                 ..Default::default()
             }

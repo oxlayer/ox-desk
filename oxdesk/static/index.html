@@ -10,7 +10,7 @@
      it reads from. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:*; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Maquinas</title>
+<title>Machines</title>
 <style>
   :root{
     color-scheme:light dark;
@@ -73,13 +73,13 @@
   .hero svg{width:82px;height:82px;display:block}
   .estado{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--down)}
   .estado.on{color:var(--up)}
-  .mais{border-top:1px solid var(--line);margin:0 -18px -12px;padding:0 18px}
-  .mais summary{cursor:pointer;padding:10px 0;font-size:12.5px;color:var(--dim);
+  .more{border-top:1px solid var(--line);margin:0 -18px -12px;padding:0 18px}
+  .more summary{cursor:pointer;padding:10px 0;font-size:12.5px;color:var(--dim);
     list-style-position:inside;user-select:none}
-  .mais summary:hover{color:var(--fg)}
-  .mais[open]{padding-bottom:14px}
-  .mais[open] .corpo{display:flex;flex-direction:column;gap:12px}
-  .mais .end{font:11px var(--mono);color:var(--faint)}
+  .more summary:hover{color:var(--fg)}
+  .more[open]{padding-bottom:14px}
+  .more[open] .corpo{display:flex;flex-direction:column;gap:12px}
+  .more .end{font:11px var(--mono);color:var(--faint)}
 
   /* Jump from the sidebar to the card: a short flash, otherwise the person
      does not know which of the three cards it was. */
@@ -167,19 +167,19 @@
   .scr .why{font:11px var(--mono);color:var(--faint);flex-basis:100%;min-width:0}
   .scr .why.er{color:var(--down)}
 
-  .novwrap{position:relative;margin-left:auto}
-  .novbtn{background:none;border:1px solid var(--line);border-radius:999px;
+  .newswrap{position:relative;margin-left:auto}
+  .newsbtn{background:none;border:1px solid var(--line);border-radius:999px;
     width:30px;height:30px;cursor:pointer;color:var(--dim);font-size:14px;
     display:flex;align-items:center;justify-content:center;position:relative}
-  .novbtn:hover{background:var(--inset);color:var(--fg)}
-  .novbtn .badge{position:absolute;top:-3px;right:-3px;min-width:15px;height:15px;
+  .newsbtn:hover{background:var(--inset);color:var(--fg)}
+  .newsbtn .badge{position:absolute;top:-3px;right:-3px;min-width:15px;height:15px;
     border-radius:999px;background:var(--down);color:#fff;font:9.5px/15px var(--mono);
     text-align:center;padding:0 3px}
-  .novpop{position:absolute;right:0;top:36px;width:min(26rem,85vw);z-index:40;
+  .newspop{position:absolute;right:0;top:36px;width:min(26rem,85vw);z-index:40;
     background:var(--card);border:1px solid var(--line);border-radius:12px;
     box-shadow:var(--shadow);max-height:60vh;overflow-y:auto;display:none}
-  .novpop.on{display:block}
-  .novpop h3{margin:0;padding:11px 14px;font-size:12px;font-weight:650;
+  .newspop.on{display:block}
+  .newspop h3{margin:0;padding:11px 14px;font-size:12px;font-weight:650;
     border-bottom:1px solid var(--line)}
   .novitem{padding:9px 14px;border-bottom:1px solid var(--line)}
   .novitem:last-child{border-bottom:none}
@@ -243,7 +243,7 @@
     border:1px solid var(--line);background:var(--bg);color:var(--dim);
     cursor:pointer}
   .tkrow .act button:hover{color:var(--down);border-color:var(--down)}
-  .tkrow .act button.sim{color:var(--down);border-color:var(--down)}
+  .tkrow .act button.yes{color:var(--down);border-color:var(--down)}
   .tkhdr{display:flex;gap:10px;padding:5px 16px;font:10.5px var(--mono);
     color:var(--faint);border-bottom:1px solid var(--line);
     text-transform:uppercase;letter-spacing:.04em}
@@ -355,34 +355,34 @@
   /* One section at a time. The content is the SAME as before -- it just
      stopped being all visible at once. */
   /* The session is a tab: the panel goes away and the remote screen takes its place. */
-  .abas{display:flex;gap:4px;margin:-12px 0 16px;padding-bottom:8px;overflow-x:auto;
+  .tabs{display:flex;gap:4px;margin:-12px 0 16px;padding-bottom:8px;overflow-x:auto;
     border-bottom:1px solid var(--line)}
-  .aba{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:9px;
+  .tab{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:9px;
     font:inherit;font-size:13px;color:var(--dim);background:none;border:0;cursor:pointer;
     white-space:nowrap}
-  .aba:hover{background:var(--selbg)}
-  .aba.on{color:var(--fg);background:var(--selbg);font-weight:600}
-  .aba .x{font-size:15px;line-height:1;opacity:.6;padding:0 2px}
-  .aba .x:hover{opacity:1}
-  .palco{position:relative;height:calc(100vh - 92px);background:#000;border-radius:12px;
+  .tab:hover{background:var(--selbg)}
+  .tab.on{color:var(--fg);background:var(--selbg);font-weight:600}
+  .tab .x{font-size:15px;line-height:1;opacity:.6;padding:0 2px}
+  .tab .x:hover{opacity:1}
+  .stage{position:relative;height:calc(100vh - 92px);background:#000;border-radius:12px;
     overflow:hidden}
   /* The bar sits outside the canvas: a click on it never becomes a remote click. */
-  .barra{height:40px;display:flex;align-items:center;gap:4px;padding:0 8px;
+  .topbar{height:40px;display:flex;align-items:center;gap:4px;padding:0 8px;
     background:#16191f;border-bottom:1px solid #262b34;color:#d7dbe2}
-  .barra button{font:inherit;font-size:12.5px;color:inherit;background:none;border:0;
+  .topbar button{font:inherit;font-size:12.5px;color:inherit;background:none;border:0;
     padding:5px 9px;border-radius:7px;cursor:pointer;white-space:nowrap}
-  .barra button:hover{background:rgba(255,255,255,.1)}
-  .barra button:focus-visible{outline:2px solid var(--accent)}
-  .barra .fim{color:#ff8a8a}
-  .barra .esp{flex:1}
-  .barra .nome{font-weight:620;font-size:13px;padding:0 8px}
-  .palco .tela{position:absolute;inset:40px 0 0 0}
-  .palco:fullscreen{border-radius:0;height:100vh}
+  .topbar button:hover{background:rgba(255,255,255,.1)}
+  .topbar button:focus-visible{outline:2px solid var(--accent)}
+  .topbar .end{color:#ff8a8a}
+  .topbar .esp{flex:1}
+  .topbar .nome{font-weight:620;font-size:13px;padding:0 8px}
+  .stage .screen{position:absolute;inset:40px 0 0 0}
+  .stage:fullscreen{border-radius:0;height:100vh}
   /* File manager over the remote screen: two folders and the queue below. */
-  .arq{position:absolute;inset:0;z-index:2;display:grid;gap:10px;padding:12px;
+  .files{position:absolute;inset:0;z-index:2;display:grid;gap:10px;padding:12px;
     grid-template-columns:minmax(0,1fr) 92px minmax(0,1fr);
     grid-template-rows:minmax(0,1fr) auto;background:var(--bg);color:var(--fg)}
-  .arq[hidden]{display:none}
+  .files[hidden]{display:none}
   .pane{display:flex;flex-direction:column;min-height:0;background:var(--card);
     border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .pane .ptop{padding:10px 12px;border-bottom:1px solid var(--line)}
@@ -401,7 +401,7 @@
   .pane .item.sel{background:color-mix(in srgb,var(--accent) 24%,transparent)}
   .pane .item .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pane .item .t{font:11px var(--mono);color:var(--faint);text-align:right}
-  .pane .nota{padding:14px;color:var(--dim);font-size:13px}
+  .pane .note{padding:14px;color:var(--dim);font-size:13px}
   .meio{display:flex;flex-direction:column;justify-content:center;gap:8px}
   .meio button{font:inherit;font-size:12.5px;font-weight:600;padding:8px 4px;border-radius:9px;
     cursor:pointer;color:#fff;border:0;background:color-mix(in srgb,var(--accent) 88%,#000)}
@@ -410,12 +410,12 @@
   .fila:empty{display:none}
   .fila div{padding:2px 4px}
   .fila .ok{color:var(--up)} .fila .error{color:var(--down)}
-  .palco canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+  .stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
     outline:0;display:none;cursor:default}
-  .palco canvas.on{display:block}
-  .palco .aviso{position:absolute;inset:0;display:grid;place-items:center;color:#aeb4bd;
+  .stage canvas.on{display:block}
+  .stage .aviso{position:absolute;inset:0;display:grid;place-items:center;color:#aeb4bd;
     font-size:14px;pointer-events:none;text-align:center;padding:20px}
-  .palco .medida{position:absolute;right:10px;bottom:8px;font:11px var(--mono);
+  .stage .medida{position:absolute;right:10px;bottom:8px;font:11px var(--mono);
     color:#c9ced6;background:rgba(0,0,0,.55);padding:3px 7px;border-radius:6px;
     pointer-events:none}
   .emsessao header,.emsessao .sec,.emsessao footer{display:none !important}
@@ -437,67 +437,67 @@
     .sidenav{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px}
     .side .navgrp,.side .sidenote,.sidetop .tt{display:none}
     .sidetop{padding:0 0 8px}
-    .grpmaq,.grpfav{display:none}
+    .grpmachines,.grpfav{display:none}
     .navit{white-space:nowrap}
     .navit.on::before{display:none}
     .wrap{padding:18px 16px 32px}
   }
 </style></head><body><div class="app">
 <aside class="side">
-  <div class="sidetop"><span class="mark"></span><span class="tt">Maquinas</span></div>
+  <div class="sidetop"><span class="mark"></span><span class="tt">Machines</span></div>
   <div class="grpfav"><div class="navgrp">Favoritos <span class="n" id="favn"></span></div>
     <div id="favlist"></div></div>
-  <div class="grpmaq"><div class="navgrp">Maquinas</div>
-    <div id="maqlist"></div></div>
+  <div class="grpmachines"><div class="navgrp">Machines</div>
+    <div id="machinelist"></div></div>
   <div class="navgrp">Paineis</div>
   <div class="sidenav">
     <div class="navit" data-sec="geral"><span class="ic">&#9636;</span><span class="lbl">Visao geral</span></div>
     <div class="navit" data-sec="botoes"><span class="ic">&#9673;</span><span class="lbl">Botoes</span></div>
     <div class="navit" data-sec="disposicao"><span class="ic">&#9638;</span><span class="lbl">Disposicao</span></div>
-    <div class="navit" data-sec="tarefas"><span class="ic">&#9776;</span><span class="lbl">Tarefas</span></div>
-    <div class="navit" data-sec="arquivos"><span class="ic">&#9639;</span><span class="lbl">Arquivos</span></div>
+    <div class="navit" data-sec="tasks"><span class="ic">&#9776;</span><span class="lbl">Tasks</span></div>
+    <div class="navit" data-sec="files"><span class="ic">&#9639;</span><span class="lbl">Files</span></div>
     <div class="navit" data-sec="log"><span class="ic">&#9783;</span><span class="lbl">Log</span></div>
   </div>
-  <div class="sidenote">A estrela ao lado de uma maquina fixa ela em
-    Favoritos; o &#9654; abre a tela dela direto.</div>
+  <div class="sidenote">The star next to a machine pins it to
+    Favourites; &#9654; opens its screen straight away.</div>
 </aside>
 <main class="wrap">
-<nav class="abas" id="abas" hidden></nav>
-<div class="palco" id="palco" hidden>
-  <div class="barra" id="barra">
-    <span class="nome" id="barranome"></span>
-    <button data-combo="alttab" title="Alt+Tab na maquina remota">Alt+Tab</button>
-    <button data-combo="super" title="Tecla Windows ou Super">Iniciar</button>
-    <button data-combo="tarefas" title="Ctrl+Shift+Esc na maquina remota">Tarefas</button>
-    <button id="barraarq">Arquivos</button>
+<nav class="tabs" id="tabs" hidden></nav>
+<div class="stage" id="stage" hidden>
+  <div class="topbar" id="topbar">
+    <span class="nome" id="topbarname"></span>
+    <button data-combo="alttab" title="Alt+Tab on the remote machine">Alt+Tab</button>
+    <button data-combo="super" title="The Windows or Super key">Start</button>
+    <button data-combo="taskmgr" title="Ctrl+Shift+Esc on the remote machine">Task manager</button>
+    <button id="topbarfiles">Files</button>
     <span class="esp"></span>
-    <button id="barracheia">Tela cheia</button>
-    <button class="fim" id="barrafim">Encerrar</button>
+    <button id="topbarfull">Full screen</button>
+    <button class="end" id="topbarend">Disconnect</button>
   </div>
-  <div class="tela" id="tela">
-    <div class="arq" id="arq" hidden>
-      <div class="pane" data-lado="esq"></div>
+  <div class="screen" id="screen">
+    <div class="files" id="files" hidden>
+      <div class="pane" data-side="lhs"></div>
       <div class="meio">
-        <button id="arqenviar" title="Copiar o selecionado para a maquina remota">Enviar &rarr;</button>
-        <button id="arqreceber" title="Copiar o selecionado para esta maquina">&larr; Receber</button>
+        <button id="filesend" title="Copy the selection to the remote machine">Send &rarr;</button>
+        <button id="filerecv" title="Copy the selection to this machine">&larr; Receive</button>
       </div>
-      <div class="pane" data-lado="dir"></div>
-      <div class="fila" id="arqfila"></div>
+      <div class="pane" data-side="rhs"></div>
+      <div class="fila" id="filequeue"></div>
     </div>
   </div>
 </div>
 <header>
-  <h1>Maquinas</h1>
+  <h1>Machines</h1>
   <div class="summary" id="sum"></div>
   <div class="spacer"></div>
   <div class="stamp" id="stamp">...</div>
-  <div class="novwrap">
-    <button class="novbtn" id="novbtn" title="novidades">&#9733;<span class="badge" id="novbadge" hidden></span></button>
-    <div class="novpop" id="novpop"><h3>Novidades</h3><div id="novlist"></div></div>
+  <div class="newswrap">
+    <button class="newsbtn" id="newsbtn" title="what's new">&#9733;<span class="badge" id="newsbadge" hidden></span></button>
+    <div class="newspop" id="newspop"><h3>What's new</h3><div id="newslist"></div></div>
   </div>
 </header>
 <section class="sec" data-sec="geral">
-<p class="sub">Leitura direta de portas, sem agente remoto</p>
+<p class="sub">Ports read directly, with no remote agent</p>
 <div class="grid" id="grid"></div>
 </section>
 
@@ -507,11 +507,11 @@
     <h2>Botoes</h2>
     <span class="meta" id="ctlmeta"></span>
   </div>
-  <div class="ctlbody" id="ctl"><div class="ctlnote">carregando...</div></div>
+  <div class="ctlbody" id="ctl"><div class="ctlnote">loading...</div></div>
   <div class="ctlnote">
-    Escrever aqui muda o comportamento fisico do botao, no proprio
-    dispositivo. &ldquo;padrao&rdquo; desfaz. Dispositivo em outra maquina nao
-    aparece: o HID++ nao alcanca quem esta em outro canal.
+    Writing here changes the button's physical behaviour, on the device
+    itself. &ldquo;default&rdquo; undoes it. A device on another machine does
+    not appear: HID++ cannot reach what is on another channel.
   </div>
 </div>
 </section>
@@ -519,34 +519,34 @@
 <section class="sec" data-sec="disposicao">
 <div class="lywrap">
   <div class="lyhead">
-    <h2>Disposicao</h2>
-    <label class="opt" id="lykvm" title="desligar para a borda parar de trocar de maquina">
-      <input type="checkbox" id="lykvmon"> KVM por borda</label>
-    <label class="opt" title="os outros dispositivos seguem este quando ele muda de maquina">
-      <input type="checkbox" id="lyfollowon"> seguir
+    <h2>Layout</h2>
+    <label class="opt" id="lykvm" title="turn off to stop the edge switching machines">
+      <input type="checkbox" id="lykvmon"> KVM by edge</label>
+    <label class="opt" title="the other devices follow this one when it changes machine">
+      <input type="checkbox" id="lyfollowon"> follow
       <select id="lyleader"></select></label>
     <span class="meta" id="lymeta"></span>
   </div>
-  <div class="lynote" id="pausawrap">
-    <button id="pausabtn">pausar leitura dos dispositivos</button>
-    <span id="pausamsg"></span>
-    <div>Para descobrir se somos NOS que estamos puxando os dispositivos
-    de volta: com a leitura pausada, troque de maquina. Se ficar de pe, o
-    problema e a nossa sondagem; se voltar sozinho, e o radio. Trocar de
-    canal continua funcionando durante a pausa.</div>
+  <div class="lynote" id="pausewrap">
+    <button id="pausebtn">pause device polling</button>
+    <span id="pausemsg"></span>
+    <div>To find out whether WE are the ones pulling the devices back:
+    with polling paused, switch machine. If it holds, our probing is the
+    problem; if it comes back on its own, it is the radio. Switching
+    channel keeps working while paused.</div>
   </div>
   <div class="lygrid" id="lygrid"></div>
   <div class="lytray" id="lytray"></div>
   <div class="lynote" id="lyedges"></div>
   <div class="lynote">
-    Arraste cada maquina para onde ela fica de verdade na sua mesa. As
-    bordas saem daqui: quem esta a direita vira a borda direita. Vale no
-    proximo boot do daemon.
+    Drag each machine to where it really sits on your desk. The edges
+    come from here: whoever is on the right becomes the right edge. Takes
+    effect on the daemon's next start.
   </div>
 </div>
 </section>
 
-<section class="sec" data-sec="tarefas">
+<section class="sec" data-sec="tasks">
 <div class="tkwrap">
   <div class="tkhead">
     <h2>Tarefas</h2>
@@ -556,26 +556,27 @@
   <div class="tkhdr"><span class="pid">pid</span><span class="nm">processo</span>
     <span class="cpu" id="tkcpu">cpu</span><span class="mem">mem MB</span>
     <span class="act"></span></div>
-  <div class="tkbody" id="tkbody"><div class="tknote">carregando...</div></div>
+  <div class="tkbody" id="tkbody"><div class="tknote">loading...</div></div>
   <div class="tknote">
-    Ordenado por CPU. Encerrar pede confirmacao e nao tem desfazer --
-    &ldquo;forcado&rdquo; nao deixa o programa salvar nada.
+    Sorted by CPU. Ending a process asks for confirmation and cannot be
+    undone -- &ldquo;forced&rdquo; does not let the program save anything.
   </div>
 </div>
 </section>
 
-<section class="sec" data-sec="arquivos">
+<section class="sec" data-sec="files">
 <div class="fswrap">
   <div class="fshead">
-    <h2>Arquivos</h2>
+    <h2>Files</h2>
     <div class="fshost" id="fshost"></div>
     <span class="meta" id="fsmeta"></span>
   </div>
   <div class="fspath" id="fspath">...</div>
-  <div class="fsbody" id="fsbody"><div class="fsnote">carregando...</div></div>
+  <div class="fsbody" id="fsbody"><div class="fsnote">loading...</div></div>
   <div class="fsnote">
-    Somente leitura: lista pastas, nao baixa nem apaga. A outra maquina vem
-    por SFTP no mesmo SSH que o daemon ja usa.
+    Read only: it lists folders, downloads nothing and deletes nothing.
+    The other machine comes over SFTP, on the same SSH the daemon already
+    uses.
   </div>
 </div>
 </section>
@@ -587,7 +588,7 @@
     <span class="meta" id="logmeta"></span>
     <label><input type="checkbox" id="follow" checked> acompanhar</label>
   </div>
-  <div class="log" id="log"><div class="empty">carregando...</div></div>
+  <div class="log" id="log"><div class="empty">loading...</div></div>
 </div>
 </section>
 
@@ -627,15 +628,15 @@ function card(h){
   // Seeing a single host's state was not enough to understand what happened.
   const k = h.kvm || {}, kvm = [];
   if (k.error){
-    kvm.push(`<span class="u" title="${esc(k.error)}">KVM &middot; nao sei</span>`);
+    kvm.push(`<span class="u" title="${esc(k.error)}">KVM &middot; unknown</span>`);
   } else {
     if (k.border != null){
-      const t = k.border ? (k.edges && k.edges.length ? k.edges.join(', ') : 'ligada')
-                         : 'desligada';
-      kvm.push(`<span class="u ${k.border ? 'warn' : ''}">borda &middot; ${esc(t)}</span>`);
+      const t = k.border ? (k.edges && k.edges.length ? k.edges.join(', ') : 'on')
+                         : 'off';
+      kvm.push(`<span class="u ${k.border ? 'warn' : ''}">edge &middot; ${esc(t)}</span>`);
     }
     if (k.follow != null){
-      const t = k.follow ? ('segue ' + (k.leader || '?')) : 'desligado';
+      const t = k.follow ? ('follows ' + (k.leader || '?')) : 'off';
       kvm.push(`<span class="u ${k.follow ? 'warn' : ''}">reconciliador &middot; ${esc(t)}</span>`);
     }
   }
@@ -659,14 +660,14 @@ function card(h){
     det.push(`<span>RAM <b>${used.toFixed(1)}/${d.ram_total_gb} GB</b>
               <span class="bar"><i style="width:${pct}%"></i></span></span>`);
   } else {
-    det.push(`<span title="${esc(h.online ? 'o host respondeu, mas a leitura de memoria falhou'
+    det.push(`<span title="${esc(h.online ? 'the host answered, but reading memory failed'
       : 'host offline: nada a ler')}">RAM <b>&mdash;</b></span>`);
   }
   if (d.cpu_pct != null){
     // The sampling window differs per OS (see `probe::Detail`): the
     // number answers "is it busy?", it is not for comparing decimals
     // across machines.
-    det.push(`<span title="janela de amostragem difere por sistema">CPU
+    det.push(`<span title="the sampling window differs per system">CPU
               <b>${Math.round(d.cpu_pct)}%</b>
               <span class="bar"><i style="width:${Math.round(d.cpu_pct)}%"></i></span></span>`);
   } else {
@@ -684,7 +685,7 @@ function card(h){
       <span class="estado ${h.online ? 'on' : ''}">${h.online ? 'online' : 'offline'}</span>
     </div>
     <div class="scr" data-scr="${esc(h.name)}"></div>
-    <details class="mais" data-mais="${esc(h.name)}"${OPEN_DETAILS.has(h.name) ? ' open' : ''}>
+    <details class="more" data-more="${esc(h.name)}"${OPEN_DETAILS.has(h.name) ? ' open' : ''}>
       <summary>Detalhes</summary>
       <div class="corpo">
         <div class="end">${esc(h.addr)}</div>
@@ -702,8 +703,8 @@ function card(h){
 const OPEN_DETAILS = new Set();
 document.getElementById('grid').addEventListener('toggle', ev => {
   const d = ev.target;
-  if (!d.dataset || !d.dataset.mais) return;
-  if (d.open) OPEN_DETAILS.add(d.dataset.mais); else OPEN_DETAILS.delete(d.dataset.mais);
+  if (!d.dataset || !d.dataset.more) return;
+  if (d.open) OPEN_DETAILS.add(d.dataset.more); else OPEN_DETAILS.delete(d.dataset.more);
 }, true);
 
 function machineSvg(h){
@@ -732,11 +733,11 @@ async function remap(slot, cid, to, statusEl){
     if (r.ok && d.ok){
       statusEl.textContent = 'ok'; statusEl.className = 'st ok';
     } else {
-      statusEl.textContent = (d.error || 'falhou').slice(0, 40);
+      statusEl.textContent = (d.error || 'failed').slice(0, 40);
       statusEl.className = 'st no';
     }
   }catch(e){
-    statusEl.textContent = 'erro'; statusEl.className = 'st no';
+    statusEl.textContent = 'error'; statusEl.className = 'st no';
   }
   ctlBusy = false;
   setTimeout(controls, 1200);
@@ -754,7 +755,7 @@ async function controls(){
       return;
     }
     if (!d.devices.length){
-      box.innerHTML = '<div class="ctlnote">nenhum dispositivo alcancavel agora</div>';
+      box.innerHTML = '<div class="ctlnote">no device reachable right now</div>';
       document.getElementById('ctlmeta').textContent = '';
       return;
     }
@@ -767,7 +768,7 @@ async function controls(){
                  `<span class="nm">${esc(c.name)}</span>` +
                  `<span class="fix">fixo (flags ${esc(c.flags)})</span></div>`;
         }
-        const opts = ['<option value="0">padrao</option>'].concat(
+        const opts = ['<option value="0">default</option>'].concat(
           targets.filter(t => t.cid !== c.cid).map(t =>
             `<option value="${esc(t.cid)}"${t.cid === current ? ' selected' : ''}>` +
             `age como ${esc(t.name)}</option>`)
@@ -789,7 +790,7 @@ async function controls(){
     }
     const n = d.devices.reduce((a, x) => a + x.controls.length, 0);
     document.getElementById('ctlmeta').textContent =
-      n + ' controles em ' + d.devices.length + ' dispositivo(s)';
+      n + ' controls on ' + d.devices.length + ' device(s)';
   }catch(e){
     box.innerHTML = `<div class="ctlnote">inacessivel: ${esc(e.message)}</div>`;
   }
@@ -802,7 +803,7 @@ async function logs(){
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     if (!d.entries.length){
-      box.innerHTML = '<div class="empty">sem entradas</div>';
+      box.innerHTML = '<div class="empty">no entries</div>';
     } else {
       // Keep the position: only scroll to the end if "acompanhar" is on.
       const follow = document.getElementById('follow').checked;
@@ -833,7 +834,7 @@ async function tick(){
     const on = d.hosts.filter(h => h.online).length;
     const bad = d.hosts.reduce((n,h) => n + h.services.filter(s => !s.ok).length, 0);
     document.getElementById('sum').innerHTML = bad
-      ? `<b>${on}/${d.hosts.length}</b> online &middot; <b>${bad}</b> servico(s) com problema`
+      ? `<b>${on}/${d.hosts.length}</b> online &middot; <b>${bad}</b> service(s) with a problem`
       : `<b>${on}/${d.hosts.length}</b> online &middot; tudo certo`;
     document.getElementById('stamp').textContent = d.generated;
   }catch(e){
@@ -863,11 +864,11 @@ async function screens(){
       `<label class="opt${can ? '' : ' off'}" title="${esc(can ? label : reason)}">` +
       `<input type="checkbox" data-opt="${id}"${isChecked ? ' checked' : ''}` +
       `${can ? '' : ' disabled'}>${esc(label)}</label>`;
-    const unsupported = `${p.client || 'o cliente'} nao expoe isso`;
+    const unsupported = `${p.client || 'the client'} does not expose that`;
     // Only the options the client can honor show up: three greyed-out boxes
     // on every card competed with the button for attention, changing nothing.
     const options =
-      (caps.view_only ? opt('control', 'teclado+mouse', true, true, '') : '') +
+      (caps.view_only ? opt('control', 'keyboard+mouse', true, true, '') : '') +
       (caps.audio ? opt('audio', 'som', false, true, unsupported) : '') +
       (caps.mic ? opt('mic', 'microfone', false, true, unsupported) : '');
     const via = p.ready ? `${p.kind} ${p.port}${lat} via ${p.client}` : '';
@@ -875,7 +876,7 @@ async function screens(){
       `<button data-open="${esc(p.host)}" title="${esc(via)}"` +
       `${p.ready ? '' : ' disabled'}>Conectar</button>` +
       (p.kind === 'oxdesk-stream' && p.ready
-        ? `<button class="alt" data-janela="${esc(p.host)}">Abrir em janela separada</button>` : '') +
+        ? `<button class="alt" data-window="${esc(p.host)}">Open in a separate window</button>` : '') +
       options +
       `<span class="why${p.ready ? '' : ' er'}">` +
       (p.ready ? '' : esc(p.blocker || 'indisponivel')) + `</span>`;
@@ -887,7 +888,7 @@ document.getElementById('grid').addEventListener('click', async ev => {
   if (tabBtn && !tabBtn.disabled && !ev.shiftKey){
     if (await openTab(tabBtn.dataset.open)) return;
   }
-  const b = tabBtn || ev.target.closest('button[data-janela]');
+  const b = tabBtn || ev.target.closest('button[data-window]');
   if (!b || b.disabled) return;
   const box = b.parentElement;
   const why = box.querySelector('.why');
@@ -901,7 +902,7 @@ document.getElementById('grid').addEventListener('click', async ev => {
     const r = await fetch('/api/screen', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
-        host: b.dataset.open || b.dataset.janela,
+        host: b.dataset.open || b.dataset.window,
         control: isChecked('control', true),
         audio: isChecked('audio', false),
         mic: isChecked('mic', false),
@@ -1061,16 +1062,16 @@ function wireVideo(s){
 }
 
 function paintTabs(){
-  const bar = document.getElementById('abas');
+  const bar = document.getElementById('tabs');
   bar.hidden = SESSIONS.size === 0;
-  bar.innerHTML = `<button class="aba${currentTab ? '' : ' on'}" data-aba="">Maquinas</button>` +
+  bar.innerHTML = `<button class="tab${currentTab ? '' : ' on'}" data-tab="">Machines</button>` +
     [...SESSIONS.keys()].map(h =>
-      `<button class="aba${currentTab === h ? ' on' : ''}" data-aba="${esc(h)}">${esc(h)}` +
-      `<span class="x" data-fecha="${esc(h)}" title="encerrar sessao">&times;</span></button>`).join('');
+      `<button class="tab${currentTab === h ? ' on' : ''}" data-tab="${esc(h)}">${esc(h)}` +
+      `<span class="x" data-close="${esc(h)}" title="end the session">&times;</span></button>`).join('');
   document.querySelector('.wrap').classList.toggle('emsessao', !!currentTab);
-  document.getElementById('palco').hidden = !currentTab;
-  document.getElementById('barranome').textContent = currentTab || '';
-  if (!document.getElementById('arq').hidden) xferShow(false);
+  document.getElementById('stage').hidden = !currentTab;
+  document.getElementById('topbarname').textContent = currentTab || '';
+  if (!document.getElementById('files').hidden) xferShow(false);
   SESSIONS.forEach((s, h) => {
     const on = h === currentTab;
     s.canvas.classList.toggle('on', on);
@@ -1110,13 +1111,13 @@ async function openTab(host){
   s.notice = document.createElement('div'); s.notice.className = 'aviso';
   s.notice.textContent = 'Conectando em ' + host + '...';
   s.stats = document.createElement('div'); s.stats.className = 'medida';
-  document.getElementById('tela').append(s.canvas, s.notice, s.stats);
+  document.getElementById('screen').append(s.canvas, s.notice, s.stats);
   s.ws = new WebSocket(`ws://127.0.0.1:${d.port}/${d.token}`);
   s.ws.binaryType = 'arraybuffer';
   wireVideo(s); wireInput(s);
   s.ws.onclose = () => {
     if (!SESSIONS.has(host)) return;
-    s.notice.hidden = false; s.notice.textContent = 'Sessao encerrada';
+    s.notice.hidden = false; s.notice.textContent = 'Session ended';
   };
   let prev = 0;
   s.timer = setInterval(() => {
@@ -1132,8 +1133,8 @@ async function openTab(host){
 
 // Shortcuts the local system would swallow go through the bar. Ctrl+Alt+Del
 // is not here because Windows does not accept that combination injected.
-const COMBOS = {alttab:[56, 15], super:[125], tarefas:[29, 42, 1]};
-document.getElementById('barra').addEventListener('click', ev => {
+const COMBOS = {alttab:[56, 15], super:[125], taskmgr:[29, 42, 1]};
+document.getElementById('topbar').addEventListener('click', ev => {
   const b = ev.target.closest('button[data-combo]');
   const s = SESSIONS.get(currentTab);
   if (!b || !s || s.ws.readyState !== 1) return;
@@ -1142,11 +1143,11 @@ document.getElementById('barra').addEventListener('click', ev => {
   [...keys].reverse().forEach(k => s.ws.send(encodeEvent(T_KEY, k, false)));
   s.canvas.focus();
 });
-document.getElementById('barrafim').addEventListener('click', () => {
+document.getElementById('topbarend').addEventListener('click', () => {
   if (currentTab) closeTab(currentTab);
 });
-document.getElementById('barracheia').addEventListener('click', () => {
-  const p = document.getElementById('palco');
+document.getElementById('topbarfull').addEventListener('click', () => {
+  const p = document.getElementById('stage');
   if (document.fullscreenElement) document.exitFullscreen(); else p.requestFullscreen();
   const s = SESSIONS.get(currentTab);
   if (s) s.canvas.focus();
@@ -1155,51 +1156,51 @@ document.getElementById('barracheia').addEventListener('click', () => {
 // --- file manager -----------------------------------------------------
 // This machine on the left, the tab's machine on the right. Copy only: the
 // route refuses to overwrite, and the destination is what says it arrived.
-const XFER = {esq:{host:'', path:'', sel:null, d:null}, dir:{host:'', path:'', sel:null, d:null},
+const XFER = {lhs:{host:'', path:'', sel:null, d:null}, rhs:{host:'', path:'', sel:null, d:null},
              timer:0, error:''};
-const paneOf = l => document.querySelector(`.pane[data-lado="${l}"]`);
+const paneOf = l => document.querySelector(`.pane[data-side="${l}"]`);
 
 async function xferList(side){
   const p = XFER[side], box = paneOf(side);
   const q = new URLSearchParams({host:p.host}); if (p.path) q.set('path', p.path);
   box.innerHTML = `<div class="ptop"><div class="pquem">${esc(p.host)}</div></div>` +
-    `<div class="nota">carregando...</div>`;
+    `<div class="note">loading...</div>`;
   let d;
   try{ d = await (await fetch('/api/files?' + q, {cache:'no-store'})).json(); }
   catch(e){ d = {error:e.message, entries:[]}; }
   p.d = d; p.sel = null;
   if (d.path) p.path = d.path;
-  const who = side === 'esq' ? `${esc(p.host)} (esta maquina)` : esc(p.host);
+  const who = side === 'lhs' ? `${esc(p.host)} (this machine)` : esc(p.host);
   const items = (d.entries || []).map((e, i) =>
     `<button class="item" data-i="${i}"><span>${e.kind === 'dir' ? '&#128193;' : '&#128196;'}</span>` +
     `<span class="n">${esc(e.name)}</span>` +
     `<span class="t">${e.kind === 'dir' ? '' : fsSize(e.size)}</span></button>`).join('');
   box.innerHTML =
     `<div class="ptop"><div class="pquem">${who}</div><div class="pnav">` +
-    `<button data-subir${d.parent ? '' : ' disabled'} title="Pasta acima">&uarr;</button>` +
-    `<button data-recarrega title="Recarregar">&#8635;</button>` +
+    `<button data-up${d.parent ? '' : ' disabled'} title="Parent folder">&uarr;</button>` +
+    `<button data-reload title="Recarregar">&#8635;</button>` +
     `<span class="pcam" title="${esc(d.display || '')}">${esc(d.display || '')}</span></div></div>` +
-    `<div class="plista">${d.error ? `<div class="nota">${esc(d.error)}</div>`
-      : (items || '<div class="nota">Pasta vazia</div>')}</div>`;
+    `<div class="plista">${d.error ? `<div class="note">${esc(d.error)}</div>`
+      : (items || '<div class="note">Empty folder</div>')}</div>`;
   xferButtons();
 }
 
 function xferButtons(){
-  document.getElementById('arqenviar').disabled = !XFER.esq.sel;
-  document.getElementById('arqreceber').disabled = !XFER.dir.sel;
+  document.getElementById('filesend').disabled = !XFER.lhs.sel;
+  document.getElementById('filerecv').disabled = !XFER.rhs.sel;
 }
 
 async function xferQueue(){
   let t = [];
   try{ t = await (await fetch('/api/files/transferencias', {cache:'no-store'})).json(); }catch(e){}
   const busy = t.some(x => x.state === 'running');
-  const label = {running:'copiando...', ok:'chegou', error:'falhou'};
-  const queue = document.getElementById('arqfila');
+  const label = {running:'copying...', ok:'arrived', error:'failed'};
+  const queue = document.getElementById('filequeue');
   const lines = t.slice(-4).reverse().map(x =>
     `<div class="${x.state}">${esc(x.name)}: ${esc(x.from)} &rarr; ${esc(x.to)} &middot; ` +
     `${label[x.state]}${x.detail ? ' &middot; ' + esc(x.detail) : ''}</div>`).join('');
   queue.innerHTML = (XFER.error ? `<div class="error">${esc(XFER.error)}</div>` : '') + lines;
-  if (XFER.wasBusy && !busy){ xferList('esq'); xferList('dir'); }
+  if (XFER.wasBusy && !busy){ xferList('lhs'); xferList('rhs'); }
   XFER.wasBusy = busy;
 }
 
@@ -1215,29 +1216,29 @@ async function xferCopy(from, to){
 }
 
 function xferShow(show){
-  const a = document.getElementById('arq');
+  const a = document.getElementById('files');
   a.hidden = !show;
   clearInterval(XFER.timer);
   if (!show){ const s = SESSIONS.get(currentTab); if (s) s.canvas.focus(); return; }
   const local = (window.HOSTS || []).find(h => h.addr === '127.0.0.1' || h.addr === 'localhost');
   XFER.error = '';
-  if (XFER.dir.host !== currentTab) Object.assign(XFER.dir, {host:currentTab, path:''});
-  XFER.esq.host = local ? local.name : '';
-  xferList('esq'); xferList('dir'); xferQueue();
+  if (XFER.rhs.host !== currentTab) Object.assign(XFER.rhs, {host:currentTab, path:''});
+  XFER.lhs.host = local ? local.name : '';
+  xferList('lhs'); xferList('rhs'); xferQueue();
   XFER.timer = setInterval(xferQueue, 1000);
 }
 
-document.getElementById('barraarq').addEventListener('click', () => {
-  xferShow(document.getElementById('arq').hidden);
+document.getElementById('topbarfiles').addEventListener('click', () => {
+  xferShow(document.getElementById('files').hidden);
 });
-document.getElementById('arqenviar').addEventListener('click', () => xferCopy('esq', 'dir'));
-document.getElementById('arqreceber').addEventListener('click', () => xferCopy('dir', 'esq'));
-document.getElementById('arq').addEventListener('click', ev => {
+document.getElementById('filesend').addEventListener('click', () => xferCopy('lhs', 'rhs'));
+document.getElementById('filerecv').addEventListener('click', () => xferCopy('rhs', 'lhs'));
+document.getElementById('files').addEventListener('click', ev => {
   const box = ev.target.closest('.pane');
   if (!box) return;
-  const side = box.dataset.lado, p = XFER[side];
-  if (ev.target.closest('[data-recarrega]')) return xferList(side);
-  if (ev.target.closest('[data-subir]')){ p.path = p.d.parent; return xferList(side); }
+  const side = box.dataset.side, p = XFER[side];
+  if (ev.target.closest('[data-reload]')) return xferList(side);
+  if (ev.target.closest('[data-up]')){ p.path = p.d.parent; return xferList(side); }
   const b = ev.target.closest('.item');
   if (!b) return;
   const e = p.d.entries[+b.dataset.i];
@@ -1249,21 +1250,21 @@ document.getElementById('arq').addEventListener('click', ev => {
   b.classList.add('sel'); p.sel = +b.dataset.i;
   xferButtons();
 });
-document.getElementById('arq').addEventListener('dblclick', ev => {
+document.getElementById('files').addEventListener('dblclick', ev => {
   const b = ev.target.closest('.item'), box = ev.target.closest('.pane');
   if (!b || !box) return;
-  const p = XFER[box.dataset.lado], e = p.d.entries[+b.dataset.i];
+  const p = XFER[box.dataset.side], e = p.d.entries[+b.dataset.i];
   if (e.kind !== 'dir') return;
   p.path = p.path.replace(/[\/\\]+$/, '') + '/' + e.name;
-  xferList(box.dataset.lado);
+  xferList(box.dataset.side);
 });
 
-document.getElementById('abas').addEventListener('click', ev => {
-  const x = ev.target.closest('[data-fecha]');
-  if (x){ closeTab(x.dataset.fecha); return; }
-  const a = ev.target.closest('[data-aba]');
+document.getElementById('tabs').addEventListener('click', ev => {
+  const x = ev.target.closest('[data-close]');
+  if (x){ closeTab(x.dataset.close); return; }
+  const a = ev.target.closest('[data-tab]');
   if (!a) return;
-  currentTab = a.dataset.aba || null;
+  currentTab = a.dataset.tab || null;
   paintTabs();
 });
 
@@ -1282,32 +1283,32 @@ async function whatsNew(){
   // "Seen" by the title of the newest entry, in browser storage: it is a
   // per-person convenience, not state that needs to last.
   let seen = null;
-  try{ seen = localStorage.getItem('oxdesk.novidades.visto'); }catch(e){}
+  try{ seen = localStorage.getItem('oxdesk.news.seen'); }catch(e){}
   const cut = items.findIndex(i => i.title === seen);
   const unseen = cut < 0 ? (seen ? items.length : 0) : cut;
 
-  document.getElementById('novlist').innerHTML = items.map((i, n) =>
+  document.getElementById('newslist').innerHTML = items.map((i, n) =>
     `<div class="novitem${n < unseen ? ' novo' : ''}">` +
     `<div class="d">${esc(i.data)}</div>` +
     `<div class="t">${esc(i.title)}</div>` +
     `<div class="x">${esc(i.description)}</div></div>`).join('');
 
-  const badge = document.getElementById('novbadge');
+  const badge = document.getElementById('newsbadge');
   badge.textContent = unseen;
   badge.hidden = unseen === 0;
 
-  document.getElementById('novbtn').onclick = () => {
-    const pop = document.getElementById('novpop');
+  document.getElementById('newsbtn').onclick = () => {
+    const pop = document.getElementById('newspop');
     pop.classList.toggle('on');
     if (pop.classList.contains('on')){
-      try{ localStorage.setItem('oxdesk.novidades.visto', items[0].title); }catch(e){}
+      try{ localStorage.setItem('oxdesk.news.seen', items[0].title); }catch(e){}
       badge.hidden = true;
       for (const el of pop.querySelectorAll('.novitem.novo')) el.classList.remove('novo');
     }
   };
 }
 document.addEventListener('click', ev => {
-  if (!ev.target.closest('.novwrap')) document.getElementById('novpop').classList.remove('on');
+  if (!ev.target.closest('.newswrap')) document.getElementById('newspop').classList.remove('on');
 });
 
 // --- layout -----------------------------------------------------------
@@ -1337,31 +1338,31 @@ function lyRender(){
     ? unplaced.map(lyTile).join('')
     : '';
   document.getElementById('lymeta').textContent =
-    unplaced.length ? `${unplaced.length} sem posicao` : 'todas posicionadas';
+    unplaced.length ? `${unplaced.length} unplaced` : 'all placed';
 }
 
 function lyTile(h){
   return `<div class="lytile${h.local ? ' eu' : ''}" draggable="true" data-host="${esc(h.name)}">` +
          `<span class="n">${esc(h.name)}</span>` +
-         `<span class="o">${esc(h.os)}${h.local ? ' - esta' : ''}</span></div>`;
+         `<span class="o">${esc(h.os)}${h.local ? ' - this one' : ''}</span></div>`;
 }
 
 function lyEdges(edges, enabled){
   const box = document.getElementById('lyedges');
   if (!edges || !edges.length){
     box.innerHTML = enabled
-      ? '<span class="lyedge">nenhuma borda derivada</span>'
-      : '<span class="lyedge">borda desligada na config</span>';
+      ? '<span class="lyedge">no edge derived</span>'
+      : '<span class="lyedge">edge turned off in the config</span>';
     return;
   }
-  const edgeNames = {right:'direita', left:'esquerda', top:'cima', bottom:'baixo'};
+  const edgeNames = {right:'right', left:'left', top:'top', bottom:'bottom'};
   // A neighbor that does not RECEIVE shows, but greyed out and with the
   // reason: the grid must not silently lie about a side that will not work.
   box.innerHTML = edges.map(e => {
     const edgeText = `${esc(edgeNames[e.edge] || e.edge)} &rarr; ${esc(e.target)}`;
     return e.active === false
-      ? `<span class="lyedge off" title="sem ssh+agent: nao ha quem devolva o dispositivo, ` +
-        `entao nao criamos borda para la">${edgeText} &middot; nao recebe</span>`
+      ? `<span class="lyedge off" title="no ssh+agent: there is nobody to hand the device back, ` +
+        `so we do not create an edge that way">${edgeText} &middot; does not receive</span>`
       : `<span class="lyedge">${edgeText}</span>`;
   }).join('');
 }
@@ -1388,8 +1389,8 @@ async function layout(){
     // -- otherwise the reconciler undoes what you just did.
     const sel = document.getElementById('lyleader');
     const names = d.devices || [];
-    if (sel.dataset.nomes !== names.join('|')){
-      sel.dataset.nomes = names.join('|');
+    if (sel.dataset.names !== names.join('|')){
+      sel.dataset.names = names.join('|');
       sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
     }
     if (d.follow_leader) sel.value = d.follow_leader;
@@ -1414,7 +1415,7 @@ async function lySave(){
     lyEdges(d.edges, true);
     document.getElementById('lymeta').textContent = 'salvo';
   }catch(e){
-    document.getElementById('lymeta').textContent = 'nao salvou: ' + e.message;
+    document.getElementById('lymeta').textContent = 'not saved: ' + e.message;
   }
 }
 
@@ -1519,9 +1520,9 @@ async function tasks(){
     body.innerHTML = d.procs.map(p => {
       const confirming = TK.pending === p.pid;
       const action = confirming
-        ? `<button class="sim" data-kill="${p.pid}">encerrar</button>` +
-          `<button class="sim" data-kill="${p.pid}" data-force="1">forcado</button>`
-        : `<button data-ask="${p.pid}">encerrar</button>`;
+        ? `<button class="yes" data-kill="${p.pid}">end</button>` +
+          `<button class="yes" data-kill="${p.pid}" data-force="1">forced</button>`
+        : `<button data-ask="${p.pid}">end</button>`;
       return `<div class="tkrow"><span class="pid">${p.pid}</span>` +
              `<span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>` +
              `<span class="cpu">${p.cpu}</span>` +
@@ -1529,7 +1530,7 @@ async function tasks(){
              `<span class="act">${action}</span></div>`;
     }).join('') || '<div class="tknote">nada rodando?</div>';
     document.getElementById('tkmeta').textContent =
-      d.procs.length + ' processos - ' + d.source;
+      d.procs.length + ' processes - ' + d.source;
   }catch(e){
     body.innerHTML = `<div class="tknote">inacessivel: ${esc(e.message)}</div>`;
   }
@@ -1621,7 +1622,7 @@ async function files(){
     }
     const up = d.parent
       ? `<div class="fsrow up" data-go="${esc(d.parent)}">` +
-        `<span class="ic">..</span><span class="nm">voltar</span></div>`
+        `<span class="ic">..</span><span class="nm">back</span></div>`
       : '';
     const rows = d.entries.map(e => {
       const icon = e.kind === 'dir' ? '&#9656;' : (e.kind === 'link' ? '&#8599;' : '&middot;');
@@ -1633,7 +1634,7 @@ async function files(){
              `<span class="wh">${esc(fsWhen(e))}</span></div>`;
     }).join('');
     body.innerHTML = up + rows ||
-      '<div class="fsnote">pasta vazia</div>';
+      '<div class="fsnote">empty folder</div>';
     document.getElementById('fsmeta').textContent =
       d.entries.length + ' item(ns) - ' + d.source +
       (d.truncated ? ' - lista cortada' : '');
@@ -1727,11 +1728,11 @@ function machineRow(h, isFav){
   const fav = isFav ? ' fav' : '';
   const hasKvm = h.kvm && h.kvm.border != null;
   const flagged = hasKvm && (h.kvm.border || h.kvm.follow);
-  return `<div class="navit" data-maq="${esc(h.name)}" title="${esc(h.role)}">` +
+  return `<div class="navit" data-machine="${esc(h.name)}" title="${esc(h.role)}">` +
     `<span class="sdot${h.online ? ' on' : ''}"></span>` +
     `<span class="lbl">${esc(h.name)}${flagged ? ' &middot;' : ''}</span>` +
     `<span class="act">` +
-      `<button data-tela="${esc(h.name)}" title="abrir a tela desta maquina">&#9654;</button>` +
+      `<button data-screen="${esc(h.name)}" title="open this machine's screen">&#9654;</button>` +
       `<button class="fav${fav}" data-fav="${esc(h.name)}" ` +
       `title="${isFav ? 'tirar dos favoritos' : 'fixar em favoritos'}">` +
       `${isFav ? '&#9733;' : '&#9734;'}</button>` +
@@ -1747,7 +1748,7 @@ function renderSide(hosts){
     pinned.length ? pinned.map(h => machineRow(h, true)).join('')
                  : `<div class="sidenote">nenhum ainda</div>`;
   document.getElementById('favn').textContent = pinned.length ? pinned.length : '';
-  document.getElementById('maqlist').innerHTML =
+  document.getElementById('machinelist').innerHTML =
     hosts.map(h => machineRow(h, favs.includes(h.name))).join('');
 }
 
@@ -1764,23 +1765,23 @@ document.querySelector('.side').addEventListener('click', ev => {
     return;
   }
 
-  const screenBtn = ev.target.closest('button[data-tela]');
+  const screenBtn = ev.target.closest('button[data-screen]');
   if (screenBtn){
     // Reuse the card's button instead of repeating the call: the options
     // (keyboard, sound, microphone) and the error report live there, and
     // two copies would diverge. Switch to the overview first so the
     // person SEES what happened.
     showSec('geral');
-    const b = document.querySelector(`button[data-open="${CSS.escape(screenBtn.dataset.tela)}"]`);
+    const b = document.querySelector(`button[data-open="${CSS.escape(screenBtn.dataset.screen)}"]`);
     if (b && !b.disabled) b.click();
     return;
   }
 
-  const machine = ev.target.closest('.navit[data-maq]');
+  const machine = ev.target.closest('.navit[data-machine]');
   if (machine){
     showSec('geral');
     const target = [...document.querySelectorAll('.card .nm')]
-      .find(n => n.textContent === machine.dataset.maq);
+      .find(n => n.textContent === machine.dataset.machine);
     if (target){
       const card = target.closest('.card');
       card.scrollIntoView({block:'center', behavior:'smooth'});
@@ -1803,21 +1804,21 @@ async function pauseHidpp(minutes){
     const d = await r.json();
     PAUSED_S = d.paused_s ?? null;
     paintPause();
-  }catch(e){ document.getElementById('pausamsg').textContent = e.message; }
+  }catch(e){ document.getElementById('pausemsg').textContent = e.message; }
 }
 function paintPause(){
-  const b = document.getElementById('pausabtn');
-  const m = document.getElementById('pausamsg');
+  const b = document.getElementById('pausebtn');
+  const m = document.getElementById('pausemsg');
   if (PAUSED_S){
-    b.textContent = 'retomar leitura';
+    b.textContent = 'resume polling';
     const min = Math.floor(PAUSED_S/60), secs = PAUSED_S%60;
-    m.textContent = `pausada — ${min}m${String(secs).padStart(2,'0')}s restantes`;
+    m.textContent = `paused — ${min}m${String(secs).padStart(2,'0')}s left`;
   } else {
-    b.textContent = 'pausar leitura dos dispositivos';
+    b.textContent = 'pause device polling';
     m.textContent = '';
   }
 }
-document.getElementById('pausabtn').addEventListener('click', () =>
+document.getElementById('pausebtn').addEventListener('click', () =>
   pauseHidpp(PAUSED_S ? 0 : 10));
 
 showSec(stored('sec', DEFAULT_SEC));

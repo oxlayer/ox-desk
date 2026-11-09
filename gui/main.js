@@ -183,7 +183,7 @@ function createWindow(route = '/') {
     height: 780,
     minWidth: 380,
     minHeight: 460,
-    title: 'Maquinas',
+    title: 'Machines',
     icon: path.join(__dirname, 'icon.png'),
     backgroundColor: '#0c0e12',
     autoHideMenuBar: true,
@@ -199,7 +199,7 @@ function createWindow(route = '/') {
 
   // Full screen only on the setup page, and only while it is open.
   //
-  // The ROUTE decides, via `did-navigate`, not the call: the "painel" link
+  // The ROUTE decides, via `did-navigate`, not the call: the "panel" link
   // at the bottom of the page is the natural exit, and it would have to
   // leave full screen on its own -- something a page cannot do. Tied to
   // the event, going back to `/` restores the normal window by itself, and
@@ -261,18 +261,18 @@ function batteryLabel(d) {
   // The status comes from the device and can contradict reality: measured,
   // an MX Keys on the cable went from 5% to 50% saying "discharging". We
   // mark whose claim it is.
-  if (d.charging) parts.push('carregando');
-  else if (d.battery_status) parts.push(`diz: ${d.battery_status}`);
-  if (d.battery_next_level != null) parts.push(`prox ${d.battery_next_level}%`);
+  if (d.charging) parts.push('charging');
+  else if (d.battery_status) parts.push(`says: ${d.battery_status}`);
+  if (d.battery_next_level != null) parts.push(`next ${d.battery_next_level}%`);
   // Age of the reading: with the device absent this is memory, and saying
   // "5% (2min)" is worth more than "?" -- but pretending it is current
   // would be worse.
   if (d.battery_age_s > 60) {
     const m = Math.round(d.battery_age_s / 60);
-    parts.push(m >= 60 ? `ha ${Math.round(m / 60)}h` : `ha ${m}min`);
+    parts.push(m >= 60 ? `${Math.round(m / 60)}h ago` : `${m}min ago`);
   }
-  const bat = parts.length ? parts.join(' ') : 'bateria ?';
-  const where = d.online ? ('canal ' + (d.current_host ?? '?')) : 'em outra maquina';
+  const bat = parts.length ? parts.join(' ') : 'battery ?';
+  const where = d.online ? ('channel ' + (d.current_host ?? '?')) : 'on another machine';
   return `${d.name} - ${bat} - ${where}`;
 }
 
@@ -340,18 +340,18 @@ async function refreshTray() {
     // only way back through the menu.
     const away = viaLan ? Boolean(kvm?.target) : list.some((d) => !d.online);
     if (here && away) {
-      items.push({ label: `Trazer para ${here.name}`, click: () => focus(here.name) });
+      items.push({ label: `Bring it to ${here.name}`, click: () => focus(here.name) });
     }
   }
 
   items.push(
     { type: 'separator' },
-    { label: 'Mostrar / esconder', click: toggle },
-    { label: 'Configurar esta maquina', click: () => open('/setup') },
-    { label: 'Recarregar', click: () => win && win.reload() },
-    { label: 'Abrir no navegador', click: () => shell.openExternal(URL) },
+    { label: 'Show / hide', click: toggle },
+    { label: 'Set up this machine', click: () => open('/setup') },
+    { label: 'Reload', click: () => win && win.reload() },
+    { label: 'Open in the browser', click: () => shell.openExternal(URL) },
     { type: 'separator' },
-    { label: 'Sair', click: () => { quitting = true; app.quit(); } }
+    { label: 'Quit', click: () => { quitting = true; app.quit(); } }
   );
 
   tray.setContextMenu(Menu.buildFromTemplate(items));

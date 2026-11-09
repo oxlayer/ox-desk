@@ -35,7 +35,7 @@ app.whenReady().then(async () => {
   const state = () => win.webContents.executeJavaScript(`(() => ({
     sections: document.querySelectorAll('.sec').length,
     visible: [...document.querySelectorAll('.sec')].filter(s => s.classList.contains('on')).map(s => s.dataset.sec),
-    machines: document.querySelectorAll('#maqlist .navit').length,
+    machines: document.querySelectorAll('#machinelist .navit').length,
     cards: document.querySelectorAll('#grid .card').length,
     screenButtons: document.querySelectorAll('button[data-open]').length,
     activeNav: [...document.querySelectorAll('.navit.on')].map(n => n.dataset.sec).filter(Boolean),
@@ -56,9 +56,9 @@ app.whenReady().then(async () => {
   // --- favorite a machine ----------------------------------------------
   // Pin it, wait for `tick` to redraw, check it landed in Favorites.
   const name = await win.webContents.executeJavaScript(
-    `document.querySelector('#maqlist .navit').dataset.maq`);
+    `document.querySelector('#machinelist .navit').dataset.maq`);
   await win.webContents.executeJavaScript(
-    `document.querySelector('#maqlist button[data-fav]').click()`);
+    `document.querySelector('#machinelist button[data-fav]').click()`);
   await new Promise(r => setTimeout(r, 2500));
   const fav = await win.webContents.executeJavaScript(`(() => ({
     favorites: [...document.querySelectorAll('#favlist .navit')].map(n => n.dataset.maq),
