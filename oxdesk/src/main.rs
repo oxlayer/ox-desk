@@ -56,6 +56,7 @@ mod sys;
 mod telemetry;
 #[cfg(target_os = "linux")]
 mod tray;
+mod wait;
 
 use config::Config;
 use probe::Snapshot;
@@ -312,10 +313,11 @@ fn main() -> std::process::ExitCode {
     // appear and the daemon keeps serving the panel and the API. Taking
     // oxdesk down because there is nowhere to draw an icon would trade an
     // inconvenience for an outage.
+    //
+    // It does keep asking, though. Giving up at t=0 is what left this
+    // machine with no icon for half an hour -- see `wait::retry_delay`.
     #[cfg(target_os = "linux")]
-    if let Some(h) = tray::start(Arc::clone(&cfg)) {
-        tray::watch(h, Arc::clone(&cfg));
-    }
+    tray::start_when_drawable(Arc::clone(&cfg));
 
     // Spec 017: pair with the peers once at startup, so phase C can refuse
     // strangers without refusing our own machines.

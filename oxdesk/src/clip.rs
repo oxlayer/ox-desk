@@ -293,14 +293,33 @@ pub mod linux {
     pub fn spawn(cfg: Arc<std::sync::RwLock<crate::config::Config>>) -> std::sync::mpsc::Sender<super::Request> {
         let (tx, rx) = std::sync::mpsc::channel::<super::Request>();
         std::thread::spawn(move || {
-            match run(&cfg, &rx) {
-                Err(e) => {
-                    crate::say!("clip: shut down ({e})");
-                    super::note_watch(false, e.to_string());
+            // A loop, for the same reason as the tray: `CreateSession`
+            // needs `org.gnome.Mutter.RemoteDesktop`, which does not exist
+            // yet when the service starts with the session. Measured on
+            // 2026-11-10 -- the clipboard said "shut down" at 12:20:00 and
+            // stayed dead until someone restarted the daemon by hand. See
+            // `crate::wait::retry_delay`.
+            let mut attempt = 0u32;
+            loop {
+                match run(&cfg, &rx) {
+                    // Exiting without error is still exiting: the channel
+                    // closed and from here on nothing crosses over. Nobody
+                    // comes back from that, so this one does not retry.
+                    Ok(()) => {
+                        super::note_watch(false, "the clipboard thread ended");
+                        return;
+                    }
+                    Err(e) => {
+                        if attempt == 0 {
+                            crate::say!(
+                                "clip: not watching yet ({e}); asking again while the daemon lives"
+                            );
+                        }
+                        super::note_watch(false, e.to_string());
+                        std::thread::sleep(crate::wait::retry_delay(attempt));
+                        attempt = attempt.saturating_add(1);
+                    }
                 }
-                // Exiting without error is still exiting: the channel
-                // closed and from here on nothing crosses over.
-                Ok(()) => super::note_watch(false, "a thread do clipboard encerrou"),
             }
         });
         tx
@@ -320,7 +339,7 @@ pub mod linux {
         c.with_proxy(RD, sess.clone(), T)
             .method_call::<(), _, _, _>(RDS, "EnableClipboard", (empty,))?;
         crate::say!("clip: watching the clipboard (session {sess})");
-        super::note_watch(true, format!("sessão {sess} do Mutter aceita"));
+        super::note_watch(true, format!("Mutter accepted session {sess}"));
 
         // Someone copied something on this machine.
         let owner = {

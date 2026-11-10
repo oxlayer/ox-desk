@@ -286,19 +286,53 @@ impl OxdeskTray {
 /// appear, and the daemon keeps serving the panel and the API. Taking
 /// `oxdesk` down because there is nowhere to draw an icon would trade an
 /// inconvenience for an outage.
-pub fn start(cfg: Arc<std::sync::RwLock<Config>>) -> Option<ksni::blocking::Handle<OxdeskTray>> {
+/// Brings the tray up as soon as there is somewhere to draw it, and then
+/// keeps the menu fresh.
+///
+/// Why a loop and not one attempt: the icon is drawn by whoever owns
+/// `org.kde.StatusNotifierWatcher`, and on GNOME that is the AppIndicator
+/// extension -- which loads after the shell, while `oxdesk.service` starts
+/// with the session. The first attempt therefore loses the race on a cold
+/// login and fails with `ServiceUnknown`. The measurement is in
+/// [`crate::wait`].
+///
+/// It asks for as long as the daemon lives, because the other reason the
+/// watcher can be missing -- no tray at all, or the extension turned off --
+/// can stop being true at any moment, and asking again every 30 s costs
+/// nothing measurable. Only the transitions are logged: one line for "not
+/// yet", one for "up". A line per attempt would bury the log of a machine
+/// that genuinely has no tray.
+pub fn start_when_drawable(cfg: Arc<std::sync::RwLock<Config>>) {
+    std::thread::spawn(move || {
+        let mut attempt = 0u32;
+        loop {
+            match spawn_item(Arc::clone(&cfg)) {
+                Ok(handle) => {
+                    crate::say!("native tray up");
+                    watch(handle, cfg);
+                    return;
+                }
+                Err(e) => {
+                    if attempt == 0 {
+                        crate::say!(
+                            "native tray not up yet ({e}); asking again while the daemon lives"
+                        );
+                    }
+                    std::thread::sleep(crate::wait::retry_delay(attempt));
+                    attempt = attempt.saturating_add(1);
+                }
+            }
+        }
+    });
+}
+
+/// One attempt to publish the item. The error comes back as a string
+/// because the only thing the caller does with it is print it once.
+fn spawn_item(
+    cfg: Arc<std::sync::RwLock<Config>>,
+) -> Result<ksni::blocking::Handle<OxdeskTray>, String> {
     use ksni::blocking::TrayMethods;
-    let b = OxdeskTray { cfg };
-    match b.spawn() {
-        Ok(h) => {
-            crate::say!("native tray up");
-            Some(h)
-        }
-        Err(e) => {
-            crate::say!("native tray did not come up ({e}); going on without it");
-            None
-        }
-    }
+    OxdeskTray { cfg }.spawn().map_err(|e| e.to_string())
 }
 
 /// Keeps the menu fresh on its own thread.
