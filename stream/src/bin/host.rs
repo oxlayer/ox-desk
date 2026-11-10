@@ -99,10 +99,12 @@ fn main() -> anyhow::Result<()> {
     // The output is ONE line per permission, `key: ok|missing`, because
     // the reader is code. See oxdesk/src/setup_mac.rs.
     //
-    // The old spellings still answer: this binary and the wizard that
-    // reads it are installed by the same deploy, but the Mac cannot be
-    // deployed while it has no screen, and a flag this one rejects turns
-    // a working permission into "run the deploy".
+    // The old spellings still answer. This binary and the wizard that
+    // reads it ship in the same deploy, and the launchd job that passes
+    // the flag is submitted fresh on every check rather than installed --
+    // so the exposure is a partial deploy and a shell history, not a
+    // stale plist. Cheap either way, and a flag this one rejects turns a
+    // granted permission into "run the deploy".
     #[cfg(target_os = "macos")]
     if a.first().is_some_and(|v| {
         v == "--check" || v == "--request" || v == "--conferir" || v == "--pedir"

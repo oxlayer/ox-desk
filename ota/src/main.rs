@@ -37,12 +37,16 @@ use std::process::ExitCode;
 /// to English.
 ///
 /// Applied once, on the way in, so the parsing below reads exactly one
-/// vocabulary. The old names cannot simply go: they are baked into things
-/// already installed on the machines -- a launchd plist and a Windows
-/// scheduled task are written once by the wizard and then outlive every
-/// deploy, and the Mac cannot be deployed at all while it has no screen.
-/// An unknown argument exits 2, so dropping a name a timer still passes
-/// would stop the updater on the one machine nobody is watching.
+/// vocabulary.
+///
+/// Who still sends the old names, measured rather than assumed. The two
+/// installed timers do **not**: the systemd unit and the Windows
+/// scheduled task both invoke this binary with no arguments at all. What
+/// does is `scripts/distribute-ota-token.sh`, which runs `--conferir`
+/// over SSH on each machine, and a shell history. An unknown argument
+/// exits 2, and the machine that script cannot update -- the Mac, while
+/// it has no screen -- is exactly the one where a silent stop would go
+/// unnoticed.
 pub fn canonical(args: Vec<String>) -> Vec<String> {
     args.into_iter()
         .map(|a| {

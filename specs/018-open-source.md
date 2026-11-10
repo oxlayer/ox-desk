@@ -486,7 +486,7 @@ a measurement.
 
      | What | Now | Still accepted, and why |
      |---|---|---|
-     | Flags | `--check`, `--force`, `--state`, `--short`, `--request`, `--probe-native`, `--fingerprint`, `--no-repeat`, `--device`, `--observe`, `--self-test` | the old spelling, via a `canonical()` table per binary: a launchd job and a Windows scheduled task are written once by the wizard and outlive every deploy, and an unknown argument exits 2 |
+     | Flags | `--check`, `--force`, `--state`, `--short`, `--request`, `--probe-native`, `--fingerprint`, `--no-repeat`, `--device`, `--observe`, `--self-test` | the old spelling, via a `canonical()` table per binary. Measured, not assumed: **neither installed timer passes a flag** — the systemd unit and the Windows scheduled task both invoke the binary bare — so the real senders are `distribute-ota-token.sh` over SSH and a shell history, and an unknown argument exits 2 |
      | Subcommands | `kvm-release`, `clip-probe`, `clip-file-{set,dir,ready}`, `version` | the old verb: a **peer** invokes these on this machine over SSH, running its own build |
      | State file | `state.json` | `estado.json` on read. A rollback has to find its state where the previous build left it, so the old file is not deleted |
      | Wire keys | `when_unix`, `n_here`, `result`, … | the pt-BR keys, as serde `alias` |
