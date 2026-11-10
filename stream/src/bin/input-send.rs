@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Sends a few input events to the host and exits.
 //!
 //! It exists to prove the return path without depending on someone moving

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Keyboard and mouse capture through evdev, for the LAN KVM.
 //!
 //! Spec: ../specs/005-input-switch.md

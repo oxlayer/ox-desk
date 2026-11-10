@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Bridge between a screen host and a panel tab: QUIC on one side, a local
 //! WebSocket on the other. See specs/016-session-and-visuals.md.
 //!

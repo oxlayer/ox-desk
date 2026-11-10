@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! macOS implementation of the contract in `mod.rs`.
 //!
 //! What is the same as Linux comes from `unix.rs` (local time, config

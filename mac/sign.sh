@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Signs a binary with the local identity, if it exists.
 #
 # Silent and NOT fatal when the identity does not exist: the machine keeps

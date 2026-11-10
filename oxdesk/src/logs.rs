@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Log for the GUI: the policy lives here, the source in the platform.
 //!
 //! It exists because its absence cost a wrong diagnosis: the channel

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Where the daemon speaks.
 //!
 //! On Linux the journal timestamps and stores, and a `println!` is

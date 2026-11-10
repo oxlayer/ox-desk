@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Edge watching on Windows: polling `GetCursorPos`.
 //!
 //! It used to be the `watch-edge` mode of `oxdesk-agent`, a separate

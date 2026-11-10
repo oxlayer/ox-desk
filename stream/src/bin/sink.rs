@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Receiver: QUIC -> frames -> file. v2 on the far side.
 //!
 //! It does not draw anything yet -- decoding and rendering are the next

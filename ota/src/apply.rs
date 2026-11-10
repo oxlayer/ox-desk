@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! The whole path: check, download, verify, sign, swap, restart, verify
 //! again, and roll back if it does not answer.
 //!

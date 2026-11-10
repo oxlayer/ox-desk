@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # What is on the clipboard of the INTERACTIVE SESSION.
 #
 # Over SSH you read session 0, which has its own clipboard and it is always

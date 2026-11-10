@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! LAN KVM: captures keyboard and mouse here and injects them on the other machine.
 //!
 //! Spec: ../../specs/005-input-switch.md

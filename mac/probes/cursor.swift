@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Where the pointer is, in pixels. One line per reading.
 //
 // It exists because "it looks like it did not move" is not a measurement.

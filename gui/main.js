@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Native shell over oxdesk. It duplicates no logic: the daemon collects data
 // and serves the UI, Electron provides the window, tray and shortcuts.
 //

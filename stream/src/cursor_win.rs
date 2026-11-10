@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #![cfg(windows)]
 //! Drawing the cursor on the Windows DESKTOP, not into the frame.
 //!

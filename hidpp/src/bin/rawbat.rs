@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: MIT
+
 //! Raw dump of the battery features, to build the parser on the real
 //! reply instead of guessing the layout.
 fn main() {

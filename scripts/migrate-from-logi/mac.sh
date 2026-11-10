@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # One-time move of a Mac installation from logi/logid/logistream to oxdesk.
 # Spec: specs/017-product.md ("The name: oxdesk"). Run ON the Mac.
 #

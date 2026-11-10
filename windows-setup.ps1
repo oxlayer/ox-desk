@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Windows side (192.168.1.43) of the Flow-equivalent setup.
 # Run in PowerShell AS ADMINISTRATOR:
 #   powershell -ExecutionPolicy Bypass -File windows-setup.ps1

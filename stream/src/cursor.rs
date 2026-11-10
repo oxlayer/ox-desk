@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Compositing the cursor onto the captured frame.
 //!
 //! Spec: ../specs/010-remote-desktop.md

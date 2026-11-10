@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Opens the oxdesk panel, starting the daemon first if it is not answering.
 #
 # This is what the desktop entry runs, and it is a script and not a bare

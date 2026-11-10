@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Screen capture on Wayland: Mutter negotiates, PipeWire delivers.
 //!
 //! **Through Mutter's private API, not the portal.** The `ScreenCast` portal

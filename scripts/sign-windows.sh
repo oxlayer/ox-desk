@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Signs an .exe with Authenticode, from here, before it reaches Windows.
 #
 # Why here and not there: Defender removed the raw `oxdesk.exe` the moment

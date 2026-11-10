@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! What Linux and macOS do the same.
 //!
 //! It exists so there is no third copy of local time, config directory

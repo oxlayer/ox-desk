@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Where deploy.sh sends things. Copy to scripts/targets.sh and fill in.
 #
 #   cp scripts/targets.example.sh scripts/targets.sh

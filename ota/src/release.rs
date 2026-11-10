@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! What the GitHub Release says, and what to do about it.
 //!
 //! Spec: ../../specs/015-ota.md

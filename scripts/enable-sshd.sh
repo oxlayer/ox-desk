@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Enables inbound SSH on Ubuntu and installs the remote-screen client.
 #
 # Why it needs you: both things ask for `sudo`, and sudo here asks for a

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Builds and tests the WHOLE repo, on every target we use.
 #
 # It exists because breaking what is not compiled is silent: renaming
@@ -32,6 +35,13 @@ run() {
     failures=$((failures + 1))
   fi
 }
+
+# Instant, and first: a file published without a licence header is a
+# licensing problem rather than a build problem, and it is the kind that
+# gets noticed by whoever audits the repository instead of by whoever
+# added the file. See specs/021.
+echo "== licence =="
+run "spdx: every source file declares one" bash scripts/spdx.sh
 
 # `agent` and `winput` are Windows-only (pure Win32): on Linux `winput`
 # compiles EMPTY because of `#![cfg(windows)]`, and the agent cannot find

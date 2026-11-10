@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: MIT
+
 //! HID++ 2.0 over raw HID -- enough to inventory Logitech devices and
 //! switch the Easy-Switch channel, on Linux and Windows.
 //!

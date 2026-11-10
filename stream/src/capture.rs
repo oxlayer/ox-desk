@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Where the frame comes from.
 //!
 //! Linux/Wayland: `ScreenCast` portal + PipeWire. There is no shortcut -- the

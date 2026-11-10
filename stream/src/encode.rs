@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Raw frame -> H.264.
 //!
 //! NVENC **directly**, through `libnvidia-encode`, and not through libavcodec:

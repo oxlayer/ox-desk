@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! oxdesk-agent -- the Windows side.
 //!
 //! Spec: ../specs/005-input-switch.md

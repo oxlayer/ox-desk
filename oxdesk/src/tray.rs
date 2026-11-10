@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Native tray, through StatusNotifierItem.
 //!
 //! Spec: ../../specs/001-control-plane.md

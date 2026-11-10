@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Puts this Mac in the overlay without the Tailscale app.
 #
 # Spec: ../specs/012-outside-the-lan.md

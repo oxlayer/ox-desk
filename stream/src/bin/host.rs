@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Screen host: dispatches to this platform's implementation.
 //!
 //! Spec: ../../specs/010-remote-desktop.md

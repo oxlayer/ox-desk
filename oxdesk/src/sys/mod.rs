@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! What differs between Linux and Windows, and only that.
 //!
 //! `oxdesk` was born on Linux only, and the GUI with it. Windows got a

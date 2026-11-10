@@ -14,7 +14,7 @@ the first half is not, and it is lost by accident rather than by decision.
 |---|---|
 | Copyright holders | **One.** `git log --all --format='%an <%ae>'` returns a single person under two identities |
 | Third-party source in the tree | **None** vendored. Dependencies are external and permissive |
-| Copyright headers / SPDX | **None**, anywhere |
+| Copyright headers / SPDX | **Every file that holds logic**, checked by `scripts/spdx.sh` |
 | Outbound licence | AGPL-3.0-or-later, except `hidpp` (MIT) |
 
 So the right to relicense exists **right now, unconditionally**: a sole
@@ -95,7 +95,10 @@ cares about. Prefer removing the constraint to managing it.
    `NOTICE` naming the copyright holder. Two reasons, and both matter
    later: AGPL compliance expects the notice, and a relicence is an
    audit — "which files, under which terms, contributed by whom" has to be
-   answerable mechanically rather than by reading `git log`.
+   answerable mechanically rather than by reading `git log`. **Done:**
+   `NOTICE`, and 128 headers written by
+   [`scripts/spdx.sh`](../scripts/spdx.sh), which also checks them from
+   `check.sh` on every run.
 4. **`hidpp` stays MIT and separate.** It is the piece we want other
    projects to take, permissive means no constraint in either direction,
    and keeping it out of the relicensable core is deliberate.
@@ -159,11 +162,30 @@ dual licensing requires owning the rights.
 
 ## Order of work
 
-1. **`CONTRIBUTING.md` with the inbound grant.** *Check:* it states the
-   sublicensable grant in substance and links the CLA. **Before** the
-   repository is public.
-2. **SPDX headers and `NOTICE`.** *Check:* every tracked source file has
-   an identifier; a one-line script proves it.
+1. ~~**`CONTRIBUTING.md` with the inbound grant.**~~ **Done:** the grant
+   is stated in substance, in the second paragraph, naming oxlayer as the
+   grantee. That is also what settles whose name the `NOTICE` carries —
+   the file a contributor reads already answered it.
+2. ~~**SPDX headers and `NOTICE`.**~~ **Done.** `scripts/spdx.sh` owns
+   both halves: it writes the headers (`--fix`) and it is the check, wired
+   into `check.sh` so a file added next week fails loudly instead of
+   shipping undeclared.
+
+   The set it enforces is files that hold logic — `.rs`, `.sh`, `.ps1`,
+   `.js`, `.swift`, `.html`, and `linux/oxdesk-panel`. Deliberately out:
+   `Cargo.toml`, which already declares `license =` and would become a
+   second source of truth to keep in sync; `.desktop`, `.service`,
+   `.rules` and `.plist`, parsed by systemd, udev and launchd, which are
+   strict about what they accept and hold no logic to attribute; and
+   Markdown, covered by `LICENSE` and `NOTICE` without putting
+   boilerplate at the top of 55 pages.
+
+   `hidpp/` gets `MIT` and everything else `AGPL-3.0-or-later`, and the
+   check compares the identifier rather than merely finding one — an AGPL
+   header inside `hidpp/` fails instead of quietly misdeclaring the
+   licence. Both failure directions were tested by breaking them on
+   purpose, because a check that has never failed is a check nobody has
+   tested.
 3. **CLA bot on pull requests.** *Check:* a throwaway PR from another
    account is blocked until signed.
 4. **Then [[020-native-mac]]**, which is what converts the right into a

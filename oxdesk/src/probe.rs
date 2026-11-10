@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Probing: TCP ports, `units` state and details over SSH.
 //!
 //! What `units` means changes per platform -- a systemd unit on Linux, a

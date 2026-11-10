@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Puts this machine on the overlay, to reach the others outside the LAN.
 #
 # Spec: ../specs/012-outside-the-lan.md

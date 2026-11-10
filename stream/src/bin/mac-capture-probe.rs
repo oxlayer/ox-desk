@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Standalone runner for the native capture probe.
 //!
 //! The logic is in `oxdesk_stream::mac_native`, because the host has to be

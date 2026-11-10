@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Checks Mutter's input injection API before building on top of it.
 //!
 //! `gdbus` does not work here: each call opens its own connection, and

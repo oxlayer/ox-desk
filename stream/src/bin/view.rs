@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Viewer: QUIC -> H.264 -> window. Closes out v2.
 //!
 //! Spec: ../specs/010-remote-desktop.md

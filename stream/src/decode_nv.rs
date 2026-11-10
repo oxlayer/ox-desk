@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! NVDEC decoding: H.264 -> NV12 -> BGRA, on the GPU.
 //!
 //! Spec: ../specs/010-remote-desktop.md

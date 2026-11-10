@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: MIT
+
 //! Diagnostic of the crate against the real hardware.
 use hidapi::HidApi;
 use std::time::Instant;

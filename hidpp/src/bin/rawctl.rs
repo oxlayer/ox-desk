@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: MIT
+
 //! Raw dump of 0x1B04 REPROG CONTROLS V4, to build the parser on the real
 //! reply. Same method that decoded 0x1815 and the battery.
 fn main() {

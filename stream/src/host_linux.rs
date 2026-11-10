@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Host on Linux/Wayland: Mutter -> PipeWire -> NVENC -> QUIC.
 //!
 //! Spec: ../specs/010-remote-desktop.md

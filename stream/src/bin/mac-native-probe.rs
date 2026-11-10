@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Does hardware H.264 encoding work from Rust on this Mac with **no media
 //! dependency at all**?
 //!

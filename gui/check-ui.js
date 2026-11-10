@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Smoke test of the panel: loads the page in a HIDDEN window, clicks what
 // is clickable and reports whatever the console says.
 //

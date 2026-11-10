@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Kills the biggest unknown of v1: does NVENC work on this machine, loaded
 //! at runtime, without the SDK and without sudo?
 //!

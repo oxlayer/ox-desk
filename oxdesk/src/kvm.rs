@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! LAN KVM: sends keyboard and mouse to another machine over the network.
 //!
 //! Spec: ../../specs/005-input-switch.md

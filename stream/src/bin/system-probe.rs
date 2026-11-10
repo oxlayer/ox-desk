@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! What Windows lets a SYSTEM process do on the lock screen.
 //!
 //! Spec: ../../../specs/014-lock-screen.md

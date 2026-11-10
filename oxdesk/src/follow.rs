@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Reconciler: the devices follow the leader's channel.
 //!
 //! Spec: ../specs/005-input-switch.md

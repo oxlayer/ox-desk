@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Starts the desktop app. Clearing ELECTRON_RUN_AS_NODE is mandatory when
 # the terminal comes from inside VS Code (the extension host exports it,
 # and with it the Electron binary runs as plain Node and nothing opens).

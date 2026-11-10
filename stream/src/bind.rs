@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Which address the host listens on.
 //!
 //! Spec: ../../specs/012-outside-the-lan.md

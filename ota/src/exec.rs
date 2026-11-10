@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Running programs and talking to the network, with a time limit.
 //!
 //! Spec: ../../specs/015-ota.md

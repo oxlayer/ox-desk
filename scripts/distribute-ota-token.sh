@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Sends the OTA token from this machine to the other two, and proves it works.
 # The value never goes through argv or the screen.
 #

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! How many bits per second the encoder may spend.
 //!
 //! Spec: ../../specs/012-outside-the-lan.md

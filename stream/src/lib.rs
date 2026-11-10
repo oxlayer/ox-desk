@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Our own remote screen. Spec: ../specs/010-remote-desktop.md
 //!
 //! The boundaries matter more than the first implementation: the first

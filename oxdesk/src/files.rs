@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! File browsing: local through `std::fs`, remote through SFTP.
 //!
 //! Spec: ../specs/003-files.md

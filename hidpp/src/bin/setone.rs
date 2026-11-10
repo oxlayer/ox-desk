@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: MIT
+
 //! Moves ONE slot to another channel. Used to test the reconciler: we send
 //! only the leader and watch whether the follower goes along.
 fn main() {

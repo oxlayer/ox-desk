@@ -83,6 +83,10 @@ afternoon.
 bash scripts/check.sh      # builds and tests every crate, native and cross
 ```
 
+If it fails on the licence step because you added a file, write the header
+with `bash scripts/spdx.sh --fix` and read it before committing: it says
+AGPL for everything except `hidpp/`, which is MIT.
+
 It has to be green. It builds for Windows too, from Linux, because half of
 some crates only compiles there — and code for another OS passes
 `cargo build` here by not being read at all

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Turns on ufw with this infra's ports, LAN only.
 #
 # Run:  sudo bash scripts/enable-ufw.sh

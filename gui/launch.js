@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Electron launcher.
 //
 // It exists because of a gotcha we paid for: VS Code's extension host

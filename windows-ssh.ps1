@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Lets the machine you drive from manage this Windows box over SSH.
 # Run in PowerShell AS ADMINISTRATOR, passing the public key of that
 # machine:

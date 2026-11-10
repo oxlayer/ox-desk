@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! What's new, embedded in the binary.
 //!
 //! `include_str!` and not a file on disk on purpose: what the panel shows

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Hardware H.264 encoding on macOS, straight against VideoToolbox.
 //!
 //! Spec: ../../specs/020-native-mac.md

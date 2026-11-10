@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Opens the MacBook to the rest of the infra: inbound SSH, screen and the key.
 #
 # Run it ON THE MAC, in Terminal. It asks for sudo in some steps; each one

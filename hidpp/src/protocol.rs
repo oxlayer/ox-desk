@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: MIT
+
 //! The protocol between peers: one line of JSON per command.
 //!
 //! Who speaks: `oxdesk-agent` on Windows and `oxdesk` on any OS, each

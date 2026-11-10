@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! SHA-256, in-house.
 //!
 //! Spec: ../../specs/015-ota.md

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Setup diagnostics. Read-only -- changes nothing.
 #   bash status.sh
 set -uo pipefail

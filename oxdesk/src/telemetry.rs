@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Session telemetry, oxdesk's half: on/off, which path a session takes, and
 //! reading back what was recorded.
 //!

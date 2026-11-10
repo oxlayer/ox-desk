@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Who is on the other end of the screen channel.
 //!
 //! Spec: ../specs/017-product.md (section 1, phase A)

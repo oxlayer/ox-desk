@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Stamps the build with the commit, so the deploy can check sync.
 //!
 //! It comes from an environment variable and not from `git` directly

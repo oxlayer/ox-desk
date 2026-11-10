@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Config in TOML, readable and editable by hand.
 //!
 //! Two levels kept apart on purpose (spec 001): config is what the user

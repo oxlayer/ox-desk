@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Remote screen: we do not serve a screen, we dispatch the right client.
 //!
 //! Spec: ../specs/006-screen-share.md

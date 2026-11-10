@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Setup checks that are the same on all three machines.
 //!
 //! Spec: ../../specs/011-onboarding.md

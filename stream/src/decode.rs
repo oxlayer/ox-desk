@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Decoding, with the platform picking the path.
 //!
 //! Spec: ../specs/010-remote-desktop.md

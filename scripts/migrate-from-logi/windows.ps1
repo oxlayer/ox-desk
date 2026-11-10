@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # One-time move of a Windows installation from logi/logid/logistream to
 # oxdesk. Spec: specs/017-product.md ("The name: oxdesk").
 #

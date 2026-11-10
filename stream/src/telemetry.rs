@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! One event per screen session, written locally when it ends.
 //!
 //! Spec: ../specs/017-product.md (section 2)

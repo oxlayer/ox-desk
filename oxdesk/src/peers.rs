@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! The peers' state, kept in the background.
 //!
 //! It exists so the hot path does not wait on SSH. Measured: the agent

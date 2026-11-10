@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: MIT
+
 //! Times exactly what the user feels: ownership ping + ChangeHost write,
 //! with no verification and no API.
 use std::time::Instant;

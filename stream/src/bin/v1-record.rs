@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Full v1: screen -> NVENC -> .h264 file.
 //!
 //! Combines what the two probes proved separately. Separate on purpose

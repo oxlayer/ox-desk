@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Builds, signs and ships the daemon to the three machines, and checks
 # that all three ended up on the SAME commit.
 #

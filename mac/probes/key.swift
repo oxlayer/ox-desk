@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Is the A key pressed? Watches for 4s and answers.
 //
 // Caps Lock is NOT a valid test on macOS: the system handles it in the HID

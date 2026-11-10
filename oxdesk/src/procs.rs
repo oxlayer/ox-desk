@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Task manager: what is running on each machine, and killing it.
 //!
 //! Spec: ../specs/009-processes.md

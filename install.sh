@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # oxdesk setup on Ubuntu 26.04 / GNOME (Wayland).
 #
 # Does NOT need root: oxdesk runs as a user service and speaks HID++

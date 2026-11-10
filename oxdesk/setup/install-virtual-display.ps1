@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Gives Windows a virtual display, so the screen host has something to capture
 # with no monitor plugged in. Run as administrator; works over SSH.
 #

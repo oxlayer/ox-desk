@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Pairing, phase B: pin each host's identity, learned over SSH.
 //!
 //! Spec: ../../specs/017-product.md (section 1)

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! NVENC: BGRA frame -> H.264, on the GPU.
 //!
 //! Spec: ../specs/010-remote-desktop.md

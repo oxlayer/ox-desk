@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! The native capture-and-encode path on macOS: ScreenCaptureKit into
 //! VideoToolbox, with the `CVPixelBuffer` going straight from one to the
 //! other with no conversion.

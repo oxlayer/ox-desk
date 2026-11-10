@@ -1,0 +1,29 @@
+oxdesk
+Copyright 2026 oxlayer
+
+This product includes software developed by oxlayer and the oxdesk
+contributors.
+
+Licensed under the GNU Affero General Public License, version 3 or later.
+The full text is in LICENSE. You should have received a copy of it along
+with this program; if not, see <https://www.gnu.org/licenses/>.
+
+One directory is deliberately not AGPL: hidpp/ is MIT (hidpp/LICENSE), so
+other projects can take the HID++ 2.0 protocol work without inheriting a
+copyleft obligation. Keeping it separate is a decision, not an oversight
+-- see specs/021-licensing-and-contributions.md.
+
+Contributors keep the copyright in what they write. They additionally
+grant oxlayer a sublicensable licence to it, which is stated in
+CONTRIBUTING.md where a contributor actually reads it. Any future change
+of licence is forward-only: every release, tag and clone already published
+stays available under the licence it shipped with.
+
+The published packages contain third-party code that is not covered by
+the terms above -- notably FFmpeg (GPL-3.0-or-later) in the macOS
+packages, which constrains the licence of that binary as a whole.
+THIRD-PARTY.md says what is inside each package and under which terms.
+
+If you run a modified version of this software and let others interact
+with it over a network, AGPL section 13 obliges you to offer those users
+the source of your modified version.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 oxlayer
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Decodes an H.264 file through NVDEC and reports what came out.
 //!
 //! Spec: ../../specs/010-remote-desktop.md
