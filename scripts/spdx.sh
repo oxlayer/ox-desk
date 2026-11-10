@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Every file that holds logic says under which licence it is published.
 #
 # usage:  bash scripts/spdx.sh          # checks; lists what is missing

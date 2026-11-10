@@ -526,15 +526,97 @@ a measurement.
    public, `grep -h '^license' */Cargo.toml` shows AGPL everywhere except
    `hidpp`, and no link in those files is dangling. Still open from 021:
    SPDX headers, `NOTICE`, and the CLA bot.
-8. **Run a real secret scanner over all history.** *Check:* clean report
-   attached to the PR that flips visibility.
-9. **Add the `pull_request` trigger** under the constraints of adversarial
-   point 5, and put `check.sh` in it. *Check:* a throwaway PR runs the
-   suite and the release job stays skipped.
+8. ~~**Run a real secret scanner over all history.**~~ **Ran** —
+   `gitleaks` v8.30.1, and it found the thing this step was not looking
+   for. Results and the decision it forces are in
+   [What the scanner found](#what-the-scanner-found-2026-11-10) below.
+9. ~~**Add the `pull_request` trigger**~~ **Done** — `pull_request` on
+   `main`, with the same `paths` filter, never `pull_request_target`, the
+   release job still tag-only, and `check.sh` reached through
+   `build-binaries.sh` plus the test step. *Check not yet possible:* CI
+   schedules nothing while the allowance is spent ([[013-ci-cd]]), so "a
+   throwaway PR runs the suite" has to wait for 1 December or a raised
+   spending limit.
 10. **Flip visibility; enable secret scanning and push protection.**
     *Check:* a tag build runs the macOS job with US$ 0.00 billed — the
     point of the exercise, and the first chance to learn whether "free"
     means "unlimited".
+
+## What the scanner found (2026-11-10)
+
+`gitleaks` v8.30.1, in a container with the repository mounted read-only
+so a third-party binary neither lands on the host nor can write to the
+repo:
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo:ro" -v /tmp/out:/out \
+  zricethezav/gitleaks:latest git /repo --log-opts="--all --full-history" \
+  --report-format json --report-path /out/gitleaks.json
+```
+
+Three scopes, because "all history" turned out to be the wrong unit:
+
+| Scope | Commits | Findings |
+|---|---:|---|
+| `main` — what publishing would actually expose | 35 | **none** |
+| Working tree, tracked files | — | **none** |
+| Every ref (`--all`) | 275 | **one** |
+
+The working-tree scan reports 8 `private-key` hits, all of them inside
+`*/target/**/libpem-*.rmeta` — the `pem` crate's own test fixtures baked
+into build artifacts that git has never tracked. Worth writing down
+because the `dir` scan takes 2m38s and 2.82 GB to produce them, while
+`git` mode sees only tracked content and takes 1.6s. Use `git` mode.
+
+The single real finding: an **XDG Desktop Portal ScreenCast restore
+token** in a README at `e6ee8f9c` (2026-11-03). It grants screen capture
+only through the local portal to the app id that was granted it, so it is
+worthless to anyone remote — but it is a per-session grant that belongs in
+nobody's README.
+
+### The finding behind the finding
+
+That commit is not reachable from `main`. Which is the point:
+
+| | |
+|---|---|
+| `main` | **35 commits** |
+| `v0.2.8`, the newest tag | **229 commits**, and **not an ancestor of `main`** |
+| On the remote right now | **13 branches + 11 tags** |
+| In that other lineage | **14 commits** touching `/home/user`, **69** touching `logistream` |
+
+The squash produced a clean `main`. It did not remove anything from the
+remote: the pre-squash, pre-rename history is still there, carried by the
+tags and the stale branches, and **flipping visibility publishes all of
+it** — including the paths and the old name the cleanup existed to leave
+behind. A clean `main` in front of that is a facade.
+
+Scale honestly: the scanner says this 275-commit universe holds exactly
+one low-severity secret, and the author's own name is already on every
+commit of `main`, so "personal data" here means usernames in old paths
+rather than anything newly disclosed. The exposure is embarrassment and
+a broken promise, not a breach.
+
+### The decision, which is not a technical one
+
+Every remedy touches the remote irreversibly, and two of them trade away
+the link between a release and its source. So it is recorded here rather
+than acted on:
+
+| Option | Cost | Keeps |
+|---|---|---|
+| **A** — delete the 13 stale branches and the 11 old tags before the flip | The 11 Releases lose their tags. Assets and notes survive, and OTA resolves `/releases/latest` by asset URL rather than by tag ([`ota/src/apply.rs`](../ota/src/apply.rs)), so updates keep working | A public repo that is exactly the clean history |
+| **B** — `git-filter-repo` over every ref, then force-push | High. Rewrites 229 commits and every tag hash; the old name stays unless that is rewritten too, and [[017-product]] records what a blind replacement already did to this repo | A rewritten history, of a lineage nobody will read |
+| **C** — push `main` and new tags to a fresh public repo; keep this one private as the archive | A new URL, and the OTA `repo` has to change with it | Both: an intact private archive and a clean public repo |
+
+**Recommended: A.** The old lineage is read by nobody, the Releases keep
+working because OTA never resolves a tag, and it is one command per ref
+instead of a rewrite. **C** is the choice if the old history is worth
+keeping intact somewhere, and it is the only one with no irreversible
+step. **B** buys the least for the most.
+
+Whichever it is, it has to happen **before** step 10, not after: a
+repository cannot be made public twice.
 
 ## See also
 
