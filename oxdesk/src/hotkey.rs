@@ -35,6 +35,12 @@
 //!   mutually exclusive by construction: no flag, no coordination, no
 //!   window where both react to the same press.
 //!
+//! That silence has a consequence this file missed at first: it swallows
+//! the **key-ups** too. The fingers come up into the grab, so a reader
+//! that only accumulates events believes the pair is still down and the
+//! edge never re-arms. The fix is to ask the kernel what is actually
+//! held, in one direction only -- see `prune_stale`.
+//!
 //! It reads key codes and keeps the state of exactly two of them. Nothing
 //! is logged, and no other key is looked at -- a daemon that can see every
 //! keystroke should be able to say precisely what it does with them.
@@ -100,6 +106,70 @@ pub fn can_report_both_ctrls(mask: &str) -> bool {
 /// the two to the same meaning.
 pub fn both_ctrls(pressed: &HashSet<u16>) -> bool {
     pressed.contains(&KEY_LEFTCTRL) && pressed.contains(&KEY_RIGHTCTRL)
+}
+
+/// `KEY_MAX` rounded up to whole bytes: the bitmap `EVIOCGKEY` fills.
+const KEY_BYTES: usize = 96;
+
+/// `_IOR('E', 0x18, [u8; KEY_BYTES])` -- "what keys are down on this
+/// device, right now", computed here so the crate keeps a single dep.
+fn eviocgkey() -> libc::c_ulong {
+    const READ: libc::c_ulong = 2;
+    (READ << 30) | ((KEY_BYTES as libc::c_ulong) << 16) | ((b'E' as libc::c_ulong) << 8) | 0x18
+}
+
+/// Which of the two Ctrl keys the kernel says are physically held.
+///
+/// `None` when the device cannot be asked, which is not the same answer as
+/// "none held" -- see `prune_stale`.
+fn ctrls_held(f: &std::fs::File) -> Option<HashSet<u16>> {
+    let mut bits = [0u8; KEY_BYTES];
+    // SAFETY: the kernel writes KEY_BYTES into a buffer of that size.
+    let rc = unsafe { libc::ioctl(f.as_raw_fd(), eviocgkey(), bits.as_mut_ptr()) };
+    if rc < 0 {
+        return None;
+    }
+    let mut out = HashSet::new();
+    for code in [KEY_LEFTCTRL, KEY_RIGHTCTRL] {
+        let (byte, bit) = (code as usize / 8, code as usize % 8);
+        if bits[byte] & (1 << bit) != 0 {
+            out.insert(code);
+        }
+    }
+    Some(out)
+}
+
+/// Drops the keys we believe are down that the kernel says are not.
+///
+/// ## Why asking is necessary
+///
+/// Our view is built from events, and **a key-up delivered to a process
+/// that holds the grab is a key-up we never see**. The sequence is the
+/// ordinary one: the gesture fires, `oxdesk-kvm` grabs the keyboard, the
+/// fingers come up -- into the grab. Our set keeps both Ctrls down
+/// forever, the edge never re-arms, and the next press is dead. One dead
+/// press per switch, which is what sent me looking.
+///
+/// ## Why asking may only ever REMOVE
+///
+/// The two watchers are mutually exclusive because this one is
+/// event-starved while the grab is held (see the module header). Reading
+/// the kernel's bitmap is not starved -- it reports the keys even during
+/// someone else's grab. So if a held pair could ARM the gesture, a single
+/// press would be answered twice: `oxdesk-kvm` brings the input home and
+/// this module sends it straight back out.
+///
+/// Hence the asymmetry, and it is the whole point: `pressed` grows only
+/// from events we actually received, and asking only prunes. Firing still
+/// requires having received both presses, which cannot happen under a
+/// grab. The invariant survives.
+///
+/// `held == None` means the question failed, and a failed question must
+/// not disarm anything -- that would be a hotkey that silently stops
+/// working, the failure mode this file already paid for once.
+pub fn prune_stale(pressed: &mut HashSet<u16>, held: Option<&HashSet<u16>>) {
+    let Some(held) = held else { return };
+    pressed.retain(|k| held.contains(k));
 }
 
 /// The machine a press sends the input to, by rotation.
@@ -189,11 +259,13 @@ pub fn start(cfg: Arc<RwLock<Config>>, cache: Arc<std::sync::Mutex<crate::Cache>
             // 1 s and not -1: the rescan above has to get its turn even on
             // a machine where nobody touches the keyboard.
             let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 1000) };
-            if n <= 0 {
+            if n < 0 {
                 continue;
             }
 
-            let mut gesture = false;
+            // A timeout is not a reason to skip the rest: the pruning below
+            // is what re-arms the gesture after a switch, and it has to get
+            // its turn on a keyboard nobody is touching.
             for (i, pfd) in fds.iter().enumerate() {
                 if pfd.revents & libc::POLLIN == 0 {
                     continue;
@@ -215,18 +287,41 @@ pub fn start(cfg: Arc<RwLock<Config>>, cache: Arc<std::sync::Mutex<crate::Cache>
                         pressed.insert(code);
                     }
                 }
-                if both_ctrls(&pressed) {
-                    gesture = true;
-                }
             }
 
+            // Decide on what we RECEIVED -- events are fresher than the
+            // question below, and a tap already over by the time we ask
+            // should still count.
+            //
             // Edge, not level: fire when the pair goes down, not for every
             // event that arrives while it is held.
+            let gesture = both_ctrls(&pressed);
             if gesture && !down && last_fired.elapsed() >= COOLDOWN {
                 last_fired = Instant::now();
                 fire(&cfg, &cache);
             }
             down = gesture;
+
+            // THEN ask the kernel what is really held, and drop the rest.
+            // Decide-then-prune, in that order: see `prune_stale` for why
+            // the question may only ever take a key away.
+            let mut held = HashSet::new();
+            let mut answered = false;
+            for (_, f) in &watched {
+                if let Some(k) = ctrls_held(f) {
+                    answered = true;
+                    held.extend(k);
+                }
+            }
+            let believed = pressed.len();
+            prune_stale(&mut pressed, if answered { Some(&held) } else { None });
+            if pressed.len() < believed && down {
+                // Once per switch, and the line I wanted to have when the
+                // gesture went quiet: it says the keys came up somewhere we
+                // could not see, and that the gesture is armed again.
+                crate::say!("hotkey: re-armed (the keys came up while the input was away)");
+                down = both_ctrls(&pressed);
+            }
         }
     });
 }
@@ -400,14 +495,66 @@ mod tests {
         assert!(both_ctrls(&p));
     }
 
-    fn cfg_with(names: &[(&str, bool)]) -> Config {
-        let mut toml = String::new();
-        for (n, local) in names {
-            toml.push_str(&format!(
-                "[[hosts]]\nname = \"{n}\"\naddr = \"{n}.local\"\nlocal = {local}\n"
-            ));
-        }
-        toml::from_str(&toml).expect("fixture must parse")
+    /// The bug this file shipped with: one dead press after every switch.
+    #[test]
+    fn a_key_up_we_never_saw_does_not_latch_the_gesture() {
+        // The press that fired. `oxdesk-kvm` now grabs the keyboard.
+        let mut pressed = HashSet::from([KEY_LEFTCTRL, KEY_RIGHTCTRL]);
+        let mut down = both_ctrls(&pressed);
+        assert!(down);
+
+        // The fingers come up into the grab: no event reaches us. Asking is
+        // the only way to find out.
+        prune_stale(&mut pressed, Some(&HashSet::new()));
+        down = both_ctrls(&pressed);
+        assert!(!down, "a key-up delivered to the grab must still disarm");
+
+        // So the very next press is an edge again, not a level.
+        pressed.insert(KEY_LEFTCTRL);
+        pressed.insert(KEY_RIGHTCTRL);
+        assert!(both_ctrls(&pressed) && !down, "the next press must fire");
+    }
+
+    /// The invariant that keeps the two watchers from both answering one
+    /// press: asking the kernel may remove, never add.
+    #[test]
+    fn asking_the_kernel_never_arms_the_gesture() {
+        // Input is away; `oxdesk-kvm` holds the grab, so we received at
+        // most this one press. The kernel still reports both keys held.
+        let mut pressed = HashSet::from([KEY_LEFTCTRL]);
+        prune_stale(&mut pressed, Some(&HashSet::from([KEY_LEFTCTRL, KEY_RIGHTCTRL])));
+        assert!(
+            !both_ctrls(&pressed),
+            "a held pair we did not receive must not become the gesture: \
+             the rescue would bring the input home and this would send it back"
+        );
+    }
+
+    #[test]
+    fn holding_the_pair_keeps_it_down() {
+        // Still held, so nothing is dropped and the cooldown -- not a
+        // re-arm -- is what stops the auto-repeat from firing again.
+        let mut pressed = HashSet::from([KEY_LEFTCTRL, KEY_RIGHTCTRL]);
+        prune_stale(&mut pressed, Some(&HashSet::from([KEY_LEFTCTRL, KEY_RIGHTCTRL])));
+        assert!(both_ctrls(&pressed));
+    }
+
+    #[test]
+    fn a_question_that_failed_disarms_nothing() {
+        // A hotkey that silently stops working is the failure mode this
+        // file already paid for once.
+        let mut pressed = HashSet::from([KEY_LEFTCTRL, KEY_RIGHTCTRL]);
+        prune_stale(&mut pressed, None);
+        assert!(both_ctrls(&pressed));
+    }
+
+    #[test]
+    fn the_key_bitmap_covers_both_ctrls() {
+        // 96 bytes is KEY_MAX rounded up; the right Ctrl at 97 lands in
+        // byte 12, well inside it. An off-by-one here reads a key that is
+        // not there.
+        assert!(KEY_BYTES * 8 > KEY_RIGHTCTRL as usize);
+        assert!(KEY_BYTES * 8 > KEY_LEFTCTRL as usize);
     }
 
     #[test]
