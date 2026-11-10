@@ -318,7 +318,71 @@ fn default_true() -> bool {
     true
 }
 
+/// Template for the first-run config -- **not** a config.
+///
+/// It carries `@NAME@` and `@OS@` because a default is inheritance:
+/// whatever stands in this file is what a stranger's first run adopts. Up
+/// to 2026-11-10 it named three real machines, their mDNS addresses and
+/// their SSH aliases, which leaked in both directions -- our names out,
+/// and a new user's setup wrong. See `.claude/rules/no-personal-data.md`
+/// and `specs/018-open-source.md` step 4.
+///
+/// Write it through [`initial_config`], never directly.
 pub const DEFAULT_TOML: &str = include_str!("../default-config.toml");
+
+/// The config the first run writes, for the machine it runs on.
+///
+/// Pure, with the host's name passed in, so the substitution is tested
+/// without needing a machine of a given name to read it from -- which is
+/// the half of "a fresh config describes THIS machine" that a test can
+/// actually hold.
+pub fn initial_config(template: &str, hostname: &str, os: &str) -> String {
+    // An empty hostname does not become `name = ""`: the panel keys hosts
+    // by name and the local machine would be unaddressable. A visible
+    // placeholder is better than a valid-looking empty string.
+    let name = hostname.trim();
+    let name = if name.is_empty() { "this-machine" } else { name };
+    let out = template.replace("@NAME@", name).replace("@OS@", os);
+    // systemd only. The template carries the empty list, so Windows and
+    // macOS need no substitution at all -- and a unit that does not exist
+    // there would answer "inactive" forever, showing the machine the panel
+    // runs on as switched off.
+    if os == "linux" {
+        out.replace("units = []", "units = [\"oxdesk.service\"]")
+    } else {
+        out
+    }
+}
+
+/// `linux` | `windows` | `macos`, for this build.
+pub fn local_os() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    }
+}
+
+/// This machine's name, for the first-run config.
+///
+/// `hostname` exists on all three systems; the environment is the fallback
+/// for an image stripped down enough not to have it. Neither is fatal --
+/// `initial_config` turns an empty answer into a placeholder.
+pub fn local_hostname() -> String {
+    if let Ok(out) = std::process::Command::new("hostname").output() {
+        if let Ok(s) = String::from_utf8(out.stdout) {
+            let s = s.trim().to_string();
+            if !s.is_empty() {
+                return s;
+            }
+        }
+    }
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_default()
+}
 
 /// Replaces values inside a section, preserving the rest of the file.
 ///
@@ -601,7 +665,8 @@ impl Config {
             if let Some(dir) = p.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| format!("criar {dir:?}: {e}"))?;
             }
-            std::fs::write(&p, DEFAULT_TOML).map_err(|e| format!("gravar {p:?}: {e}"))?;
+            let initial = initial_config(DEFAULT_TOML, &local_hostname(), local_os());
+            std::fs::write(&p, initial).map_err(|e| format!("write {p:?}: {e}"))?;
             gripe!("initial config written to {}", p.display());
         }
         let raw = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
@@ -641,19 +706,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_parses_and_has_the_three_machines() {
+    fn the_default_describes_this_machine_and_nobody_else() {
         // `DEFAULT_TOML` is written on the first run AND by the wizard's
-        // "Escrever a config padrão" button -- so an error here only shows
-        // up on the new machine, which is exactly where nobody can
-        // diagnose it.
+        // fix button -- so an error here only shows up on the new machine,
+        // which is exactly where nobody can diagnose it.
         //
-        // This test was born from a real defect: the MacBook was left out
-        // of this file for months. Since all three live configs had it,
-        // nothing complained -- until someone rewrote the default config
-        // and lost a whole machine without warning.
+        // The assertion used to be "the default describes the three
+        // machines", and it was right about the danger (a rewrite had
+        // silently lost a whole machine) and wrong about the shape: those
+        // three were OUR machines, and the first run of a stranger adopted
+        // them. Step 4 of specs/018. What has to hold now is that the
+        // default describes exactly one host, the local one, and names no
+        // peer at all.
         let c: Config = toml::from_str(DEFAULT_TOML).expect("the default must parse");
-        assert_eq!(c.hosts.len(), 3, "the default describes the three machines");
+        assert_eq!(c.hosts.len(), 1, "the default describes only this machine");
         assert_eq!(c.hosts.iter().filter(|h| h.is_local()).count(), 1, "exactly one local");
+        assert!(c.devices.is_empty(), "channels are the user's hardware, not ours");
+        assert!(c.input.border.target.is_none(), "the default names no peer");
+        assert!(c.input.follow.leader.is_none(), "the default names no device");
+        for h in &c.hosts {
+            assert!(h.ssh.is_none(), "{}: no ssh alias in the default", h.name);
+            assert!(h.agent.is_none(), "{}: no agent path in the default", h.name);
+        }
 
         let mut names: Vec<&str> = c.hosts.iter().map(|h| h.name.as_str()).collect();
         names.sort_unstable();
@@ -665,10 +739,13 @@ mod tests {
         // edge point at the wrong one.
         let mut cells: Vec<(i32, i32)> =
             c.hosts.iter().filter_map(|h| h.layout).map(|l| (l.col, l.row)).collect();
-        assert_eq!(cells.len(), 3, "every host in the default has a grid position");
+        // Against `hosts.len()` and not against a literal: the rule was
+        // never "three", it was "all of them, each in its own cell". The
+        // literal is what made this test fail for the right change.
+        assert_eq!(cells.len(), c.hosts.len(), "every host has a grid position");
         cells.sort_unstable();
         cells.dedup();
-        assert_eq!(cells.len(), 3, "two machines in the same grid cell");
+        assert_eq!(cells.len(), c.hosts.len(), "two machines in the same grid cell");
 
         // No literal IP: it already broke everything once when the
         // Windows one changed.
@@ -944,5 +1021,45 @@ addr = "la.local"
         let c: Config = toml::from_str(t).unwrap();
         assert_eq!(c.devices[0].hosts.get("a"), Some(&1));
         assert_eq!(c.devices[0].hosts.get("b"), Some(&2));
+    }
+}
+
+#[cfg(test)]
+mod template_tests {
+    use super::*;
+
+    #[test]
+    fn the_rendered_config_names_the_machine_it_was_written_on() {
+        let out = initial_config(DEFAULT_TOML, "someones-laptop", "linux");
+        let c: Config = toml::from_str(&out).expect("the rendered config must parse");
+        assert_eq!(c.hosts[0].name, "someones-laptop");
+        assert_eq!(c.hosts[0].os.as_deref(), Some("linux"));
+        // No placeholder may survive: one left behind would be a host name
+        // of literally "@NAME@", and the panel would key everything by it.
+        assert!(!out.contains('@'), "a placeholder survived the substitution");
+    }
+
+    #[test]
+    fn linux_watches_its_unit_and_the_others_watch_none() {
+        let linux = initial_config(DEFAULT_TOML, "a", "linux");
+        let c: Config = toml::from_str(&linux).unwrap();
+        assert_eq!(c.hosts[0].units, vec!["oxdesk.service".to_string()]);
+
+        for os in ["windows", "macos"] {
+            let other = initial_config(DEFAULT_TOML, "a", os);
+            let c: Config = toml::from_str(&other).unwrap();
+            assert!(c.hosts[0].units.is_empty(), "{os} has no systemd units");
+        }
+    }
+
+    #[test]
+    fn a_machine_with_no_readable_name_gets_a_visible_placeholder() {
+        // Better a name that is obviously a placeholder than `name = ""`,
+        // which parses, looks fine and makes the local host unaddressable.
+        for empty in ["", "   ", "\n"] {
+            let out = initial_config(DEFAULT_TOML, empty, "linux");
+            let c: Config = toml::from_str(&out).unwrap();
+            assert_eq!(c.hosts[0].name, "this-machine");
+        }
     }
 }

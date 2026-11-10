@@ -213,7 +213,12 @@ pub fn write_config() -> Result<String, String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
-    std::fs::write(&p, crate::config::DEFAULT_TOML)
+    let initial = crate::config::initial_config(
+        crate::config::DEFAULT_TOML,
+        &crate::config::local_hostname(),
+        crate::config::local_os(),
+    );
+    std::fs::write(&p, initial)
         .map_err(|e| format!("write {}: {e}", p.display()))?;
     // Reopen before saying it worked: a default that does not parse would
     // leave the daemon without a config on the next start.
