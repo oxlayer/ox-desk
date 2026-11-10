@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 # Sends the OTA token from this machine to the other two, and proves it works.
-# The value never goes through argv or the screen. The grep below matches
-# oxdesk-ota's own output (pt-BR result words): keep it in sync with ota/.
+# The value never goes through argv or the screen.
+#
+# It shows the LAST line of `oxdesk-ota --conferir` and does not filter by
+# word. There used to be a `grep -E '^(erro|igual|novo|...)'` here with a
+# comment saying to keep it in sync with `ota/` -- and measured on
+# 2026-11-10 it did not match the normal output at all, which begins
+# `mais-novo-aqui:`. So it hid the very state it was meant to report. A
+# filter that has to track another program's vocabulary is a coupling that
+# breaks in silence; the last line is enough and never goes stale.
+#
+# On the Windows side `Out-String` ends with a blank CRLF line, so a plain
+# `tail -1` reported NOTHING for that machine -- an empty line under
+# `^ <alias>`, which reads like "no answer" and was really "last line is
+# the empty one". Hence the `tr -d '\r'` and the blank-line drop.
 #
 #   bash scripts/distribute-ota-token.sh [extra-unix-alias ...]
 #
@@ -12,8 +24,17 @@ set -uo pipefail
 
 TOKEN="$HOME/.config/oxdesk/ota-token"
 [ -s "$TOKEN" ] || { echo "missing $TOKEN"; exit 1; }
-[ "$(stat -f '%Lp' "$TOKEN" 2>/dev/null || stat -c '%a' "$TOKEN")" = 600 ] ||
-  { echo "$TOKEN needs chmod 600"; exit 1; }
+# GNU `stat` FIRST, BSD second. Written the other way round, this check
+# could never pass on Linux: `stat -f '%Lp'` there means "file system
+# status", prints the whole filesystem block to STDOUT and only then exits
+# 1, so the `||` fallback appended `600` to that dump and the comparison
+# was against several lines of ext4 trivia. Measured 2026-11-10 on a token
+# that was already 600.
+perms=$(stat -c '%a' "$TOKEN" 2>/dev/null || stat -f '%Lp' "$TOKEN" 2>/dev/null)
+# It says what it found: "needs chmod 600" on a file that already was 600
+# sent me looking at the file instead of at the check.
+[ "$perms" = 600 ] ||
+  { echo "$TOKEN needs chmod 600 (it is ${perms:-unreadable})"; exit 1; }
 
 TARGETS="$(dirname "$0")/targets.sh"
 # shellcheck source=/dev/null
@@ -26,7 +47,7 @@ for h in "$@" ${MAC:+"$MAC"} ${WIN:+"$WIN"}; do
   if [ -n "$WIN" ] && [ "$h" = "$WIN" ]; then
     scp -q -o BatchMode=yes "$TOKEN" "$WIN:AppData/Local/oxdesk/ota-token" &&
       ssh -T -o BatchMode=yes "$WIN" 'icacls "$env:LOCALAPPDATA\oxdesk\ota-token" /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null; & "$env:LOCALAPPDATA\oxdesk\oxdesk-ota.exe" --conferir | Out-String' 2>&1 |
-      grep -E '^(fail|igual|new|há|ha |build)' | cut -c1-100 || failed=1
+      tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -1 | cut -c1-100 || failed=1
   else
     ssh -T -o BatchMode=yes "$h" 'umask 077; mkdir -p ~/.config/oxdesk; cat > ~/.config/oxdesk/ota-token' < "$TOKEN" &&
       ssh -T -o BatchMode=yes "$h" '~/.local/bin/oxdesk-ota --conferir' 2>&1 | tail -1 | cut -c1-100 || failed=1
