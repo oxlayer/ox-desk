@@ -4,6 +4,20 @@
 > Ubuntu compiles; the Mac package was checked by format and stamp,
 > but **has not run on the MacBook yet** (it was offline that day).
 
+> ⚠️ **Red since 2026-11-08 03:10, for a reason outside this repo.** Every
+> run from `2fc748b` on fails in 2-6 s with **zero steps executed**: no
+> checkout, no logs, nothing to read. The last green was `bbae0a6` at
+> 02:51 the same night, and the two commits in between touched neither
+> `.github/`, nor `BUILD_BASE`, nor `build-binaries.sh` -- same workflow,
+> same script, green and then dead. Actions is enabled and all actions are
+> allowed, so what is left is the account side, and the Actions **spending
+> limit** is the prime suspect (this is a private repo, and `macos-15`
+> bills at ten times a Linux minute). Checking it needs account scopes
+> that a repo token does not carry: it is at
+> <https://github.com/settings/billing>. Until then CI reports nothing
+> about the code, and `deploy.sh`'s own `check.sh` is the only gate that
+> actually runs.
+
 ## The problem
 
 The binaries only existed as a side effect of `deploy.sh`: compiled
@@ -14,7 +28,7 @@ commit?" without recompiling.
 
 ## The shape
 
-One workflow, [`binarios.yml`](../.github/workflows/binarios.yml), which
+One workflow, [`binaries.yml`](../.github/workflows/binaries.yml), which
 calls one script, [`build-binaries.sh`](../scripts/build-binaries.sh).
 
 | Target | Runner | How it compiles | Package |
@@ -27,10 +41,17 @@ calls one script, [`build-binaries.sh`](../scripts/build-binaries.sh).
 |---|---|
 | push to `main` or `ci/**` touching code | compiles all three, packages kept 14 days as artifacts |
 | tag `v*` | the same, and publishes a Release with the three packages and `SHA256SUMS` |
+| pull request to `main` touching code | compiles all three, before the merge |
 | `workflow_dispatch` | the same as push, on demand |
 
 A documentation-only commit triggers nothing: the `paths` filter exists
-so as not to spend minutes on that.
+so as not to spend minutes on that. The pull-request trigger repeats that
+same list instead of sharing it, because Actions does not resolve YAML
+anchors -- and a docs-only PR that spent a `macos-15` runner would be
+paying ten times a Linux minute for nothing.
+
+`push` stays limited to `main` and `ci/**`, so a pull request from an
+ordinary branch runs once, not twice.
 
 ## What CI does not do
 
