@@ -25,16 +25,16 @@ case "$PUB" in
 esac
 
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-nao()  { printf '  \033[31mfailed\033[0m %s\n' "$1"; }
-nota() { printf '  ..    %s\n' "$1"; }
+bad()  { printf '  \033[31mfailed\033[0m %s\n' "$1"; }
+note() { printf '  ..    %s\n' "$1"; }
 
 echo "== 1. Remote Login (inbound SSH) =="
 if sudo systemsetup -f -setremotelogin on >/dev/null 2>&1; then
   ok "on"
 else
-  nao "systemsetup refused"
-  nota "on recent macOS it requires Full Disk Access for Terminal."
-  nota "manual path: Settings > General > Sharing > Remote Login"
+  bad "systemsetup refused"
+  note "on recent macOS it requires Full Disk Access for Terminal."
+  note "manual path: Settings > General > Sharing > Remote Login"
 fi
 sudo systemsetup -getremotelogin 2>/dev/null | sed 's/^/        /'
 
@@ -44,11 +44,11 @@ echo "== 2. Firewall: do not block everything, no stealth mode =="
 # Ubuntu.
 FW=/usr/libexec/ApplicationFirewall/socketfilterfw
 if [ -x "$FW" ]; then
-  sudo "$FW" --setblockall off    >/dev/null 2>&1 && ok "blockall off"    || nao "blockall"
-  sudo "$FW" --setstealthmode off >/dev/null 2>&1 && ok "stealth off"     || nao "stealth"
+  sudo "$FW" --setblockall off    >/dev/null 2>&1 && ok "blockall off"    || bad "blockall"
+  sudo "$FW" --setstealthmode off >/dev/null 2>&1 && ok "stealth off"     || bad "stealth"
   sudo "$FW" --getglobalstate --getstealthmode --getblockall 2>/dev/null | sed 's/^/        /'
 else
-  nota "socketfilterfw does not exist on this system"
+  note "socketfilterfw does not exist on this system"
 fi
 
 echo "== 3. Screen Sharing (VNC) =="
@@ -56,14 +56,14 @@ if sudo launchctl enable system/com.apple.screensharing >/dev/null 2>&1 &&
    sudo launchctl kickstart -k system/com.apple.screensharing >/dev/null 2>&1; then
   ok "service enabled"
 else
-  nao "launchctl refused"
-  nota "manual path: Settings > General > Sharing > Screen Sharing"
+  bad "launchctl refused"
+  note "manual path: Settings > General > Sharing > Screen Sharing"
 fi
-nota "ONE STEP IS MISSING IN THE UI, and it is required for ordinary clients:"
-nota "  Screen Sharing > (i) > Computer Settings >"
-nota "  tick 'VNC viewers may control screen with password' + set a password."
-nota "  Without it macOS requires Apple's own authentication (type 30),"
-nota "  which gnome-connections and most clients do not speak."
+note "ONE STEP IS MISSING IN THE UI, and it is required for ordinary clients:"
+note "  Screen Sharing > (i) > Computer Settings >"
+note "  tick 'VNC viewers may control screen with password' + set a password."
+note "  Without it macOS requires Apple's own authentication (type 30),"
+note "  which gnome-connections and most clients do not speak."
 
 echo "== 4. Authorizing the Ubuntu key =="
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -73,7 +73,7 @@ if grep -qF "$PUB" ~/.ssh/authorized_keys 2>/dev/null; then
 else
   printf '%s\n' "$PUB" >> ~/.ssh/authorized_keys && ok "key added"
 fi
-nota "$(wc -l < ~/.ssh/authorized_keys | tr -d ' ') key(s) in ~/.ssh/authorized_keys"
+note "$(wc -l < ~/.ssh/authorized_keys | tr -d ' ') key(s) in ~/.ssh/authorized_keys"
 
 echo "== 5. What is here =="
 printf '  user:    %s@%s\n' "$(whoami)" "$(hostname)"

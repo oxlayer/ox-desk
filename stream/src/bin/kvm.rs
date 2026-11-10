@@ -144,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
             tokio::net::lookup_host(&target).await?.collect();
         addrs.sort_by_key(|a| !a.is_ipv4());
         let dest =
-            *addrs.first().ok_or_else(|| anyhow::anyhow!("nao resolvi {target}"))?;
+            *addrs.first().ok_or_else(|| anyhow::anyhow!("could not resolve {target}"))?;
         let bind: std::net::SocketAddr =
             if dest.is_ipv4() { "0.0.0.0:0".parse()? } else { "[::]:0".parse()? };
         let ep = net::client(bind)?;
@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
         let c = ep
             .connect(dest, "oxdesk-stream")?
             .await
-            .map_err(|e| anyhow::anyhow!("nao conectei em {target}: {e}. Nada foi agarrado."))?;
+            .map_err(|e| anyhow::anyhow!("could not connect to {target}: {e}. Nothing was grabbed."))?;
         println!("  connected to {target}");
         Some(c)
     };
@@ -166,7 +166,7 @@ async fn main() -> anyhow::Result<()> {
     if !observe && self_test == 0 {
         for d in &mut chosen {
             d.grab().map_err(|e| {
-                anyhow::anyhow!("nao agarrei {}: {e}", d.name)
+                anyhow::anyhow!("could not grab {}: {e}", d.name)
             })?;
         }
         println!("  grabbed; both Ctrl keys together give control back");
@@ -282,7 +282,7 @@ async fn main() -> anyhow::Result<()> {
         e.write(&mut buf);
         if let Some(s) = &mut send {
             if let Err(err) = s.write_all(&buf).await {
-                reason = format!("escrita falhou: {err}");
+                reason = format!("write failed: {err}");
                 break;
             }
         }
