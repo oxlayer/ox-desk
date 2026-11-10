@@ -28,7 +28,7 @@ pub const BTN_MIDDLE: i32 = 0x112;
 /// end has to agree on it, and until 08/11 two of them did not. The viewer
 /// sends `LineDelta * 15` and the Windows injector divides by 15; the LAN
 /// KVM sent 120 px per notch -- Windows' own wheel unit -- so one click of
-/// the wheel scrolled EIGHT lines there. Measured on the windows-host machine.
+/// the wheel scrolled EIGHT lines there. Measured on the Windows machine.
 ///
 /// 15 px is not a measurement of anything, it is a choice: Mutter wants a
 /// continuous offset and a line of text is about that tall. What matters is

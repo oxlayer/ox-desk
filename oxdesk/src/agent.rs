@@ -177,8 +177,8 @@ mod tests {
         // Unix: single quotes, no `&` -- which there would mean background
         // and return empty success, read as "did not answer JSON".
         assert_eq!(
-            remote_cmd(HostOs::Linux, "/home/user/.local/bin/oxdesk", "devices"),
-            "'/home/user/.local/bin/oxdesk' devices"
+            remote_cmd(HostOs::Linux, "/home/alice/.local/bin/oxdesk", "devices"),
+            "'/home/alice/.local/bin/oxdesk' devices"
         );
         assert_eq!(
             remote_cmd(HostOs::Macos, "/opt/homebrew/bin/oxdesk", "set-host 1 2 --confirm"),

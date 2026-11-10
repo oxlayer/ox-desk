@@ -213,7 +213,11 @@ mod visual {
     }
 
     pub fn run() -> anyhow::Result<()> {
-        let target = std::env::args().nth(1).unwrap_or_else(|| "ubuntu-host.local:9777".into());
+        // Loopback, not a host of ours: the panel always passes
+        // `{host}:{port}` (see `sys::linux::clients`), so this default
+        // only ever serves a local test.
+        let target =
+            std::env::args().nth(1).unwrap_or_else(|| "127.0.0.1:9777".into());
         let slot: Arc<Mutex<Slot>> = Arc::new(Mutex::new(Slot::default()));
         let slot_net = Arc::clone(&slot);
 

@@ -85,7 +85,7 @@ pub fn run(api: &HidApi, args: &[String]) -> Handled {
 ///
 /// `bus` came as 0x01 on hosts through a Unifying receiver and 0x04 on
 /// the Bluetooth host -- that is what told apart, among the MX Keys'
-/// three hosts, `ubuntu-host` and `windows-host` (Unifying) from the
+/// three hosts, `linux-pc` and `WINDOWS-PC` (Unifying) from the
 /// MacBook (Bluetooth).
 ///
 /// Not a probe: `0x1815` is optional and the MX Anywhere 3 does not

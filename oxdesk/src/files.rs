@@ -20,8 +20,8 @@
 //!
 //! ## Paths are not comparable between the two sources
 //!
-//! SFTP exposes the Windows disk as `/C:/Users/user`; `std::fs` on the
-//! machine itself says `C:\Users\user`. Two names for the same place,
+//! SFTP exposes the Windows disk as `/C:/Users/Alice`; `std::fs` on the
+//! machine itself says `C:\Users\Alice`. Two names for the same place,
 //! and neither is wrong. Instead of normalizing (and getting it wrong),
 //! each listing declares its `source`, returns an opaque `path` for the UI
 //! to navigate with, and a separate `display` to show people.
@@ -299,7 +299,7 @@ fn list_sftp(host: &str, alias: &str, addr: &str, path: &str) -> Listing {
 }
 
 fn parse_pwd(out: &str) -> Option<String> {
-    // "Remote working directory: /C:/Users/user"
+    // "Remote working directory: /C:/Users/Alice"
     out.lines()
         .find_map(|l| l.split_once("working directory:").map(|(_, p)| p.trim().to_string()))
         .filter(|p| !p.is_empty())
@@ -317,7 +317,7 @@ fn sftp_parent(path: &str) -> Option<String> {
     Some(trimmed[..idx].to_string())
 }
 
-/// `/C:/Users/user` -> `C:\Users\user`. For the eyes, not for
+/// `/C:/Users/Alice` -> `C:\Users\Alice`. For the eyes, not for
 /// navigating: navigation uses `path`.
 fn windows_display(path: &str) -> String {
     let b = path.as_bytes();
@@ -330,7 +330,7 @@ fn windows_display(path: &str) -> String {
 /// Parses sftp's `ls -la` output.
 ///
 /// Format (the server's, not ours):
-///   `drwxrwxrwx   1 user user  0 Nov  3 22:00 Documents`
+///   `drwxrwxrwx   1 Alice Alice  0 Nov  3 22:00 Documents`
 ///
 /// **Anchored on the month, not on a field count.** The first version
 /// counted: name = after the 8th field. Wrong -- there are nine (mode,
@@ -576,7 +576,7 @@ mod tests {
 
     #[test]
     fn path_with_quotes_or_glob_is_refused() {
-        assert!(safe_path("/C:/Users/user/Meus Arquivos/a.txt").is_ok());
+        assert!(safe_path("/C:/Users/Alice/My Files/a.txt").is_ok());
         assert!(safe_path("/tmp/a'b").is_err());
         assert!(safe_path("/tmp/*").is_err());
         assert!(safe_path("/tmp/a\nb").is_err());
@@ -603,13 +603,13 @@ mod tests {
     #[test]
     fn parses_sftp_ls_la() {
         let out = "\
-sftp> cd '/C:/Users/user'
+sftp> cd '/C:/Users/Alice'
 sftp> ls -la
-drwxrwxrwx    1 user user        0 Nov  3 22:00 .
-drwxrwxrwx    1 user user        0 Oct 26 14:05 ..
-drwxrwxrwx    1 user user        0 Nov  3 21:12 Program Files
--rw-rw-rw-    1 user user     1234 Nov  3 22:19 watch-edge.log
-lrwxrwxrwx    1 user user       12 Nov  1 09:00 atalho
+drwxrwxrwx    1 Alice Alice        0 Nov  3 22:00 .
+drwxrwxrwx    1 Alice Alice        0 Oct 26 14:05 ..
+drwxrwxrwx    1 Alice Alice        0 Nov  3 21:12 Program Files
+-rw-rw-rw-    1 Alice Alice     1234 Nov  3 22:19 watch-edge.log
+lrwxrwxrwx    1 Alice Alice       12 Nov  1 09:00 shortcut
 total 4
 ";
         let (mut v, truncated) = parse_ls_la(out);
@@ -630,10 +630,10 @@ total 4
     fn parses_even_without_the_group_field() {
         // Some SFTP servers omit the group: eight fields instead of nine.
         // A fixed count would break here; the month anchor does not.
-        let out = "-rw-r--r--    1 user    4096 Nov  3 22:00 nota final.txt\n";
+        let out = "-rw-r--r--    1 alice    4096 Nov  3 22:00 final note.txt\n";
         let (v, _) = parse_ls_la(out);
         assert_eq!(v.len(), 1);
-        assert_eq!(v[0].name, "nota final.txt");
+        assert_eq!(v[0].name, "final note.txt");
         assert_eq!(v[0].size, Some(4096));
     }
 
@@ -649,14 +649,14 @@ total 4
 
     #[test]
     fn windows_path_becomes_readable_but_navigable() {
-        assert_eq!(windows_display("/C:/Users/user"), "C:\\Users\\user");
+        assert_eq!(windows_display("/C:/Users/Alice"), "C:\\Users\\Alice");
         // A Unix path stays as it is.
-        assert_eq!(windows_display("/home/user"), "/home/user");
+        assert_eq!(windows_display("/home/alice"), "/home/alice");
     }
 
     #[test]
     fn parent_stops_at_the_disk_root() {
-        assert_eq!(sftp_parent("/C:/Users/user"), Some("/C:/Users".into()));
+        assert_eq!(sftp_parent("/C:/Users/Alice"), Some("/C:/Users".into()));
         assert_eq!(sftp_parent("/C:/Users"), Some("/C:".into()));
         // Above `/C:` sftp lists nothing useful.
         assert_eq!(sftp_parent("/C:"), None);
@@ -666,8 +666,8 @@ total 4
     #[test]
     fn sftp_pwd() {
         assert_eq!(
-            parse_pwd("Remote working directory: /C:/Users/user\n").as_deref(),
-            Some("/C:/Users/user")
+            parse_pwd("Remote working directory: /C:/Users/Alice\n").as_deref(),
+            Some("/C:/Users/Alice")
         );
         assert_eq!(parse_pwd("nada aqui"), None);
     }

@@ -382,7 +382,7 @@ pub async fn serve_video(
 /// viewer.
 ///
 /// The symptom was exactly what the user described: they clicked to send
-/// input to the windows-host machine, the keyboard and mouse vanished from
+/// input to the Windows machine, the keyboard and mouse vanished from
 /// here (the grab took them), and "on windows it doesn't seem to have
 /// moved". It had moved: the host log recorded every `MouseRel`, and
 /// measuring the cursor inside the interactive session it moved 210 px

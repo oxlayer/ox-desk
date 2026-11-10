@@ -582,7 +582,7 @@ fn port(base: &Path, s: System) -> u16 {
     // `%LOCALAPPDATA%\oxdesk`. Looking in the same place for both would
     // never find it -- and fall back to the hardcoded 8787, which is the
     // bug this function exists to avoid. Checked against the wizard's
-    // output there: `C:\Users\user\AppData\Roaming\oxdesk\config.toml`.
+    // output there: `%APPDATA%\oxdesk\config.toml`.
     let cfg = match s {
         System::Linux | System::Mac => base.join(".config").join("oxdesk").join("config.toml"),
         System::Windows => std::env::var_os("APPDATA")

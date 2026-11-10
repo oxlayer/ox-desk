@@ -499,7 +499,7 @@ pub fn repair(id: &str, _cfg: &Config) -> Result<String, String> {
 /// Writes the plist and loads the agent.
 ///
 /// Generates the XML here instead of copying the file from the repo
-/// because the versioned plists have `/Users/user` baked in -- an
+/// because the versioned plists have `/Users/<the user>` baked in -- an
 /// absolute path cannot be relative, and `~` does not expand in a plist.
 /// Generated, the same wizard serves any account.
 fn install_agent(

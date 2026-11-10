@@ -147,7 +147,7 @@ mod tests {
             "[hosts.screen]\n  kind = \"logistream\"\n",
             "units = [\"ai.logi.logid\"]\n",
             "units = [\"logid\", \"logid-agent\", \"sshd\"]\n",
-            "agent = \"/home/user/.local/bin/logid\"\n",
+            "agent = \"/home/alice/.local/bin/logid\"\n",
         );
         let new = rewrite_config(old).expect("changed");
         assert!(new.contains("units = [\"oxdesk.service\"]"), "{new}");
@@ -155,7 +155,7 @@ mod tests {
         assert!(new.contains("  kind = \"oxdesk-stream\""), "{new}");
         assert!(new.contains("units = [\"app.oxdesk.daemon\"]"), "{new}");
         assert!(new.contains("units = [\"oxdesk\", \"oxdesk-agent\", \"sshd\"]"), "{new}");
-        assert!(new.contains("agent = \"/home/user/.local/bin/oxdesk\""), "{new}");
+        assert!(new.contains("agent = \"/home/alice/.local/bin/oxdesk\""), "{new}");
         assert!(new.starts_with("# Config do logid NESTE MAC."), "a comment without a quoted value stays");
         assert_eq!(rewrite_config(&new), None, "idempotent");
         // The result must still be a valid config for the new code.

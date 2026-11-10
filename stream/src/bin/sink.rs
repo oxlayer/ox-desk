@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Resolve ALL addresses and prefer IPv4, rather than taking the first.
     //
-    // `ubuntu-host.local` resolves in both families, and the Mac returns
+    // `linux-pc.local` resolves in both families, and the Mac returns
     // IPv6 first. With the socket bound to `0.0.0.0`, quinn refuses with
     // "invalid remote address" -- the same trap the daemon's `ssh` had
     // already hit. The local socket has to be born in the destination's

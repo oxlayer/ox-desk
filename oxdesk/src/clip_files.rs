@@ -171,7 +171,7 @@ fn measure_one(p: &Path, m: &mut Measure) {
 // path percent-encoded.
 //
 // The encoding is the detail that breaks in practice: names with spaces,
-// accents, `#`. `arquivo final.pdf` turning into `arquivo` + `final.pdf`
+// accents, `#`. `final report.pdf` turning into `final` + `report.pdf`
 // is the classic bug of this conversion, and that is why it is pure and
 // has tests.
 
@@ -371,22 +371,22 @@ mod tests {
 
     #[test]
     fn space_and_accent_survive_the_round_trip() {
-        // The classic bug: "arquivo final.pdf" turning into two paths.
+        // The classic bug: "final report.pdf" turning into two paths.
         let orig = vec![
-            "/home/user/arquivo final.pdf".to_string(),
-            "/home/user/relatório #3.txt".to_string(),
+            "/home/alice/final report.pdf".to_string(),
+            "/home/alice/relatório #3.txt".to_string(),
         ];
         let list = uris_from_paths(&orig);
-        assert!(list.contains("arquivo%20final.pdf"), "{list}");
+        assert!(list.contains("final%20report.pdf"), "{list}");
         assert!(!list.contains('#'), "the # has to be escaped: {list}");
         assert_eq!(paths_from_uris(&list), orig);
     }
 
     #[test]
     fn windows_path_round_trips() {
-        let w = vec![r"C:\Users\windows-host\nota.txt".to_string()];
+        let w = vec![r"C:\Users\Alice\note.txt".to_string()];
         let list = uris_from_paths(&w);
-        assert_eq!(list.trim_end(), "file:///C:/Users/windows-host/nota.txt");
+        assert_eq!(list.trim_end(), "file:///C:/Users/Alice/note.txt");
         assert_eq!(paths_from_uris(&list), w, "round trip on Windows");
         // On the way back, the URI's `/C:/` has to become a native `C:\`.
         assert_eq!(paths_from_uris("file:///C:/Users/x/a.txt"), vec![r"C:\Users\x\a.txt"]);
@@ -850,7 +850,7 @@ pub fn on_copy(cfg: &crate::config::Config, paths: &[String]) {
 /// One `-C` per file because the selection may come from different
 /// folders, and `tar` accepts several (tested on GNU tar and on Windows'
 /// bsdtar). The file goes into the archive by base name, so the
-/// destination tree does not reproduce `/home/user/dev/...` -- the
+/// destination tree does not reproduce `/home/alice/dev/...` -- the
 /// staging folder stays flat and pasteable.
 pub fn tar_args(paths: &[String]) -> Vec<String> {
     let mut v = Vec::new();

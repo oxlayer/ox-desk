@@ -333,7 +333,10 @@ fn install_clock() -> Result<String, String> {
     let service = concat!(
         "[Unit]\n",
         "Description=oxdesk-ota - checks the published Release and applies it if newer\n",
-        "Documentation=file:///home/user/dev/oxdesk/specs/015-ota.md\n",
+        // Not a path of this machine: this unit is WRITTEN on the
+        // user's disk, and a `file:///home/<someone>/dev/...` there
+        // points at a checkout they do not have.
+        "Documentation=https://github.com/oxlayer/ox-desk/blob/main/specs/015-ota.md\n",
         "\n",
         "[Service]\n",
         "Type=oneshot\n",

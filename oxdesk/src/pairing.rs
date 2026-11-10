@@ -253,9 +253,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         assert_eq!(pinned(&d, "ubuntu"), None);
         store_pin(&d, "ubuntu", A).unwrap();
-        store_pin(&d, "windows-host", B).unwrap();
+        store_pin(&d, "windows-pc", B).unwrap();
         assert_eq!(pinned(&d, "ubuntu").as_deref(), Some(A));
-        assert_eq!(pinned(&d, "windows-host").as_deref(), Some(B));
+        assert_eq!(pinned(&d, "windows-pc").as_deref(), Some(B));
         assert_eq!(pinned(&d, "mac"), None);
         let _ = std::fs::remove_dir_all(&d);
     }

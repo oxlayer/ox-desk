@@ -137,7 +137,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
     //
     //   08:33:04 border: edge KVM turned OFF from the GUI
     //   08:33:04 border: armed -- the devices are here
-    //   08:33:06 border: edge 'left' reached -- switching to ubuntu-host
+    //   08:33:06 border: edge 'left' reached -- switching to linux-pc
     //
     // The user sent the devices to this machine, moved the mouse to the
     // left -- the natural movement, because Ubuntu is on that side -- and

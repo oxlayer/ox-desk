@@ -20,7 +20,7 @@
 //! This module left the user unable to work. The log:
 //!
 //! ```text
-//! 08:18:30  MX Anywhere 3: asked windows-host to send it to channel 1
+//! 08:18:30  MX Anywhere 3: asked windows-pc to send it to channel 1
 //! 08:18:56  ... to channel 1
 //! 08:19:17  ... to channel 1      (seven times in two minutes)
 //! ```
@@ -322,7 +322,7 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
 
             // Right after an arrival the state is in transit, and the
             // reconciler would read a photo that is already stale. The
-            // user's log showed the damage: `follow: asked windows-host to
+            // user's log showed the damage: `follow: asked windows-pc to
             // send it to channel 1` eleven seconds before the edge sent
             // everything to channel 2, and the two undoing each other
             // while he tried to work.

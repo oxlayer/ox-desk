@@ -6,7 +6,7 @@
 //! switch Easy-Switch channel, which requires a paired receiver on the
 //! target machine. With a single dongle -- which is where we ended up
 //! after two dongles close together proved unstable -- pressing "send to
-//! windows-host" made the keyboard look for a receiver that does not exist
+//! windows-pc" made the keyboard look for a receiver that does not exist
 //! there, not find it, and come back. It was the protocol's correct
 //! behavior solving the wrong problem.
 //!
@@ -112,7 +112,7 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     // Sending to the local machine = bringing it back. Same "is it here?"
     // test focus.rs uses, and not just the `local` flag: it is optional in
     // the config and not every host declares it, so trusting only it would
-    // make "Trazer para ubuntu-host" try to open a KVM pointing at
+    // make "Trazer para linux-pc" try to open a KVM pointing at
     // ourselves.
     let here = h.local.unwrap_or(false)
         || matches!(h.addr.as_str(), "127.0.0.1" | "localhost" | "::1");
@@ -137,15 +137,15 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     // Can this machine capture?
     //
     // Only Linux has capture (`EVIOCGRAB`). On a Windows or Mac, clicking
-    // "Mandar para ubuntu-host" cannot mean "become the source" -- it
+    // "Mandar para linux-pc" cannot mean "become the source" -- it
     // means "I want the input THERE", and whoever has to act is whoever is
     // holding the keyboard now: the source.
     //
     // Without this the click failed silently and the only way back was the
     // two-Ctrl rescue. The user reported exactly that: "tentei clicar no
-    // tray do windows para mandar para ubuntu-host e nao voltou, so
+    // tray do windows para mandar para linux-pc e nao voltou, so
     // funcionou apertando dois ctrl" ("I tried clicking the Windows tray
-    // to send to ubuntu-host and it did not come back, it only worked
+    // to send to linux-pc and it did not come back, it only worked
     // pressing two ctrl").
     if !cfg!(target_os = "linux") {
         return ask_to_release(h).map(|()| format!("asked {host} to take the input back"));
@@ -202,7 +202,7 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     //
     // `spawn` returns Ok as soon as the process exists -- before it
     // connects and before it grabs. Reporting success there would make the
-    // tray say "sent to windows-host" while the child had already died
+    // tray say "sent to windows-pc" while the child had already died
     // because the target refused the connection or the /dev/input ACL was
     // missing. The state would fix itself on the next `target()`, but the
     // user would already have read the lie and be waiting for the keyboard
@@ -322,7 +322,7 @@ pub fn adopt(cfg: &Config) {
     let text = String::from_utf8_lossy(&o.stdout);
     let Some(line) = text.lines().next() else { return };
 
-    // "12345 oxdesk-kvm windows-host.local:9778"
+    // "12345 oxdesk-kvm windows-pc.local:9778"
     let mut fields = line.split_whitespace();
     let Some(pid) = fields.next().and_then(|p| p.parse::<u32>().ok()) else { return };
     let Some(dest) = fields.nth(1) else { return };

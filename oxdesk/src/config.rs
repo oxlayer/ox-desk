@@ -117,7 +117,7 @@ impl HostCfg {
 
 /// The host's position on the grid.
 ///
-/// Writing `edge = "right"` and `target = "windows-host"` by hand was always
+/// Writing `edge = "right"` and `target = "windows-pc"` by hand was always
 /// describing a SPATIAL relation in prose. The grid says the same thing
 /// the way the person already thinks -- "Windows is to the right" -- and
 /// the edges come out of it.
@@ -257,7 +257,7 @@ pub struct InputCfg {
     ///   this receiver no longer reaches the device.
     ///
     /// The default became `lan` when we were down to a single dongle:
-    /// with `hidpp`, "send to windows-host" made the keyboard look for a
+    /// with `hidpp`, "send to windows-pc" made the keyboard look for a
     /// receiver that does not exist there, not find it, and come back.
     /// Correct protocol behavior solving the wrong problem.
     ///
@@ -828,7 +828,7 @@ mod tests {
             r#"
             [[hosts]]
             name = "aqui"
-            addr = "windows-host.local"
+            addr = "windows-pc.local"
             local = true
             [[hosts]]
             name = "la"

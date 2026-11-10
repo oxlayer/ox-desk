@@ -14,7 +14,7 @@ const UNIT: &str = "oxdesk.service";
 /// `to_socket_addrs` uses getaddrinfo with AF_UNSPEC, and that **fails**
 /// for `.local` on this machine: `mdns4_minimal` with `[NOTFOUND=return]`
 /// in nsswitch aborts the chain on the AAAA query. Confirmed: `ssh-keyscan
-/// windows-host.local` gives "Temporary failure in name resolution" while
+/// windows-pc.local` gives "Temporary failure in name resolution" while
 /// `getent hosts` works.
 pub fn resolve_fallback(addr: &str, port: u16) -> Option<SocketAddr> {
     let out = Command::new("getent").arg("hosts").arg(addr).output().ok()?;

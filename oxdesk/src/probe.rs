@@ -65,7 +65,7 @@ pub struct Kvm {
     pub follow: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub leader: Option<String>,
-    /// The active edges there, like "left -> ubuntu-host".
+    /// The active edges there, like "left -> linux-pc".
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<String>,
     /// Why we do not know. Better to say we do not know than to show
@@ -95,7 +95,7 @@ pub struct Snapshot {
 /// All the addresses of a name, without link-local, IPv4 first.
 ///
 /// Returns a LIST because a name can have families that do not behave
-/// the same. Measured: seen from the Mac, `windows-host.local` resolves to
+/// the same. Measured: seen from the Mac, `windows-pc.local` resolves to
 /// IPv4 **and** IPv6, IPv4 connects on 3389 and IPv6 times out -- because
 /// the Windows firewall rule was written as `192.168.1.0/24`, which is
 /// IPv4. Taking only the first address, the Mac's panel said "RDP closed"
@@ -128,7 +128,7 @@ fn resolve_all(addr: &str, port: u16) -> Vec<SocketAddr> {
 /// ## Why this exists
 ///
 /// On Windows, `ssh` launched **by the daemon** fails with "Could not
-/// resolve hostname ubuntu-host" -- while, in the same scheduled-task
+/// resolve hostname linux-pc" -- while, in the same scheduled-task
 /// context, `ping` resolves, `[System.Net.Dns]::GetHostAddresses`
 /// resolves both names (short and `.local`), and the same `ssh` launched
 /// from a `cmd.exe` in the same task works. That is: the OS resolver sees
@@ -159,7 +159,7 @@ pub fn ssh_addr_opts(addr: &str) -> Vec<String> {
 /// Address to hand to `ssh`: the first from `resolve_all`.
 ///
 /// Link-local is what made SFTP to the Mac die with "Connection closed":
-/// seen from Windows, `mac-host.local` resolves **only to
+/// seen from Windows, `the-mac.local` resolves **only to
 /// IPv6**, and the first address is `fe80::...%11`, which without the
 /// right scope leads nowhere. `None` means letting `ssh` try on its own
 /// -- better than handing over an address that does not connect.
