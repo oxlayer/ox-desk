@@ -4,19 +4,14 @@
 > Ubuntu compiles; the Mac package was checked by format and stamp,
 > but **has not run on the MacBook yet** (it was offline that day).
 
-> ⚠️ **Red since 2026-11-08 03:10, for a reason outside this repo.** Every
-> run from `2fc748b` on fails in 2-6 s with **zero steps executed**: no
-> checkout, no logs, nothing to read. The last green was `bbae0a6` at
-> 02:51 the same night, and the two commits in between touched neither
-> `.github/`, nor `BUILD_BASE`, nor `build-binaries.sh` -- same workflow,
-> same script, green and then dead. Actions is enabled and all actions are
-> allowed, so what is left is the account side, and the Actions **spending
-> limit** is the prime suspect (this is a private repo, and `macos-15`
-> bills at ten times a Linux minute). Checking it needs account scopes
-> that a repo token does not carry: it is at
-> <https://github.com/settings/billing>. Until then CI reports nothing
-> about the code, and `deploy.sh`'s own `check.sh` is the only gate that
-> actually runs.
+> ⚠️ **Still red.** On 2026-11-10 the count is **22 consecutive runs**
+> with the same signature, the newest being `50765ce`. Nothing new to
+> diagnose: the cause was measured on the 8th and is below, under
+> [When the minutes run out](#when-the-minutes-run-out-2026-11-08) —
+> the November allowance is spent, the spending limit is US$ 0, and
+> GitHub stops scheduling rather than charging. It resets on 1 December
+> unless the limit is raised. Until then CI says nothing about the code
+> and `scripts/check.sh` is the only gate that runs.
 
 ## The problem
 
@@ -239,6 +234,17 @@ the first cut named above; or wait for the allowance to reset on the 1st.
 The first cut named in **Cost** above — taking the Mac off `push` and leaving
 it on tag and `workflow_dispatch` — is still the cheapest lever, and it is a
 job-level `if`, not a new workflow.
+
+The `pull_request` trigger added later moves the same number the wrong way,
+by a little: a PR now builds all three as well. In a repository whose
+normal motion is a direct push to `main` that is a rounding error — the
+151 macOS minutes of November were pushes, not pull requests — but it is
+worth knowing that the lever and the trigger pull against each other, and
+that the lever is the one with the measurement behind it. Taking the Mac
+off `push` while keeping it on `pull_request` would preserve the coverage
+that matters, since a PR is where a target still has time to be fixed. It
+needs a dynamic `matrix.include`, because a job-level `if` cannot skip one
+entry of a matrix, and it cannot be verified until the allowance resets.
 
 ### Publishing a Release without CI
 
