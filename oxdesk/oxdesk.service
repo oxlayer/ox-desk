@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[Unit]
+Description=oxdesk - control plane for the LAN machines
+Documentation=https://github.com/oxlayer/ox-desk/blob/main/specs/001-control-plane.md
+
+[Service]
+Type=simple
+# `process`, not the default `control-group`: restarting the daemon must
+# NOT take down `oxdesk-kvm`, which may be holding the keyboard of
+# someone working on another machine. With the default, every deploy
+# yanked the input back mid-sentence.
+KillMode=process
+ExecStart=%h/.local/bin/oxdesk
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

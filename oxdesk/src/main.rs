@@ -170,8 +170,13 @@ pub fn canonical(verb: &str) -> &str {
         "clip-arq-set" => "clip-file-set",
         "clip-arq-dir" => "clip-file-dir",
         "clip-arq-prontos" => "clip-file-ready",
-        "versao" => "version",
-        "--versao" => "--version",
+        // Every spelling of the same question collapses to one token, so
+        // the match below needs one arm. Keeping `--version` as itself is
+        // what broke it: the arm said `version`, nothing matched, and
+        // `oxdesk --version` answered "unknown command" -- which
+        // `install.sh` had been hiding behind a `|| true` since before
+        // the rename, because the old binary did not accept it either.
+        "versao" | "--versao" | "--version" => "version",
         other => other,
     }
 }
@@ -1279,6 +1284,17 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
 mod cli_tests {
     use super::*;
 
+    /// `oxdesk --version` has to work, and it is the spelling a person
+    /// types first. It answered "unknown command" until this test
+    /// existed: the table renamed the flag and the match arm did not
+    /// follow.
+    #[test]
+    fn every_spelling_of_version_reaches_the_same_arm() {
+        for v in ["version", "versao", "--versao", "--version"] {
+            assert_eq!(canonical(v), "version", "{v} must route to the version arm");
+        }
+    }
+
     /// A peer invokes these ON THIS MACHINE over SSH, and the peer runs
     /// its own build. Dropping a name would make the clipboard and the
     /// input handback fail against a machine that is merely behind.
@@ -1291,7 +1307,7 @@ mod cli_tests {
             ("clip-arq-dir", "clip-file-dir"),
             ("clip-arq-prontos", "clip-file-ready"),
             ("versao", "version"),
-            ("--versao", "--version"),
+            ("--versao", "version"),
         ] {
             assert_eq!(canonical(old), new);
             assert_eq!(canonical(new), new, "translating twice must be a no-op");

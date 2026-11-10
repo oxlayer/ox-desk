@@ -217,7 +217,7 @@ step "windows: build"
 if out=$(cargo build --release --target x86_64-pc-windows-gnu --manifest-path oxdesk/Cargo.toml 2>&1); then ok; else fail "$out"; fi
 
 EXE=oxdesk/target/x86_64-pc-windows-gnu/release/oxdesk.exe
-SIGNED=$(mktemp -u /tmp/oxdesk-assinado-XXXX.exe)
+SIGNED=$(mktemp -u /tmp/oxdesk-signed-XXXX.exe)
 step "windows: sign"
 # ALWAYS before copying: Defender removed the raw .exe the instant it was
 # written, twice, taking the scheduled task with it. See specs/008.
@@ -277,7 +277,7 @@ step "windows: agent"
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path agent/Cargo.toml 2>&1); then
   AG=agent/target/x86_64-pc-windows-gnu/release/oxdesk-agent.exe
-  AGSIG=$(mktemp -u /tmp/oxdesk-agent-assinado-XXXX.exe)
+  AGSIG=$(mktemp -u /tmp/oxdesk-agent-signed-XXXX.exe)
   if out=$(cp "$AG" "$AGSIG" && bash scripts/sign-windows.sh "$AGSIG" 2>&1 &&
            send "$AGSIG" oxdesk-agent); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
@@ -318,7 +318,7 @@ step "windows: updater (oxdesk-ota)"
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path ota/Cargo.toml 2>&1); then
   OT=ota/target/x86_64-pc-windows-gnu/release/oxdesk-ota.exe
-  OTSIG=$(mktemp -u /tmp/oxdesk-ota-assinado-XXXX.exe)
+  OTSIG=$(mktemp -u /tmp/oxdesk-ota-signed-XXXX.exe)
   if out=$(cp "$OT" "$OTSIG" && bash scripts/sign-windows.sh "$OTSIG" 2>&1 &&
            send "$OTSIG" oxdesk-ota); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
@@ -353,7 +353,7 @@ step "windows: screen viewer"
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path stream/Cargo.toml --bin oxdesk-view 2>&1); then
   VW=stream/target/x86_64-pc-windows-gnu/release/oxdesk-view.exe
-  VWSIG=$(mktemp -u /tmp/oxdesk-view-assinado-XXXX.exe)
+  VWSIG=$(mktemp -u /tmp/oxdesk-view-signed-XXXX.exe)
   if out=$(cp "$VW" "$VWSIG" && bash scripts/sign-windows.sh "$VWSIG" 2>&1 &&
            send "$VWSIG" oxdesk-view); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
@@ -392,7 +392,7 @@ step "windows: tab bridge"
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path stream/Cargo.toml --bin oxdesk-bridge 2>&1); then
   PT=stream/target/x86_64-pc-windows-gnu/release/oxdesk-bridge.exe
-  PTSIG=$(mktemp -u /tmp/oxdesk-bridge-assinado-XXXX.exe)
+  PTSIG=$(mktemp -u /tmp/oxdesk-bridge-signed-XXXX.exe)
   if out=$(cp "$PT" "$PTSIG" && bash scripts/sign-windows.sh "$PTSIG" 2>&1 &&
            send "$PTSIG" oxdesk-bridge); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
@@ -438,7 +438,7 @@ step "windows: screen host (oxdesk-stream)"
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path stream/Cargo.toml --bin oxdesk-host 2>&1); then
   HOSTEXE=stream/target/x86_64-pc-windows-gnu/release/oxdesk-host.exe
-  HOSTSIG=$(mktemp -u /tmp/oxdesk-host-assinado-XXXX.exe)
+  HOSTSIG=$(mktemp -u /tmp/oxdesk-host-signed-XXXX.exe)
   # Delete the destination BEFORE the scp.
   #
   # The Windows SFTP server refuses to overwrite with "Overwriting an

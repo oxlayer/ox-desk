@@ -26,7 +26,7 @@ EXE="${1:?usage: sign-windows.sh <file.exe>}"
 DIR="$HOME/.config/oxdesk/signing"
 [ -f "$DIR/key.pem" ] || { echo "no key in $DIR -- see specs/008" >&2; exit 1; }
 
-TMP="$(mktemp -u "${EXE%.exe}.assinado.XXXX.exe")"
+TMP="$(mktemp -u "${EXE%.exe}.signed.XXXX.exe")"
 # `-t` timestamps it: the signature survives the certificate's expiry,
 # and it is what a normal binary has. If the TSA does not answer, sign
 # without a timestamp instead of failing the build.

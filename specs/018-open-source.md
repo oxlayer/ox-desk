@@ -573,6 +573,33 @@ a measurement.
    schedules nothing while the allowance is spent ([[013-ci-cd]]), so "a
    throwaway PR runs the suite" has to wait for 1 December or a raised
    spending limit.
+9b. **Make `install.sh` work on a clone.** Found while doing 6d, and it
+    is the first command anyone who finds this repository will run — the
+    panel's own repair recipe for the `binaries` step says
+    `bash install.sh`.
+
+    Fixed already: the script does `install -D oxdesk/oxdesk.service`,
+    and **that file was not in the repository**. With `set -euo pipefail`
+    the install aborted there, after copying the binary and before the
+    service, the hidraw ACL and the GSConnect step. The unit is now
+    tracked, rebuilt from the one running on this machine minus the two
+    things that cannot be published: a Portuguese description and
+    `Documentation=file:///home/<user>/dev/oxdesk/...`, a personal path
+    that `no-personal-data` forbids. `KillMode=process` carries its
+    reason with it — restarting the daemon must not take down an
+    `oxdesk-kvm` holding someone's keyboard.
+
+    Still open, and a decision rather than a bug: `install.sh` builds and
+    installs **one** binary, while the wizard's `binaries` step expects
+    six, and its dependency check (cargo, libudev, dbus) does not cover
+    what `oxdesk-stream` needs (clang, libclang, pipewire — the list CI
+    installs). So a newcomer who runs it gets a daemon whose own panel
+    reports missing binaries. Either `install.sh` grows to the full set
+    with the full dependency check, or it says plainly that it installs
+    the control plane only and points at `scripts/deploy.sh` for the
+    rest. Neither can be verified from here — it needs a machine that
+    has never had oxdesk on it.
+
 10. **Flip visibility; enable secret scanning and push protection.**
     *Check:* a tag build runs the macOS job with US$ 0.00 billed — the
     point of the exercise, and the first chance to learn whether "free"
