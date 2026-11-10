@@ -974,19 +974,19 @@ addr = "la.local"
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
-            name = "eu"
+            name = "me"
             addr = "127.0.0.1"
             layout = { col = 1, row = 1 }
             [[hosts]]
-            name = "direita"
+            name = "to-the-right"
             addr = "d.local"
             layout = { col = 3, row = 1 }
             [[hosts]]
-            name = "esquerda"
+            name = "to-the-left"
             addr = "e.local"
             layout = { col = 0, row = 1 }
             [[hosts]]
-            name = "acima"
+            name = "above"
             addr = "a.local"
             layout = { col = 1, row = 0 }
             [[hosts]]
@@ -1002,9 +1002,9 @@ addr = "la.local"
         let n = c.neighbors();
         let lookup = |b: &str| n.iter().find(|(e, _)| *e == b).map(|(_, h)| h.as_str());
         // Column 3 with a gap at 2: still the right-hand neighbor.
-        assert_eq!(lookup("right"), Some("direita"));
-        assert_eq!(lookup("left"), Some("esquerda"));
-        assert_eq!(lookup("top"), Some("acima"));
+        assert_eq!(lookup("right"), Some("to-the-right"));
+        assert_eq!(lookup("left"), Some("to-the-left"));
+        assert_eq!(lookup("top"), Some("above"));
         // A diagonal is not a neighbor on any edge.
         assert_eq!(lookup("bottom"), None);
         assert_eq!(n.len(), 3, "only the three edges with a neighbor");
@@ -1015,7 +1015,7 @@ addr = "la.local"
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
-            name = "eu"
+            name = "me"
             addr = "127.0.0.1"
             layout = { col = 0, row = 0 }
             [[hosts]]
@@ -1042,7 +1042,7 @@ addr = "la.local"
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
-            name = "eu"
+            name = "me"
             addr = "127.0.0.1"
             [[hosts]]
             name = "outro"

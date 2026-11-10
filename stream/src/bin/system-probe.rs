@@ -11,9 +11,9 @@
 //! right after locking on Win 11 and reports of it working fine as SYSTEM.
 //! It cannot be decided by reading.
 //!
-//!   oxdesk-probe-system --quem        who am I, and on which desktop
-//!   oxdesk-probe-system --capturar    can I duplicate the screen from here?
-//!   oxdesk-probe-system --lancar      become SYSTEM on the Winlogon desktop
+//!   oxdesk-probe-system --who        who am I, and on which desktop
+//!   oxdesk-probe-system --capture    can I duplicate the screen from here?
+//!   oxdesk-probe-system --launch      become SYSTEM on the Winlogon desktop
 //!
 //! ## The path we are proving
 //!
@@ -23,7 +23,7 @@
 //! attach to `Winlogon`. A user process -- which is what we are today, via
 //! an `/IT` task -- cannot even look.
 //!
-//! The pattern Parsec and RustDesk use, and that `--lancar` exercises:
+//! The pattern Parsec and RustDesk use, and that `--launch` exercises:
 //!
 //! 1. find the console session's `winlogon.exe` (`WTSGetActiveConsoleSessionId`)
 //! 2. open its token and duplicate it as a primary token
@@ -37,7 +37,7 @@
 //! Installing a service means touching `HKLM` and creating a permanent
 //! SYSTEM process -- and Defender has already deleted this machine's
 //! `oxdesk.exe` once (spec 008). Before asking for that, it is worth knowing
-//! whether the path works: `--lancar` achieves the same effect from a
+//! whether the path works: `--launch` achieves the same effect from a
 //! `/ru SYSTEM` scheduled task, which the administrator creates and deletes
 //! without leaving residue.
 
@@ -69,7 +69,7 @@ use windows::Win32::System::Threading::OpenProcess;
 
 /// Prints and **records**.
 ///
-/// The process launched by `--lancar` is born without a console (on
+/// The process launched by `--launch` is born without a console (on
 /// purpose: a new console would open a black window on the lock screen).
 /// Without a file, its output would go nowhere -- and its output is the
 /// entire result of the experiment.
@@ -368,20 +368,20 @@ fn launch(rest: &[String]) {
 
 pub fn run() {
     let a: Vec<String> = std::env::args().skip(1).collect();
-    let mode = a.first().map(String::as_str).unwrap_or("--quem");
+    let mode = a.first().map(String::as_str).unwrap_or("--who");
     say!("== oxdesk-probe-system {mode} ==");
     // Timestamp: this probe runs from a scheduled task, without a console,
     // and without the time there is no way to tell whether the output is
     // from this run or the previous one.
     say!("  {}", simple_clock());
     match mode {
-        "--quem" => who(),
-        "--capturar" => {
+        "--who" => who(),
+        "--capture" => {
             who();
             capture();
         }
-        "--lancar" => launch(if a.len() > 1 { &a[1..] } else { &[] }),
-        "--seguir" => {
+        "--launch" => launch(if a.len() > 1 { &a[1..] } else { &[] }),
+        "--follow" => {
             who();
             let n = a.get(1).and_then(|v| v.parse().ok()).unwrap_or(15);
             follow(n);

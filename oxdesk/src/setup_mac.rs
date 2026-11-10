@@ -17,7 +17,7 @@
 //! TCC ties the grant to the binary -- to its designated requirement.
 //! Asking from here, from the `oxdesk` process, would give a correct
 //! answer about the wrong program. So the measurement runs
-//! `oxdesk-host --conferir` and reads the two lines it prints.
+//! `oxdesk-host --check` and reads the two lines it prints.
 //!
 //! ## Order matters, and the catalog enforces it
 //!
@@ -352,7 +352,7 @@ fn signature() -> Check {
 }
 
 /// Reads both permissions from the host itself.
-/// Runs the host's `--conferir` as its own launchd job.
+/// Runs the host's `--check` as its own launchd job.
 ///
 /// As a child of `oxdesk`, the answer would be about `oxdesk`: macOS
 /// attributes the permission to the responsible process. The host's
@@ -361,7 +361,7 @@ fn signature() -> Check {
 /// answers.
 fn check_outside_daemon(target: &std::path::Path) -> Result<String, String> {
     const LABEL: &str = "app.oxdesk.check";
-    let file = crate::sys::config_dir().join("conferir.out");
+    let file = crate::sys::config_dir().join("check.out");
     let path = file.to_string_lossy().into_owned();
     let _ = std::fs::remove_file(&file);
     let _ = run_timed("/bin/launchctl", &["remove", LABEL], 5);
@@ -369,7 +369,7 @@ fn check_outside_daemon(target: &std::path::Path) -> Result<String, String> {
         "/bin/launchctl",
         &[
             "submit", "-l", LABEL, "-o", &path, "-e", &path, "--",
-            &target.to_string_lossy(), "--conferir",
+            &target.to_string_lossy(), "--check",
         ],
         5,
     )?;
@@ -377,7 +377,10 @@ fn check_outside_daemon(target: &std::path::Path) -> Result<String, String> {
     let mut text = String::new();
     while std::time::Instant::now() < deadline {
         text = std::fs::read_to_string(&file).unwrap_or_default();
-        if text.contains("acessibilidade: ") {
+        // Either spelling: the host prints `accessibility:` since the
+        // rename and `acessibilidade:` before it, and the two can be one
+        // partial deploy apart.
+        if text.contains("accessibility: ") || text.contains("acessibilidade: ") {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -399,31 +402,29 @@ fn check_permissions() -> (Check, Check) {
     // 10 s because the binary only prints two lines and exits; if it
     // takes longer, something is hung, and hung is not "ok".
     let output = check_outside_daemon(&target);
-    let read = |text: &str, key: &str| -> Option<bool> {
-        text
-            .lines()
-            .find_map(|l| l.strip_prefix(&format!("{key}: ")))
-            .map(|v| v.trim() == "ok")
-    };
+    // `permission_from` lives in setup_common, where a test can reach it:
+    // this file is macOS-only and its tests never run in `check.sh`, which
+    // is how the two spellings got to disagree in the first place.
+    let read = crate::setup_common::permission_from;
     match output {
         Ok(text) => {
             let one = |id: &str, kind: &str| match read(&text, id) {
-                Some(true) => Check::ok(id, format!("concedida a {}", target.display())),
+                Some(true) => Check::ok(id, format!("granted to {}", target.display())),
                 Some(false) => Check::missing(id, format!("the host does not have {kind}")),
-                // An old binary, from before `--conferir`: not measuring
+                // An old binary, from before `--check`: not measuring
                 // is different from measuring "missing", and saying which
                 // case it is saves the afternoon I would lose looking in
                 // the wrong place.
-                None => Check::error(id, "the installed host does not understand --conferir: run the deploy"),
+                None => Check::error(id, "the installed host does not understand --check: run the deploy"),
             };
             (
                 one("screen-recording", "Screen Recording"),
-                one("accessibility", "Acessibilidade"),
+                one("accessibility", "Accessibility"),
             )
         }
         Err(e) => (
-            Check::error("screen-recording", format!("--conferir: {e}")),
-            Check::error("accessibility", format!("--conferir: {e}")),
+            Check::error("screen-recording", format!("--check: {e}")),
+            Check::error("accessibility", format!("--check: {e}")),
         ),
     }
 }
@@ -575,7 +576,7 @@ fn install_agent(
 /// One-hour interval. `RunAtLoad false`: `bootstrap` must not fire the
 /// agent now, because it would apply the new build and restart `oxdesk`
 /// -- which is what is answering this request. The first check here is
-/// `--conferir`, which swaps nothing; the swap happens on the first
+/// `--check`, which swaps nothing; the swap happens on the first
 /// tick, with nobody waiting.
 ///
 /// Accepted and documented consequence: after a boot, the Mac may take
@@ -670,7 +671,7 @@ fn request_permission(id: &str, pane: &str) -> Result<String, String> {
     if !target.exists() {
         return Err("the screen host is not installed".into());
     }
-    let _ = run_timed(&target.to_string_lossy(), &["--pedir"], 20);
+    let _ = run_timed(&target.to_string_lossy(), &["--request"], 20);
     let url = format!("x-apple.systempreferences:com.apple.preference.security?{pane}");
     let _ = run_timed("/usr/bin/open", &[&url], 10);
 

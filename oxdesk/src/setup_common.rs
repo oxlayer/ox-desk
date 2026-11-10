@@ -321,7 +321,7 @@ pub fn human_age(s: u64) -> String {
 /// How this machine's automatic update is doing.
 ///
 /// It does not read `oxdesk-ota`'s `estado.json` nor rewrite its phrases:
-/// it asks the binary itself (`--estado --curto`) and splits on TAB.
+/// it asks the binary itself (`--state --short`) and splits on TAB.
 /// `oxdesk` and `oxdesk-ota` are separate binaries -- duplicating the file
 /// format here would be the same trap as having the list of binaries in
 /// two places ([[../../specs/013-ci-cd.md]]).
@@ -387,7 +387,7 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, clock: Result<String,
         return Check::missing("ota", r);
     }
 
-    let line = match run_timed(&bin.to_string_lossy(), &["--estado", "--curto"], 8) {
+    let line = match run_timed(&bin.to_string_lossy(), &["--state", "--short"], 8) {
         Ok(l) => l.trim().to_string(),
         // Exits != 0 when it never checked. That is a legitimate state
         // right after installing, not an error.
@@ -451,6 +451,36 @@ pub fn verdict(line: &str, clock: &str) -> Check {
 /// Comparing the two stamps turns a day of confusion into one panel line.
 /// And it is the same hole OTA has: it restarts, asks `/healthz`, hears
 /// the old build and **reverts a good update**.
+/// Reads one `key: ok|missing` line out of what `oxdesk-host --check`
+/// printed.
+///
+/// `None` means the key was not there at all, which is NOT the same
+/// answer as `Some(false)`: not measuring and measuring "missing" send
+/// the reader to different places, and the caller says so.
+///
+/// It lives here, and not next to its only caller in `setup_mac.rs`,
+/// because that file is `cfg(target_os = "macos")` -- its tests never run
+/// in `check.sh`, which builds the Mac target nowhere. The bug below is
+/// what that costs: the host printed `acessibilidade:` while the wizard
+/// asked for `accessibility:`, so `read` returned `None` and the panel
+/// told you to run a deploy about a permission that was granted. Two
+/// literals, two crates, no test that could fail.
+pub fn permission_from(text: &str, key: &str) -> Option<bool> {
+    // The key the host prints since the rename, and the one it printed
+    // before it: the wizard and the host are installed together, but the
+    // Mac cannot be deployed while it has no screen.
+    let legacy = match key {
+        "accessibility" => Some("acessibilidade"),
+        _ => None,
+    };
+    text.lines()
+        .find_map(|l| {
+            l.strip_prefix(&format!("{key}: "))
+                .or_else(|| legacy.and_then(|k| l.strip_prefix(&format!("{k}: "))))
+        })
+        .map(|v| v.trim() == "ok")
+}
+
 pub fn stamp_verdict(live: (u64, &str), on_disk: (u64, &str)) -> Option<String> {
     let (n_live, b_live) = live;
     let (n_disk, b_disk) = on_disk;
@@ -476,7 +506,16 @@ pub fn daemon_on_disk(bin: &std::path::Path) -> Option<String> {
     // without `CREATE_NO_WINDOW` opens a NEW console, and the panel is
     // read all the time -- it would be a cmd window flashing on screen.
     // That was complained about once already (see sys/windows.rs).
-    let s = crate::sys::child(&bin.to_string_lossy()).arg("versao").output().ok()?;
+    // `version`, then `versao`: this runs the binary ON DISK, which a
+    // partial deploy can leave one generation behind the one asking. The
+    // answer is what catches an old process holding the port -- the Mac
+    // served a ten-day-old binary for a whole day while every deploy said
+    // `ok` -- so losing it to a renamed subcommand would cost exactly what
+    // the check was added to prevent.
+    let mut s = crate::sys::child(&bin.to_string_lossy()).arg("version").output().ok()?;
+    if !s.status.success() {
+        s = crate::sys::child(&bin.to_string_lossy()).arg("versao").output().ok()?;
+    }
     if !s.status.success() {
         return None;
     }
@@ -566,6 +605,30 @@ mod tests {
         );
         assert_eq!(m.state, crate::setup::State::Missing);
         assert!(m.detail.contains("is not installed"), "{}", m.detail);
+    }
+
+    /// The bug that shipped: `screen-recording` parsed and
+    /// `accessibility` did not, because the host spelled it in
+    /// Portuguese. The panel then reported an error about a permission
+    /// macOS had granted, and told the user to deploy.
+    #[test]
+    fn the_accessibility_key_is_read_in_both_spellings() {
+        let new = "screen-recording: ok\naccessibility: ok\n";
+        let old = "screen-recording: ok\nacessibilidade: ok\n";
+        for text in [new, old] {
+            assert_eq!(permission_from(text, "screen-recording"), Some(true));
+            assert_eq!(permission_from(text, "accessibility"), Some(true), "{text:?}");
+        }
+    }
+
+    /// Missing is a measurement; absent is not. Collapsing them would
+    /// make an old binary look like a denied permission.
+    #[test]
+    fn absent_is_not_the_same_as_missing() {
+        assert_eq!(permission_from("accessibility: missing\n", "accessibility"), Some(false));
+        assert_eq!(permission_from("accessibility: falta\n", "accessibility"), Some(false));
+        assert_eq!(permission_from("something else\n", "accessibility"), None);
+        assert_eq!(permission_from("", "accessibility"), None);
     }
 
     /// A stopped clock cannot show up as "ok" just because the last check

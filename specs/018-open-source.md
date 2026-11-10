@@ -476,15 +476,51 @@ a measurement.
      "copiando...", "chegou" and "novidades" as pending while
      `index.html` had none of them. *Checked:* zero accented characters
      and zero of those words in the file.
-   - 6d. **The CLI and the OTA's vocabulary.** 29 flags and subcommands
-     (`--conferir`, `--estado`, `--forcar`, `--curto`, `--pedir`,
-     `--probe-nativo`, `kvm-soltar`, `clip-arq-*`, `esquerda/direita`),
-     the state words on the wire (`igual`, `mais-novo-aqui`,
-     `em dia no build`), and the build stamp's `-sujo`. This one is last
-     on purpose: `deploy.sh` stamps `-sujo` and `ota/src/release.rs`
-     strips exactly that suffix, so renaming one side changes what an
-     already-installed updater concludes about a published build. It
-     moves with its tests, or not at all.
+   - 6d. **The CLI and the OTA's vocabulary. Done 2026-11-10.** Every
+     flag and subcommand, the state words on the wire, the state file
+     itself and the build stamp. It was left for last because nothing
+     else in the sweep is read across a process boundary, a reboot and a
+     machine we cannot deploy, and the answer was the same in each case:
+     **rename the writer, and keep the reader bilingual for one
+     generation.**
+
+     | What | Now | Still accepted, and why |
+     |---|---|---|
+     | Flags | `--check`, `--force`, `--state`, `--short`, `--request`, `--probe-native`, `--fingerprint`, `--no-repeat`, `--device`, `--observe`, `--self-test` | the old spelling, via a `canonical()` table per binary: a launchd job and a Windows scheduled task are written once by the wizard and outlive every deploy, and an unknown argument exits 2 |
+     | Subcommands | `kvm-release`, `clip-probe`, `clip-file-{set,dir,ready}`, `version` | the old verb: a **peer** invokes these on this machine over SSH, running its own build |
+     | State file | `state.json` | `estado.json` on read. A rollback has to find its state where the previous build left it, so the old file is not deleted |
+     | Wire keys | `when_unix`, `n_here`, `result`, … | the pt-BR keys, as serde `alias` |
+     | Result words | `same`, `updated`, `available`, `newer-here`, `rolled-back`, `error` | the pt-BR words, in `normalize_result` and in `setup_common::verdict` |
+     | Build stamp | `-dirty`, `unknown` | `-sujo`, stripped by `release.rs` |
+
+     Three callers talk to a machine that may be behind, and they retry
+     rather than assume: `kvm-release` then `kvm-soltar`, `--fingerprint`
+     then `--digital`, `version` then `versao`. Each retry costs one round
+     trip on a stale machine and nothing on a current one, and each
+     disappears by itself once the fleet is current. The one place that
+     does **not** retry is `clip-file-set`, which streams a tar through
+     stdin — the file clipboard against a machine not deployed since the
+     rename needs that deploy, which today means the Mac.
+
+     *Checked:* 164 tests green plus the full cross build, and the live
+     migration measured on this machine — `~/.local/state/oxdesk-ota/estado.json`
+     held `"resultado": "mais-novo-aqui"` and the new binary read it.
+
+     **A bug fell out of it.** `oxdesk-host` printed `acessibilidade: ok`
+     while `setup_mac.rs` looked for `accessibility: `, so the parse
+     returned `None` and the Mac's panel reported *"the installed host
+     does not understand --conferir: run the deploy"* about a permission
+     macOS had granted. Two literals, two crates, and **no test that
+     could fail**: the parsing lived in a `cfg(target_os = "macos")` file,
+     and `check.sh` builds the Mac target nowhere. It now lives in
+     `setup_common::permission_from`, with tests for both spellings — the
+     remedy [[../.claude/rules/check-the-other-cfg]] already prescribes.
+
+     That blind spot is still there for the rest of `setup_mac.rs`:
+     `cargo check --target aarch64-apple-darwin` fails on Linux because
+     `hidapi`'s build script wants the Apple SDK. Mac-only code is
+     verified by reading until CI can run, which is itself blocked on
+     [[013-ci-cd]].
    - 6e. **`scripts/`. Done 2026-11-10** (`31e1e68`). 305 replacements
      across eight scripts: shell identifiers, the variables of the
      PowerShell embedded in `deploy.sh`, the `--pular-mac` flag (now

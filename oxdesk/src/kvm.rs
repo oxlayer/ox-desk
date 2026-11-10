@@ -192,7 +192,7 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     let mut cmd = crate::sys::child("oxdesk-kvm");
     cmd.arg(&dest);
     if h.os.as_deref() == Some("linux") {
-        cmd.arg("--sem-repeticao");
+        cmd.arg("--no-repeat");
     }
     let mut child = cmd
         .stdin(Stdio::null())
@@ -235,7 +235,7 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
 
 /// Asks another machine's `oxdesk` to release its KVM.
 ///
-/// Over SSH and `oxdesk kvm-soltar`, by the same path and for the same
+/// Over SSH and `oxdesk kvm-release`, by the same path and for the same
 /// reasons as the clipboard: the API listens only on 127.0.0.1, and SSH is
 /// already the trusted channel between the machines.
 ///
@@ -245,32 +245,37 @@ fn ask_to_release(h: &crate::config::HostCfg) -> Result<(), String> {
     let dest = h.ssh.clone().ok_or_else(|| {
         format!("'{}' has no `ssh` in the config: there is no way to ask it anything", h.name)
     })?;
-    let out = crate::sys::child("ssh")
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", &dest])
-        .arg(remote_release_command(h))
-        .output()
-        .map_err(|e| format!("ssh to {}: {e}", h.name))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{} refused to release: {}",
-            h.name,
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
+    // The new verb first, the one from before the rename second. The peer
+    // runs its OWN build of oxdesk, and a peer we cannot deploy -- the Mac
+    // without a screen -- only understands the old one. Retrying costs an
+    // SSH round trip on a machine that is behind, and not retrying costs
+    // the input staying where it is, which is the one failure this path
+    // exists to prevent.
+    let mut last = String::new();
+    for verb in ["kvm-release", "kvm-soltar"] {
+        let out = crate::sys::child("ssh")
+            .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", &dest])
+            .arg(remote_release_command(h, verb))
+            .output()
+            .map_err(|e| format!("ssh to {}: {e}", h.name))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        last = String::from_utf8_lossy(&out.stderr).trim().to_string();
     }
+    Err(format!("{} refused to release: {last}", h.name))
 }
 
 /// Same path rule as the clipboard: by OS, not by PATH.
-fn remote_release_command(h: &crate::config::HostCfg) -> String {
+fn remote_release_command(h: &crate::config::HostCfg, verb: &str) -> String {
     if h.os.as_deref() == Some("windows") {
-        r#"& "$env:LOCALAPPDATA\oxdesk\oxdesk.exe" kvm-soltar"#.into()
+        format!(r#"& "$env:LOCALAPPDATA\oxdesk\oxdesk.exe" {verb}"#)
     } else {
-        "~/.local/bin/oxdesk kvm-soltar".into()
+        format!("~/.local/bin/oxdesk {verb}")
     }
 }
 
-/// `oxdesk kvm-soltar`: tells the local daemon to give the input back.
+/// `oxdesk kvm-release`: tells the local daemon to give the input back.
 ///
 /// Goes through the local API for the same reason as `clip-set`: the KVM
 /// state lives in the daemon, and a separate CLI reaches neither the child
@@ -279,11 +284,11 @@ pub fn cli_release(port: u16) -> std::process::ExitCode {
     use std::io::{Read, Write};
     let request = "POST /api/kvm/release HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
-        eprintln!("kvm-soltar: the local oxdesk did not answer on port {port}");
+        eprintln!("kvm-release: the local oxdesk did not answer on port {port}");
         return std::process::ExitCode::FAILURE;
     };
     if s.write_all(request.as_bytes()).is_err() {
-        eprintln!("kvm-soltar: failed to write the request");
+        eprintln!("kvm-release: failed to write the request");
         return std::process::ExitCode::FAILURE;
     }
     let mut r = String::new();
@@ -291,7 +296,7 @@ pub fn cli_release(port: u16) -> std::process::ExitCode {
     if r.starts_with("HTTP/1.1 200") {
         std::process::ExitCode::SUCCESS
     } else {
-        eprintln!("kvm-soltar: {}", r.lines().next().unwrap_or("no response"));
+        eprintln!("kvm-release: {}", r.lines().next().unwrap_or("no response"));
         std::process::ExitCode::FAILURE
     }
 }
@@ -350,3 +355,37 @@ pub fn adopt(cfg: &Config) {
 /// On the other systems there is no capture, so nothing to adopt.
 #[cfg(not(target_os = "linux"))]
 pub fn adopt(_cfg: &Config) {}
+
+#[cfg(test)]
+mod release_cmd_tests {
+    use super::*;
+    use crate::config::HostCfg;
+
+    fn host(os: &str) -> HostCfg {
+        let toml = format!("name = \"peer\"\naddr = \"peer.local\"\nos = \"{os}\"\n");
+        toml::from_str(&toml).expect("fixture must parse")
+    }
+
+    /// The verb is substituted, not appended: the retry sends a second
+    /// command, not a command with two verbs.
+    #[test]
+    fn the_verb_goes_into_the_command_for_each_os() {
+        let posix = remote_release_command(&host("linux"), "kvm-release");
+        assert_eq!(posix, "~/.local/bin/oxdesk kvm-release");
+        let win = remote_release_command(&host("windows"), "kvm-release");
+        assert!(win.contains("oxdesk.exe\" kvm-release"), "{win}");
+        assert!(!win.contains("kvm-soltar"), "{win}");
+    }
+
+    /// The old verb has to still be expressible, because that is the
+    /// retry: a peer running a build from before the rename -- the Mac,
+    /// which cannot be deployed while it has no screen -- answers to
+    /// nothing else, and the input would stay where it is.
+    #[test]
+    fn the_old_verb_is_still_expressible_for_the_retry() {
+        assert_eq!(
+            remote_release_command(&host("linux"), "kvm-soltar"),
+            "~/.local/bin/oxdesk kvm-soltar"
+        );
+    }
+}

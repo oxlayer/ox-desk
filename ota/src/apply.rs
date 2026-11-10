@@ -222,7 +222,7 @@ fn steps(ctx: &Context, st: &mut State) -> Result<(), String> {
 
     if ctx.mode == Mode::Check {
         st.result = "available".into();
-        st.message = "only checked (--conferir)".into();
+        st.message = "only checked (--check)".into();
         return Ok(());
     }
     if let Some(reason) = ctx.plan.refusal {

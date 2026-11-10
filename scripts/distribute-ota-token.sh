@@ -5,7 +5,7 @@
 # Sends the OTA token from this machine to the other two, and proves it works.
 # The value never goes through argv or the screen.
 #
-# It shows the LAST line of `oxdesk-ota --conferir` and does not filter by
+# It shows the LAST line of `oxdesk-ota --check` and does not filter by
 # word. There used to be a `grep -E '^(erro|igual|novo|...)'` here with a
 # comment saying to keep it in sync with `ota/` -- and measured on
 # 2026-11-10 it did not match the normal output at all, which begins
@@ -49,11 +49,17 @@ failed=0
 for h in "$@" ${MAC:+"$MAC"} ${WIN:+"$WIN"}; do
   if [ -n "$WIN" ] && [ "$h" = "$WIN" ]; then
     scp -q -o BatchMode=yes "$TOKEN" "$WIN:AppData/Local/oxdesk/ota-token" &&
-      ssh -T -o BatchMode=yes "$WIN" 'icacls "$env:LOCALAPPDATA\oxdesk\ota-token" /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null; & "$env:LOCALAPPDATA\oxdesk\oxdesk-ota.exe" --conferir | Out-String' 2>&1 |
+      ssh -T -o BatchMode=yes "$WIN" 'icacls "$env:LOCALAPPDATA\oxdesk\ota-token" /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null; & "$env:LOCALAPPDATA\oxdesk\oxdesk-ota.exe" --check | Out-String' 2>&1 |
       tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -1 | cut -c1-100 || failed=1
   else
     ssh -T -o BatchMode=yes "$h" 'umask 077; mkdir -p ~/.config/oxdesk; cat > ~/.config/oxdesk/ota-token' < "$TOKEN" &&
-      ssh -T -o BatchMode=yes "$h" '~/.local/bin/oxdesk-ota --conferir' 2>&1 | tail -1 | cut -c1-100 || failed=1
+      # `--check`, falling back to `--conferir`: the flag was renamed, an
+      # unknown argument exits 2, and the peer runs its own build -- the
+      # Mac cannot be deployed while it has no screen. The fallback
+      # disappears on its own once every machine is current.
+      ssh -T -o BatchMode=yes "$h" \
+        '~/.local/bin/oxdesk-ota --check || ~/.local/bin/oxdesk-ota --conferir' 2>&1 |
+        tail -1 | cut -c1-100 || failed=1
   fi
   echo "  ^ $h"
 done

@@ -10,13 +10,13 @@
 //! **It really moves the target machine's cursor.** The movement is small
 //! and the key is a lone Shift, which types nothing.
 //!
-//! With `--rajada N` it sends N mouse movements with NO pause between them.
+//! With `--burst N` it sends N mouse movements with NO pause between them.
 //! It serves to measure what the user felt: "the video stops if I stop
 //! typing" and "input is slow" had the same cause -- injection waited for
 //! Mutter's reply on the same thread that pumps the video. A burst while
 //! `sink` measures fps shows the damage, and shows the improvement.
 //!
-//!   cargo run --release --bin input-send -- <host:port> [--rajada N]
+//!   cargo run --release --bin input-send -- <host:port> [--burst N]
 
 use bytes::BytesMut;
 use oxdesk_stream::input::{Event, BTN_LEFT};
@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  connected; sending events");
 
     let burst: usize = std::env::args()
-        .position(|a| a == "--rajada")
+        .position(|a| a == "--burst")
         .and_then(|i| std::env::args().nth(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -112,14 +112,14 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // `--segurar <evdev>`: presses the key, waits, and releases it.
+    // `--hold <evdev>`: presses the key, waits, and releases it.
     //
     // It exists because Caps Lock does NOT work as a test on macOS: the
     // system handles it in the HID layer and a synthetic event does not
     // toggle it, even when it arrives and gets translated. With a common
     // key you can look at its state while it is held, which is a real
     // measurement.
-    if let Some(i) = std::env::args().position(|a| a == "--segurar") {
+    if let Some(i) = std::env::args().position(|a| a == "--hold") {
         let code: u32 = std::env::args()
             .nth(i + 1)
             .and_then(|v| v.parse().ok())

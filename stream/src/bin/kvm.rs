@@ -5,7 +5,7 @@
 //!
 //! Spec: ../../specs/005-input-switch.md
 //!
-//!   oxdesk-kvm <host:port> [--observar] [--dispositivo NAME]...
+//!   oxdesk-kvm <host:port> [--observe] [--device NAME]...
 //!
 //! It does not matter which machine has the dongle: what matters is where
 //! the devices are connected NOW. Switching machines stops being a radio
@@ -53,7 +53,7 @@ use oxdesk_stream::net;
 #[cfg(target_os = "linux")]
 use oxdesk_stream::capture_input::{is_rescue, Device};
 
-/// Default names, if nobody passes `--dispositivo`.
+/// Default names, if nobody passes `--device`.
 #[cfg(target_os = "linux")]
 const DEFAULT: [&str; 2] = ["MX Keys", "MX Anywhere"];
 
@@ -67,12 +67,18 @@ fn main() {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let observe = args.iter().any(|a| a == "--observar");
+    // The old spellings answer too. `oxdesk` launches this binary, so the
+    // two travel together -- but a developer with a shell history and the
+    // notes in specs/ are also callers, and a flag that silently stops
+    // being recognised here means grabbing the keyboard with the wrong
+    // repeat setting.
+    let has = |new: &str, old: &str| args.iter().any(|a| a == new || a == old);
+    let observe = has("--observe", "--observar");
     // A target that applies its own repeat logic (Mutter does that with
     // injected keys) would get doubled repeat if we sent the kernel's
     // along. Whoever launches the process knows the target's OS.
-    let repeat = !args.iter().any(|a| a == "--sem-repeticao");
-    // `--autoteste N`: connects, does NOT grab, and pushes N movements
+    let repeat = !has("--no-repeat", "--sem-repeticao");
+    // `--self-test N`: connects, does NOT grab, and pushes N movements
     // through the same bridge a device would use (thread -> channel ->
     // async loop -> QUIC). It exists because the bug it caught lived
     // exactly in that bridge: `recv_timeout` blocking the executor kept the
@@ -81,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     // want to do on someone's machine.
     let self_test: usize = args
         .iter()
-        .position(|a| a == "--autoteste")
+        .position(|a| a == "--self-test" || a == "--autoteste")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -93,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut filters: Vec<String> = Vec::new();
     for (i, a) in args.iter().enumerate() {
-        if a == "--dispositivo" {
+        if a == "--device" || a == "--dispositivo" {
             if let Some(n) = args.get(i + 1) {
                 filters.push(n.clone());
             }
@@ -259,7 +265,7 @@ async fn main() -> anyhow::Result<()> {
             }
         };
 
-        // Stuck-key bookkeeping. It has to apply ALSO in `--observar`,
+        // Stuck-key bookkeeping. It has to apply ALSO in `--observe`,
         // otherwise the first real use starts with the set lying.
         if let Event::Key { keycode, pressed } = e {
             if pressed {

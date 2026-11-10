@@ -277,7 +277,7 @@ pub fn repair(id: &str, _cfg: &Config) -> Result<String, String> {
 fn install_clock() -> Result<String, String> {
     let exe = bin_dir().join("oxdesk-ota.exe");
     create_task("ota", "oxdesk-ota", &exe.to_string_lossy(), &["/sc", "hourly"])?;
-    let first = run_timed(&exe.to_string_lossy(), &["--conferir"], 60);
+    let first = run_timed(&exe.to_string_lossy(), &["--check"], 60);
     Ok(match first {
         Ok(s) => format!("tarefa criada; primeira checagem: {}", s.trim()),
         Err(e) => format!("task created, but the first check failed: {e}"),

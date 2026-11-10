@@ -331,7 +331,7 @@ pub fn repair(id: &str, cfg: &Config) -> Result<String, String> {
 /// `%h` resolves to the home of whoever runs it, so the same text serves
 /// any account.
 ///
-/// The first run is `--conferir`, on purpose: `oxdesk-ota` without
+/// The first run is `--check`, on purpose: `oxdesk-ota` without
 /// arguments may apply a new build and **restart oxdesk** -- which is
 /// what is answering this request. The clock applies on the next tick,
 /// with nobody waiting for an answer.
@@ -391,7 +391,7 @@ fn install_clock() -> Result<String, String> {
 
     // Check what stuck, not what I ordered.
     clock()?;
-    let first = crate::setup_common::run_timed(&bin.to_string_lossy(), &["--conferir"], 60);
+    let first = crate::setup_common::run_timed(&bin.to_string_lossy(), &["--check"], 60);
     Ok(match first {
         Ok(s) => format!("timer habilitado; primeira checagem: {}", s.trim()),
         Err(e) => format!("timer enabled, but the first check failed: {e}"),

@@ -20,7 +20,7 @@
 //!    `StartInterval`, scheduled task), which already exists on all
 //!    three machines and already wakes up everything that needs waking.
 //!
-//!   usage:  oxdesk-ota [--conferir | --forcar | --estado]
+//!   usage:  oxdesk-ota [--check | --force | --state]
 //!
 //! With no argument: check, and apply if there is something new.
 
@@ -33,22 +33,47 @@ mod state;
 
 use std::process::ExitCode;
 
+/// Translates the flags this binary answered to before they were renamed
+/// to English.
+///
+/// Applied once, on the way in, so the parsing below reads exactly one
+/// vocabulary. The old names cannot simply go: they are baked into things
+/// already installed on the machines -- a launchd plist and a Windows
+/// scheduled task are written once by the wizard and then outlive every
+/// deploy, and the Mac cannot be deployed at all while it has no screen.
+/// An unknown argument exits 2, so dropping a name a timer still passes
+/// would stop the updater on the one machine nobody is watching.
+pub fn canonical(args: Vec<String>) -> Vec<String> {
+    args.into_iter()
+        .map(|a| {
+            match a.as_str() {
+                "--conferir" => "--check",
+                "--forcar" => "--force",
+                "--estado" => "--state",
+                "--curto" => "--short",
+                _ => return a,
+            }
+            .to_string()
+        })
+        .collect()
+}
+
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = canonical(std::env::args().skip(1).collect());
     let mode = match args.first().map(String::as_str) {
         None => apply::Mode::Apply,
-        Some("--conferir") => apply::Mode::Check,
-        Some("--forcar") => apply::Mode::Force,
-        Some("--estado") => return show_state(args.iter().any(|a| a == "--curto")),
+        Some("--check") => apply::Mode::Check,
+        Some("--force") => apply::Mode::Force,
+        Some("--state") => return show_state(args.iter().any(|a| a == "--short")),
         Some("-h") | Some("--help") => {
             println!(
-                "oxdesk-ota [--conferir | --forcar | --estado]
+                "oxdesk-ota [--check | --force | --state]
 
   (no argument)    check the latest Release and apply it if it is newer
-  --conferir       only check and record the state; swaps nothing
-  --forcar         apply even if the stamp is the same
-  --estado         print the JSON of the last check
-  --estado --curto one line: <result> TAB <age in s> TAB <phrase>
+  --check          only check and record the state; swaps nothing
+  --force          apply even if the stamp is the same
+  --state          print the JSON of the last check
+  --state --short  one line: <result> TAB <age in s> TAB <phrase>
 
 Read token for the Releases (private repo) in ~/.config/oxdesk/ota-token
 or in the OXDESK_OTA_TOKEN variable. See specs/015-ota.md."
@@ -77,10 +102,10 @@ or in the OXDESK_OTA_TOKEN variable. See specs/015-ota.md."
 
 /// The last check, for whoever consumes it.
 ///
-/// `--curto` exists for the wizard's `ota` step: `oxdesk` does not link
+/// `--short` exists for the wizard's `ota` step: `oxdesk` does not link
 /// this crate (they are separate binaries) and **must not reimplement
 /// either the file format or the phrases**. So the asker runs
-/// `oxdesk-ota --estado --curto` and splits on TAB. One owner of the
+/// `oxdesk-ota --state --short` and splits on TAB. One owner of the
 /// format, a one-line contract.
 fn show_state(short: bool) -> ExitCode {
     let ctx = match apply::context(apply::Mode::Check) {
@@ -103,5 +128,29 @@ fn show_state(short: bool) -> ExitCode {
             eprintln!("nothing checked yet (nothing in {})", state::path(&ctx.dir).display());
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A timer or a scheduled task written before the rename still passes
+    /// the old flag, and an unknown argument exits 2 -- so dropping one
+    /// stops the updater on whichever machine nobody is watching.
+    #[test]
+    fn the_old_flags_still_name_the_same_modes() {
+        let got = canonical(
+            ["--conferir", "--forcar", "--estado", "--curto"].map(String::from).to_vec(),
+        );
+        assert_eq!(got, ["--check", "--force", "--state", "--short"]);
+    }
+
+    #[test]
+    fn a_name_we_do_not_translate_passes_through() {
+        // Including the new names: translating twice must be a no-op, or
+        // the table becomes order-dependent.
+        let got = canonical(["--check", "--help", "-h", "banana"].map(String::from).to_vec());
+        assert_eq!(got, ["--check", "--help", "-h", "banana"]);
     }
 }

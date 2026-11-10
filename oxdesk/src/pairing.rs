@@ -103,7 +103,7 @@ fn host_cmd(h: &HostCfg, args: &str) -> String {
 /// This machine's fingerprint, from the local host binary.
 fn local_fingerprint(host_bin: &Path) -> Result<String, String> {
     let out = crate::sys::child(&host_bin.to_string_lossy())
-        .arg("--digital")
+        .arg("--fingerprint")
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("read the local identity: {e}"))?;
@@ -115,7 +115,15 @@ fn local_fingerprint(host_bin: &Path) -> Result<String, String> {
 }
 
 fn remote_fingerprint(h: &HostCfg) -> Result<String, String> {
-    let out = crate::remote::run(h, &host_cmd(h, "--digital"), 12)?;
+    // `--digital` is what the host answered to before the rename, and this
+    // call lands on the OTHER machine's build. A peer we cannot deploy --
+    // the Mac while it has no screen -- knows only the old name, and
+    // pairing that fails there is pairing that fails, not a cosmetic
+    // problem. So: the new name, then the old one.
+    let mut out = crate::remote::run(h, &host_cmd(h, "--fingerprint"), 12)?;
+    if !out.lines().map(str::trim).any(is_fingerprint) {
+        out = crate::remote::run(h, &host_cmd(h, "--digital"), 12).unwrap_or(out);
+    }
     let fp = out.lines().map(str::trim).find(|l| is_fingerprint(l)).unwrap_or_default();
     if fp.is_empty() {
         return Err(format!(

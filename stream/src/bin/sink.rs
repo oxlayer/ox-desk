@@ -12,14 +12,14 @@
 //! skew plus the network, and it is labeled that way instead of being
 //! presented as truth.
 //!
-//! With `--rajada N` (burst) it also sends N mouse movements over the
+//! With `--burst N` (burst) it also sends N mouse movements over the
 //! SAME connection, as the viewer does. That matters: the host serves one
 //! client at a time, so measuring input and video over separate
 //! connections reproduces nothing -- the second one waits in the queue.
 //! That is how the first attempt to measure "the video stops when I type"
 //! measured nothing.
 //!
-//!   cargo run --release --bin sink -- <host:port> [seconds] [--rajada N]
+//!   cargo run --release --bin sink -- <host:port> [seconds] [--burst N]
 
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
     // Input burst over the SAME connection, before measuring starts.
     let burst: usize = a
         .iter()
-        .position(|x| x == "--rajada")
+        .position(|x| x == "--burst")
         .and_then(|i| a.get(i + 1))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);

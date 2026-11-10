@@ -65,19 +65,23 @@ fn main() -> anyhow::Result<()> {
     // Spec 017: the fingerprint other machines pin, read over SSH by the
     // panel. Answered BEFORE the Windows redirect, or it would land in the
     // log file instead of the SSH pipe.
-    if std::env::args().nth(1).as_deref() == Some("--digital") {
+    // `--digital` is what this answered to before the rename, and it is
+    // invoked ON THE OTHER MACHINE over SSH by `oxdesk/src/pairing.rs`.
+    // So the old name has to keep working for a caller we have not
+    // updated, and the caller tries the new one first.
+    if matches!(std::env::args().nth(1).as_deref(), Some("--fingerprint") | Some("--digital")) {
         println!("{}", oxdesk_stream::identity::load()?.fingerprint());
         return Ok(());
     }
 
-    // Same reason `--conferir` and `--pedir` live here: macOS ties the
+    // Same reason `--check` and `--request` live here: macOS ties the
     // Screen Recording grant to THIS binary's designated requirement. A
     // fresh probe binary is refused with `-3801 The user declined TCCs`
     // (measured), while this one already holds the grant and keeps it
     // across rebuilds thanks to the local signing identity. See
     // specs/020-native-mac.md.
     #[cfg(target_os = "macos")]
-    if std::env::args().nth(1).as_deref() == Some("--probe-nativo") {
+    if std::env::args().nth(1).as_deref() == Some("--probe-native") {
         return oxdesk_stream::mac_native::probe().map_err(|e| anyhow::anyhow!(e));
     }
 
@@ -86,17 +90,24 @@ fn main() -> anyhow::Result<()> {
 
     let a: Vec<String> = std::env::args().skip(1).collect();
 
-    // `--conferir` and `--pedir` live in THIS binary and not in the daemon
+    // `--check` and `--request` live in THIS binary and not in the daemon
     // because macOS TCC ties the grant to the binary -- to its designated
     // requirement. `oxdesk` asking "do I have screen permission?" would get
     // a correct answer about the wrong program, and the setup wizard would
     // paint green a permission the host does not have.
     //
-    // The output is ONE line per permission, `key: ok|falta`, because the
-    // reader is code. See oxdesk/src/setup_mac.rs.
+    // The output is ONE line per permission, `key: ok|missing`, because
+    // the reader is code. See oxdesk/src/setup_mac.rs.
+    //
+    // The old spellings still answer: this binary and the wizard that
+    // reads it are installed by the same deploy, but the Mac cannot be
+    // deployed while it has no screen, and a flag this one rejects turns
+    // a working permission into "run the deploy".
     #[cfg(target_os = "macos")]
-    if a.first().is_some_and(|v| v == "--conferir" || v == "--pedir") {
-        let request = a[0] == "--pedir";
+    if a.first().is_some_and(|v| {
+        v == "--check" || v == "--request" || v == "--conferir" || v == "--pedir"
+    }) {
+        let request = a[0] == "--request" || a[0] == "--pedir";
         if request {
             // Shows the system dialog. Only works when launched from the
             // graphical session: over SSH there is no dialog to show and
@@ -107,15 +118,18 @@ fn main() -> anyhow::Result<()> {
         // request's return value is what the user just clicked, and in the
         // common case (dialog already answered some day) there is not even
         // a dialog. What answers "can we capture now?" is the preflight.
-        // Keys and values are parsed by oxdesk/src/setup_mac.rs: do not
-        // translate them.
+        // Keys and values are parsed by oxdesk/src/setup_mac.rs: changing
+        // one side alone breaks the pair silently, which is exactly what
+        // had happened -- this printed `acessibilidade:` while the wizard
+        // looked for `accessibility:`, so a granted permission was
+        // reported as "the installed host does not understand --conferir".
         println!(
             "screen-recording: {}",
-            if oxdesk_stream::input_mac::has_screen_recording() { "ok" } else { "falta" }
+            if oxdesk_stream::input_mac::has_screen_recording() { "ok" } else { "missing" }
         );
         println!(
-            "acessibilidade: {}",
-            if oxdesk_stream::input_mac::has_accessibility() { "ok" } else { "falta" }
+            "accessibility: {}",
+            if oxdesk_stream::input_mac::has_accessibility() { "ok" } else { "missing" }
         );
         return Ok(());
     }

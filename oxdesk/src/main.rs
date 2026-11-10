@@ -155,15 +155,36 @@ fn cached(cfg: &Config, cache: &Mutex<Cache>) -> Arc<Snapshot> {
 ///
 /// The format comes from `hidpp::protocol`, shared with `oxdesk-agent`: it
 /// is the contract between the machines, and two copies would diverge.
+/// Translates the subcommands and flags this binary answered to before
+/// they were renamed to English.
+///
+/// The old names have to keep working because they are not only typed by
+/// hand: a peer invokes them **on this machine over SSH** (`kvm-soltar`,
+/// `clip-arq-*`), and a peer can be a build older than this one -- the Mac
+/// cannot be deployed while it has no screen. Translating on the way in
+/// costs one table and keeps the parsing below to a single vocabulary.
+pub fn canonical(verb: &str) -> &str {
+    match verb {
+        "kvm-soltar" => "kvm-release",
+        "clip-sonda" => "clip-probe",
+        "clip-arq-set" => "clip-file-set",
+        "clip-arq-dir" => "clip-file-dir",
+        "clip-arq-prontos" => "clip-file-ready",
+        "versao" => "version",
+        "--versao" => "--version",
+        other => other,
+    }
+}
+
 fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
     use std::process::ExitCode;
-    match args.first().map(String::as_str) {
+    match args.first().map(String::as_str).map(canonical) {
         None => None,
         Some("serve") => None,
         // Receives the clipboard from another machine, over SSH. Hands it
         // to the local daemon -- see `clip::cli_set` for why it does not
         // write directly.
-        Some("kvm-soltar") => {
+        Some("kvm-release") => {
             let port = Config::load().map(|c| c.port).unwrap_or(8787);
             Some(crate::kvm::cli_release(port))
         }
@@ -172,21 +193,21 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
             Some(crate::clip::cli_set(port))
         }
         #[cfg(target_os = "linux")]
-        Some("clip-sonda") => Some(crate::clip_files::cli_probe()),
+        Some("clip-probe") => Some(crate::clip_files::cli_probe()),
         // Receives files from another machine. `clip-arq-set` reads a tar
         // from stdin; the other two serve the rsync path, which copies
         // first and notifies afterwards.
-        Some("clip-arq-set") => {
+        Some("clip-file-set") => {
             let port = Config::load().map(|c| c.port).unwrap_or(8787);
             Some(crate::clip_files::cli_set(port))
         }
-        Some("clip-arq-dir") => Some(crate::clip_files::cli_dir()),
-        Some("clip-arq-prontos") => {
+        Some("clip-file-dir") => Some(crate::clip_files::cli_dir()),
+        Some("clip-file-ready") => {
             let port = Config::load().map(|c| c.port).unwrap_or(8787);
             match args.get(1) {
                 Some(d) => Some(crate::clip_files::cli_ready(port, d)),
                 None => {
-                    eprintln!("clip-arq-prontos: give the folder");
+                    eprintln!("clip-file-ready: give the folder");
                     Some(ExitCode::FAILURE)
                 }
             }
@@ -195,7 +216,7 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
         // daemon the binary on disk?" compares two answers with a single
         // parser, instead of inventing a second way of saying the same
         // thing. See `setup_common::daemon_on_disk`.
-        Some("versao") | Some("--versao") => {
+        Some("version") => {
             println!(
                 "{{\"build\":\"{}\",\"n\":{}}}",
                 env!("OXDESK_BUILD"),
@@ -210,9 +231,9 @@ fn run_cli(args: &[String]) -> Option<std::process::ExitCode> {
 
   (no command)   starts the daemon and serves the API on 127.0.0.1
   serve          same, explicit
-  versao         this binary's build stamp, in the /healthz shape
+  version        this binary's build stamp, in the /healthz shape
 
-  kvm-soltar     gives this machine's input back to itself
+  kvm-release    gives this machine's input back to itself
                  (used by a peer that wants the input back)
   clip-set       reads stdin and puts it on this machine's clipboard
                  (used by the peers over SSH)
@@ -1251,5 +1272,36 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         }
 
         _ => err_json(req, 404, "not found"),
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    /// A peer invokes these ON THIS MACHINE over SSH, and the peer runs
+    /// its own build. Dropping a name would make the clipboard and the
+    /// input handback fail against a machine that is merely behind.
+    #[test]
+    fn the_subcommands_a_peer_may_still_send_are_understood() {
+        for (old, new) in [
+            ("kvm-soltar", "kvm-release"),
+            ("clip-sonda", "clip-probe"),
+            ("clip-arq-set", "clip-file-set"),
+            ("clip-arq-dir", "clip-file-dir"),
+            ("clip-arq-prontos", "clip-file-ready"),
+            ("versao", "version"),
+            ("--versao", "--version"),
+        ] {
+            assert_eq!(canonical(old), new);
+            assert_eq!(canonical(new), new, "translating twice must be a no-op");
+        }
+    }
+
+    #[test]
+    fn an_unrelated_verb_is_left_alone() {
+        for v in ["serve", "clip-set", "devices", "set-host", "--help", ""] {
+            assert_eq!(canonical(v), v);
+        }
     }
 }

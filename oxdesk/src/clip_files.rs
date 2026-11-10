@@ -807,7 +807,7 @@ pub fn on_copy(cfg: &crate::config::Config, paths: &[String]) {
     let before = bases.len();
     bases.dedup();
     if bases.len() != before {
-        crate::say!("clip-arq: two files with the same name in the selection; not sent");
+        crate::say!("clip-file: two files with the same name in the selection; not sent");
         return;
     }
 
@@ -817,20 +817,20 @@ pub fn on_copy(cfg: &crate::config::Config, paths: &[String]) {
             if let Ok(mut g) = OFFER.lock() {
                 *g = None;
             }
-            crate::say!("clip-arq: {reason}; not sent");
+            crate::say!("clip-file: {reason}; not sent");
         }
         Transport::Inline => {
             if let Ok(mut g) = OFFER.lock() {
                 *g = None;
             }
             let n = m.files;
-            crate::say!("clip-arq: sending {n} file(s), {}", human_size(m.bytes));
+            crate::say!("clip-file: sending {n} file(s), {}", human_size(m.bytes));
             for p in peers(cfg) {
                 let c = paths.to_vec();
                 std::thread::spawn(move || {
                     match send_tar(&p, &c) {
-                        Ok(()) => crate::say!("clip-arq: {} received", p.name),
-                        Err(e) => crate::say!("clip-arq: {} did not receive -- {e}", p.name),
+                        Ok(()) => crate::say!("clip-file: {} received", p.name),
+                        Err(e) => crate::say!("clip-file: {} did not receive -- {e}", p.name),
                     }
                 });
             }
@@ -889,7 +889,7 @@ fn send_tar(p: &Peer, paths: &[String]) -> Result<(), String> {
     let out = tar.stdout.take().ok_or("tar without stdout")?;
     let ssh = crate::sys::child("ssh")
         .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", &p.ssh])
-        .arg(crate::remote::oxdesk_command(&p.cfg, "clip-arq-set"))
+        .arg(crate::remote::oxdesk_command(&p.cfg, "clip-file-set"))
         .stdin(Stdio::from(out))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -929,7 +929,7 @@ pub fn send_offer(cfg: &crate::config::Config, host: &str) -> Result<String, Str
     match r {
         Ok(()) => {
             let via = if use_rsync { "rsync" } else { "tar" };
-            crate::say!("clip-arq: {} went to {} via {via}", human_size(bytes), p.name);
+            crate::say!("clip-file: {} went to {} via {via}", human_size(bytes), p.name);
             Ok(format!("{} sent to {}", human_size(bytes), p.name))
         }
         Err(e) => Err(format!("{}: {e}", p.name)),
@@ -947,7 +947,7 @@ fn send_rsync(p: &Peer, paths: &[String]) -> Result<(), String> {
     let dest = &p.ssh;
     let o = crate::sys::child("ssh")
         .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", dest])
-        .arg(crate::remote::oxdesk_command(&p.cfg, "clip-arq-dir"))
+        .arg(crate::remote::oxdesk_command(&p.cfg, "clip-file-dir"))
         .output()
         .map_err(|e| format!("ssh: {e}"))?;
     if !o.status.success() {
@@ -970,7 +970,7 @@ fn send_rsync(p: &Peer, paths: &[String]) -> Result<(), String> {
 
     let o = crate::sys::child("ssh")
         .args(["-o", "BatchMode=yes", dest])
-        .arg(crate::remote::oxdesk_command(&p.cfg, &format!("clip-arq-prontos {dir}")))
+        .arg(crate::remote::oxdesk_command(&p.cfg, &format!("clip-file-ready {dir}")))
         .output()
         .map_err(|e| format!("ssh: {e}"))?;
     if o.status.success() {
