@@ -58,6 +58,43 @@ died with `command not found` **before** reaching nohup — the host never
 started and the symptom arrived as "it called VNC". Today `setsid` is
 conditional.
 
+## The session is a timeline, not a location (10/11)
+
+Everything above is about WHERE a process is born. This is about WHEN.
+
+`oxdesk.service` is a systemd **user** service, so it is born inside the
+session -- and still too early. At 12:20:00, the same second it started,
+both of these failed:
+
+```
+clip: shut down (The name org.gnome.Mutter.RemoteDesktop was not
+       provided by any .service files)
+native tray did not come up (... org.kde.StatusNotifierWatcher ...
+       ServiceUnknown ...); going on without it
+```
+
+Half an hour later the watcher was on the bus with four other icons
+registered on it, and oxdesk had no tray and no clipboard, because
+neither had asked again. `systemctl --user restart` fixed both in the
+same second -- a bug whose remedy is "a person notices" is an outage
+wearing a polite log line.
+
+**Ordering the unit does not fix this.** `org.kde.StatusNotifierWatcher`
+is owned by the AppIndicator extension, which loads after GNOME Shell is
+up, which is after `graphical-session.target`. There is no target that
+means "the shell's extensions have published their names".
+
+So: **a session D-Bus name that is missing at startup is missing YET, not
+missing.** Ask again, with a delay that starts short because a cold login
+is seconds away and grows because the other explanation (no tray at all)
+can last forever. The policy is `oxdesk/src/wait.rs`, with the tests; the
+two callers are `tray::start_when_drawable` and `clip::linux::spawn`.
+
+Proven, not assumed: with the extension disabled the daemon logs `not up
+yet`, and re-enabling it brings the icon up on its own in ~4 s with no
+restart -- `org.kde.StatusNotifierItem-<pid>-4`, the 4th attempt, which
+is the backoff showing its work.
+
 ## See also
 
 - [[windows-locked-screen]] — the same boundary, on the Windows side
