@@ -328,6 +328,31 @@ pub fn builtin_arrow() -> Shape {
     Shape { kind: ShapeKind::Mono, w, h: h * 2, pitch, bytes, hot: (0, 0) }
 }
 
+/// How often the overlay re-asserts its place at the top of the z-order.
+///
+/// Being topmost is not a property you set once. The taskbar is
+/// `WS_EX_TOPMOST` too, and the shell raises it INSIDE that band when the
+/// pointer reaches it -- above an overlay that was put there earlier. The
+/// arrow then exists, at the right pixel, and is invisible over the
+/// taskbar and nowhere else. That is how the symptom arrived: *"the cursor
+/// was drawn on Windows just right, but on the taskbar it does not show,
+/// only on windows and the desktop"*.
+pub const RAISE_EVERY: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Whether to call `SetWindowPos(HWND_TOPMOST)` on this iteration.
+///
+/// On a timer and not on every move: the overlay follows the pointer at
+/// 125 Hz, and a z-order change per frame is both wasteful and a way to
+/// start a raising war with another window that re-raises itself. On a
+/// timer the worst case is a fifth of a second of arrow behind the
+/// taskbar, which then heals on its own.
+///
+/// `just_shown` still raises immediately, because that case is not a
+/// correction -- it is the first time the window has a place at all.
+pub fn should_raise(just_shown: bool, since_last_raise: std::time::Duration) -> bool {
+    just_shown || since_last_raise >= RAISE_EVERY
+}
+
 /// The same arrow, as premultiplied BGRA for a layered window.
 ///
 /// `builtin_arrow` serves the compositing path, which speaks DXGI's
@@ -434,5 +459,27 @@ mod arrow_tests {
         for (x, y) in [(-5, -5), (14, 14), (-5, 14), (14, -5)] {
             draw(&mut px, 16 * 4, 16, 16, &f, x, y);
         }
+    }
+}
+
+#[cfg(test)]
+mod raise_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn appearing_raises_without_waiting_for_the_timer() {
+        assert!(should_raise(true, Duration::ZERO));
+    }
+
+    #[test]
+    fn while_visible_it_raises_on_the_timer_and_not_on_every_frame() {
+        // 8 ms is the follow interval: at 125 Hz this must say no, or the
+        // overlay changes the z-order of the whole desktop 125 times a
+        // second to fix a problem that happens when a window rises.
+        assert!(!should_raise(false, Duration::from_millis(8)));
+        assert!(!should_raise(false, RAISE_EVERY - Duration::from_millis(1)));
+        assert!(should_raise(false, RAISE_EVERY));
+        assert!(should_raise(false, Duration::from_secs(5)));
     }
 }

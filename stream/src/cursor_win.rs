@@ -190,6 +190,8 @@ fn overlay() -> anyhow::Result<()> {
 
         let mut shown = false;
         let mut last = (i32::MIN, i32::MIN);
+        // Far enough in the past that the first visible iteration raises.
+        let mut raised = std::time::Instant::now() - crate::cursor::RAISE_EVERY;
         let mut msg = MSG::default();
         loop {
             // The pump is mandatory even for a window nobody clicks: an
@@ -230,11 +232,19 @@ fn overlay() -> anyhow::Result<()> {
                         ULW_ALPHA,
                     );
                 }
-                if !shown {
+                let appearing = !shown;
+                if appearing {
                     let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-                    // Topmost AGAIN on each appearance: a window that went
-                    // fullscreen while we were hidden would be above us,
-                    // and then the arrow exists and nobody sees it.
+                    shown = true;
+                    DRAWING.store(true, Ordering::Relaxed);
+                    println!("  cursor overlay: drawing at {},{}", pt.x, pt.y);
+                }
+                // Topmost again, and AGAIN AND AGAIN. Doing it only on
+                // appearance covered the window that went fullscreen while
+                // we were hidden, and missed the one that rises while we
+                // are visible -- which is the taskbar, every time the
+                // pointer reaches it. See `cursor::should_raise`.
+                if crate::cursor::should_raise(appearing, raised.elapsed()) {
                     let _ = SetWindowPos(
                         hwnd,
                         Some(HWND_TOPMOST),
@@ -244,9 +254,7 @@ fn overlay() -> anyhow::Result<()> {
                         0,
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                     );
-                    shown = true;
-                    DRAWING.store(true, Ordering::Relaxed);
-                    println!("  cursor overlay: drawing at {},{}", pt.x, pt.y);
+                    raised = std::time::Instant::now();
                 }
             } else if shown {
                 let _ = ShowWindow(hwnd, SW_HIDE);
