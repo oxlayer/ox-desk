@@ -21,8 +21,16 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-ALVO_USER="${SUDO_USER:-user}"
-LAN="192.168.1.0/24"
+# No fallback to a name: this grants ssh access to an account, and
+# guessing whose would be the worst possible default.
+ALVO_USER="${SUDO_USER:-}"
+[ -n "$ALVO_USER" ] || { echo "run it with sudo, so SUDO_USER says who gets access" >&2; exit 1; }
+
+# The range allowed to reach ssh. Required: opening a firewall to a
+# network we guessed is a rule for somebody else's network.
+#   ip -o -f inet addr show | awk '{print $4}'
+LAN="${OXDESK_LAN_CIDR:-${LAN:-}}"
+[ -n "$LAN" ] || { echo "set OXDESK_LAN_CIDR=<your.lan.0/24> (see scripts/targets.example.sh)" >&2; exit 1; }
 
 echo "== 1. installing openssh-server and a screen client =="
 export DEBIAN_FRONTEND=noninteractive

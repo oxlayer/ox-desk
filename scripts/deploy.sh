@@ -14,13 +14,31 @@ export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
 
 # The Windows key has a passphrase, and the GNOME agent holds it. In an
 # SSH session this variable comes empty: Windows accepts the key, the
-# signature never happens, and `windows-host` answers `Permission denied`.
+# signature never happens, and Windows answers `Permission denied`.
 if [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "/run/user/$(id -u)/gcr/ssh" ]; then
   export SSH_AUTH_SOCK="/run/user/$(id -u)/gcr/ssh"
 fi
 
 PULAR_MAC=0
 [ "${1:-}" = "--pular-mac" ] && PULAR_MAC=1
+
+# WHERE this sends things. Not in the repo: a script someone runs must not
+# carry someone else's machines (.claude/rules/no-personal-data.md). Copy
+# scripts/targets.example.sh to scripts/targets.sh and fill it in.
+TARGETS="$(dirname "$0")/targets.sh"
+# shellcheck source=/dev/null
+[ -f "$TARGETS" ] && . "$TARGETS"
+WIN="${OXDESK_WIN_SSH:-}"
+MAC="${OXDESK_MAC_SSH:-}"
+if [ -z "$WIN" ]; then
+  echo "no target for the Windows machine." >&2
+  echo "  cp scripts/targets.example.sh scripts/targets.sh   and fill it in" >&2
+  echo "  (or export OXDESK_WIN_SSH=<ssh alias>)" >&2
+  exit 1
+fi
+# No Mac configured is the same as --pular-mac: the alternative is fifteen
+# steps failing one by one against an empty host name.
+[ -z "$MAC" ] && PULAR_MAC=1
 
 # `desconhecido` and `-sujo` are part of the build stamp that oxdesk parses
 # (oxdesk/build.rs, setup_comum.rs): they stay as they are.
@@ -65,7 +83,7 @@ erro()  { echo "FAILED"; echo "$1" | tail -6 | sed 's/^/      /'; falhas=$((falh
 # before running, so one bad line at the end means none of it runs.
 psrun() {
   local enc; enc=$(iconv -f UTF-8 -t UTF-16LE | base64 -w0)
-  timeout 180 ssh -o BatchMode=yes windows-host "powershell -NoProfile -EncodedCommand $enc" 2>&1 |
+  timeout 180 ssh -o BatchMode=yes "$WIN" "powershell -NoProfile -EncodedCommand $enc" 2>&1 |
     grep -av 'post-quantum\|store now\|openssh.com/pq\|^\*\* \|#< CLIXML\|<Objs Version' | tr -d '\r'
 }
 
@@ -170,7 +188,7 @@ envia() {
   local src="$1" nome="$2" limpo saida codigo
   limpo=$(limpa_novos)
   if printf '%s' "$limpo" | grep -q 'ERROR'; then printf '%s\n' "$limpo"; return 1; fi
-  saida=$(timeout 180 scp -q "$src" "windows-host:C:/Users/user/AppData/Local/oxdesk/$nome.new.exe" 2>&1)
+  saida=$(timeout 180 scp -q "$src" "$WIN:AppData/Local/oxdesk/$nome.new.exe" 2>&1)
   codigo=$?
   [ "$codigo" -eq 0 ] && return 0
   # The upload failed, and `scp`'s message names no file -- which is how one
@@ -241,7 +259,7 @@ passo "windows: GUI shell"
 #
 # Takes effect on the app's next launch; we do not kill anyone's window.
 if out=$(timeout 60 scp -q gui/main.js \
-           'windows-host:C:/Users/user/AppData/Local/oxdesk/gui/main.js' 2>&1); then ok
+           "$WIN:AppData/Local/oxdesk/gui/main.js" 2>&1); then ok
 else erro "$out"; fi
 
 passo "windows: agent"
@@ -494,14 +512,14 @@ else
   # without the only path it has to update itself away from home
   # (specs/015).
   if out=$(for d in hidpp oxdesk stream ota; do
-             rsync -az --delete --exclude target -e "ssh -o BatchMode=yes" "$d" mac:~/oxdesk/ || exit 1
+             rsync -az --delete --exclude target -e "ssh -o BatchMode=yes" "$d" "$MAC:~/oxdesk/" || exit 1
            done 2>&1); then ok; else erro "$out"; fi
 
   passo "mac: updater (oxdesk-ota)"
   # Built THERE, like every Mac binary. It deliberately does not depend on
   # brew (build-binaries.sh refuses if it does): whatever repairs the
   # machine must not need ffmpeg to come up.
-  if out=$(timeout 300 ssh -n -o BatchMode=yes mac \
+  if out=$(timeout 300 ssh -n -o BatchMode=yes "$MAC" \
             "cd ~/oxdesk/ota && OXDESK_BUILD='$BUILD' OXDESK_BUILD_N='$OXDESK_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
              install -m755 target/release/oxdesk-ota ~/.local/bin/oxdesk-ota &&
              ~/.local/bin/oxdesk-ota --help > /dev/null" 2>&1); then ok; else erro "$out"; fi
@@ -516,7 +534,7 @@ else
   #    dies with `Address already in use`.
   # 2. Check `/healthz`. Asking for a restart is not having restarted --
   #    see .claude/rules/verify-what-arrived.md.
-  if out=$(timeout 420 ssh -n -o BatchMode=yes mac \
+  if out=$(timeout 420 ssh -n -o BatchMode=yes "$MAC" \
             "cd ~/oxdesk/oxdesk && OXDESK_BUILD='$BUILD' OXDESK_BUILD_N='$OXDESK_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
              install -m755 target/release/oxdesk ~/.local/bin/oxdesk || exit 1
              pkill -x oxdesk
@@ -560,7 +578,7 @@ else
   # See FFMPEG_SONAME in build-binaries.sh, which on the PACKAGE path
   # is strict on purpose -- a package linked to the unversioned prefix
   # does not install on a machine that only has the versioned keg.
-  if out=$(timeout 900 ssh -n -o BatchMode=yes mac \
+  if out=$(timeout 900 ssh -n -o BatchMode=yes "$MAC" \
             "cd ~/oxdesk/stream && export PATH=/opt/homebrew/bin:\$PATH PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig &&
              ~/.cargo/bin/cargo build --release --bin oxdesk-view --bin oxdesk-bridge --bin oxdesk-host 2>&1 | tail -3 &&
              mkdir -p ~/.local/bin ~/.local/state &&
@@ -590,7 +608,7 @@ else
   # FAILS if the binary stays ad-hoc. The previous version of this step
   # had a `|| true` and said ok with the signature not applied -- and I
   # only found out because the Mac's screen started freezing again.
-  if out=$(ssh -n -o BatchMode=yes mac \
+  if out=$(ssh -n -o BatchMode=yes "$MAC" \
             "~/.local/bin/sign.sh ~/.local/bin/oxdesk-host 2>&1 | tail -3;
              if codesign -dv ~/.local/bin/oxdesk-host 2>&1 | grep -q adhoc; then
                echo 'ERROR: the binary stayed ad-hoc; run create-identity.sh on the Mac'
@@ -604,8 +622,8 @@ else
   # grant on every deploy. The identity itself is created by hand, once,
   # in the Mac's Terminal (`create-identity.sh`) -- over SSH the keychain
   # is locked.
-  if out=$(scp -q -o BatchMode=yes mac/create-identity.sh mac/sign.sh mac:.local/bin/ 2>&1 &&
-           ssh -n -o BatchMode=yes mac "chmod +x ~/.local/bin/create-identity.sh ~/.local/bin/sign.sh" 2>&1); then ok; else erro "$out"; fi
+  if out=$(scp -q -o BatchMode=yes mac/create-identity.sh mac/sign.sh "$MAC:.local/bin/" 2>&1 &&
+           ssh -n -o BatchMode=yes "$MAC" "chmod +x ~/.local/bin/create-identity.sh ~/.local/bin/sign.sh" 2>&1); then ok; else erro "$out"; fi
 
   passo "mac: screen host LaunchAgent"
   # The host MUST be born in the graphical session: capture depends on a
@@ -613,8 +631,8 @@ else
   # AVFoundation hangs instead of failing. `RunAtLoad false` -- it only
   # comes up when someone asks for the screen, so it does not burn battery
   # capturing for nobody.
-  if out=$(scp -q -o BatchMode=yes mac/app.oxdesk.host.plist mac:Library/LaunchAgents/ 2>&1 &&
-           ssh -n -o BatchMode=yes mac \
+  if out=$(scp -q -o BatchMode=yes mac/app.oxdesk.host.plist "$MAC:Library/LaunchAgents/" 2>&1 &&
+           ssh -n -o BatchMode=yes "$MAC" \
             "launchctl bootout gui/\$(id -u)/app.oxdesk.host 2>/dev/null || true;
              # bootstrap fails with an I/O error if the previous one is
              # still exiting. A short pause covers it, and retrying is
@@ -641,11 +659,11 @@ else
   # We do not restart the GUI here: it reads `main.js` on its next launch,
   # and killing the window of whoever is using the machine is not the
   # deploy's job.
-  if out=$(ssh -n -o BatchMode=yes mac \
+  if out=$(ssh -n -o BatchMode=yes "$MAC" \
              'mkdir -p ~/Applications/Oxdesk.app/Contents/Resources/app' 2>&1 &&
            rsync -az -e "ssh -o BatchMode=yes" gui/main.js gui/package.json gui/icon.png gui/tray.png \
-             mac:Applications/Oxdesk.app/Contents/Resources/app/ 2>&1 &&
-           ssh -n -o BatchMode=yes mac '
+             "$MAC:Applications/Oxdesk.app/Contents/Resources/app/" 2>&1 &&
+           ssh -n -o BatchMode=yes "$MAC" '
              APP=$HOME/Applications/Oxdesk.app
              if [ -f "$APP/Contents/Resources/app.asar" ]; then
                mv "$APP/Contents/Resources/app.asar" "$APP/Contents/Resources/app.asar.off"
@@ -667,16 +685,16 @@ TOKEN="$HOME/.config/oxdesk/ota-token"
 if [ -f "$TOKEN" ]; then
   passo "windows: OTA token"
   if out=$(timeout 60 scp -q "$TOKEN" \
-             'windows-host:C:/Users/user/AppData/Local/oxdesk/ota-token' 2>&1); then ok
+             "$WIN:AppData/Local/oxdesk/ota-token" 2>&1); then ok
   else erro "$out"; fi
   if [ "$PULAR_MAC" -eq 0 ]; then
     passo "mac: OTA token"
     # `chmod 600` on that side: scp preserves the source mode, but relying
     # on that is relying on another machine's umask -- and the wizard
     # refuses a token readable by others.
-    if out=$(ssh -n -o BatchMode=yes mac 'mkdir -p ~/.config/oxdesk' 2>&1 &&
-             scp -q -o BatchMode=yes "$TOKEN" mac:.config/oxdesk/ota-token 2>&1 &&
-             ssh -n -o BatchMode=yes mac 'chmod 600 ~/.config/oxdesk/ota-token' 2>&1); then ok
+    if out=$(ssh -n -o BatchMode=yes "$MAC" 'mkdir -p ~/.config/oxdesk' 2>&1 &&
+             scp -q -o BatchMode=yes "$TOKEN" "$MAC:.config/oxdesk/ota-token" 2>&1 &&
+             ssh -n -o BatchMode=yes "$MAC" 'chmod 600 ~/.config/oxdesk/ota-token' 2>&1); then ok
     else erro "$out"; fi
   fi
 else
@@ -692,7 +710,7 @@ sleep 6
 declare -A visto
 visto[ubuntu]=$(curl -s --max-time 8 http://127.0.0.1:8787/healthz 2>/dev/null)
 visto[windows]=$(echo "(Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 'http://127.0.0.1:8787/healthz').Content" | psrun)
-[ "$PULAR_MAC" -eq 1 ] || visto[mac]=$(timeout 25 ssh -n -o BatchMode=yes mac \
+[ "$PULAR_MAC" -eq 1 ] || visto[mac]=$(timeout 25 ssh -n -o BatchMode=yes "$MAC" \
   'curl -s --max-time 8 http://127.0.0.1:8787/healthz' 2>/dev/null)
 
 for h in "${!visto[@]}"; do

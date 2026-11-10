@@ -3,9 +3,11 @@
 # The value never goes through argv or the screen. The grep below matches
 # oxdesk-ota's own output (pt-BR result words): keep it in sync with ota/.
 #
-#   bash scripts/distribute-ota-token.sh mac ubuntu windows-host
+#   bash scripts/distribute-ota-token.sh [extra-unix-alias ...]
 #
-# Pass the ssh aliases of the OTHER machines. Windows aliases must be `windows-host`.
+# The targets come from scripts/targets.sh, like the deploy: the Windows
+# machine is the one named there, not one whose alias we pattern-match.
+# Extra aliases given as arguments are treated as unix machines.
 set -uo pipefail
 
 TOKEN="$HOME/.config/oxdesk/ota-token"
@@ -13,11 +15,17 @@ TOKEN="$HOME/.config/oxdesk/ota-token"
 [ "$(stat -f '%Lp' "$TOKEN" 2>/dev/null || stat -c '%a' "$TOKEN")" = 600 ] ||
   { echo "$TOKEN needs chmod 600"; exit 1; }
 
+TARGETS="$(dirname "$0")/targets.sh"
+# shellcheck source=/dev/null
+[ -f "$TARGETS" ] && . "$TARGETS"
+WIN="${OXDESK_WIN_SSH:-}"
+MAC="${OXDESK_MAC_SSH:-}"
+
 falhou=0
-for h in "$@"; do
-  if [ "$h" = windows-host ]; then
-    scp -q -o BatchMode=yes "$TOKEN" 'windows-host:AppData/Local/oxdesk/ota-token' &&
-      ssh -T -o BatchMode=yes windows-host 'icacls "$env:LOCALAPPDATA\oxdesk\ota-token" /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null; & "$env:LOCALAPPDATA\oxdesk\oxdesk-ota.exe" --conferir | Out-String' 2>&1 |
+for h in "$@" ${MAC:+"$MAC"} ${WIN:+"$WIN"}; do
+  if [ -n "$WIN" ] && [ "$h" = "$WIN" ]; then
+    scp -q -o BatchMode=yes "$TOKEN" "$WIN:AppData/Local/oxdesk/ota-token" &&
+      ssh -T -o BatchMode=yes "$WIN" 'icacls "$env:LOCALAPPDATA\oxdesk\ota-token" /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null; & "$env:LOCALAPPDATA\oxdesk\oxdesk-ota.exe" --conferir | Out-String' 2>&1 |
       grep -E '^(erro|igual|novo|há|ha |build)' | cut -c1-100 || falhou=1
   else
     ssh -T -o BatchMode=yes "$h" 'umask 077; mkdir -p ~/.config/oxdesk; cat > ~/.config/oxdesk/ota-token' < "$TOKEN" &&

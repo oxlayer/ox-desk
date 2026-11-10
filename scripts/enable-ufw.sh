@@ -20,7 +20,10 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-LAN="${LAN:-192.168.1.0/24}"
+# Required, with no fallback, for the reason in enable-sshd.sh.
+#   ip -o -f inet addr show | awk '{print $4}'
+LAN="${OXDESK_LAN_CIDR:-${LAN:-}}"
+[ -n "$LAN" ] || { echo "set OXDESK_LAN_CIDR=<your.lan.0/24> (see scripts/targets.example.sh)" >&2; exit 1; }
 echo "== LAN in use: $LAN =="
 
 if ! command -v ufw >/dev/null 2>&1; then
@@ -56,7 +59,11 @@ cat <<EOF
 == check ==
 EOF
 echo -n "  mDNS still resolves Windows?   "
-getent hosts windows-host.local >/dev/null 2>&1 && echo "yes" || echo "NO -- review the 5353 rule"
+if [ -n "${OXDESK_WIN_SSH:-}" ]; then
+  getent hosts "${OXDESK_WIN_SSH}.local" >/dev/null 2>&1 && echo "yes" || echo "NO -- review the 5353 rule"
+else
+  echo "skipped: set OXDESK_WIN_SSH to check mDNS against a peer"
+fi
 echo -n "  22 listening?                  "
 ss -tln | grep -q ':22 ' && echo "yes" || echo "no"
 echo -n "  8787 only on loopback?         "
