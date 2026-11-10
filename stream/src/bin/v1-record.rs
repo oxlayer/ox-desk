@@ -54,7 +54,7 @@ const T: Duration = Duration::from_secs(10);
 // list of binaries.
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!("oxdesk-record so roda no Linux: ele captura pelo Mutter/PipeWire, que so existem la");
+    eprintln!("oxdesk-record only runs on Linux: it captures through Mutter/PipeWire, which exist only there");
     std::process::exit(1);
 }
 

@@ -107,7 +107,7 @@ fn main() -> anyhow::Result<()> {
         // Keys and values are parsed by oxdesk/src/setup_mac.rs: do not
         // translate them.
         println!(
-            "gravacao-de-tela: {}",
+            "screen-recording: {}",
             if oxdesk_stream::input_mac::has_screen_recording() { "ok" } else { "falta" }
         );
         println!(

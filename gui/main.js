@@ -310,7 +310,7 @@ async function refreshTray() {
   if (devs?.error) {
     items.push({ label: devs.error.slice(0, 60), enabled: false });
   } else if (!list.length) {
-    items.push({ label: 'nenhum dispositivo conhecido', enabled: false });
+    items.push({ label: 'no known device', enabled: false });
   } else {
     for (const d of list) items.push({ label: batteryLabel(d), enabled: false });
   }
@@ -327,7 +327,7 @@ async function refreshTray() {
     for (const h of remotes) {
       const active = viaLan && kvm?.target === h.name;
       items.push({
-        label: (active ? '● ' : '') + `Mandar para ${h.name}`,
+        label: (active ? '● ' : '') + `Send to ${h.name}`,
         click: () => focus(h.name),
       });
     }
@@ -360,7 +360,7 @@ async function refreshTray() {
   const low = list.filter((d) => (d.battery_percent ?? 100) <= 15);
   const summary = list.length
     ? list.map((d) => `${d.name}: ${d.battery_percent ?? '?'}%`).join(' | ')
-    : 'sem dispositivos';
+    : 'no devices';
   tray.setToolTip(
     'oxdesk' + (low.length ? '  [BATERIA BAIXA]' : '') + '\n' + summary
   );

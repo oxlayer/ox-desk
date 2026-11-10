@@ -5,7 +5,7 @@
 # It is what CI runs (specs/013), and it runs the same here: the logic of
 # "which binaries exist" cannot live only in a YAML nobody runs locally.
 #
-#   usage:  bash scripts/build-binaries.sh <linux|windows|mac> [--sem-compilar]
+#   usage:  bash scripts/build-binaries.sh <linux|windows|mac> [--no-build]
 #
 # The binary list mirrors what `deploy.sh` installs on each machine. A new
 # binary there has to be added here: `oxdesk-kvm` was already left out
@@ -16,9 +16,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-ALVO="${1:?usage: build-binaries.sh <linux|windows|mac> [--sem-compilar]}"
-COMPILAR=1
-[ "${2:-}" = "--sem-compilar" ] && COMPILAR=0
+TARGET="${1:?usage: build-binaries.sh <linux|windows|mac> [--no-build]}"
+BUILD=1
+[ "${2:-}" = "--no-build" ] && BUILD=0
 
 OXDESK_BUILD="${OXDESK_BUILD:-$(git rev-parse --short HEAD)}"
 # BUILD_BASE + the commit count: the squash of 2026-11-08 reset the count,
@@ -53,17 +53,17 @@ WIN=x86_64-pc-windows-gnu
 # Changing major means changing both ends in the same commit. The check
 # in `conferir_dependencias` breaks the build if only one moves.
 FFMPEG_FORMULA="ffmpeg@7"
-FFMPEG_PREFIXO="/opt/homebrew/opt/$FFMPEG_FORMULA"
+FFMPEG_PREFIX="/opt/homebrew/opt/$FFMPEG_FORMULA"
 FFMPEG_SONAME="libavcodec.61.dylib"
 # The script CHECKS this prefix, so it also SETS it: relying on the caller
 # leaves `bash scripts/build-binaries.sh mac` by hand behaving differently
 # from CI, and the header of this file exists because the packaging logic
 # cannot live only in a YAML nobody runs locally.
-if [ "$ALVO" = mac ]; then
-  export PKG_CONFIG_PATH="$FFMPEG_PREFIXO/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+if [ "$TARGET" = mac ]; then
+  export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 fi
 
-case "$ALVO" in
+case "$TARGET" in
   linux)
     PACOTE="oxdesk-linux-x86_64"
     FORMATO='ELF 64-bit.*x86-64'
@@ -95,7 +95,7 @@ stream/target/release/oxdesk-view
 stream/target/release/oxdesk-bridge
 ota/target/release/oxdesk-ota"
     ;;
-  *) echo "unknown target: $ALVO" >&2; exit 2 ;;
+  *) echo "unknown target: $TARGET" >&2; exit 2 ;;
 esac
 
 # The MacBook cannot hold the `ffmpeg@7` keg: macOS 14 is Tier 3 for
@@ -115,16 +115,16 @@ esac
 # FILE. If they ever stop being, this refuses: a package that lies about
 # what it was linked against is worse than one that fails to build.
 fixar_prefixo_ffmpeg() {
-  [ "$ALVO" = mac ] || return 0
+  [ "$TARGET" = mac ] || return 0
   local f="$1" name="$2" d new a b
   # Both prefixes come from the ONE declaration: `@7` is the declared one
-  # and `${FFMPEG_PREFIXO%@*}` is the same formula unversioned. Deriving
+  # and `${FFMPEG_PREFIX%@*}` is the same formula unversioned. Deriving
   # them beats writing the paths twice, and beats a substitution with
   # escaped slashes -- which is what broke here first, putting a literal
   # `opt\/ffmpeg@7\/` in the message.
-  local sem="${FFMPEG_PREFIXO%@*}"
-  for d in $(otool -L "$f" | grep -o "$sem/[^ ]*"); do
-    new="$FFMPEG_PREFIXO/${d#"$sem"/}"
+  local bare="${FFMPEG_PREFIX%@*}"
+  for d in $(otool -L "$f" | grep -o "$bare/[^ ]*"); do
+    new="$FFMPEG_PREFIX/${d#"$bare"/}"
     a=$(stat -f %i "$d" 2>/dev/null)
     b=$(stat -f %i "$new" 2>/dev/null)
     if [ -z "$a" ] || [ -z "$b" ]; then
@@ -141,7 +141,7 @@ fixar_prefixo_ffmpeg() {
 }
 
 compilar() {
-  case "$ALVO" in
+  case "$TARGET" in
     linux)
       cargo build --release --locked --manifest-path oxdesk/Cargo.toml &&
       cargo build --release --locked --manifest-path ota/Cargo.toml &&
@@ -164,8 +164,8 @@ compilar() {
   esac
 }
 
-echo "== $ALVO: build #$OXDESK_BUILD_N $OXDESK_BUILD =="
-if [ "$COMPILAR" -eq 1 ]; then
+echo "== $TARGET: build #$OXDESK_BUILD_N $OXDESK_BUILD =="
+if [ "$BUILD" -eq 1 ]; then
   compilar || { echo "ERROR: the build failed"; exit 1; }
 fi
 
@@ -176,7 +176,7 @@ falha() { echo "ERROR: $1"; failures=$((failures + 1)); }
 # and each answer has already been a real problem or would be one silently.
 conferir_dependencias() {
   local b="$1" name="$2" deps
-  case "$ALVO" in
+  case "$TARGET" in
     linux)
       deps=$(ldd "$b" 2>&1)
       if printf '%s\n' "$deps" | grep -q 'not found'; then
@@ -209,15 +209,15 @@ conferir_dependencias() {
       # `/opt/homebrew/opt/ffmpeg/` (unversioned) is exactly the case that
       # works on the runner and does not load on the machine.
       local fora
-      fora=$(printf '%s\n' "$deps" | grep '/opt/homebrew' | grep -v "$FFMPEG_PREFIXO/" || true)
+      fora=$(printf '%s\n' "$deps" | grep '/opt/homebrew' | grep -v "$FFMPEG_PREFIX/" || true)
       if [ -n "$fora" ]; then
-        falha "$name: brew dylib outside $FFMPEG_PREFIXO (wrong PKG_CONFIG_PATH?)"
+        falha "$name: brew dylib outside $FFMPEG_PREFIX (wrong PKG_CONFIG_PATH?)"
         printf '%s\n' "$fora"
       fi
       # The major is what OTA checks on the other side. If the runner
       # changes formula or version, this breaks HERE, at build time, and
       # not a week later in a silent OTA refusal on the Mac.
-      if printf '%s\n' "$deps" | grep -q "$FFMPEG_PREFIXO" &&
+      if printf '%s\n' "$deps" | grep -q "$FFMPEG_PREFIX" &&
          ! printf '%s\n' "$deps" | grep -q "$FFMPEG_SONAME"; then
         falha "$name: expected $FFMPEG_SONAME ($FFMPEG_FORMULA) and did not find it -- did the major change?"
       fi
@@ -226,20 +226,20 @@ conferir_dependencias() {
   esac
 }
 
-SAIDA="dist/$PACOTE-$OXDESK_BUILD_N-$OXDESK_BUILD"
-rm -rf "$SAIDA" "$SAIDA.tar.gz"
-mkdir -p "$SAIDA"
+OUTDIR="dist/$PACOTE-$OXDESK_BUILD_N-$OXDESK_BUILD"
+rm -rf "$OUTDIR" "$OUTDIR.tar.gz"
+mkdir -p "$OUTDIR"
 
 printf '%-24s %12s  %s\n' binary bytes sha256
-LINHAS=""
+ROWS=""
 while IFS= read -r b; do
   name=$(basename "$b")
   [ -f "$b" ] || { falha "$name does not exist at $b"; continue; }
   # Copy FIRST, then check: `fixar_prefixo_ffmpeg` edits the copy, so
   # checking and hashing the original would describe a file that is not the
   # one in the package. The build output in target/ is never touched.
-  cp "$b" "$SAIDA/" || { falha "$name: copy failed"; continue; }
-  d="$SAIDA/$name"
+  cp "$b" "$OUTDIR/" || { falha "$name: copy failed"; continue; }
+  d="$OUTDIR/$name"
   tipo=$(file -b "$d")
   printf '%s' "$tipo" | grep -qE "$FORMATO" || falha "$name: unexpected format: $tipo"
   fixar_prefixo_ffmpeg "$d" "$name"
@@ -249,17 +249,17 @@ while IFS= read -r b; do
   bytes=$(wc -c < "$d" | tr -d ' ')
   [ "$bytes" -gt 100000 ] || falha "$name: only $bytes bytes"
   conferir_dependencias "$d" "$name"
-  soma=$(shasum -a 256 "$d" | cut -d' ' -f1)
-  printf '%-24s %12s  %s\n' "$name" "$bytes" "$soma"
-  printf '%s  %s\n' "$soma" "$name" >> "$SAIDA/SHA256SUMS"
-  LINHAS="$LINHAS| \`$name\` | $bytes | \`${soma:0:16}\` |
+  sum=$(shasum -a 256 "$d" | cut -d' ' -f1)
+  printf '%-24s %12s  %s\n' "$name" "$bytes" "$sum"
+  printf '%s  %s\n' "$sum" "$name" >> "$OUTDIR/SHA256SUMS"
+  ROWS="$ROWS| \`$name\` | $bytes | \`${sum:0:16}\` |
 "
 done <<< "$BINARIOS"
 
 # The stamp proves this binary is from THIS commit. It is the same question
 # the deploy asks /healthz at the end, asked before any machine receives it.
-daemon="$SAIDA/oxdesk"
-[ "$ALVO" = windows ] && daemon="$SAIDA/oxdesk.exe"
+daemon="$OUTDIR/oxdesk"
+[ "$TARGET" = windows ] && daemon="$OUTDIR/oxdesk.exe"
 if [ -f "$daemon" ]; then
   grep -aqF "$OXDESK_BUILD" "$daemon" || falha "oxdesk does not carry the stamp $OXDESK_BUILD"
 fi
@@ -269,18 +269,18 @@ if [ "$failures" -ne 0 ]; then
   exit 1
 fi
 
-tar -czf "$SAIDA.tar.gz" -C dist "$(basename "$SAIDA")"
-pacote_bytes=$(wc -c < "$SAIDA.tar.gz" | tr -d ' ')
-echo "package: $SAIDA.tar.gz ($pacote_bytes bytes)"
+tar -czf "$OUTDIR.tar.gz" -C dist "$(basename "$OUTDIR")"
+pacote_bytes=$(wc -c < "$OUTDIR.tar.gz" | tr -d ' ')
+echo "package: $OUTDIR.tar.gz ($pacote_bytes bytes)"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
-    echo "### $ALVO: build #$OXDESK_BUILD_N \`$OXDESK_BUILD\`"
+    echo "### $TARGET: build #$OXDESK_BUILD_N \`$OXDESK_BUILD\`"
     echo
     echo "| binary | bytes | sha256 |"
     echo "|---|---:|---|"
-    printf '%s' "$LINHAS"
+    printf '%s' "$ROWS"
     echo
-    echo "Package: \`$(basename "$SAIDA").tar.gz\`, $pacote_bytes bytes."
+    echo "Package: \`$(basename "$OUTDIR").tar.gz\`, $pacote_bytes bytes."
   } >> "$GITHUB_STEP_SUMMARY"
 fi

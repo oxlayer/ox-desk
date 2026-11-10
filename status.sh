@@ -103,6 +103,6 @@ sec "── Recent errors ──────────────────
 # The pattern matches oxdesk's own log words, Portuguese and English: keep
 # it in step with the daemon's messages.
 ERR=$(journalctl --user -u $UNIT --since '-1 hour' --no-pager 2>/dev/null \
-      | grep -iE 'failed|falhou|erro|error|FATAL|split state|dividido' | tail -6)
+      | grep -iE 'failed|error|FATAL|split state' | tail -6)
 [ -n "$ERR" ] && echo "$ERR" | sed 's/^/  /' || ok "no errors in the last hour"
 echo

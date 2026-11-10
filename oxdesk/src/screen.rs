@@ -473,8 +473,8 @@ pub(crate) fn wake_host(h: &crate::config::HostCfg, port: u16) -> Result<(), Str
     // wrong one sends the person looking for a file that does not exist.
     Err(if crate::remote::is_powershell(h) {
         format!(
-            "o host de tela nao subiu em {}: confira `schtasks /query /tn oxdesk-host` \
-             la -- a tarefa precisa existir e a sessao estar aberta (ela roda com /it)",
+            "the screen host did not come up on {}: check `schtasks /query /tn oxdesk-host` \
+             there -- the task has to exist and the session has to be open (it runs with /it)",
             h.name
         )
     } else {

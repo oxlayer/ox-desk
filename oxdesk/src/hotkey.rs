@@ -1,0 +1,328 @@
+//! Both Ctrl keys, when the input is HERE: send it to the other machine.
+//!
+//! Spec: ../../specs/005-input-switch.md
+//!
+//! ## Why this module exists at all
+//!
+//! The gesture already existed, in one direction only. `oxdesk-kvm` grabs
+//! the devices and watches for both Ctrls to **release** them -- the way
+//! back that does not depend on the network (see
+//! `stream::capture_input::is_rescue`). But that watcher lives inside the
+//! grabbing process, which only exists WHILE input is away. With the input
+//! here, nobody was listening, so the same gesture did nothing and the only
+//! way out was the tray.
+//!
+//! So: both Ctrls is now a toggle. Here -> there is this module; there ->
+//! here stays where it was.
+//!
+//! ## Why a toggle and not a cycle through the machines
+//!
+//! A cycle would destroy the escape. From a remote machine, coming home
+//! would take N presses, each one a round trip over a network that may be
+//! exactly what broke. "Both Ctrls always brings the input home" has to
+//! stay true in one press, so the second direction is a toggle against a
+//! single target.
+//!
+//! ## Why this reader never grabs
+//!
+//! It opens the keyboard read-only and never calls `EVIOCGRAB`. Two
+//! reasons, and the second is the good one:
+//!
+//! - grabbing here would take the keyboard away from the local desktop,
+//!   which is the opposite of what a daemon watching for a hotkey should do;
+//! - **while `oxdesk-kvm` holds the grab, this reader receives nothing.**
+//!   The kernel delivers to the grabbing fd alone. So the two watchers are
+//!   mutually exclusive by construction: no flag, no coordination, no
+//!   window where both react to the same press.
+//!
+//! It reads key codes and keeps the state of exactly two of them. Nothing
+//! is logged, and no other key is looked at -- a daemon that can see every
+//! keystroke should be able to say precisely what it does with them.
+
+#![cfg(target_os = "linux")]
+
+use std::collections::HashSet;
+use std::io::Read;
+use std::os::fd::AsRawFd;
+use std::sync::Arc;
+use std::sync::RwLock;
+use std::time::{Duration, Instant};
+
+use crate::config::Config;
+
+/// evdev keycodes of the two Ctrl keys.
+const KEY_LEFTCTRL: u16 = 29;
+const KEY_RIGHTCTRL: u16 = 97;
+
+/// A 64-bit `struct input_event`: 2x i64 of time, u16, u16, i32.
+const EVENT_SIZE: usize = 24;
+const EV_KEY: u16 = 0x01;
+
+/// After firing, ignore the gesture for this long.
+///
+/// Holding both Ctrls down sends a stream of auto-repeat; without this the
+/// daemon would ask for the same switch dozens of times a second.
+const COOLDOWN: Duration = Duration::from_secs(2);
+
+/// Can this device report BOTH Ctrl keys?
+///
+/// Reads `/sys/class/input/eventN/device/capabilities/key`, which is the
+/// kernel's own answer to "what can this thing send". Selecting by
+/// capability and not by device name is what keeps a brand out of the code:
+/// any keyboard qualifies, and a mouse never does.
+///
+/// The format is space-separated 64-bit hex words, **highest word first**,
+/// so the list is reversed before indexing.
+pub fn can_report_both_ctrls(mask: &str) -> bool {
+    let mut words: Vec<u64> = Vec::new();
+    for w in mask.split_whitespace() {
+        match u64::from_str_radix(w, 16) {
+            Ok(v) => words.push(v),
+            // A word we cannot read makes the whole answer a guess, and a
+            // guess here means watching the wrong device or none.
+            Err(_) => return false,
+        }
+    }
+    words.reverse();
+    let has = |bit: u16| -> bool {
+        let (i, off) = ((bit / 64) as usize, bit % 64);
+        words.get(i).is_some_and(|w| (w >> off) & 1 == 1)
+    };
+    has(KEY_LEFTCTRL) && has(KEY_RIGHTCTRL)
+}
+
+/// Both Ctrl keys down, and nothing else needed.
+///
+/// Same predicate as `capture_input::is_rescue` on the other side of the
+/// gesture, duplicated on purpose: `oxdesk` does not depend on the
+/// `oxdesk-stream` crate, and pulling QUIC and a video encoder into the
+/// daemon to share one line would be a worse trade. The test below pins
+/// the two to the same meaning.
+pub fn both_ctrls(pressed: &HashSet<u16>) -> bool {
+    pressed.contains(&KEY_LEFTCTRL) && pressed.contains(&KEY_RIGHTCTRL)
+}
+
+/// Which machine the gesture sends the input to.
+///
+/// Explicit beats inferred, and an ambiguity is an error rather than a
+/// choice made for the person: sending the keyboard to the wrong machine is
+/// not something a default should decide.
+pub fn pick_target(cfg: &Config, configured: Option<&str>) -> Result<String, String> {
+    let peers: Vec<&str> =
+        cfg.hosts.iter().filter(|h| !h.is_local()).map(|h| h.name.as_str()).collect();
+    if let Some(want) = configured.map(str::trim).filter(|s| !s.is_empty()) {
+        return if peers.iter().any(|p| *p == want) {
+            Ok(want.to_string())
+        } else {
+            Err(format!("[input.hotkey] target is '{want}', which is not a remote host"))
+        };
+    }
+    match peers.len() {
+        0 => Err("no remote host in the config".into()),
+        1 => Ok(peers[0].to_string()),
+        _ => Err(format!(
+            "{} remote hosts: set [input.hotkey] target to say which one",
+            peers.len()
+        )),
+    }
+}
+
+/// Watches the keyboards for the gesture, for as long as the daemon lives.
+pub fn start(cfg: Arc<RwLock<Config>>) {
+    std::thread::spawn(move || {
+        let mut pressed: HashSet<u16> = HashSet::new();
+        let mut down = false;
+        let mut last_fired = Instant::now() - COOLDOWN;
+        let mut watched: Vec<(std::path::PathBuf, std::fs::File)> = Vec::new();
+        let mut rescan = Instant::now() - Duration::from_secs(60);
+
+        loop {
+            // Rescan, because a keyboard can arrive after the daemon did --
+            // and the receiver's own devices come and go with the dongle.
+            if rescan.elapsed() >= Duration::from_secs(10) {
+                rescan = Instant::now();
+                watched.retain(|(p, _)| p.exists());
+                for path in keyboards() {
+                    if watched.iter().any(|(p, _)| *p == path) {
+                        continue;
+                    }
+                    if let Ok(f) = std::fs::File::open(&path) {
+                        crate::say!("hotkey: watching {}", path.display());
+                        watched.push((path, f));
+                    }
+                }
+            }
+            if watched.is_empty() {
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            }
+
+            let mut fds: Vec<libc::pollfd> = watched
+                .iter()
+                .map(|(_, f)| libc::pollfd { fd: f.as_raw_fd(), events: libc::POLLIN, revents: 0 })
+                .collect();
+            // 1 s and not -1: the rescan above has to get its turn even on
+            // a machine where nobody touches the keyboard.
+            let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 1000) };
+            if n <= 0 {
+                continue;
+            }
+
+            let mut gesture = false;
+            for (i, pfd) in fds.iter().enumerate() {
+                if pfd.revents & libc::POLLIN == 0 {
+                    continue;
+                }
+                let mut buf = [0u8; EVENT_SIZE * 32];
+                let Ok(read) = watched[i].1.read(&mut buf) else { continue };
+                for chunk in buf[..read].chunks_exact(EVENT_SIZE) {
+                    let kind = u16::from_ne_bytes([chunk[16], chunk[17]]);
+                    let code = u16::from_ne_bytes([chunk[18], chunk[19]]);
+                    let value = i32::from_ne_bytes([chunk[20], chunk[21], chunk[22], chunk[23]]);
+                    if kind != EV_KEY || (code != KEY_LEFTCTRL && code != KEY_RIGHTCTRL) {
+                        continue;
+                    }
+                    // value 2 is the kernel's auto-repeat: it keeps the key
+                    // down, it does not press it again.
+                    if value == 0 {
+                        pressed.remove(&code);
+                    } else {
+                        pressed.insert(code);
+                    }
+                }
+                if both_ctrls(&pressed) {
+                    gesture = true;
+                }
+            }
+
+            // Edge, not level: fire when the pair goes down, not for every
+            // event that arrives while it is held.
+            if gesture && !down && last_fired.elapsed() >= COOLDOWN {
+                last_fired = Instant::now();
+                fire(&cfg);
+            }
+            down = gesture;
+        }
+    });
+}
+
+/// Devices that can report both Ctrl keys.
+fn keyboards() -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let Ok(dir) = std::fs::read_dir("/sys/class/input") else { return out };
+    for entry in dir.flatten() {
+        let name = entry.file_name();
+        let Some(node) = name.to_str().filter(|n| n.starts_with("event")) else { continue };
+        let mask = entry.path().join("device/capabilities/key");
+        let Ok(mask) = std::fs::read_to_string(mask) else { continue };
+        if can_report_both_ctrls(mask.trim()) {
+            let dev = std::path::PathBuf::from("/dev/input").join(node);
+            if dev.exists() {
+                out.push(dev);
+            }
+        }
+    }
+    out
+}
+
+/// Asks for the switch, through the same door the tray uses.
+///
+/// `kvm::send` and not a shortcut of our own: the pre-flight, the refusals
+/// and the audit line all live there, and a second path into the same
+/// action is a second place for them to diverge.
+fn fire(cfg: &Arc<RwLock<Config>>) {
+    let Ok(c) = cfg.read() else { return };
+    if !c.input.hotkey.enabled {
+        return;
+    }
+    // Already away: the gesture belongs to `oxdesk-kvm`'s rescue, and we
+    // should not have seen it at all (it holds the grab). Belt and braces.
+    if crate::kvm::target().is_some() {
+        return;
+    }
+    match pick_target(&c, c.input.hotkey.target.as_deref()) {
+        Ok(host) => match crate::kvm::send(&c, &host) {
+            Ok(msg) => crate::say!("hotkey: both Ctrl -> {msg}"),
+            Err(e) => crate::say!("hotkey: both Ctrl -> {host} refused: {e}"),
+        },
+        Err(e) => crate::say!("hotkey: both Ctrl, but {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Real masks, read from `/sys/class/input` on 2026-11-10.
+    #[test]
+    fn a_keyboard_qualifies_and_a_mouse_does_not() {
+        let keyboard = "3f00733fff 0 0 483ffff17aff32d bfd4444600000000 ffff0001 \
+                        130ff38b17d007 ffff7bfad941dfff ffbeffdfffefffff fffffffffffffffe";
+        assert!(can_report_both_ctrls(keyboard));
+        // The mouse of the same receiver: buttons only.
+        assert!(!can_report_both_ctrls("ffff0000 0 0 0 0"));
+        // A lid switch and a consumer-control endpoint, which is where a
+        // name-based match would have gone wrong.
+        assert!(!can_report_both_ctrls("4000 0 0"));
+        assert!(!can_report_both_ctrls("100000000010000 17800000000 c000000000000 0"));
+    }
+
+    #[test]
+    fn an_unreadable_mask_is_not_a_keyboard() {
+        // Better to watch nothing than to watch the wrong device because a
+        // word did not parse.
+        assert!(!can_report_both_ctrls(""));
+        assert!(!can_report_both_ctrls("zzz 0"));
+    }
+
+    #[test]
+    fn the_gesture_is_the_same_one_the_rescue_uses() {
+        let mut p = HashSet::new();
+        p.insert(KEY_LEFTCTRL);
+        assert!(!both_ctrls(&p), "one Ctrl is not the gesture");
+        p.insert(46); // KEY_C -- Ctrl+C must never switch machines
+        assert!(!both_ctrls(&p));
+        p.insert(KEY_RIGHTCTRL);
+        assert!(both_ctrls(&p));
+    }
+
+    fn cfg_with(names: &[(&str, bool)]) -> Config {
+        let mut toml = String::new();
+        for (n, local) in names {
+            toml.push_str(&format!(
+                "[[hosts]]\nname = \"{n}\"\naddr = \"{n}.local\"\nlocal = {local}\n"
+            ));
+        }
+        toml::from_str(&toml).expect("fixture must parse")
+    }
+
+    #[test]
+    fn one_peer_needs_no_configuration() {
+        let c = cfg_with(&[("here", true), ("there", false)]);
+        assert_eq!(pick_target(&c, None).unwrap(), "there");
+    }
+
+    #[test]
+    fn two_peers_without_a_target_is_an_error_not_a_coin_toss() {
+        // Sending the keyboard to the wrong machine is not something a
+        // default gets to decide.
+        let c = cfg_with(&[("here", true), ("a", false), ("b", false)]);
+        let e = pick_target(&c, None).unwrap_err();
+        assert!(e.contains("2 remote hosts"), "{e}");
+        assert_eq!(pick_target(&c, Some("b")).unwrap(), "b");
+    }
+
+    #[test]
+    fn a_target_that_is_not_a_peer_is_refused_by_name() {
+        let c = cfg_with(&[("here", true), ("there", false)]);
+        assert!(pick_target(&c, Some("here")).is_err(), "the local host is not a target");
+        let e = pick_target(&c, Some("ghost")).unwrap_err();
+        assert!(e.contains("ghost"), "{e}");
+    }
+
+    #[test]
+    fn no_peer_at_all_says_so() {
+        let c = cfg_with(&[("here", true)]);
+        assert!(pick_target(&c, None).unwrap_err().contains("no remote host"));
+    }
+}

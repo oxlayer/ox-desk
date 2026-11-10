@@ -564,7 +564,7 @@ fn install_agent(
     // agent that does not show up in `print` is a pair I have seen.
     run_timed("/bin/launchctl", &["print", &format!("{target}/{label}")], 5)
         .map_err(|e| format!("loaded, and launchd does not list it: {e}"))?;
-    Ok(format!("{label} instalado e carregado"))
+    Ok(format!("{label} installed and loaded"))
 }
 
 /// Installs the `oxdesk-ota` LaunchAgent and checks once.
@@ -592,7 +592,7 @@ fn install_clock() -> Result<String, String> {
     clock()?;
     let first = run_timed(&bin.to_string_lossy(), &["--conferir"], 60);
     Ok(match first {
-        Ok(s) => format!("agente instalado; primeira checagem: {}", s.trim()),
+        Ok(s) => format!("agent installed; first check: {}", s.trim()),
         Err(e) => format!("agent installed, but the first check failed: {e}"),
     })
 }
@@ -649,7 +649,7 @@ fn sign() -> Result<String, String> {
     match signature().state {
         State::Ok => Ok("signed with the stable identity".into()),
         _ => Err("sign.sh ran and the binary still has no identity; \
-                  veja ~/.local/state/sign.log"
+                  see ~/.local/state/sign.log"
             .into()),
     }
 }

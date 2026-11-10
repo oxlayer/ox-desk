@@ -30,21 +30,21 @@ env:
 
 jobs:
   construir:
-    name: ${{ matrix.alvo }}
+    name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - alvo: linux
+          - target: linux
             runner: ubuntu-24.04
           # Cross-compiled, as in the deploy: it is the binary that already
           # runs on Windows, and a Linux runner minute costs half a Windows one.
-          - alvo: windows
+          - target: windows
             runner: ubuntu-24.04
             rust_target: x86_64-pc-windows-gnu
-          - alvo: mac
+          - target: mac
             runner: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,20 +53,20 @@ jobs:
           fetch-depth: 0
 
       - name: Dependencies (linux)
-        if: matrix.alvo == 'linux'
+        if: matrix.target == 'linux'
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends \
             clang libclang-dev libdbus-1-dev libpipewire-0.3-dev libudev-dev pkg-config
 
       - name: Dependencies (windows)
-        if: matrix.alvo == 'windows'
+        if: matrix.target == 'windows'
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends gcc-mingw-w64-x86-64
 
       - name: Dependencies (mac)
-        if: matrix.alvo == 'mac'
+        if: matrix.target == 'mac'
         env:
           HOMEBREW_NO_AUTO_UPDATE: '1'
           HOMEBREW_NO_INSTALL_CLEANUP: '1'
@@ -100,7 +100,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: ${{ matrix.alvo }}
+          key: ${{ matrix.target }}
           workspaces: |
             oxdesk
             stream
@@ -108,10 +108,10 @@ jobs:
             ota
 
       - name: Build, check and package
-        run: bash scripts/build-binaries.sh "${{ matrix.alvo }}"
+        run: bash scripts/build-binaries.sh "${{ matrix.target }}"
 
       - name: Tests
-        if: matrix.alvo == 'linux'
+        if: matrix.target == 'linux'
         run: |
           cargo test --release --locked --manifest-path hidpp/Cargo.toml
           cargo test --release --locked --manifest-path oxdesk/Cargo.toml
@@ -124,7 +124,7 @@ jobs:
       # prints the number: it measures, but does not decide.
       # (The test name below lives in oxdesk-stream; keep it in sync if renamed.)
       - name: Conversion budget (informational)
-        if: matrix.alvo == 'linux'
+        if: matrix.target == 'linux'
         continue-on-error: true
         run: |
           cargo test --release --locked --manifest-path stream/Cargo.toml --lib \
@@ -133,7 +133,7 @@ jobs:
       # Tar, not the loose binaries: upload-artifact loses the executable bit.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: oxdesk-${{ matrix.alvo }}
+          name: oxdesk-${{ matrix.target }}
           path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 14

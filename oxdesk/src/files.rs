@@ -134,9 +134,9 @@ pub fn list(cfg: &Config, host: &str, path: &str) -> Listing {
             path,
             "sftp",
             format!(
-                "host '{host}' nao tem `ssh` na config: sem canal SSH nao ha \
-                 como listar. No Ubuntu o `sshd` ainda nao esta instalado -- \
-                 ver specs/003."
+                "host '{host}' has no `ssh` in the config: with no SSH channel \
+                 there is no way to list. On Linux `sshd` may not be \
+                 installed yet -- see specs/003."
             ),
         );
     };
@@ -669,6 +669,6 @@ total 4
             parse_pwd("Remote working directory: /C:/Users/Alice\n").as_deref(),
             Some("/C:/Users/Alice")
         );
-        assert_eq!(parse_pwd("nada aqui"), None);
+        assert_eq!(parse_pwd("nothing here"), None);
     }
 }

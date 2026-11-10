@@ -204,7 +204,7 @@
   .lygrid{display:grid;gap:8px;padding:16px}
   .lycell{min-height:62px;border:1px dashed var(--line);border-radius:10px;
     display:flex;align-items:center;justify-content:center}
-  .lycell.alvo{border-color:var(--fg);background:var(--inset)}
+  .lycell.target{border-color:var(--fg);background:var(--inset)}
   .lytile{background:var(--inset);border:1px solid var(--line);border-radius:9px;
     padding:7px 10px;cursor:grab;user-select:none;text-align:center;
     min-width:7.5em;max-width:100%}
@@ -661,7 +661,7 @@ function card(h){
               <span class="bar"><i style="width:${pct}%"></i></span></span>`);
   } else {
     det.push(`<span title="${esc(h.online ? 'the host answered, but reading memory failed'
-      : 'host offline: nada a ler')}">RAM <b>&mdash;</b></span>`);
+      : 'host offline: nothing to read')}">RAM <b>&mdash;</b></span>`);
   }
   if (d.cpu_pct != null){
     // The sampling window differs per OS (see `probe::Detail`): the
@@ -813,7 +813,7 @@ async function logs(){
       if (follow) box.scrollTop = box.scrollHeight;
     }
     document.getElementById('logmeta').textContent =
-      d.entries.length + ' linhas - ' + d.unit;
+      d.entries.length + ' rows - ' + d.unit;
   }catch(e){
     box.innerHTML = `<div class="empty">log inacessivel: ${esc(e.message)}</div>`;
   }
@@ -1469,17 +1469,17 @@ document.addEventListener('dragover', ev => {
   const c = ev.target.closest('.lycell');
   if (!c || !lyDragging) return;
   ev.preventDefault();
-  c.classList.add('alvo');
+  c.classList.add('target');
 });
 document.addEventListener('dragleave', ev => {
   const c = ev.target.closest('.lycell');
-  if (c) c.classList.remove('alvo');
+  if (c) c.classList.remove('target');
 });
 document.addEventListener('drop', ev => {
   const c = ev.target.closest('.lycell');
   if (!c || !lyDragging) return;
   ev.preventDefault();
-  c.classList.remove('alvo');
+  c.classList.remove('target');
   LY.pos[lyDragging] = {col: Number(c.dataset.col), row: Number(c.dataset.row)};
   lyDragging = null;
   lyRender();
@@ -1528,7 +1528,7 @@ async function tasks(){
              `<span class="cpu">${p.cpu}</span>` +
              `<span class="mem">${p.mem_mb}</span>` +
              `<span class="act">${action}</span></div>`;
-    }).join('') || '<div class="tknote">nada rodando?</div>';
+    }).join('') || '<div class="tknote">nothing running?</div>';
     document.getElementById('tkmeta').textContent =
       d.procs.length + ' processes - ' + d.source;
   }catch(e){
@@ -1746,7 +1746,7 @@ function renderSide(hosts){
   const pinned = favs.map(n => hosts.find(h => h.name === n));
   document.getElementById('favlist').innerHTML =
     pinned.length ? pinned.map(h => machineRow(h, true)).join('')
-                 : `<div class="sidenote">nenhum ainda</div>`;
+                 : `<div class="sidenote">none yet</div>`;
   document.getElementById('favn').textContent = pinned.length ? pinned.length : '';
   document.getElementById('machinelist').innerHTML =
     hosts.map(h => machineRow(h, favs.includes(h.name))).join('');

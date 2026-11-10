@@ -256,18 +256,18 @@ fn no_access() -> Survey {
     let error = {
         let (total, openable) = crate::sys::hidraw_count();
         if total == 0 {
-            "nenhum no `/dev/hidraw*` neste sistema: nao ha receptor \
-             Logitech conectado aqui (ou o kernel nao o enumerou)"
+            "no `/dev/hidraw*` node on this system: there is no Logitech \
+             receiver plugged in here (or the kernel did not enumerate it)"
                 .to_string()
         } else if openable == 0 {
             format!(
-                "{total} no(s) `/dev/hidraw*` existem, mas nenhum abre: e \
-                 permissao. Rode `sudo udevadm trigger \
-                 --subsystem-match=hidraw --action=add` (a regra do Solaar \
-                 so aplica ACL a nos criados depois dela)"
+                "{total} `/dev/hidraw*` node(s) exist, but none opens: it is \
+                 permission. Run `sudo udevadm trigger \
+                 --subsystem-match=hidraw --action=add` (Solaar's rule only \
+                 applies the ACL to nodes created after it)"
             )
         } else {
-            "acesso ao hidraw ok, mas nenhuma interface HID++ respondeu".to_string()
+            "hidraw access is fine, but no HID++ interface answered".to_string()
         }
     };
     #[cfg(not(target_os = "linux"))]
@@ -344,7 +344,7 @@ pub fn survey_cached_or_fresh(max_age: Duration) -> Survey {
             backend: "hidpp (cache)",
             paused_s: None,
             receivers: vec![Receiver {
-                name: "Receptor Logitech".into(),
+                name: "Logitech receiver".into(),
                 hidraw: None,
                 usb_id: None,
                 serial: None,
@@ -503,7 +503,7 @@ fn survey_paused(remaining: u64) -> Survey {
         paused_s: Some(remaining),
         error: None,
         receivers: vec![Receiver {
-            name: "Receptor Logitech".into(),
+            name: "Logitech receiver".into(),
             hidraw: None,
             usb_id: None,
             serial: None,
@@ -677,7 +677,7 @@ pub fn survey_opts(with_battery: bool) -> Survey {
         backend: "hidpp",
         paused_s: None,
         receivers: vec![Receiver {
-            name: format!("Receptor Logitech {:04x}", rx.product_id),
+            name: format!("Logitech receiver {:04x}", rx.product_id),
             hidraw: Some(rx.path.clone()),
             usb_id: Some(format!("046d:{:04X}", rx.product_id)),
             serial: None,
@@ -857,8 +857,8 @@ pub fn remap(slot: u8, cid: u16, to: u16) -> Result<String, String> {
     let rx = open_rx(&api)?;
     if ping_retry(&rx, slot, 4).is_err() {
         return Err(format!(
-            "slot {slot} nao responde (4 tentativas) -- o dispositivo esta em \
-             outro canal, ou com bateria baixa demais para responder"
+            "slot {slot} does not answer (4 tries) -- the device is on another \
+             channel, or its battery is too low to answer"
         ));
     }
     // Restoring the default is remapping the control TO ITSELF, not to

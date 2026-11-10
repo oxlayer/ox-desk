@@ -171,7 +171,7 @@ impl Receiver {
             // The receiver has a C5xx-family PID; we prefer it over the
             // node of an individual device, because it answers every slot.
             .min_by_key(|d| if (0xC500..=0xC5FF).contains(&d.product_id()) { 0 } else { 1 })
-            .ok_or("nenhuma interface HID++ Logitech (vid 046d, usage page ff00, usage 2)")?;
+            .ok_or("no Logitech HID++ interface (vid 046d, usage page ff00, usage 2)")?;
         let path = info.path().to_string_lossy().to_string();
         let product_id = info.product_id();
         let dev = info
@@ -258,7 +258,7 @@ impl Receiver {
     fn feature_index_uncached(&self, slot: u8, feature: u16) -> Result<u8, String> {
         let p = [(feature >> 8) as u8, (feature & 0xFF) as u8, 0];
         let (r, _) = self.request(slot, 0x00, 0x00, &p)?;
-        let idx = *r.first().ok_or("resposta vazia de getFeature")?;
+        let idx = *r.first().ok_or("empty answer from getFeature")?;
         if idx == 0 {
             return Err(format!("feature 0x{feature:04x} not supported"));
         }
@@ -329,7 +329,7 @@ impl Receiver {
         let fi = self.feature_index(slot, FEATURE_CHANGE_HOST)?;
         let (r, _) = self.request(slot, fi, 0x00, &[0, 0, 0])?;
         if r.len() < 2 {
-            return Err("resposta curta de getHostInfo".into());
+            return Err("short answer from getHostInfo".into());
         }
         let num_hosts = r[0];
         let current = r[1] + 1;
@@ -516,7 +516,7 @@ pub fn control_name(cid: u16) -> &'static str {
         0x0053 => "Voltar",
         0x0056 => "Avancar",
         0x005b => "Gesto",
-        0x006e => "Mostrar area de trabalho",
+        0x006e => "Show desktop",
         0x00c3 => "Roda horizontal",
         0x00c4 => "Smart Shift",
         0x00c7 => "Easy-Switch 1",

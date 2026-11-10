@@ -76,7 +76,7 @@ macro_rules! say {
         println!("{line}");
         let _ = std::fs::create_dir_all("C:\\ProgramData\\oxdesk");
         if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true).append(true).open("C:\\ProgramData\\oxdesk\\probe-sistema.log")
+            .create(true).append(true).open("C:\\ProgramData\\oxdesk\\probe-system.log")
         {
             use std::io::Write;
             let _ = writeln!(f, "{line}");

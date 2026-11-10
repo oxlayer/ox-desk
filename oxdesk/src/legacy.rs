@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn rewrites_only_the_old_values_in_the_config() {
         let old = concat!(
-            "# Config do logid NESTE MAC.\n",
+            "# logid config ON THIS MAC.\n",
             "units = [\"logid.service\"]\n",
             "agent = \"%LOCALAPPDATA%\\\\logid\\\\logid-agent.exe\"\n",
             "[hosts.screen]\n  kind = \"logistream\"\n",
@@ -156,7 +156,7 @@ mod tests {
         assert!(new.contains("units = [\"app.oxdesk.daemon\"]"), "{new}");
         assert!(new.contains("units = [\"oxdesk\", \"oxdesk-agent\", \"sshd\"]"), "{new}");
         assert!(new.contains("agent = \"/home/alice/.local/bin/oxdesk\""), "{new}");
-        assert!(new.starts_with("# Config do logid NESTE MAC."), "a comment without a quoted value stays");
+        assert!(new.starts_with("# logid config ON THIS MAC."), "a comment without a quoted value stays");
         assert_eq!(rewrite_config(&new), None, "idempotent");
         // The result must still be a valid config for the new code.
         assert!(!new.contains("logistream\"\n  "), "{new}");

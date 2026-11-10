@@ -238,6 +238,30 @@ pub struct FollowCfg {
     pub interval_seconds: u64,
 }
 
+/// Both Ctrl keys, with the input here, send it to `target`.
+///
+/// **On by default**, unlike the border and the reconciler, and the reason
+/// is the mechanism: this is the LAN KVM, which forwards input over the
+/// network while the devices stay on this receiver. The gesture is
+/// reversible from the far side in one press, and `kvm::send`'s pre-flight
+/// still refuses what it always refused. Nothing moves in hardware, so
+/// there is no state a wrong press could leave behind.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotkeyCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Where the input goes. Optional while there is exactly one remote
+    /// host; required as soon as there are two. See `hotkey::pick_target`.
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+impl Default for HotkeyCfg {
+    fn default() -> Self {
+        Self { enabled: true, target: None }
+    }
+}
+
 impl Default for FollowCfg {
     fn default() -> Self {
         Self { enabled: false, leader: None, interval_seconds: default_follow_interval() }
@@ -268,6 +292,8 @@ pub struct InputCfg {
     pub border: BorderCfg,
     #[serde(default)]
     pub follow: FollowCfg,
+    #[serde(default)]
+    pub hotkey: HotkeyCfg,
 }
 
 fn default_input_mode() -> String {
@@ -808,17 +834,17 @@ mod tests {
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
-            name = "aqui"
+            name = "here"
             addr = "127.0.0.1"
             [[hosts]]
-            name = "la"
+            name = "there"
             addr = "la.local"
             "#,
         )
         .unwrap();
         assert!(c.hosts[0].is_local());
         assert!(!c.hosts[1].is_local());
-        assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("la"));
+        assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("there"));
 
         // An explicit flag beats the address -- that is the Windows case,
         // where the local entry may not use loopback. A second, diverging
@@ -827,11 +853,11 @@ mod tests {
         let c: Config = toml::from_str(
             r#"
             [[hosts]]
-            name = "aqui"
+            name = "here"
             addr = "windows-pc.local"
             local = true
             [[hosts]]
-            name = "la"
+            name = "there"
             addr = "127.0.0.1"
             local = false
             "#,
@@ -839,7 +865,7 @@ mod tests {
         .unwrap();
         assert!(c.hosts[0].is_local(), "an explicit flag must beat the address");
         assert!(!c.hosts[1].is_local(), "local = false beats loopback");
-        assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("la"));
+        assert_eq!(c.peer_host().map(|h| h.name.as_str()), Some("there"));
     }
 
     #[test]
@@ -848,7 +874,7 @@ mod tests {
 port = 8787
 
 [[hosts]]
-name = "aqui"
+name = "here"
 addr = "127.0.0.1"
 # Este comentario tem de sobreviver.
 local = true
@@ -858,13 +884,13 @@ local = true
   port = 22
 
 [[hosts]]
-name = "la"
+name = "there"
 layout = { col = 9, row = 9 }
 addr = "la.local"
 "#;
         let mut pos = BTreeMap::new();
-        pos.insert("aqui".to_string(), Cell { col: 0, row: 1 });
-        pos.insert("la".to_string(), Cell { col: 2, row: 1 });
+        pos.insert("here".to_string(), Cell { col: 0, row: 1 });
+        pos.insert("there".to_string(), Cell { col: 2, row: 1 });
         let after = apply_layout(before, &pos);
 
         assert!(after.contains("# Comentario que explica uma decisao cara.")
@@ -872,7 +898,7 @@ addr = "la.local"
         assert!(after.contains("# Este comentario tem de sobreviver."));
         assert!(after.contains("label = \"SSH\""), "subtable intact");
         // Inserted where there was none.
-        assert!(after.contains("name = \"aqui\"\nlayout = { col = 0, row = 1 }"));
+        assert!(after.contains("name = \"here\"\nlayout = { col = 0, row = 1 }"));
         // Replaced where there was one -- and the old one is gone.
         assert!(after.contains("layout = { col = 2, row = 1 }"));
         assert!(!after.contains("col = 9"), "the old position must go");

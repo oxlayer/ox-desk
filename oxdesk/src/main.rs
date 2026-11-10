@@ -33,6 +33,8 @@ mod files;
 mod focus;
 mod follow;
 mod hidpp;
+#[cfg(target_os = "linux")]
+mod hotkey;
 mod clip;
 mod clip_files;
 mod kvm;
@@ -319,6 +321,13 @@ fn main() -> std::process::ExitCode {
     #[cfg(target_os = "linux")]
     tray::start_when_drawable(Arc::clone(&cfg));
 
+    // Both Ctrl keys, with the input here, send it to the other machine.
+    // The other half of the gesture -- bringing it back -- lives in
+    // `oxdesk-kvm`, and the two cannot both see a press: whoever holds the
+    // grab gets the events alone. See `hotkey`.
+    #[cfg(target_os = "linux")]
+    hotkey::start(Arc::clone(&cfg));
+
     // Spec 017: pair with the peers once at startup, so phase C can refuse
     // strangers without refusing our own machines.
     if let Ok(c) = cfg.read() {
@@ -397,7 +406,7 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
         return err_json(req, 422, "invalid port");
     }
     if next.hosts.is_empty() {
-        return err_json(req, 422, "precisa de ao menos um host");
+        return err_json(req, 422, "needs at least one host");
     }
     // Save before applying: if the disk refuses, nothing changes in
     // memory.
@@ -542,7 +551,7 @@ fn post_clipboard(mut req: Request) {
         return err_json(req, 400, "unreadable body");
     }
     if text.len() > clip::LIMIT {
-        return err_json(req, 413, "texto acima do limite");
+        return err_json(req, 413, "text over the limit");
     }
     match clip::apply_local(&text) {
         Ok(()) => ok_json(req, "{\"ok\":true}".into()),

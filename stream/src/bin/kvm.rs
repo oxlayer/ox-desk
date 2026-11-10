@@ -124,14 +124,12 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // pt-BR on purpose: fatal before grabbing, shown in the tray (see the
-    // module doc).
     if chosen.is_empty() {
         anyhow::bail!(
-            "nenhum dispositivo casou com {filters:?}. Sem permissao? \
-             Veja .claude/skills/grant-input-access.md -- sem a regra de \
-             udev os nos existem mas nao abrem, e a lista sai vazia \
-             exatamente como se o dispositivo nao estivesse conectado."
+            "no device matched {filters:?}. No permission? \
+             See .claude/skills/grant-input-access.md -- without the udev \
+             rule the nodes exist but do not open, and the list comes out \
+             empty exactly as if the device were not connected."
         );
     }
 
@@ -244,7 +242,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(Some(e)) => e,
             // Every device thread died.
             Ok(None) => {
-                reason = "os dispositivos pararam de responder".into();
+                reason = "the devices stopped answering".into();
                 break;
             }
             Err(_) => {

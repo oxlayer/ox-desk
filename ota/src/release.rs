@@ -280,7 +280,7 @@ mod tests {
         let sums = "\
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  dist/oxdesk-linux-x86_64-124-abc1234.tar.gz
 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad *oxdesk
-lixo que nao e soma
+junk that is not a sum
 ";
         assert_eq!(
             sum_for(sums, "oxdesk-linux-x86_64-124-abc1234.tar.gz").unwrap(),

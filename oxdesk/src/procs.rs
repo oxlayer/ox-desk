@@ -167,7 +167,7 @@ pub fn kill(
         return Err("confirm is missing: killing a process has no undo".into());
     }
     if pid <= 1 {
-        return Err("pid 0 e 1 sao do sistema; recusado".into());
+        return Err("pid 0 and 1 belong to the system; refused".into());
     }
     let h = cfg
         .hosts

@@ -342,7 +342,7 @@ pub fn clipboard_read_files() -> Result<Option<Vec<String>>, String> {
 /// Puts a list of files on the clipboard.
 pub fn clipboard_write_files(paths: &[String]) -> Result<(), String> {
     if paths.is_empty() {
-        return Err("lista de arquivos vazia".into());
+        return Err("empty file list".into());
     }
     // DROPFILES + UTF-16 names, each with \0, plus a final \0.
     let mut names: Vec<u16> = Vec::new();

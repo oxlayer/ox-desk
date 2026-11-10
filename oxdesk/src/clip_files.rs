@@ -655,17 +655,17 @@ pub fn read_clipboard() -> Clipboard {
     // what happens when a permission is missing or the script could not
     // be written -- would become a silent no-op. Whoever reads the note is
     // the setup wizard, so the notes stay pt-BR.
-    let js = match script_on_disk("ler-pb.js", READ_PB_JS) {
+    let js = match script_on_disk("read-pb.js", READ_PB_JS) {
         Ok(js) => js,
         Err(e) => {
-            crate::clip::note_watch(false, format!("não pude escrever o script de leitura: {e}"));
+            crate::clip::note_watch(false, format!("could not write the read script: {e}"));
             return Clipboard::Empty;
         }
     };
     let o = match crate::sys::child("osascript").args(["-l", "JavaScript"]).arg(&js).output() {
         Ok(o) => o,
         Err(e) => {
-            crate::clip::note_watch(false, format!("osascript não executou: {e}"));
+            crate::clip::note_watch(false, format!("osascript did not run: {e}"));
             return Clipboard::Empty;
         }
     };

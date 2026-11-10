@@ -558,12 +558,12 @@ pub fn watch(cfg: std::sync::Arc<std::sync::RwLock<crate::config::Config>>) {
                 }
                 match winput::clipboard_read() {
                     Ok(Some(t)) => {
-                        note_watch(true, "a area de transferencia responde");
+                        note_watch(true, "the clipboard answers");
                         t
                     }
                     // Empty is healthy: opening worked, there was nothing.
                     Ok(None) => {
-                        note_watch(true, "a area de transferencia responde (vazia)");
+                        note_watch(true, "the clipboard answers (empty)");
                         continue;
                     }
                     // A silent `continue` used to be here. A read error on

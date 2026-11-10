@@ -202,7 +202,7 @@ Get-ChildItem $d -Filter '*.exe' -ErrorAction SilentlyContinue |
   Sort-Object LastWriteTime -Descending | Select-Object -First 8 |
   ForEach-Object { $_.LastWriteTime.ToString('HH:mm:ss') + '  ' + $_.Length.ToString().PadLeft(9) + '  ' + $_.Name }
 Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'oxdesk*' } |
-  ForEach-Object { 'rodando: ' + $_.Name + ' pid ' + $_.Id }
+  ForEach-Object { 'running: ' + $_.Name + ' pid ' + $_.Id }
 PS1
   return 1
 }

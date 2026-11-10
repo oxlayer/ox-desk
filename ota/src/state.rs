@@ -80,7 +80,7 @@ impl State {
                 "this machine has #{}, newer than the published #{}",
                 self.n_here, self.n_there
             ),
-            "revertido" => format!("voltei para #{} {}: {}", self.n_here, self.build_here, self.message),
+            "revertido" => format!("rolled back to #{} {}: {}", self.n_here, self.build_here, self.message),
             _ => self.message.clone(),
         }
     }
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn garbage_in_the_file_does_not_crash() {
-        let dir = std::env::temp_dir().join(format!("oxdesk-ota-lixo-{}", now()));
+        let dir = std::env::temp_dir().join(format!("oxdesk-ota-scratch-{}", now()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(path(&dir), "not json").unwrap();
         assert!(read(&dir).is_none());

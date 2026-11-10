@@ -380,7 +380,7 @@ fn install(
 
     st.result = "revertido".into();
     st.message = if restored && back {
-        format!("{why}; voltei ao build anterior e ele responde")
+        format!("{why}; rolled back to the previous build and it answers")
     } else {
         format!(
             "{why}; the rollback did NOT confirm -- the good copy is at {}",
@@ -478,8 +478,8 @@ fn check_links(s: System, bin: &Path) -> Result<(), String> {
                 // does not load. Without this line the symptom would be a
                 // refusal with no cause.
                 return Err(format!(
-                    "{name} precisa de {} e nao esta aqui: o pacote veio ligado ao ffmpeg do runner. \
-                     Conserto: `brew upgrade ffmpeg` no Mac, ou rode o deploy, que compila contra o ffmpeg DE CA",
+                    "{name} needs {} and it is not here: the package was linked against the runner's ffmpeg. \
+                     Fix: `brew upgrade ffmpeg` on the Mac, or run the deploy, which builds against the ffmpeg FROM HERE",
                     missing.join(", ")
                 ));
             }
@@ -615,7 +615,7 @@ mod tests {
 
     #[test]
     fn finds_the_stamp_inside_arbitrary_bytes() {
-        let bin = b"\x7fELF\x02\x01...oxdesk 2f1409d em http://127.0.0.1\x00mais lixo";
+        let bin = b"\x7fELF\x02\x01...oxdesk 2f1409d em http://127.0.0.1\x00more junk";
         assert!(contains(bin, b"2f1409d"));
         assert!(!contains(bin, b"deadbee"));
         assert!(!contains(bin, b""), "an empty needle matches nothing");

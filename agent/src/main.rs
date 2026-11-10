@@ -147,16 +147,16 @@ fn main() -> ExitCode {
 
             if !input::in_console_session() {
                 return fail(
-                    "watch-edge precisa da sessao do console: GetCursorPos e \
-                     GetLastInputInfo sao por sessao. Lancado assim ele nao \
-                     veria input e ainda competiria pelo receptor. Use o \
-                     atalho em shell:startup.",
+                    "watch-edge needs the console session: GetCursorPos and \
+                     GetLastInputInfo are per session. Launched like this it \
+                     would see no input and would still compete for the \
+                     receiver. Use the shortcut in shell:startup.",
                 );
             }
             if !input::claim_single_instance("oxdesk-agent-watch-edge") {
                 return fail(
-                    "ja existe um watch-edge rodando -- tres instancias \
-                     competindo pelo mesmo receptor foi problema real",
+                    "a watch-edge is already running -- three instances \
+                     competing for the same receiver was a real problem",
                 );
             }
 
@@ -349,12 +349,12 @@ fn main() -> ExitCode {
                         if started.elapsed().as_millis() as u64 >= budget_ms {
                             let link = match hidpp::Receiver::open(&api) {
                                 Ok(l) => l,
-                                Err(e) => return fail(format!("resgate falhou ao abrir: {e}")),
+                                Err(e) => return fail(format!("rescue failed to open: {e}")),
                             };
                             return match link.set_host(slot, host) {
                                 Ok(()) => out(json!({ "ok": true, "action": "reverted",
                                                       "to_host": host, "idle_ms": idle })),
-                                Err(e) => fail(format!("resgate falhou: {e}")),
+                                Err(e) => fail(format!("rescue failed: {e}")),
                             };
                         }
                     }

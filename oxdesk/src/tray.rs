@@ -111,7 +111,7 @@ impl ksni::Tray for OxdeskTray {
         if f.devices.is_empty() {
             items.push(
                 StandardItem {
-                    label: "nenhum dispositivo conhecido".into(),
+                    label: "no known device".into(),
                     enabled: false,
                     ..Default::default()
                 }
@@ -135,7 +135,7 @@ impl ksni::Tray for OxdeskTray {
                         // The dot marks where the input is going. Without
                         // it the menu cannot tell "I can send" from "it is
                         // already there".
-                        label: format!("{}Mandar para {name}", if active { "● " } else { "" }),
+                        label: format!("{}Send to {name}", if active { "● " } else { "" }),
                         activate: Box::new(move |b: &mut OxdeskTray| b.send_to(&target)),
                         ..Default::default()
                     }
@@ -185,7 +185,7 @@ impl ksni::Tray for OxdeskTray {
                 let target = name.clone();
                 items.push(
                     StandardItem {
-                        label: format!("Mandar arquivos para {name}"),
+                        label: format!("Send files to {name}"),
                         activate: Box::new(move |b: &mut OxdeskTray| b.send_files(&target)),
                         ..Default::default()
                     }
