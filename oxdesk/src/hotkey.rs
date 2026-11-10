@@ -346,9 +346,20 @@ fn switch_to(cfg: &Arc<RwLock<Config>>, host: &str) {
             }
             crate::say!("hotkey: both Ctrl -> {msg}");
         }
-        // The target is NOT remembered on failure: the next press should
-        // try this machine again, not skip past it to the following one.
-        Err(e) => crate::say!("hotkey: both Ctrl -> {host} refused: {e}"),
+        // A failure ADVANCES the rotation. The first version kept the
+        // position so a host that merely blinked would be tried again --
+        // but the real case is a machine that is up by SSH and cannot take
+        // input at all (the Mac with a dead panel answers ssh and has no
+        // graphical session). Keeping the position there spends every
+        // second press on a wall. Advancing means the next press lands on
+        // a machine that works, and a rotation over failures still comes
+        // back around.
+        Err(e) => {
+            if let Ok(mut l) = LAST.lock() {
+                *l = Some(host.to_string());
+            }
+            crate::say!("hotkey: both Ctrl -> {host} refused: {e}");
+        }
     }
 }
 
@@ -432,6 +443,15 @@ mod tests {
         let peers = [("a", false), ("b", false)];
         assert_eq!(next_target(&peers, None), Some("a"));
         assert_eq!(next_target(&peers, Some("a")), Some("b"));
+    }
+
+    #[test]
+    fn a_target_that_refuses_is_stepped_over_by_the_next_press() {
+        // `switch_to` records the host on failure too, so the rotation
+        // advances. The case: a machine that answers ssh (so the snapshot
+        // calls it online) and cannot take input at all.
+        let peers = [("windows", true), ("mac", true)];
+        assert_eq!(next_target(&peers, Some("mac")), Some("windows"));
     }
 
     #[test]
