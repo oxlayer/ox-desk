@@ -107,24 +107,51 @@ pub fn both_ctrls(pressed: &HashSet<u16>) -> bool {
 /// Explicit beats inferred, and an ambiguity is an error rather than a
 /// choice made for the person: sending the keyboard to the wrong machine is
 /// not something a default should decide.
-pub fn pick_target(cfg: &Config, configured: Option<&str>) -> Result<String, String> {
+///
+/// In order:
+///
+/// 1. `[input.hotkey] target` -- said for this gesture.
+/// 2. `[input.border] target` -- said for the OTHER gesture that moves
+///    input to a machine. Measured on 2026-11-10: with two peers and only
+///    the border target set, refusing was the wrong answer. The person had
+///    already written down where input goes; asking them to write it twice
+///    is pedantry, not safety.
+/// 3. the only peer, when there is only one.
+///
+/// The grid `layout` is deliberately NOT a fallback. `col`/`row` say where
+/// a machine sits on screen, which is a hint about geometry, not a
+/// statement about where someone wants their keyboard to go.
+pub fn pick_target(
+    cfg: &Config,
+    configured: Option<&str>,
+    border: Option<&str>,
+) -> Result<String, String> {
     let peers: Vec<&str> =
         cfg.hosts.iter().filter(|h| !h.is_local()).map(|h| h.name.as_str()).collect();
-    if let Some(want) = configured.map(str::trim).filter(|s| !s.is_empty()) {
-        return if peers.iter().any(|p| *p == want) {
+    let named = |want: &str, from: &str| -> Result<String, String> {
+        if peers.iter().any(|p| *p == want) {
             Ok(want.to_string())
         } else {
-            Err(format!("[input.hotkey] target is '{want}', which is not a remote host"))
-        };
+            Err(format!("{from} is '{want}', which is not a remote host"))
+        }
+    };
+    if let Some(want) = configured.map(str::trim).filter(|s| !s.is_empty()) {
+        return named(want, "[input.hotkey] target");
     }
-    match peers.len() {
-        0 => Err("no remote host in the config".into()),
-        1 => Ok(peers[0].to_string()),
-        _ => Err(format!(
-            "{} remote hosts: set [input.hotkey] target to say which one",
-            peers.len()
-        )),
+    if peers.len() == 1 {
+        return Ok(peers[0].to_string());
     }
+    if let Some(want) = border.map(str::trim).filter(|s| !s.is_empty()) {
+        return named(want, "[input.border] target");
+    }
+    if peers.is_empty() {
+        return Err("no remote host in the config".into());
+    }
+    Err(format!(
+        "{} remote hosts and no target: set [input.hotkey] target to one of {:?}",
+        peers.len(),
+        peers
+    ))
 }
 
 /// Watches the keyboards for the gesture, for as long as the daemon lives.
@@ -240,7 +267,7 @@ fn fire(cfg: &Arc<RwLock<Config>>) {
     if crate::kvm::target().is_some() {
         return;
     }
-    match pick_target(&c, c.input.hotkey.target.as_deref()) {
+    match pick_target(&c, c.input.hotkey.target.as_deref(), c.input.border.target.as_deref()) {
         Ok(host) => match crate::kvm::send(&c, &host) {
             Ok(msg) => crate::say!("hotkey: both Ctrl -> {msg}"),
             Err(e) => crate::say!("hotkey: both Ctrl -> {host} refused: {e}"),
@@ -299,7 +326,7 @@ mod tests {
     #[test]
     fn one_peer_needs_no_configuration() {
         let c = cfg_with(&[("here", true), ("there", false)]);
-        assert_eq!(pick_target(&c, None).unwrap(), "there");
+        assert_eq!(pick_target(&c, None, None).unwrap(), "there");
     }
 
     #[test]
@@ -307,22 +334,45 @@ mod tests {
         // Sending the keyboard to the wrong machine is not something a
         // default gets to decide.
         let c = cfg_with(&[("here", true), ("a", false), ("b", false)]);
-        let e = pick_target(&c, None).unwrap_err();
+        let e = pick_target(&c, None, None).unwrap_err();
         assert!(e.contains("2 remote hosts"), "{e}");
-        assert_eq!(pick_target(&c, Some("b")).unwrap(), "b");
+        assert_eq!(pick_target(&c, Some("b"), None).unwrap(), "b");
     }
 
     #[test]
     fn a_target_that_is_not_a_peer_is_refused_by_name() {
         let c = cfg_with(&[("here", true), ("there", false)]);
-        assert!(pick_target(&c, Some("here")).is_err(), "the local host is not a target");
-        let e = pick_target(&c, Some("ghost")).unwrap_err();
+        assert!(pick_target(&c, Some("here"), None).is_err(), "the local host is not a target");
+        let e = pick_target(&c, Some("ghost"), None).unwrap_err();
         assert!(e.contains("ghost"), "{e}");
+    }
+
+    #[test]
+    fn the_border_target_answers_when_the_hotkey_has_none() {
+        // The case that made this fallback exist: two peers, nothing said
+        // for the hotkey, and `[input.border] target` already naming one.
+        let c = cfg_with(&[("here", true), ("a", false), ("b", false)]);
+        assert_eq!(pick_target(&c, None, Some("b")).unwrap(), "b");
+        // The hotkey's own target still wins over it.
+        assert_eq!(pick_target(&c, Some("a"), Some("b")).unwrap(), "a");
+        // And a border target that is not a peer is refused by name,
+        // rather than falling through to a guess.
+        let e = pick_target(&c, None, Some("ghost")).unwrap_err();
+        assert!(e.contains("[input.border] target") && e.contains("ghost"), "{e}");
+    }
+
+    #[test]
+    fn with_no_target_anywhere_it_names_the_candidates() {
+        // "set a target" without saying which ones exist sends the person
+        // back to read the config file.
+        let c = cfg_with(&[("here", true), ("a", false), ("b", false)]);
+        let e = pick_target(&c, None, None).unwrap_err();
+        assert!(e.contains("\"a\"") && e.contains("\"b\""), "{e}");
     }
 
     #[test]
     fn no_peer_at_all_says_so() {
         let c = cfg_with(&[("here", true)]);
-        assert!(pick_target(&c, None).unwrap_err().contains("no remote host"));
+        assert!(pick_target(&c, None, None).unwrap_err().contains("no remote host"));
     }
 }
