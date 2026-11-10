@@ -357,7 +357,7 @@ fn linux() -> Vec<Step> {
             why: "it is the shortest way to bring the keyboard back when it \
                      is on another machine. Without it you depend on \
                      remembering the double Ctrl.",
-            fix: Fix::Auto { label: "Launch it now" },
+            fix: Fix::Auto { label: "Turn the tray on" },
             depends_on: &["daemon"],
             essential: false,
         },

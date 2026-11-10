@@ -272,12 +272,26 @@ fn tray() -> Check {
     // `pgrep -f` with the pattern the deploy skill uses to kill the
     // process. Matching on the name "electron" alone would catch any
     // Electron app on the machine.
-    let alive = Command::new("pgrep")
-        .args(["-f", "electron \\.$"])
-        .output()
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false);
-    Check::when("tray", alive, "running", "not running")
+    // `NameHasOwner` and not a `pgrep`: the question is whether something
+    // on this session bus will DRAW an item, and the answer is owned by
+    // the bus, not by any process name we could guess.
+    let watcher = crate::setup_common::run_timed(
+        "busctl",
+        &[
+            "--user",
+            "call",
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "NameHasOwner",
+            "s",
+            "org.kde.StatusNotifierWatcher",
+        ],
+        5,
+    )
+    .map(|o| o.trim().ends_with("true"))
+    .unwrap_or(false);
+    crate::setup_common::tray_verdict(watcher, crate::tray::is_published())
 }
 
 // ------------------------------------------------------------------ repairs
@@ -297,7 +311,7 @@ pub fn repair(id: &str, cfg: &Config) -> Result<String, String> {
             Ok("unit habilitada".into())
         }
         "clipboard" => crate::setup_common::test_clipboard(),
-        "tray" => launch_tray(),
+        "tray" => enable_appindicators(),
         "ota" => install_clock(),
         _ => Err(format!("'{id}' has no automatic fix on this machine")),
     }
@@ -389,31 +403,32 @@ fn install_clock() -> Result<String, String> {
 /// `requestSingleInstanceLock()` -- with a message that says nothing
 /// about the variable. I already brought the user's GUI down that way,
 /// and the daemon inherits the environment of whoever launched it, so
-/// the variable may well be present here.
-fn launch_tray() -> Result<String, String> {
-    let dir = crate::sys::home_dir().join("dev/oxdesk/gui");
-    if !dir.join("main.js").exists() {
-        return Err(format!("could not find the shell at {}", dir.display()));
-    }
-    let log = crate::sys::state_dir().join("oxdesk-gui.log");
-    let output = std::fs::File::create(&log).map_err(|e| format!("abrir {}: {e}", log.display()))?;
-    let error = output.try_clone().map_err(|e| format!("duplicar o log: {e}"))?;
-    Command::new("setsid")
-        .args(["env", "-u", "ELECTRON_RUN_AS_NODE", "node", "./node_modules/.bin/electron", "."])
-        .current_dir(&dir)
-        .stdout(output)
-        .stderr(error)
-        .spawn()
-        .map_err(|e| format!("launch: {e}"))?;
 
-    // Measure after launching, do not announce the launch: electron dies
-    // within ~200 ms when it dies, and an immediate "ready" would hide
-    // precisely the most common failure.
-
-    std::thread::sleep(Duration::from_millis(1500));
-    if tray().state == State::Ok {
-        Ok("the tray is up".into())
-    } else {
-        Err(format!("launched and it did not stay up; see {}", log.display()))
+/// Turns the AppIndicator extension back on, and waits for the icon.
+///
+/// This replaced `launch_tray`, which started an **Electron** process
+/// from `~/dev/oxdesk/gui` -- the tray implementation `tray.rs` had
+/// already replaced, at a developer checkout path that does not exist on
+/// anybody else's machine. It was a fix for a check that measured the
+/// wrong thing, and it could only ever fail.
+///
+/// What actually goes wrong here is the extension being off, which takes
+/// the watcher off the bus. The daemon's own retry loop publishes the
+/// icon again within 30 s of the watcher coming back (see
+/// `wait::retry_delay`), so this does not touch the daemon at all.
+fn enable_appindicators() -> Result<String, String> {
+    const EXT: &str = "ubuntu-appindicators@ubuntu.com";
+    crate::setup_common::run_timed("gnome-extensions", &["enable", EXT], 10).map_err(|e| {
+        format!("could not enable {EXT}: {e} (not GNOME? then enable your desktop's tray by hand)")
+    })?;
+    // Measured, not announced: enabling is not drawing, and the retry loop
+    // needs a moment to notice the watcher. Up to ~8 s covers the first
+    // three retries.
+    for _ in 0..16 {
+        std::thread::sleep(Duration::from_millis(500));
+        if tray().state == State::Ok {
+            return Ok("the tray is up".into());
+        }
     }
+    Err(format!("{EXT} is enabled, but no icon appeared yet -- check the log"))
 }

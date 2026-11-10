@@ -175,6 +175,33 @@ pub fn monitors_verdict(id: &str, output: &str) -> Check {
 /// screen host had its grant, was signed, was loaded -- and could not have
 /// served a frame, because there was no framebuffer to read. Nothing on
 /// the wizard said so. That is the silence the honesty rule is about.
+/// Is there a tray icon a person can actually click?
+///
+/// Two conditions, because either one alone lies. `published` is this
+/// daemon's own registration (see `tray::is_published`); `watcher` is
+/// whether anything OWNS `org.kde.StatusNotifierWatcher` -- on GNOME the
+/// AppIndicator extension. Published with no watcher means the item
+/// exists and nobody draws it, which is the state a person reports as
+/// "there is no icon".
+///
+/// The old check for this step grepped for a running Electron process --
+/// the implementation `tray.rs` replaced -- so it could never say `ok`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn tray_verdict(watcher: bool, published: bool) -> Check {
+    match (watcher, published) {
+        (false, _) => Check::missing(
+            "tray",
+            "nothing is drawing a tray: no owner for org.kde.StatusNotifierWatcher \
+             (on GNOME that is the AppIndicator extension)",
+        ),
+        (true, false) => Check::missing(
+            "tray",
+            "there is a tray, and this daemon has not published its icon on it yet",
+        ),
+        (true, true) => Check::ok("tray", "the icon is published and something is drawing it"),
+    }
+}
+
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn displays_verdict(id: &str, err: i32, count: u32) -> Check {
     if err != 0 {
@@ -685,6 +712,26 @@ mod tests {
     /// A failed call is "I don't know", not "no display". Reporting zero
     /// on an error would tell someone to go buy a monitor they already
     /// have plugged in.
+    #[test]
+    fn a_tray_needs_both_a_drawer_and_a_published_icon() {
+        // Published with nobody drawing is the state a person reports as
+        // "there is no icon", and the old check could not see it at all.
+        assert_eq!(tray_verdict(false, true).state, crate::setup::State::Missing);
+        assert_eq!(tray_verdict(false, false).state, crate::setup::State::Missing);
+        assert_eq!(tray_verdict(true, false).state, crate::setup::State::Missing);
+        assert_eq!(tray_verdict(true, true).state, crate::setup::State::Ok);
+    }
+
+    #[test]
+    fn a_tray_without_a_watcher_blames_the_watcher_and_not_the_daemon() {
+        // The detail is what the person acts on: pointing at the daemon
+        // when the extension is off sends them to restart the wrong thing.
+        let d = tray_verdict(false, true).detail;
+        assert!(d.contains("StatusNotifierWatcher"), "{d}");
+        let d = tray_verdict(true, false).detail;
+        assert!(d.contains("published"), "{d}");
+    }
+
     #[test]
     fn a_failed_display_query_is_an_error_not_an_absence() {
         let m = displays_verdict("display", -1, 0);

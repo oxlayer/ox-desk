@@ -302,12 +302,24 @@ impl OxdeskTray {
 /// nothing measurable. Only the transitions are logged: one line for "not
 /// yet", one for "up". A line per attempt would bury the log of a machine
 /// that genuinely has no tray.
+/// Whether this daemon has published its tray item.
+///
+/// The wizard asks. It used to measure a RUNNING ELECTRON PROCESS, which
+/// stopped being the tray when this module replaced it -- so it answered
+/// "not running" on a machine whose icon was on the bus and clickable.
+static PUBLISHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn is_published() -> bool {
+    PUBLISHED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn start_when_drawable(cfg: Arc<std::sync::RwLock<Config>>) {
     std::thread::spawn(move || {
         let mut attempt = 0u32;
         loop {
             match spawn_item(Arc::clone(&cfg)) {
                 Ok(handle) => {
+                    PUBLISHED.store(true, std::sync::atomic::Ordering::Relaxed);
                     crate::say!("native tray up");
                     watch(handle, cfg);
                     return;
