@@ -43,10 +43,13 @@ fi
 # steps failing one by one against an empty host name.
 [ -z "$MAC" ] && SKIP_MAC=1
 
-# `desconhecido` and `-sujo` are part of the build stamp that oxdesk parses
-# (oxdesk/build.rs, setup_comum.rs): they stay as they are.
-BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo desconhecido)"
-git diff --quiet 2>/dev/null || BUILD="$BUILD-sujo"
+# `unknown` and `-dirty` are part of the build stamp that oxdesk and
+# oxdesk-ota parse (oxdesk/build.rs, setup_common.rs, ota/src/release.rs).
+# Renaming them here alone would be the quiet kind of break: `release.rs`
+# strips exactly this suffix to decide "same build", so it strips both
+# spellings for one generation.
+BUILD="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+git diff --quiet 2>/dev/null || BUILD="$BUILD-dirty"
 export OXDESK_BUILD="$BUILD"
 # Incremental number: tells WHICH machine is behind, not just that they
 # differ. It travels along because the Mac's copy has no .git.

@@ -17,38 +17,40 @@
 //! kind of code that gets time zones and daylight saving wrong.
 //!
 //! The JSON field names (`quando_unix`, `resultado`, ...) and the
-//! `resultado` values are read by the wizard and by
-//! `scripts/distribute-ota-token.sh`; the phrases from `line()` are shown
-//! in the panel, so they stay in Portuguese.
+//! The `result` values are read by the wizard, so renaming one means
+//! renaming it on both sides of a process boundary -- and the file on
+//! disk may have been written by the build before the rename. That is
+//! what `normalize_result` and `legacy_path` are for.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
-    #[serde(rename = "quando_unix")]
+    #[serde(alias = "quando_unix")]
     pub when_unix: u64,
-    #[serde(rename = "sistema")]
+    #[serde(alias = "sistema")]
     pub system: String,
     /// What is installed on this machine, as `/healthz` answers it.
-    #[serde(rename = "n_aqui")]
+    #[serde(alias = "n_aqui")]
     pub n_here: u64,
-    #[serde(rename = "build_aqui")]
+    #[serde(alias = "build_aqui")]
     pub build_here: String,
     /// What the Release published. Zeroed when we never got to know.
     #[serde(default)]
     pub tag: String,
-    #[serde(default, rename = "n_la")]
+    #[serde(default, alias = "n_la")]
     pub n_there: u64,
-    #[serde(default, rename = "build_la")]
+    #[serde(default, alias = "build_la")]
     pub build_there: String,
-    #[serde(default, rename = "pacote")]
+    #[serde(default, alias = "pacote")]
     pub package: String,
-    /// `igual` | `atualizado` | `novidade` | `mais-novo-aqui` |
-    /// `revertido` | `erro`
-    #[serde(rename = "resultado")]
+    /// `same` | `updated` | `available` | `newer-here` |
+    /// `rolled-back` | `error`. A file written before the rename says
+    /// `igual` and friends; `read` translates those on the way in.
+    #[serde(alias = "resultado")]
     pub result: String,
-    #[serde(rename = "mensagem")]
+    #[serde(alias = "mensagem")]
     pub message: String,
 }
 
@@ -63,7 +65,7 @@ impl State {
             n_there: 0,
             build_there: String::new(),
             package: String::new(),
-            result: "erro".into(),
+            result: "error".into(),
             message: "no conclusion".into(),
         }
     }
@@ -71,19 +73,21 @@ impl State {
     /// One-line summary, the way the wizard shows it.
     pub fn line(&self) -> String {
         match self.result.as_str() {
-            "igual" => format!("up to date on build #{} {}", self.n_here, self.build_here),
-            "atualizado" => {
-                format!("atualizei para #{} {} sozinho", self.n_there, self.build_there)
+            "same" => format!("up to date on build #{} {}", self.n_here, self.build_here),
+            "updated" => {
+                format!("updated to #{} {} on its own", self.n_there, self.build_there)
             }
-            "novidade" => format!(
+            "available" => format!(
                 "build #{} {} is published; this machine has #{} -- {}",
                 self.n_there, self.build_there, self.n_here, self.message
             ),
-            "mais-novo-aqui" => format!(
+            "newer-here" => format!(
                 "this machine has #{}, newer than the published #{}",
                 self.n_here, self.n_there
             ),
-            "revertido" => format!("rolled back to #{} {}: {}", self.n_here, self.build_here, self.message),
+            "rolled-back" => {
+                format!("rolled back to #{} {}: {}", self.n_here, self.build_here, self.message)
+            }
             _ => self.message.clone(),
         }
     }
@@ -107,7 +111,36 @@ pub fn now() -> u64 {
 }
 
 pub fn path(dir: &Path) -> PathBuf {
+    dir.join("state.json")
+}
+
+/// Where an updater installed before the rename wrote its state.
+///
+/// Read-only and on purpose: the next write lands on the new name, so the
+/// old file is picked up once and then goes quiet on its own. Deleting it
+/// would be the tidier gesture and the worse one -- a rollback to the
+/// previous build has to find its state where that build left it.
+pub fn legacy_path(dir: &Path) -> PathBuf {
     dir.join("estado.json")
+}
+
+/// Translates the vocabulary this file used to write into the one it
+/// writes now.
+///
+/// The state file outlives the build that wrote it: the wizard reads
+/// whatever is on disk, and on an unsigned Windows box that file can sit
+/// there for weeks. One translation point, on the way in, so nothing
+/// downstream has to know there were ever two spellings.
+pub fn normalize_result(r: &str) -> &str {
+    match r {
+        "igual" => "same",
+        "atualizado" => "updated",
+        "novidade" => "available",
+        "mais-novo-aqui" => "newer-here",
+        "revertido" => "rolled-back",
+        "erro" => "error",
+        other => other,
+    }
 }
 
 pub fn write(dir: &Path, e: &State) -> Result<(), String> {
@@ -118,8 +151,12 @@ pub fn write(dir: &Path, e: &State) -> Result<(), String> {
 /// Reads the state. A missing or corrupt file returns `None` -- it never
 /// brings down the next check.
 pub fn read(dir: &Path) -> Option<State> {
-    let txt = std::fs::read_to_string(path(dir)).ok()?;
-    serde_json::from_str(&txt).ok()
+    let txt = std::fs::read_to_string(path(dir))
+        .or_else(|_| std::fs::read_to_string(legacy_path(dir)))
+        .ok()?;
+    let mut st: State = serde_json::from_str(&txt).ok()?;
+    st.result = normalize_result(&st.result).to_string();
+    Some(st)
 }
 
 #[cfg(test)]
@@ -132,8 +169,8 @@ mod tests {
         e.n_there = 125;
         e.build_there = "def5678".into();
         e.package = "oxdesk-mac-arm64-unsigned-125-def5678.tar.gz".into();
-        e.result = "atualizado".into();
-        e.message = "trocado e conferido".into();
+        e.result = "updated".into();
+        e.message = "swapped and verified".into();
         e
     }
 
@@ -166,20 +203,46 @@ mod tests {
     /// them.
     #[test]
     fn json_keys_keep_their_wire_names() {
+        // This test existed to stop the wire names being renamed by
+        // accident, and it did: renaming them broke it first. Now it pins
+        // the other half of a deliberate rename -- what we write, and
+        // what we must still be able to read.
         let txt = serde_json::to_string(&sample()).unwrap();
         for k in [
-            "quando_unix", "sistema", "n_aqui", "build_aqui", "tag", "n_la", "build_la", "pacote",
-            "resultado", "mensagem",
+            "when_unix", "system", "n_here", "build_here", "tag", "n_there", "build_there",
+            "package", "result", "message",
         ] {
             assert!(txt.contains(&format!("\"{k}\":")), "{k} missing in {txt}");
         }
+        for gone in ["quando_unix", "n_aqui", "resultado", "mensagem"] {
+            assert!(!txt.contains(&format!("\"{gone}\":")), "{gone} should no longer be written");
+        }
+    }
+
+    /// Every word the old vocabulary could hold maps to one of the new
+    /// ones, and a word we do not know passes through rather than
+    /// becoming an empty string the wizard cannot report.
+    #[test]
+    fn every_old_word_has_a_new_one() {
+        for (old, new) in [
+            ("igual", "same"),
+            ("atualizado", "updated"),
+            ("novidade", "available"),
+            ("mais-novo-aqui", "newer-here"),
+            ("revertido", "rolled-back"),
+            ("erro", "error"),
+        ] {
+            assert_eq!(normalize_result(old), new);
+            assert_eq!(normalize_result(new), new, "the new word must survive a second pass");
+        }
+        assert_eq!(normalize_result("banana"), "banana");
     }
 
     /// Every result has to produce a phrase that says what happened.
     /// An empty line in the panel is the same as having no panel.
     #[test]
     fn every_result_has_a_phrase() {
-        for r in ["igual", "atualizado", "novidade", "mais-novo-aqui", "revertido", "erro"] {
+        for r in ["same", "updated", "available", "newer-here", "rolled-back", "error"] {
             let mut e = sample();
             e.result = r.into();
             let l = e.line();
@@ -194,7 +257,7 @@ mod tests {
     /// here.
     #[test]
     fn short_has_three_fields_and_no_tab_inside() {
-        for r in ["igual", "atualizado", "novidade", "mais-novo-aqui", "revertido", "erro"] {
+        for r in ["same", "updated", "available", "newer-here", "rolled-back", "error"] {
             let mut e = sample();
             e.result = r.into();
             e.when_unix = 1000;
@@ -221,7 +284,7 @@ mod tests {
     /// the history.
     #[test]
     fn old_state_without_new_fields_still_reads() {
-        let dir = std::env::temp_dir().join(format!("oxdesk-ota-velho-{}", now()));
+        let dir = std::env::temp_dir().join(format!("oxdesk-ota-old-{}", now()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             path(&dir),
@@ -230,6 +293,43 @@ mod tests {
         .unwrap();
         let e = read(&dir).expect("the defaulted fields have to cover it");
         assert_eq!(e.n_there, 0);
+        // The field names AND the word: both were renamed, and a file on
+        // disk knows nothing about it.
+        assert_eq!(e.n_here, 1, "`n_aqui` has to still land in `n_here`");
+        assert_eq!(e.result, "same", "`igual` has to arrive as `same`");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The file an updater installed before the rename actually wrote, at
+    /// the name it wrote it under. Without this the wizard would report
+    /// "the timer is not firing" on a machine whose timer fired fine --
+    /// the state was simply being looked for under the new name.
+    #[test]
+    fn a_state_file_under_the_old_name_is_still_found() {
+        let dir = std::env::temp_dir().join(format!("oxdesk-ota-legacy-{}", now()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            legacy_path(&dir),
+            r#"{"quando_unix":7,"sistema":"windows","n_aqui":9,"build_aqui":"b","resultado":"novidade","mensagem":"y"}"#,
+        )
+        .unwrap();
+        let e = read(&dir).expect("estado.json has to be read when state.json is absent");
+        assert_eq!((e.n_here, e.result.as_str()), (9, "available"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// And the new name wins, so the fallback cannot resurrect a stale
+    /// answer once this build has written one.
+    #[test]
+    fn the_new_name_wins_over_the_old_one() {
+        let dir = std::env::temp_dir().join(format!("oxdesk-ota-both-{}", now()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(legacy_path(&dir), r#"{"quando_unix":1,"sistema":"l","n_aqui":1,"build_aqui":"old","resultado":"igual","mensagem":"x"}"#).unwrap();
+        let mut fresh = State::new("linux", 2, "new");
+        fresh.result = "same".into();
+        write(&dir, &fresh).unwrap();
+        let e = read(&dir).expect("state.json exists");
+        assert_eq!(e.build_here, "new", "the fallback must not shadow a fresh write");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

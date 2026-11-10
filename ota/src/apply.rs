@@ -157,7 +157,7 @@ pub fn run(mode: Mode) -> Result<State, State> {
             Ok(st)
         }
         Err(msg) => {
-            if st.result == "erro" {
+            if st.result == "error" {
                 st.message = msg;
             }
             st.when_unix = state::now();
@@ -208,12 +208,12 @@ fn steps(ctx: &Context, st: &mut State) -> Result<(), String> {
         }
         Decision::NewerHere { here, there } => {
             st.n_there = there;
-            st.result = "mais-novo-aqui".into();
+            st.result = "newer-here".into();
             st.message = format!("#{here} here, #{there} published; I do not go down a version");
             return Ok(());
         }
         Decision::Same { .. } if ctx.mode != Mode::Force => {
-            st.result = "igual".into();
+            st.result = "same".into();
             st.message = format!("Release {} is what already runs here", l.tag);
             return Ok(());
         }
@@ -221,12 +221,12 @@ fn steps(ctx: &Context, st: &mut State) -> Result<(), String> {
     }
 
     if ctx.mode == Mode::Check {
-        st.result = "novidade".into();
+        st.result = "available".into();
         st.message = "only checked (--conferir)".into();
         return Ok(());
     }
     if let Some(reason) = ctx.plan.refusal {
-        st.result = "novidade".into();
+        st.result = "available".into();
         st.message = reason.to_string();
         return Ok(());
     }
@@ -351,7 +351,7 @@ fn install(
     let came_up = restarted.is_ok() && check_healthz(&ctx.base, ctx.system, &st.build_there).is_ok();
 
     if came_up {
-        st.result = "atualizado".into();
+        st.result = "updated".into();
         st.message = format!(
             "{} binary(ies) swapped and /healthz answered {}",
             items.len(),
@@ -381,7 +381,7 @@ fn install(
     let _ = restart(ctx);
     let back = check_healthz(&ctx.base, ctx.system, &st.build_here).is_ok();
 
-    st.result = "revertido".into();
+    st.result = "rolled-back".into();
     st.message = if restored && back {
         format!("{why}; rolled back to the previous build and it answers")
     } else {

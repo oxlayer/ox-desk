@@ -156,10 +156,20 @@ pub fn decide(n_here: u64, hash_here: &str, package_name: &str) -> Decision {
     let Some((n_there, hash_there)) = stamp_from_name(package_name) else {
         return Decision::NoStamp { name: package_name.to_string() };
     };
-    // `abc1234-sujo` is the stamp of a deploy from a dirty tree: it counts
-    // as the same commit for comparison purposes, and the difference in
-    // `n` is what decides.
-    let here_clean = hash_here.strip_suffix("-sujo").unwrap_or(hash_here);
+    // `abc1234-dirty` is the stamp of a deploy from a dirty tree: it
+    // counts as the same commit for comparison purposes, and the
+    // difference in `n` is what decides.
+    //
+    // `-sujo` is what `deploy.sh` wrote before the rename, and it is read
+    // here across a boundary that a single deploy does not close: OTA can
+    // install this binary while the daemon answering `/healthz` is still
+    // the previous one, and that stamp is whatever built it. Failing to
+    // strip it would make a dirty build look like a different commit and
+    // turn `Same` into `Update` -- a swap for nothing, on every check.
+    let here_clean = hash_here
+        .strip_suffix("-dirty")
+        .or_else(|| hash_here.strip_suffix("-sujo"))
+        .unwrap_or(hash_here);
     if n_there == n_here && here_clean == hash_there {
         return Decision::Same { n: n_there, hash: hash_there };
     }
@@ -260,15 +270,26 @@ mod tests {
         assert_eq!(decide(124, "0000000", newer), Decision::Update { n: 124, hash: "abc1234".into() });
     }
 
-    /// `-sujo` is how `deploy.sh` stamps a build from a dirty tree.
+    /// `-dirty` is how `deploy.sh` stamps a build from a dirty tree, and
+    /// `-sujo` is how it did before the rename -- both have to strip, or
+    /// a dirty build re-downloads the same package forever.
     /// Without this case, a machine that just got a local deploy would
     /// download the same commit from the Release for "different hash", in
     /// a loop.
     #[test]
     fn dirty_stamp_counts_as_the_same_commit() {
+        for stamp in ["abc1234-dirty", "abc1234-sujo"] {
+            assert_eq!(
+                decide(124, stamp, "oxdesk-linux-x86_64-124-abc1234.tar.gz"),
+                Decision::Same { n: 124, hash: "abc1234".into() },
+                "{stamp} has to count as the same commit"
+            );
+        }
+        // And the suffix is not allowed to swallow a real difference: a
+        // dirty build of ANOTHER commit is still an update.
         assert_eq!(
-            decide(124, "abc1234-sujo", "oxdesk-linux-x86_64-124-abc1234.tar.gz"),
-            Decision::Same { n: 124, hash: "abc1234".into() }
+            decide(123, "9999999-dirty", "oxdesk-linux-x86_64-124-abc1234.tar.gz"),
+            Decision::Update { n: 124, hash: "abc1234".into() }
         );
     }
 

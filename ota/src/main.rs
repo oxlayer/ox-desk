@@ -69,7 +69,7 @@ or in the OXDESK_OTA_TOKEN variable. See specs/015-ota.md."
         Err(e) => {
             // stderr: this runs from a scheduled task, and what matters is
             // that it lands in the supervisor's log.
-            eprintln!("{}: {}", e.result, if e.result == "erro" { &e.message } else { &e.message });
+            eprintln!("{}: {}", e.result, &e.message);
             ExitCode::FAILURE
         }
     }

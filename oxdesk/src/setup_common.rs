@@ -412,8 +412,17 @@ pub fn verdict(line: &str, clock: &str) -> Check {
         (fields[0], fields[1].parse::<u64>().unwrap_or(u64::MAX), fields[2]);
     let when = human_age(age);
 
+    // Both spellings. `oxdesk-ota` renamed these words, and this reads
+    // them across a process boundary: the binary that printed the line
+    // may be the one installed before the rename, and on Windows -- where
+    // we do not sign, so OTA never swaps itself -- that can stay true for
+    // weeks. Dropping the old words here would turn a healthy machine
+    // into an "ok" that means nothing, because every arm would fall
+    // through to the last one.
     match result {
-        "erro" | "revertido" => Check::error("ota", format!("{when}: {phrase}")),
+        "error" | "rolled-back" | "erro" | "revertido" => {
+            Check::error("ota", format!("{when}: {phrase}"))
+        }
         _ if age > 6 * 3600 => Check::missing(
             "ota",
             format!("{clock}, but the last check was {when} -- the timer is not firing"),
@@ -421,7 +430,7 @@ pub fn verdict(line: &str, clock: &str) -> Check {
         // An update published and not applied is pending, not success: on
         // Windows it is the permanent state (we do not sign there), and
         // that is exactly what the panel needs to show.
-        "novidade" => Check::missing("ota", format!("{when}: {phrase}")),
+        "available" | "novidade" => Check::missing("ota", format!("{when}: {phrase}")),
         _ => Check::ok("ota", format!("{clock}; {when}: {phrase}")),
     }
 }
@@ -574,11 +583,22 @@ mod tests {
 
     #[test]
     fn error_and_revert_are_errors_and_update_available_is_pending() {
+        assert_eq!(verdict("error\t60\tno token", "x").state, crate::setup::State::Error);
+        assert_eq!(verdict("rolled-back\t60\trolled back", "x").state, crate::setup::State::Error);
+        assert_eq!(verdict("available\t60\t#125 is out", "x").state, crate::setup::State::Missing);
+        assert_eq!(verdict("updated\t60\tswapped", "x").state, crate::setup::State::Ok);
+        assert_eq!(verdict("newer-here\t60\t#130 here", "x").state, crate::setup::State::Ok);
+    }
+
+    /// The words an `oxdesk-ota` installed before the rename still
+    /// prints. Same routing, or a machine that is failing to update reads
+    /// as fine.
+    #[test]
+    fn the_words_from_before_the_rename_route_the_same_way() {
         assert_eq!(verdict("erro\t60\tno token", "x").state, crate::setup::State::Error);
         assert_eq!(verdict("revertido\t60\trolled back", "x").state, crate::setup::State::Error);
         assert_eq!(verdict("novidade\t60\t#125 is out", "x").state, crate::setup::State::Missing);
-        assert_eq!(verdict("atualizado\t60\tswapped", "x").state, crate::setup::State::Ok);
-        assert_eq!(verdict("mais-novo-aqui\t60\t#130 here", "x").state, crate::setup::State::Ok);
+        assert_eq!(verdict("igual\t600\tup to date", "x").state, crate::setup::State::Ok);
     }
 
     /// A line outside the contract is an error, not "ok" by omission. If
@@ -631,11 +651,11 @@ mod tests {
     }
 
     /// A dirty tree installs its own dirty binary. Ignoring the suffix
-    /// would make `abc` and `abc-sujo` pass as equal -- and it is between
+    /// would make `abc` and `abc-dirty` pass as equal -- and it is between
     /// those two that the swap happens during a deploy from the laptop.
     #[test]
     fn dirty_is_not_the_same_as_clean() {
-        assert!(stamp_verdict((131, "25512f1"), (131, "25512f1-sujo")).is_some());
+        assert!(stamp_verdict((131, "25512f1"), (131, "25512f1-dirty")).is_some());
     }
 
     #[test]
