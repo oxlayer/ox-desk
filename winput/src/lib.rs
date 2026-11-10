@@ -42,7 +42,7 @@ pub fn idle_ms() -> Result<u64, String> {
     };
     let ok = unsafe { GetLastInputInfo(&mut lii) };
     if ok == 0 {
-        return Err("GetLastInputInfo falhou".into());
+        return Err("GetLastInputInfo failed".into());
     }
     let now = unsafe { GetTickCount64() };
     // dw_time is 32-bit and wraps every ~49 days; GetTickCount64 does not.
@@ -170,7 +170,7 @@ pub fn claim_single_instance(name: &str) -> bool {
 // Get-Clipboard` on every sample. That worked, but spawning a PowerShell
 // every 2 s costs ~200 ms of CPU per read -- and, if the caller forgets
 // `CREATE_NO_WINDOW`, it opens a visible console window on every round.
-// That is what happened: "o windows ta abrindo um powershell a cada 5s"
+// That is what happened: "windows is opening a powershell every 5s"
 // (Windows is opening a PowerShell every 5 s).
 //
 // Unicode text only (CF_UNICODETEXT). Files are CF_HDROP and are handled
@@ -216,7 +216,7 @@ fn with_clipboard<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String>
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     if !opened {
-        return Err("o clipboard esta ocupado por outro programa".into());
+        return Err("the clipboard is held by another program".into());
     }
     let r = f();
     unsafe { CloseClipboard() };
@@ -235,7 +235,7 @@ pub fn clipboard_read() -> Result<Option<String>, String> {
         }
         let p = unsafe { GlobalLock(mem) };
         if p.is_null() {
-            return Err("GlobalLock falhou na leitura".into());
+            return Err("GlobalLock failed on read".into());
         }
         // Zero-terminated UTF-16. Walking to the terminator is the only
         // way: the block size is rounded up and may carry trailing garbage.
@@ -258,12 +258,12 @@ pub fn clipboard_write(text: &str) -> Result<(), String> {
     with_clipboard(|| {
         let mem = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) };
         if mem == 0 {
-            return Err("GlobalAlloc falhou".into());
+            return Err("GlobalAlloc failed".into());
         }
         let p = unsafe { GlobalLock(mem) };
         if p.is_null() {
             unsafe { GlobalFree(mem) };
-            return Err("GlobalLock falhou na escrita".into());
+            return Err("GlobalLock failed on write".into());
         }
         unsafe {
             std::ptr::copy_nonoverlapping(u.as_ptr(), p, u.len());
@@ -275,7 +275,7 @@ pub fn clipboard_write(text: &str) -> Result<(), String> {
         // it when the Set FAILS and ownership did not change hands.
         if unsafe { SetClipboardData(CF_UNICODETEXT, mem) } == 0 {
             unsafe { GlobalFree(mem) };
-            return Err("SetClipboardData falhou".into());
+            return Err("SetClipboardData failed".into());
         }
         Ok(())
     })
@@ -358,12 +358,12 @@ pub fn clipboard_write_files(paths: &[String]) -> Result<(), String> {
     with_clipboard(|| {
         let mem = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) };
         if mem == 0 {
-            return Err("GlobalAlloc falhou".into());
+            return Err("GlobalAlloc failed".into());
         }
         let p = unsafe { GlobalLock(mem) } as *mut u8;
         if p.is_null() {
             unsafe { GlobalFree(mem) };
-            return Err("GlobalLock falhou".into());
+            return Err("GlobalLock failed".into());
         }
         unsafe {
             let df = p as *mut DropFiles;
@@ -378,7 +378,7 @@ pub fn clipboard_write_files(paths: &[String]) -> Result<(), String> {
         // Same rule as for text: after the Set the block is the SYSTEM's.
         if unsafe { SetClipboardData(CF_HDROP, mem) } == 0 {
             unsafe { GlobalFree(mem) };
-            return Err("SetClipboardData(CF_HDROP) falhou".into());
+            return Err("SetClipboardData(CF_HDROP) failed".into());
         }
         Ok(())
     })

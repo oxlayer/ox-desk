@@ -545,9 +545,9 @@ fn install_agent(
     );
 
     let dir = home.join("Library/LaunchAgents");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let path = dir.join(format!("{label}.plist"));
-    std::fs::write(&path, &plist).map_err(|e| format!("gravar {}: {e}", path.display()))?;
+    std::fs::write(&path, &plist).map_err(|e| format!("write {}: {e}", path.display()))?;
 
     let target = format!("gui/{}", uid());
     let _ = run_timed("/bin/launchctl", &["bootout", &format!("{target}/{label}")], 10);
@@ -557,7 +557,7 @@ fn install_agent(
     let p = path.to_string_lossy().into_owned();
     if let Err(e) = run_timed("/bin/launchctl", &["bootstrap", &target, &p], 15) {
         if run_timed("/bin/launchctl", &["bootstrap", &target, &p], 15).is_err() {
-            return Err(format!("escrevi o plist, mas o bootstrap falhou: {e}"));
+            return Err(format!("wrote the plist, but the bootstrap failed: {e}"));
         }
     }
     // Check that it really loaded. A `bootstrap` that returns 0 and an
@@ -593,7 +593,7 @@ fn install_clock() -> Result<String, String> {
     let first = run_timed(&bin.to_string_lossy(), &["--conferir"], 60);
     Ok(match first {
         Ok(s) => format!("agente instalado; primeira checagem: {}", s.trim()),
-        Err(e) => format!("agente instalado, mas a primeira checagem falhou: {e}"),
+        Err(e) => format!("agent installed, but the first check failed: {e}"),
     })
 }
 
@@ -604,10 +604,10 @@ fn install_clock() -> Result<String, String> {
 fn install_tailscale() -> Result<String, String> {
     const SCRIPT: &str = include_str!("../setup/install-tailscale-mac.sh");
     let dir = crate::sys::config_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("criar {dir:?}: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {dir:?}: {e}"))?;
     let script = dir.join("install-tailscale-mac.sh");
     let opener = dir.join("install-tailscale.command");
-    std::fs::write(&script, SCRIPT).map_err(|e| format!("gravar {script:?}: {e}"))?;
+    std::fs::write(&script, SCRIPT).map_err(|e| format!("write {script:?}: {e}"))?;
     let command = format!(
         "#!/bin/bash\n\
          export PATH=/opt/homebrew/bin:/usr/local/bin:$PATH\n\
@@ -620,7 +620,7 @@ fn install_tailscale() -> Result<String, String> {
          read -r -p 'Press Enter to close '\n",
         script.display()
     );
-    std::fs::write(&opener, command).map_err(|e| format!("gravar {opener:?}: {e}"))?;
+    std::fs::write(&opener, command).map_err(|e| format!("write {opener:?}: {e}"))?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700))
         .map_err(|e| format!("permissions on {opener:?}: {e}"))?;

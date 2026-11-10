@@ -94,7 +94,7 @@ pub fn log_lines(n: usize) -> Raw {
     let p = log_path();
     let label = p.to_string_lossy().to_string();
     let Ok(text) = std::fs::read_to_string(&p) else {
-        return Raw { unit: label, lines: vec![], error: Some("ainda nao ha arquivo de log".into()) };
+        return Raw { unit: label, lines: vec![], error: Some("there is no log file yet".into()) };
     };
     let all: Vec<&str> = text.lines().collect();
     let start = all.len().saturating_sub(n);

@@ -84,7 +84,7 @@ impl ksni::Tray for OxdeskTray {
     fn tool_tip(&self) -> ksni::ToolTip {
         let f = current_state();
         let summary = if f.devices.is_empty() {
-            "sem dispositivos".to_string()
+            "no devices".to_string()
         } else {
             f.devices.join(" | ")
         };
@@ -172,7 +172,7 @@ impl ksni::Tray for OxdeskTray {
             items.push(
                 StandardItem {
                     label: format!(
-                        "{} arquivo(s) copiado(s), {}",
+                        "{} file(s) copied, {}",
                         paths.len(),
                         crate::clip_files::human_size(bytes)
                     ),

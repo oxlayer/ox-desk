@@ -59,13 +59,13 @@ pub fn pinned(dir: &Path, host: &str) -> Option<String> {
 
 fn store_pin(dir: &Path, host: &str, fp: &str) -> Result<(), String> {
     use std::io::Write;
-    std::fs::create_dir_all(dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(dir.join(PINS_FILE))
-        .map_err(|e| format!("gravar o pin: {e}"))?;
-    writeln!(f, "{host} {fp}").map_err(|e| format!("gravar o pin: {e}"))
+        .map_err(|e| format!("write the pin: {e}"))?;
+    writeln!(f, "{host} {fp}").map_err(|e| format!("write the pin: {e}"))
 }
 
 /// Decide what to do with the fingerprint the host reported.
@@ -103,10 +103,10 @@ fn local_fingerprint(host_bin: &Path) -> Result<String, String> {
         .arg("--digital")
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("ler a identidade local: {e}"))?;
+        .map_err(|e| format!("read the local identity: {e}"))?;
     let fp = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !is_fingerprint(&fp) {
-        return Err("a identidade local nao respondeu com uma digital".into());
+        return Err("the local identity did not answer with a fingerprint".into());
     }
     Ok(fp)
 }
@@ -116,7 +116,7 @@ fn remote_fingerprint(h: &HostCfg) -> Result<String, String> {
     let fp = out.lines().map(str::trim).find(|l| is_fingerprint(l)).unwrap_or_default();
     if fp.is_empty() {
         return Err(format!(
-            "{} nao respondeu com uma digital (o host de tela de la e anterior a 017?)",
+            "{} did not answer with a fingerprint (is its screen host older than 017?)",
             h.name
         ));
     }
@@ -153,7 +153,7 @@ fn authorize_on(h: &HostCfg, fp: &str) -> Result<(), String> {
     if out.contains("autorizado") {
         Ok(())
     } else {
-        Err(format!("nao consegui me autorizar em {}", h.name))
+        Err(format!("could not authorize myself on {}", h.name))
     }
 }
 

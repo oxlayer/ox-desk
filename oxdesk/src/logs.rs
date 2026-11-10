@@ -43,12 +43,14 @@ pub struct Logs {
 /// The patterns match the log lines written by `border`, `follow` and
 /// `focus`; whoever rewords those lines updates these too.
 ///
-/// `falhou` stays: error strings from `winput` (pt-BR on purpose, they can
-/// reach the panel) still end up in the log through these modules.
+/// It used to also match `falhou`, because `winput` wrote its errors in
+/// pt-BR and they reach the panel through these modules. `winput` speaks
+/// English since specs/018 step 6f, so the word went with it -- lines
+/// already in the rotated log that contain it now classify as info, which
+/// is cosmetic and only touches history.
 fn classify(msg: &str) -> &'static str {
     let m = msg.to_ascii_lowercase();
     if m.contains("failed")
-        || m.contains("falhou")
         || m.contains("error")
         || m.contains("fatal")
         || m.contains("did not switch")
@@ -99,8 +101,8 @@ mod tests {
         assert_eq!(classify("border: armed -- the devices are here"), "info");
         assert_eq!(classify("border: input detected -- dead-man's switch stood down"), "info");
         assert_eq!(classify("switch done in 46ms"), "info");
-        // pt-BR error text from winput still counts.
-        assert_eq!(classify("clip: GlobalLock falhou na leitura"), "error");
+        // An error text coming up from `winput` still counts.
+        assert_eq!(classify("clip: GlobalLock failed on read"), "error");
     }
 
     #[test]

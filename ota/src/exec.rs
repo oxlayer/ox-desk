@@ -149,7 +149,7 @@ pub fn api(url: &str, token: Option<&str>, seconds: u64) -> Result<String, Strin
         let reason = s.err.lines().next().unwrap_or("").trim();
         let body = s.out.trim();
         return Err(format!(
-            "curl falhou ao buscar {url}{}{}",
+            "curl failed fetching {url}{}{}",
             if reason.is_empty() { String::new() } else { format!(": {reason}") },
             if body.is_empty() { String::new() } else { format!(" (corpo: {})", &body[..body.len().min(200)]) }
         ));
@@ -184,12 +184,12 @@ pub fn download(url: &str, token: Option<&str>, dest: &Path, seconds: u64) -> Re
     )?;
     if !s.ok {
         let _ = std::fs::remove_file(dest);
-        let reason = s.err.lines().next().unwrap_or("falhou sem mensagem").trim();
-        return Err(format!("nao baixei {url}: {reason}"));
+        let reason = s.err.lines().next().unwrap_or("failed with no message").trim();
+        return Err(format!("did not download {url}: {reason}"));
     }
     let bytes = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
     if bytes == 0 {
-        return Err(format!("baixei 0 bytes de {url}"));
+        return Err(format!("downloaded 0 bytes from {url}"));
     }
     Ok(bytes)
 }
@@ -215,10 +215,10 @@ mod tests {
     fn runs_and_returns_both_outputs() {
         #[cfg(unix)]
         {
-            let s = run("sh", &["-c", "echo saida; echo erro >&2; exit 3"], 5).unwrap();
+            let s = run("sh", &["-c", "echo out; echo err >&2; exit 3"], 5).unwrap();
             assert!(!s.ok);
-            assert!(s.out.contains("saida"));
-            assert!(s.err.contains("erro"));
+            assert!(s.out.contains("out"));
+            assert!(s.err.contains("err"));
         }
     }
 

@@ -36,15 +36,15 @@ pub struct Release {
 /// Parses the `/releases/latest` response.
 pub fn parse(json: &str) -> Result<Release, String> {
     let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("a resposta nao e JSON: {e}"))?;
+        serde_json::from_str(json).map_err(|e| format!("the answer is not JSON: {e}"))?;
 
     // The API answers 200 with `{"message": "..."}` in several cases
     // (no token on a private repo, rate limit exceeded). Without this the
     // error would show up as "no package for linux", which sends you
     // looking in the wrong place.
     if v.get("assets").is_none() {
-        let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("sem assets e sem message");
-        return Err(format!("o GitHub respondeu: {msg}"));
+        let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("no assets and no message");
+        return Err(format!("GitHub answered: {msg}"));
     }
 
     let tag = v.get("tag_name").and_then(|t| t.as_str()).unwrap_or("?").to_string();
@@ -74,7 +74,7 @@ pub fn pick<'a>(l: &'a Release, s: System) -> Result<&'a Asset, String> {
         .find(|a| a.name.starts_with(p) && a.name.ends_with(".tar.gz"))
         .ok_or_else(|| {
             let has: Vec<&str> = l.assets.iter().map(|a| a.name.as_str()).collect();
-            format!("nenhum pacote comecando com {p}; a Release traz: {}", has.join(", "))
+            format!("no package starting with {p}; the Release has: {}", has.join(", "))
         })
 }
 
@@ -83,7 +83,7 @@ pub fn sums<'a>(l: &'a Release) -> Result<&'a Asset, String> {
     l.assets
         .iter()
         .find(|a| a.name == "SHA256SUMS")
-        .ok_or_else(|| "a Release nao traz SHA256SUMS; nao confiro o que baixei".to_string())
+        .ok_or_else(|| "the Release has no SHA256SUMS; I cannot check what I downloaded".to_string())
 }
 
 /// The `-<n>-<hash>` the package name carries.
@@ -287,7 +287,7 @@ lixo que nao e soma
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
         assert_eq!(sum_for(sums, "oxdesk").unwrap().len(), 64);
-        assert_eq!(sum_for(sums, "nao-existe"), None);
+        assert_eq!(sum_for(sums, "does-not-exist"), None);
         assert_eq!(lines(sums).len(), 2, "the garbage line does not count");
     }
 
@@ -295,7 +295,7 @@ lixo que nao e soma
     fn parses_healthz() {
         let j = r#"{"ok":true,"build":"abc1234","n":124,"host":"x"}"#;
         assert_eq!(parse_healthz(j), Some((124, "abc1234".into())));
-        assert_eq!(parse_healthz("nao e json"), None);
+        assert_eq!(parse_healthz("not json"), None);
         assert_eq!(parse_healthz(r#"{"ok":true}"#), None);
     }
 }

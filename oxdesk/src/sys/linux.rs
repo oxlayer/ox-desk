@@ -49,7 +49,7 @@ pub fn log_lines(n: usize) -> Raw {
         return Raw {
             unit: UNIT.into(),
             lines: vec![],
-            error: Some("nao consegui executar journalctl".into()),
+            error: Some("could not run journalctl".into()),
         };
     };
 

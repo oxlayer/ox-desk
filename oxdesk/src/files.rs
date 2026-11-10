@@ -123,7 +123,7 @@ pub fn percent_decode(s: &str) -> String {
 /// Lists `path` on `host`. Empty `path` = that host's starting point.
 pub fn list(cfg: &Config, host: &str, path: &str) -> Listing {
     let Some(h) = cfg.hosts.iter().find(|x| x.name == host) else {
-        return Listing::failed(host, path, "local", format!("host '{host}' nao esta na config"));
+        return Listing::failed(host, path, "local", format!("host '{host}' is not in the config"));
     };
     if h.is_local() {
         return list_local(host, path);
@@ -230,12 +230,12 @@ fn sftp_batch(alias: &str, addr: &str, script: &str) -> Result<String, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("nao consegui executar sftp: {e}"))?;
+        .map_err(|e| format!("could not run sftp: {e}"))?;
 
     child
         .stdin
         .as_mut()
-        .ok_or("sftp sem stdin")?
+        .ok_or("sftp has no stdin")?
         .write_all(script.as_bytes())
         .map_err(|e| format!("escrever no sftp: {e}"))?;
     drop(child.stdin.take());
@@ -244,7 +244,7 @@ fn sftp_batch(alias: &str, addr: &str, script: &str) -> Result<String, String> {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     if !out.status.success() && stdout.trim().is_empty() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(if err.is_empty() { "sftp falhou sem mensagem".into() } else { err });
+        return Err(if err.is_empty() { "sftp failed with no message".into() } else { err });
     }
     Ok(stdout)
 }
@@ -276,9 +276,9 @@ fn list_sftp(host: &str, alias: &str, addr: &str, path: &str) -> Listing {
             path,
             "sftp",
             if path.is_empty() {
-                "sftp nao respondeu ao pwd".to_string()
+                "sftp did not answer pwd".to_string()
             } else {
-                format!("nao consegui entrar em '{path}'")
+                format!("could not enter '{path}'")
             },
         );
     };
@@ -476,7 +476,7 @@ fn finish(id: u64, state: &'static str, detail: String) {
 /// a glob in `get`.
 fn safe_path(c: &str) -> Result<(), String> {
     match c.chars().find(|x| matches!(x, '\'' | '"' | '\n' | '\r' | '*' | '?' | '[')) {
-        Some(x) => Err(format!("o caminho tem um caractere que nao sei copiar: {x:?}")),
+        Some(x) => Err(format!("the path has a character I cannot copy: {x:?}")),
         None => Ok(()),
     }
 }
@@ -508,24 +508,24 @@ pub fn transfer(
     folder: &str,
 ) -> Result<u64, String> {
     let find = |n: &str| {
-        cfg.hosts.iter().find(|h| h.name == n).ok_or_else(|| format!("host '{n}' nao esta na config"))
+        cfg.hosts.iter().find(|h| h.name == n).ok_or_else(|| format!("host '{n}' is not in the config"))
     };
     let (ho, hd) = (find(from)?, find(to)?);
     let remote = match (ho.is_local(), hd.is_local()) {
         (true, false) => hd,
         (false, true) => ho,
-        _ => return Err("uma das pontas tem de ser esta maquina".into()),
+        _ => return Err("one of the two ends has to be this machine".into()),
     };
-    let alias = remote.ssh.clone().ok_or_else(|| format!("'{}' nao tem `ssh`", remote.name))?;
+    let alias = remote.ssh.clone().ok_or_else(|| format!("'{}' has no `ssh`", remote.name))?;
     safe_path(path)?;
     safe_path(folder)?;
-    let name = name_of(path).ok_or("caminho sem nome")?.to_string();
+    let name = name_of(path).ok_or("path with no name")?.to_string();
     let parent = path.trim_end_matches(['/', '\\']);
     let parent = parent[..parent.len() - name.len()].to_string();
 
-    let source = entry_in(cfg, from, &parent, &name)?.ok_or("o arquivo nao esta mais la")?;
+    let source = entry_in(cfg, from, &parent, &name)?.ok_or("the file is not there any more")?;
     if entry_in(cfg, to, folder, &name)?.is_some() {
-        return Err(format!("'{name}' ja existe no destino: nada foi copiado"));
+        return Err(format!("'{name}' already exists at the destination: nothing was copied"));
     }
 
     let dest = join(folder, &name);
@@ -554,7 +554,7 @@ pub fn transfer(
         // Finishing is not arriving: the destination is what answers.
         match entry_in(&cfg, &to, &folder, &name) {
             Ok(Some(e)) if source.kind != "file" || e.size == source.size => {
-                let t = e.size.map(|b| format!("{b} bytes")).unwrap_or_else(|| "pasta".into());
+                let t = e.size.map(|b| format!("{b} bytes")).unwrap_or_else(|| "folder".into());
                 say!("files: {name} copied to {to}");
                 finish(id, "ok", t);
             }
@@ -563,7 +563,7 @@ pub fn transfer(
                 "error",
                 format!("chegou com {:?} bytes, esperava {:?}", e.size, source.size),
             ),
-            Ok(None) => finish(id, "error", "o destino nao tem o arquivo".into()),
+            Ok(None) => finish(id, "error", "the destination does not have the file".into()),
             Err(e) => finish(id, "error", e),
         }
     });
@@ -585,7 +585,7 @@ mod tests {
     #[test]
     fn name_comes_from_the_end_of_the_path() {
         assert_eq!(name_of("/C:/Users/a.txt"), Some("a.txt"));
-        assert_eq!(name_of("C:\\Users\\pasta\\"), Some("pasta"));
+        assert_eq!(name_of("C:\\Users\\folder\\"), Some("folder"));
         assert_eq!(name_of("/"), None);
         assert_eq!(join("/tmp/", "a"), "/tmp/a");
     }

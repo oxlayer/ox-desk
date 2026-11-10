@@ -324,7 +324,7 @@ fn install_clock() -> Result<String, String> {
         return Err(format!("could not find {}: run the deploy", bin.display()));
     }
     let dir = crate::sys::home_dir().join(".config/systemd/user");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("criar {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
 
     // `concat!` and not line continuation with `\`: the previous version
     // wrote the file with the source code's indentation inside. systemd
@@ -365,9 +365,9 @@ fn install_clock() -> Result<String, String> {
     );
 
     std::fs::write(dir.join("oxdesk-ota.service"), service)
-        .map_err(|e| format!("gravar oxdesk-ota.service: {e}"))?;
+        .map_err(|e| format!("write oxdesk-ota.service: {e}"))?;
     std::fs::write(dir.join("oxdesk-ota.timer"), timer)
-        .map_err(|e| format!("gravar oxdesk-ota.timer: {e}"))?;
+        .map_err(|e| format!("write oxdesk-ota.timer: {e}"))?;
 
     crate::setup_common::run_timed("systemctl", &["--user", "daemon-reload"], 15)?;
     crate::setup_common::run_timed("systemctl", &["--user", "enable", "--now", "oxdesk-ota.timer"], 15)?;
@@ -377,7 +377,7 @@ fn install_clock() -> Result<String, String> {
     let first = crate::setup_common::run_timed(&bin.to_string_lossy(), &["--conferir"], 60);
     Ok(match first {
         Ok(s) => format!("timer habilitado; primeira checagem: {}", s.trim()),
-        Err(e) => format!("timer habilitado, mas a primeira checagem falhou: {e}"),
+        Err(e) => format!("timer enabled, but the first check failed: {e}"),
     })
 }
 

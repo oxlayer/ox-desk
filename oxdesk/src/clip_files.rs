@@ -402,7 +402,7 @@ mod tests {
     fn accepts_localhost_and_refuses_a_real_host() {
         assert_eq!(paths_from_uris("file://localhost/tmp/a"), vec!["/tmp/a"]);
         // A file on another machine is not a file here.
-        assert!(paths_from_uris("file://outra-maquina/tmp/a").is_empty());
+        assert!(paths_from_uris("file://another-machine/tmp/a").is_empty());
     }
 
     #[test]
@@ -671,7 +671,7 @@ pub fn read_clipboard() -> Clipboard {
     };
     if !o.status.success() {
         let err = String::from_utf8_lossy(&o.stderr);
-        let line = err.lines().find(|l| !l.trim().is_empty()).unwrap_or("sem mensagem");
+        let line = err.lines().find(|l| !l.trim().is_empty()).unwrap_or("no message");
         crate::clip::note_watch(false, format!("osascript recusou: {line}"));
         return Clipboard::Empty;
     }

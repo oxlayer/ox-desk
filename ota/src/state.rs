@@ -61,23 +61,23 @@ impl State {
             build_there: String::new(),
             package: String::new(),
             result: "erro".into(),
-            message: "sem conclusao".into(),
+            message: "no conclusion".into(),
         }
     }
 
     /// One-line summary, the way the wizard shows it.
     pub fn line(&self) -> String {
         match self.result.as_str() {
-            "igual" => format!("em dia no build #{} {}", self.n_here, self.build_here),
+            "igual" => format!("up to date on build #{} {}", self.n_here, self.build_here),
             "atualizado" => {
                 format!("atualizei para #{} {} sozinho", self.n_there, self.build_there)
             }
             "novidade" => format!(
-                "ha o build #{} {} publicado; aqui esta o #{} -- {}",
+                "build #{} {} is published; this machine has #{} -- {}",
                 self.n_there, self.build_there, self.n_here, self.message
             ),
             "mais-novo-aqui" => format!(
-                "aqui esta o #{}, mais novo que o #{} publicado",
+                "this machine has #{}, newer than the published #{}",
                 self.n_here, self.n_there
             ),
             "revertido" => format!("voltei para #{} {}: {}", self.n_here, self.build_here, self.message),
@@ -148,14 +148,14 @@ mod tests {
     fn garbage_in_the_file_does_not_crash() {
         let dir = std::env::temp_dir().join(format!("oxdesk-ota-lixo-{}", now()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(path(&dir), "nao e json").unwrap();
+        std::fs::write(path(&dir), "not json").unwrap();
         assert!(read(&dir).is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn no_file_returns_none() {
-        assert!(read(Path::new("/tmp/nao-existe-oxdesk-ota-xyz")).is_none());
+        assert!(read(Path::new("/tmp/does-not-exist-oxdesk-ota-xyz")).is_none());
     }
 
     /// The wire names are a contract with the wizard and with the file

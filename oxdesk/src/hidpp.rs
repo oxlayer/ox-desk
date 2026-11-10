@@ -271,7 +271,7 @@ fn no_access() -> Survey {
         }
     };
     #[cfg(not(target_os = "linux"))]
-    let error = "sem acesso ao dispositivo HID bruto".to_string();
+    let error = "no access to the raw HID device".to_string();
 
     Survey {
         hidraw_access: false,
@@ -842,7 +842,7 @@ pub fn controls() -> Controls {
             }),
             Err(e) => out.push(DeviceControls {
                 slot,
-                device: format!("{name} (erro: {e})"),
+                device: format!("{name} (error: {e})"),
                 controls: vec![],
             }),
         }

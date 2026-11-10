@@ -123,7 +123,7 @@ pub fn plan(s: System, uid: u32) -> Plan {
             daemon: "oxdesk.exe",
             signs: false,
             // Shown in the panel: stays in Portuguese.
-            refusal: Some("nao assino aqui: a chave do Authenticode vive no Ubuntu (specs/008); rode o deploy"),
+            refusal: Some("I do not sign here: the Authenticode key lives on the Linux machine (specs/008); run the deploy"),
             restart: vec![],
             clear: vec![],
         },

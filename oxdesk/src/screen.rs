@@ -213,19 +213,19 @@ fn plan_for(cfg: &Config, name: &str, opts: Opts) -> Option<Plan> {
         let tried: Vec<&str> =
             crate::sys::screen_clients(&sc.kind).into_iter().map(|c| c.prog).collect();
         Some(if tried.is_empty() {
-            format!("protocolo '{}' nao tem cliente conhecido aqui", sc.kind)
+            format!("protocol '{}' has no known client here", sc.kind)
         } else {
-            format!("sem cliente {} instalado aqui (procurei: {})", sc.kind, tried.join(", "))
+            format!("no {} client installed here (looked for: {})", sc.kind, tried.join(", "))
         })
     } else if !reachable {
         Some(if sc.kind == "oxdesk-stream" {
             format!(
-                "'{}' nao tem `ssh` na config: sem ele nao ha como levantar o host de tela la",
+                "'{}' has no `ssh` in the config: without it there is no way to start its screen host",
                 h.name
             )
         } else {
             format!(
-                "{}:{} nao respondeu -- a tela do host esta desligada ou bloqueada",
+                "{}:{} did not answer -- that host's screen is off or locked",
                 h.addr, sc.port
             )
         })
@@ -268,7 +268,7 @@ pub fn plans(cfg: &Config) -> Vec<Plan> {
 /// Launches the client. Returns what was run, for the log and the UI.
 pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
     let plan = plan_for(cfg, host, opts)
-        .ok_or_else(|| format!("host '{host}' nao tem `[hosts.screen]` na config"))?;
+        .ok_or_else(|| format!("host '{host}' has no `[hosts.screen]` in the config"))?;
     if let Some(b) = &plan.blocker {
         return Err(b.clone());
     }
@@ -279,14 +279,14 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
     if plan.kind == "oxdesk-stream" {
         if let Some(h) = cfg.hosts.iter().find(|x| x.name == host) {
             if let Err(e) = wake_host(h, plan.port) {
-                return Err(format!("nao consegui levantar o host de tela: {e}"));
+                return Err(format!("could not start the screen host: {e}"));
             }
             pin = Some(crate::pairing::pin_for(h, &local_host_bin())?);
         }
     }
 
-    let cmd = plan.command.ok_or("sem comando")?;
-    let (prog, args) = cmd.split_first().ok_or("comando vazio")?;
+    let cmd = plan.command.ok_or("no command")?;
+    let (prog, args) = cmd.split_first().ok_or("empty command")?;
 
     // `spawn` and not `output`: the screen client is interactive and
     // lives for minutes or hours. Waiting for it would block the server
@@ -303,7 +303,7 @@ pub fn launch(cfg: &Config, host: &str, opts: Opts) -> Result<String, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("nao consegui executar {prog}: {e}"))?;
+        .map_err(|e| format!("could not run {prog}: {e}"))?;
 
     let line = cmd.join(" ");
     let mode = format!(
@@ -330,21 +330,21 @@ pub struct Session {
 /// back to the native viewer. See specs/016-session-and-visuals.md.
 pub fn open_session(cfg: &Config, host: &str) -> Result<Session, String> {
     let plan = plan_for(cfg, host, Opts::default())
-        .ok_or_else(|| format!("host '{host}' nao tem `[hosts.screen]` na config"))?;
+        .ok_or_else(|| format!("host '{host}' has no `[hosts.screen]` in the config"))?;
     if let Some(b) = &plan.blocker {
         return Err(b.clone());
     }
     if plan.kind != "oxdesk-stream" {
-        return Err(format!("'{host}' nao usa oxdesk-stream"));
+        return Err(format!("'{host}' does not use oxdesk-stream"));
     }
     let h = cfg
         .hosts
         .iter()
         .find(|x| x.name == host)
-        .ok_or_else(|| format!("host '{host}' nao esta na config"))?;
+        .ok_or_else(|| format!("host '{host}' is not in the config"))?;
     let name = if cfg!(windows) { "oxdesk-bridge.exe" } else { "oxdesk-bridge" };
-    let bridge = find_program(name).ok_or("oxdesk-bridge nao instalada")?;
-    wake_host(h, plan.port).map_err(|e| format!("nao consegui levantar o host de tela: {e}"))?;
+    let bridge = find_program(name).ok_or("oxdesk-bridge is not installed")?;
+    wake_host(h, plan.port).map_err(|e| format!("could not start the screen host: {e}"))?;
     let pin = crate::pairing::pin_for(h, &local_host_bin())?;
 
     let mut bytes = [0u8; 24];
@@ -364,16 +364,16 @@ pub fn open_session(cfg: &Config, host: &str) -> Result<Session, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("nao consegui executar a ponte: {e}"))?;
-    let output = child.stdout.take().ok_or("a ponte nao tem saida")?;
+        .map_err(|e| format!("could not run the bridge: {e}"))?;
+    let output = child.stdout.take().ok_or("the bridge has no output")?;
     let mut line = String::new();
     std::io::BufRead::read_line(&mut std::io::BufReader::new(output), &mut line)
-        .map_err(|e| format!("ler a ponte: {e}"))?;
+        .map_err(|e| format!("read the bridge: {e}"))?;
     let port = line
         .trim()
         .strip_prefix("porta ")
         .and_then(|p| p.parse().ok())
-        .ok_or("a ponte nao disse a porta")?;
+        .ok_or("the bridge did not say the port")?;
     // The bridge exits on its own when the tab closes; this thread only
     // reaps the child.
     std::thread::spawn(move || {
@@ -479,7 +479,7 @@ pub(crate) fn wake_host(h: &crate::config::HostCfg, port: u16) -> Result<(), Str
         )
     } else {
         format!(
-            "o processo nao subiu em {} (veja ~/.local/state/oxdesk-host.log la)",
+            "the process did not come up on {} (see ~/.local/state/oxdesk-host.log there)",
             h.name
         )
     })

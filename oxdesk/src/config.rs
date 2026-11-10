@@ -446,12 +446,12 @@ fn write_validated(after: String) -> Result<(), String> {
     // would leave the daemon without a config on the next boot.
     toml::from_str::<Config>(&after).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
     let p = Config::path();
-    std::fs::write(&p, after).map_err(|e| format!("gravar {p:?}: {e}"))
+    std::fs::write(&p, after).map_err(|e| format!("write {p:?}: {e}"))
 }
 
 pub fn save_border_enabled(on: bool) -> Result<(), String> {
     let p = Config::path();
-    let before = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+    let before = std::fs::read_to_string(&p).map_err(|e| format!("read {p:?}: {e}"))?;
     write_validated(set_in_section(&before, "input.border", &[("enabled", on.to_string())]))
 }
 
@@ -464,7 +464,7 @@ pub fn save_border_enabled(on: bool) -> Result<(), String> {
 /// back to where the mouse is and undoes what the person just did.
 pub fn save_follow(on: bool, leader: Option<&str>) -> Result<(), String> {
     let p = Config::path();
-    let before = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+    let before = std::fs::read_to_string(&p).map_err(|e| format!("read {p:?}: {e}"))?;
     let mut pairs: Vec<(&str, String)> = vec![("enabled", on.to_string())];
     if let Some(l) = leader {
         pairs.push(("leader", format!("\"{}\"", l.replace('"', ""))));
@@ -475,12 +475,12 @@ pub fn save_follow(on: bool, leader: Option<&str>) -> Result<(), String> {
 /// Writes the positions to the file, preserving comments.
 pub fn save_layout(pos: &BTreeMap<String, Cell>) -> Result<(), String> {
     let p = Config::path();
-    let before = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+    let before = std::fs::read_to_string(&p).map_err(|e| format!("read {p:?}: {e}"))?;
     let after = apply_layout(&before, pos);
     // Validate BEFORE writing: a text edit that produces invalid TOML
     // would leave the daemon without a config on the next boot.
     toml::from_str::<Config>(&after).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
-    std::fs::write(&p, after).map_err(|e| format!("gravar {p:?}: {e}"))
+    std::fs::write(&p, after).map_err(|e| format!("write {p:?}: {e}"))
 }
 
 /// Writes each host's grid position, preserving the file.
@@ -663,15 +663,15 @@ impl Config {
         let p = Self::path();
         if !p.exists() {
             if let Some(dir) = p.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| format!("criar {dir:?}: {e}"))?;
+                std::fs::create_dir_all(dir).map_err(|e| format!("create {dir:?}: {e}"))?;
             }
             let initial = initial_config(DEFAULT_TOML, &local_hostname(), local_os());
             std::fs::write(&p, initial).map_err(|e| format!("write {p:?}: {e}"))?;
             gripe!("initial config written to {}", p.display());
         }
-        let raw = std::fs::read_to_string(&p).map_err(|e| format!("ler {p:?}: {e}"))?;
+        let raw = std::fs::read_to_string(&p).map_err(|e| format!("read {p:?}: {e}"))?;
         let mut c: Config =
-            toml::from_str(&raw).map_err(|e| format!("TOML invalido em {}: {e}", p.display()))?;
+            toml::from_str(&raw).map_err(|e| format!("invalid TOML in {}: {e}", p.display()))?;
         // The screen kind from before the rename. legacy.rs rewrites the
         // file; this covers a config that could not be rewritten, so the
         // screen buttons do not vanish over a name.
@@ -695,9 +695,9 @@ impl Config {
     /// as `apply_layout` does.
     pub fn save(&self) -> Result<(), String> {
         let text = toml::to_string_pretty(self).map_err(|e| format!("serializar: {e}"))?;
-        toml::from_str::<Config>(&text).map_err(|e| format!("auto-validacao falhou: {e}"))?;
+        toml::from_str::<Config>(&text).map_err(|e| format!("self-validation failed: {e}"))?;
         let p = Self::path();
-        std::fs::write(&p, text).map_err(|e| format!("gravar {p:?}: {e}"))
+        std::fs::write(&p, text).map_err(|e| format!("write {p:?}: {e}"))
     }
 }
 
@@ -899,10 +899,10 @@ addr = "la.local"
 
     #[test]
     fn border_toggle_preserves_the_section() {
-        let before = "# topo\n[input.border]\n# por que esta assim\nenabled = false\nedge = \"right\"\n\n[input.follow]\nenabled = true\n";
+        let before = "# top\n[input.border]\n# why it is like this\nenabled = false\nedge = \"right\"\n\n[input.follow]\nenabled = true\n";
         let after = set_in_section(before, "input.border", &[("enabled", "true".into())]);
-        assert!(after.contains("# por que esta assim"));
-        assert!(after.contains("[input.border]\n# por que esta assim\nenabled = true"));
+        assert!(after.contains("# why it is like this"));
+        assert!(after.contains("[input.border]\n# why it is like this\nenabled = true"));
         // Must not touch the OTHER block's enabled.
         assert!(after.contains("[input.follow]\nenabled = true"));
         let c: Config = toml::from_str(&after).unwrap();
@@ -947,7 +947,7 @@ addr = "la.local"
             addr = "x.local"
             layout = { col = 2, row = 2 }
             [[hosts]]
-            name = "sem posicao"
+            name = "no position"
             addr = "s.local"
             "#,
         )

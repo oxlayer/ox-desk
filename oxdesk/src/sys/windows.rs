@@ -149,7 +149,7 @@ pub fn log_lines(n: usize) -> Raw {
         return Raw {
             unit: label,
             lines: vec![],
-            error: Some("ainda nao ha arquivo de log".into()),
+            error: Some("there is no log file yet".into()),
         };
     };
     let all: Vec<&str> = text.lines().collect();

@@ -30,7 +30,7 @@ pub fn run(h: &HostCfg, cmd: &str, timeout_s: u32) -> Result<String, String> {
             .map_err(|e| format!("executar local: {e}"))?
     } else {
         let alias = h.ssh.as_deref().ok_or_else(|| {
-            format!("host '{}' nao tem `ssh` na config: nao ha como rodar nada la", h.name)
+            format!("host '{}' has no `ssh` in the config: there is no way to run anything there", h.name)
         })?;
         let mut args: Vec<String> = vec![
             "-o".into(), "BatchMode=yes".into(),
@@ -54,7 +54,7 @@ pub fn run(h: &HostCfg, cmd: &str, timeout_s: u32) -> Result<String, String> {
             })
             .filter(|l| !l.trim().is_empty())
             .last()
-            .unwrap_or("comando falhou sem mensagem")
+            .unwrap_or("the command failed with no message")
             .to_string();
         return Err(err);
     }

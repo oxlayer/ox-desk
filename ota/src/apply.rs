@@ -52,7 +52,7 @@ fn base() -> Result<PathBuf, String> {
     let v = std::env::var_os("LOCALAPPDATA");
     #[cfg(not(windows))]
     let v = std::env::var_os("HOME");
-    v.map(PathBuf::from).ok_or_else(|| "nao sei onde e a casa desta maquina".to_string())
+    v.map(PathBuf::from).ok_or_else(|| "I do not know where this machine's home is".to_string())
 }
 
 /// The uid, taken from the owner of the home directory itself.
@@ -175,14 +175,14 @@ fn steps(ctx: &Context, st: &mut State) -> Result<(), String> {
     let url = format!("{api}/repos/{}/releases/latest", ctx.repo);
     let json = exec::api(&url, ctx.token.as_deref(), 30).map_err(|e| {
         if ctx.token.is_none() {
-            format!("{e} -- e nao ha token em {}", plan::token_path(ctx.system, &ctx.base).display())
+            format!("{e} -- and there is no token at {}", plan::token_path(ctx.system, &ctx.base).display())
         } else {
             e
         }
     })?;
     let l = release::parse(&json).map_err(|e| {
         if ctx.token.is_none() {
-            format!("{e} (repo privado sem token: ponha um PAT de leitura em {})",
+            format!("{e} (private repo with no token: put a read-only PAT at {})",
                 plan::token_path(ctx.system, &ctx.base).display())
         } else {
             e
@@ -201,17 +201,17 @@ fn steps(ctx: &Context, st: &mut State) -> Result<(), String> {
 
     match decision {
         Decision::NoStamp { name } => {
-            return Err(format!("o pacote {name} nao traz -<n>-<hash>; nao troco as cegas"));
+            return Err(format!("package {name} has no -<n>-<hash>; I will not swap blind"));
         }
         Decision::NewerHere { here, there } => {
             st.n_there = there;
             st.result = "mais-novo-aqui".into();
-            st.message = format!("#{here} aqui, #{there} publicado; nao desco de versao");
+            st.message = format!("#{here} here, #{there} published; I do not go down a version");
             return Ok(());
         }
         Decision::Same { .. } if ctx.mode != Mode::Force => {
             st.result = "igual".into();
-            st.message = format!("a Release {} e o que ja roda aqui", l.tag);
+            st.message = format!("Release {} is what already runs here", l.tag);
             return Ok(());
         }
         _ => {}
@@ -219,7 +219,7 @@ fn steps(ctx: &Context, st: &mut State) -> Result<(), String> {
 
     if ctx.mode == Mode::Check {
         st.result = "novidade".into();
-        st.message = "so conferi (--conferir)".into();
+        st.message = "only checked (--conferir)".into();
         return Ok(());
     }
     if let Some(reason) = ctx.plan.refusal {
@@ -251,7 +251,7 @@ fn install(
     exec::download(&sums.url, ctx.token.as_deref(), &p_sums, 60)?;
     let txt_sums = fs::read_to_string(&p_sums).map_err(|e| format!("SHA256SUMS: {e}"))?;
     let expected = release::sum_for(&txt_sums, &asset.name)
-        .ok_or_else(|| format!("o SHA256SUMS da Release nao tem linha para {}", asset.name))?;
+        .ok_or_else(|| format!("the Release's SHA256SUMS has no line for {}", asset.name))?;
 
     let p_tar = staging.join(&asset.name);
     let bytes = exec::download(&asset.url, ctx.token.as_deref(), &p_tar, 300)?;
@@ -260,7 +260,7 @@ fn install(
     let got = sha256::hex(&data);
     if got != expected {
         return Err(format!(
-            "o pacote nao confere: esperava {expected}, baixei {got} ({bytes} bytes)"
+            "the package does not match: expected {expected}, downloaded {got} ({bytes} bytes)"
         ));
     }
     drop(data);
@@ -274,19 +274,19 @@ fn install(
         120,
     )?;
     if !s.ok {
-        return Err(format!("tar falhou: {}", first_line(&s.err)));
+        return Err(format!("tar failed: {}", first_line(&s.err)));
     }
 
     let inner = staging.join(asset.name.trim_end_matches(".tar.gz"));
     if !inner.is_dir() {
-        return Err(format!("o pacote nao trouxe a pasta {}", inner.display()));
+        return Err(format!("the package has no {} directory", inner.display()));
     }
 
     let inner_sums = fs::read_to_string(inner.join("SHA256SUMS"))
-        .map_err(|e| format!("o pacote nao traz SHA256SUMS interno: {e}"))?;
+        .map_err(|e| format!("the package has no inner SHA256SUMS: {e}"))?;
     let items = release::lines(&inner_sums);
     if items.is_empty() {
-        return Err("o SHA256SUMS interno nao lista nada".into());
+        return Err("the inner SHA256SUMS lists nothing".into());
     }
 
     for (sum, name) in &items {
@@ -294,7 +294,7 @@ fn install(
         let d = fs::read(&f).map_err(|e| format!("{name}: {e}"))?;
         let got = sha256::hex(&d);
         if &got != sum {
-            return Err(format!("{name} nao confere: esperava {sum}, veio {got}"));
+            return Err(format!("{name} does not match: expected {sum}, got {got}"));
         }
     }
 
@@ -305,7 +305,7 @@ fn install(
     let raw = fs::read(&daemon).map_err(|e| format!("{}: {e}", ctx.plan.daemon))?;
     if !contains(&raw, st.build_there.as_bytes()) {
         return Err(format!(
-            "o {} do pacote nao carrega o carimbo {}",
+            "the package's {} does not carry the stamp {}",
             ctx.plan.daemon, st.build_there
         ));
     }
@@ -350,7 +350,7 @@ fn install(
     if came_up {
         st.result = "atualizado".into();
         st.message = format!(
-            "{} binario(s) trocado(s) e /healthz respondeu {}",
+            "{} binary(ies) swapped and /healthz answered {}",
             items.len(),
             st.build_there
         );
@@ -363,10 +363,10 @@ fn install(
     // Roll back. If not even this works, the message has to say where the
     // copy was left -- that is what someone will need at 2 a.m.
     let why = match restarted {
-        Err(e) => format!("o reinicio falhou: {e}"),
+        Err(e) => format!("the restart failed: {e}"),
         Ok(()) => match check_healthz(&ctx.base, ctx.system, &st.build_there) {
             Err(e) => e,
-            Ok(()) => "sem motivo claro".into(),
+            Ok(()) => "no clear reason".into(),
         },
     };
     let mut restored = true;
@@ -383,7 +383,7 @@ fn install(
         format!("{why}; voltei ao build anterior e ele responde")
     } else {
         format!(
-            "{why}; a volta NAO confirmou -- a copia boa esta em {}",
+            "{why}; the rollback did NOT confirm -- the good copy is at {}",
             previous.display()
         )
     };
@@ -391,7 +391,7 @@ fn install(
 }
 
 fn first_line(s: &str) -> String {
-    s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("sem mensagem").to_string()
+    s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no message").to_string()
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -422,10 +422,10 @@ fn copy(from: &Path, to: &Path) -> Result<(), String> {
 
 fn sign_all(ctx: &Context, inner: &Path, items: &[(String, String)]) -> Result<(), String> {
     let script = plan::signer(ctx.system, &ctx.base)
-        .ok_or_else(|| "este sistema nao tem assinador".to_string())?;
+        .ok_or_else(|| "this system has no signer".to_string())?;
     if !script.is_file() {
         return Err(format!(
-            "{} nao existe; sem ele o binario entra ad-hoc e o Mac perde a Gravacao de Tela",
+            "{} does not exist; without it the binary lands ad-hoc and the Mac loses Screen Recording",
             script.display()
         ));
     }
@@ -442,7 +442,7 @@ fn sign_all(ctx: &Context, inner: &Path, items: &[(String, String)]) -> Result<(
         let v = exec::run("codesign", &["-dvvv", &target.to_string_lossy()], 30)?;
         let all = format!("{}{}", v.out, v.err);
         if all.contains("adhoc") || !all.contains("Authority=") {
-            return Err(format!("{name} seguiu sem identidade apos assinar; rode create-identity.sh no Mac"));
+            return Err(format!("{name} still has no identity after signing; run create-identity.sh on the Mac"));
         }
     }
     Ok(())
@@ -506,7 +506,7 @@ fn check_links(s: System, bin: &Path) -> Result<(), String> {
 /// goes to stderr on purpose, and exiting non-zero is not a symptom.
 fn smoke_test_daemon(bin: &Path) -> Result<(), String> {
     let r = exec::run(&bin.to_string_lossy(), &["--help"], 20)
-        .map_err(|e| format!("o daemon do pacote nao executou: {e}"))?;
+        .map_err(|e| format!("the package's daemon did not run: {e}"))?;
     let all = format!("{}{}", r.out, r.err);
     for signal in [
         "error while loading shared libraries",
@@ -517,7 +517,7 @@ fn smoke_test_daemon(bin: &Path) -> Result<(), String> {
         "Exec format error",
     ] {
         if all.contains(signal) {
-            return Err(format!("o daemon do pacote nao carrega: {}", first_line(&all)));
+            return Err(format!("the package's daemon does not load: {}", first_line(&all)));
         }
     }
     Ok(())
@@ -536,7 +536,7 @@ fn restart(ctx: &Context) -> Result<(), String> {
         let _ = exec::run(prog, &args, 15);
     }
     let argv = &ctx.plan.restart;
-    let (prog, args) = argv.split_first().ok_or_else(|| "sem comando de reinicio".to_string())?;
+    let (prog, args) = argv.split_first().ok_or_else(|| "no restart command".to_string())?;
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let s = exec::run(prog, &args, 60)?;
     if !s.ok {
@@ -552,19 +552,19 @@ fn restart(ctx: &Context) -> Result<(), String> {
 /// fail an update that was correct.
 fn check_healthz(base: &Path, s: System, expected: &str) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/healthz", port(base, s));
-    let mut last = String::from("nao respondeu");
+    let mut last = String::from("did not answer");
     for _ in 0..13 {
         std::thread::sleep(std::time::Duration::from_millis(2000));
         match exec::api(&url, None, 4) {
             Ok(t) => match release::parse_healthz(&t) {
                 Some((_, b)) if b == expected => return Ok(()),
-                Some((n, b)) => last = format!("/healthz responde #{n} {b}, esperava {expected}"),
-                None => last = "o /healthz respondeu algo que nao sei ler".into(),
+                Some((n, b)) => last = format!("/healthz answers #{n} {b}, expected {expected}"),
+                None => last = "/healthz answered something I cannot read".into(),
             },
             Err(e) => last = e,
         }
     }
-    Err(format!("o /healthz nao confirmou {expected} em ~26 s: {last}"))
+    Err(format!("/healthz did not confirm {expected} in ~26 s: {last}"))
 }
 
 /// The daemon's port, read from this machine's config.
@@ -658,7 +658,7 @@ mod tests {
         fs::create_dir_all(&cfg).unwrap();
         fs::write(cfg.join("config.toml"), "# comentario\nport = 9191\nfollow = true\n").unwrap();
         assert_eq!(port(&d, System::Linux), 9191);
-        fs::write(cfg.join("config.toml"), "sem porta aqui\n").unwrap();
+        fs::write(cfg.join("config.toml"), "no port here\n").unwrap();
         assert_eq!(port(&d, System::Linux), 8787);
         // Each host's SSH `port = 22` must not become the daemon's port
         // when the daemon's is not written.
@@ -668,13 +668,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(port(&d, System::Linux), 8787);
-        assert_eq!(port(Path::new("/nao/existe"), System::Linux), 8787);
+        assert_eq!(port(Path::new("/does/not/exist"), System::Linux), 8787);
         fs::remove_dir_all(&d).ok();
     }
 
     #[test]
     fn first_line_skips_empty_ones() {
-        assert_eq!(first_line("\n\n  erro de verdade\noutra"), "erro de verdade");
-        assert_eq!(first_line(""), "sem mensagem");
+        assert_eq!(first_line("\n\n  a real error\nanother"), "a real error");
+        assert_eq!(first_line(""), "no message");
     }
 }

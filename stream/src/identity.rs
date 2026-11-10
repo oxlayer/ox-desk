@@ -272,7 +272,7 @@ impl ClientCertVerifier for ClientPolicy {
                 // pt-BR on purpose: it travels in the TLS alert and the
                 // viewer shows it to the person.
                 return Err(rustls::Error::General(format!(
-                    "este computador ({}) nao esta autorizado neste host",
+                    "this computer ({}) is not authorized on this host",
                     short(&fp)
                 )));
             }

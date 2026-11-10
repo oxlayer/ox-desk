@@ -79,14 +79,14 @@ fn list_cmd(os: HostOs) -> Option<(&'static str, &'static str)> {
 
 pub fn list(cfg: &crate::config::Config, host: &str) -> Procs {
     let Some(h) = cfg.hosts.iter().find(|x| x.name == host) else {
-        return Procs::failed(host, "local", format!("host '{host}' nao esta na config"));
+        return Procs::failed(host, "local", format!("host '{host}' is not in the config"));
     };
     let source = if h.is_local() { "local" } else { "ssh" };
     let Some((cmd, cpu_kind)) = list_cmd(h.os()) else {
         return Procs::failed(
             host,
             source,
-            "SO do host desconhecido: declare `os` em [[hosts]] para eu saber que comando usar",
+            "unknown host OS: declare `os` in [[hosts]] so I know which command to use",
         );
     };
     let output = match remote::run(h, cmd, TIMEOUT_S) {
@@ -164,7 +164,7 @@ pub fn kill(
     confirm: bool,
 ) -> Result<String, String> {
     if !confirm {
-        return Err("falta confirm: encerrar processo nao tem desfazer".into());
+        return Err("confirm is missing: killing a process has no undo".into());
     }
     if pid <= 1 {
         return Err("pid 0 e 1 sao do sistema; recusado".into());
@@ -173,7 +173,7 @@ pub fn kill(
         .hosts
         .iter()
         .find(|x| x.name == host)
-        .ok_or_else(|| format!("host '{host}' nao esta na config"))?;
+        .ok_or_else(|| format!("host '{host}' is not in the config"))?;
 
     let cmd = match h.os() {
         HostOs::Windows => {
@@ -191,7 +191,7 @@ pub fn kill(
             format!("kill -{signal} {pid}")
         }
         HostOs::Unknown => {
-            return Err("SO do host desconhecido: declare `os` em [[hosts]]".into())
+            return Err("unknown host OS: declare `os` in [[hosts]]".into())
         }
     };
     let output = remote::run(h, &cmd, TIMEOUT_S)?;

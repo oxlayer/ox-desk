@@ -441,7 +441,7 @@ fn kvm_state(h: &HostCfg, cfg: &Config) -> Kvm {
         Err(e) => return Kvm { error: Some(e), ..Default::default() },
     };
     let Some(line) = text.lines().find(|l| l.trim_start().starts_with('{')) else {
-        return Kvm { error: Some("o daemon de la nao respondeu JSON".into()), ..Default::default() };
+        return Kvm { error: Some("that machine's daemon did not answer JSON".into()), ..Default::default() };
     };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
         return Kvm { error: Some("JSON ilegivel".into()), ..Default::default() };

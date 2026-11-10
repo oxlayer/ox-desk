@@ -534,21 +534,21 @@ mod tests {
     /// updating and nothing warns.
     #[test]
     fn stopped_clock_is_not_ok_even_with_a_good_result() {
-        let recent = verdict("igual\t600\tem dia no build #124 abc1234", "a cada 1 h");
+        let recent = verdict("igual\t600\tup to date on build #124 abc1234", "a cada 1 h");
         assert_eq!(recent.state, crate::setup::State::Ok);
 
-        let stopped = verdict("igual\t25000\tem dia no build #124 abc1234", "a cada 1 h");
+        let stopped = verdict("igual\t25000\tup to date on build #124 abc1234", "a cada 1 h");
         assert_eq!(stopped.state, crate::setup::State::Missing);
         assert!(stopped.detail.contains("is not firing"), "{}", stopped.detail);
     }
 
     #[test]
     fn error_and_revert_are_errors_and_update_available_is_pending() {
-        assert_eq!(verdict("erro\t60\tsem token", "x").state, crate::setup::State::Error);
-        assert_eq!(verdict("revertido\t60\tvoltei", "x").state, crate::setup::State::Error);
-        assert_eq!(verdict("novidade\t60\tha o #125", "x").state, crate::setup::State::Missing);
-        assert_eq!(verdict("atualizado\t60\ttroquei", "x").state, crate::setup::State::Ok);
-        assert_eq!(verdict("mais-novo-aqui\t60\t#130 aqui", "x").state, crate::setup::State::Ok);
+        assert_eq!(verdict("erro\t60\tno token", "x").state, crate::setup::State::Error);
+        assert_eq!(verdict("revertido\t60\trolled back", "x").state, crate::setup::State::Error);
+        assert_eq!(verdict("novidade\t60\t#125 is out", "x").state, crate::setup::State::Missing);
+        assert_eq!(verdict("atualizado\t60\tswapped", "x").state, crate::setup::State::Ok);
+        assert_eq!(verdict("mais-novo-aqui\t60\t#130 here", "x").state, crate::setup::State::Ok);
     }
 
     /// A line outside the contract is an error, not "ok" by omission. If
