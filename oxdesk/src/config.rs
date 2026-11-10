@@ -250,15 +250,33 @@ pub struct FollowCfg {
 pub struct HotkeyCfg {
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// `rotate` (default) or `ask`.
+    ///
+    /// - **rotate**: each press goes to the next machine that is up. With
+    ///   one machine up it always goes there, which is the common case.
+    /// - **ask**: a list appears and you choose. Costs a dialog and a
+    ///   click; worth it when more than one machine is up and the right
+    ///   one is not always the next one.
+    ///
+    /// Rotating does not endanger the way back. The gesture only rotates
+    /// when the input is HERE: from a remote machine both Ctrls still land
+    /// in `oxdesk-kvm`'s rescue and bring it home in one press. The cycle
+    /// is `home -> A -> home -> B`, never `A -> B`.
+    #[serde(default = "default_hotkey_mode")]
+    pub mode: String,
     /// Where the input goes. Optional while there is exactly one remote
     /// host; required as soon as there are two. See `hotkey::pick_target`.
     #[serde(default)]
     pub target: Option<String>,
 }
 
+fn default_hotkey_mode() -> String {
+    "rotate".into()
+}
+
 impl Default for HotkeyCfg {
     fn default() -> Self {
-        Self { enabled: true, target: None }
+        Self { enabled: true, mode: default_hotkey_mode(), target: None }
     }
 }
 

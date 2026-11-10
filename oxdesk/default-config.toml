@@ -147,6 +147,29 @@ enabled = false
 # leader = "MX Keys Wireless Keyboard"
 interval_seconds = 5
 
+# Both Ctrl keys, with the input HERE, send it to another machine.
+#
+# The other half of the gesture already existed: from a machine that has
+# your input, both Ctrls bring it back (oxdesk-kvm's rescue). This is the
+# way out.
+#
+# ON by default, unlike the two above, because the mechanism is different:
+# this is the LAN KVM. The devices stay on this receiver, nothing moves in
+# hardware, the target is connected to BEFORE anything is grabbed, and one
+# press from the far side brings it home. There is no state a wrong press
+# can leave behind.
+#
+#   mode = "rotate"  each press goes to the next machine that is up
+#   mode = "ask"     a list appears and you choose (needs `zenity`)
+#   target = "..."   always this one, no rotation and no list
+#
+# Rotating does not endanger the way back: it only rotates when the input
+# is here, so the cycle is `home -> A -> home -> B`, never `A -> B`.
+[input.hotkey]
+enabled = true
+mode = "rotate"
+# target = "windows-pc"
+
 # Dwell on the edge before switching. hold_hits = 1 switches on the first
 # touch: more immediate, more chance of switching on a graze.
 

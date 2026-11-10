@@ -72,9 +72,20 @@ const SETUP: &str = include_str!("../static/setup.html");
 /// Snapshot cache. It exists because /api/status does network and SSH --
 /// measured at 2.09 s in the Python version, against 0.6 ms for /healthz.
 /// Reusing it is what keeps the GUI smooth.
-struct Cache {
+pub struct Cache {
     at: Option<Instant>,
     data: Option<Arc<Snapshot>>,
+}
+
+/// The cached snapshot, or `None` -- never a fresh one.
+///
+/// `cached()` refreshes when the TTL expired, and refreshing does network
+/// and SSH to three machines. That is right for a panel request and wrong
+/// for a keypress: the hotkey would hang for seconds on the gesture whose
+/// whole point is to be instant. So this one PEEKS, and the caller decides
+/// what to do with nothing.
+pub fn snapshot_peek(cache: &Mutex<Cache>) -> Option<Arc<Snapshot>> {
+    cache.lock().ok().and_then(|c| c.data.as_ref().map(Arc::clone))
 }
 
 fn json_header() -> Header {
@@ -326,7 +337,7 @@ fn main() -> std::process::ExitCode {
     // `oxdesk-kvm`, and the two cannot both see a press: whoever holds the
     // grab gets the events alone. See `hotkey`.
     #[cfg(target_os = "linux")]
-    hotkey::start(Arc::clone(&cfg));
+    hotkey::start(Arc::clone(&cfg), Arc::clone(&cache));
 
     // Spec 017: pair with the peers once at startup, so phase C can refuse
     // strangers without refusing our own machines.

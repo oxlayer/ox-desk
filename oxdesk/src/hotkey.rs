@@ -102,60 +102,58 @@ pub fn both_ctrls(pressed: &HashSet<u16>) -> bool {
     pressed.contains(&KEY_LEFTCTRL) && pressed.contains(&KEY_RIGHTCTRL)
 }
 
-/// Which machine the gesture sends the input to.
+/// The machine a press sends the input to, by rotation.
 ///
-/// Explicit beats inferred, and an ambiguity is an error rather than a
-/// choice made for the person: sending the keyboard to the wrong machine is
-/// not something a default should decide.
+/// `peers` is the config order with each one's reachability; `last` is
+/// where the previous press went.
 ///
-/// In order:
+/// Online ones first, and ALL of them when none is online -- better to try
+/// and get `could not connect ... Nothing was grabbed` than to do nothing
+/// and leave the person pressing a key that answers silence. If `last` is
+/// no longer a candidate (it went down), the rotation restarts rather than
+/// skipping to a position that no longer means anything.
+pub fn next_target<'a>(peers: &[(&'a str, bool)], last: Option<&str>) -> Option<&'a str> {
+    let online: Vec<&'a str> = peers.iter().filter(|(_, up)| *up).map(|(n, _)| *n).collect();
+    let pool: Vec<&'a str> =
+        if online.is_empty() { peers.iter().map(|(n, _)| *n).collect() } else { online };
+    if pool.is_empty() {
+        return None;
+    }
+    match last.and_then(|l| pool.iter().position(|p| *p == l)) {
+        Some(i) => Some(pool[(i + 1) % pool.len()]),
+        None => Some(pool[0]),
+    }
+}
+
+/// Where the last press sent the input.
+static LAST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Asks which machine, with a list.
 ///
-/// 1. `[input.hotkey] target` -- said for this gesture.
-/// 2. `[input.border] target` -- said for the OTHER gesture that moves
-///    input to a machine. Measured on 2026-11-10: with two peers and only
-///    the border target set, refusing was the wrong answer. The person had
-///    already written down where input goes; asking them to write it twice
-///    is pedantry, not safety.
-/// 3. the only peer, when there is only one.
+/// `zenity` and not a window of our own: the daemon has no GUI toolkit --
+/// only `ksni`, which is D-Bus -- and pulling one in to draw a list would
+/// be a lot of binary for one dialog. A real overlay (the Win+P kind) is a
+/// separate job: it needs a window AND a font rasterizer, which nothing
+/// here has yet.
 ///
-/// The grid `layout` is deliberately NOT a fallback. `col`/`row` say where
-/// a machine sits on screen, which is a hint about geometry, not a
-/// statement about where someone wants their keyboard to go.
-pub fn pick_target(
-    cfg: &Config,
-    configured: Option<&str>,
-    border: Option<&str>,
-) -> Result<String, String> {
-    let peers: Vec<&str> =
-        cfg.hosts.iter().filter(|h| !h.is_local()).map(|h| h.name.as_str()).collect();
-    let named = |want: &str, from: &str| -> Result<String, String> {
-        if peers.iter().any(|p| *p == want) {
-            Ok(want.to_string())
-        } else {
-            Err(format!("{from} is '{want}', which is not a remote host"))
-        }
-    };
-    if let Some(want) = configured.map(str::trim).filter(|s| !s.is_empty()) {
-        return named(want, "[input.hotkey] target");
+/// A cancelled dialog returns `None` and nothing is switched. That matters:
+/// the gesture becomes undoable before anything is grabbed.
+fn ask_which(options: &[&str]) -> Option<String> {
+    let mut cmd = std::process::Command::new("zenity");
+    cmd.args(["--list", "--title=oxdesk", "--text=Send keyboard and mouse to:", "--column=Machine"]);
+    for o in options {
+        cmd.arg(o);
     }
-    if peers.len() == 1 {
-        return Ok(peers[0].to_string());
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
     }
-    if let Some(want) = border.map(str::trim).filter(|s| !s.is_empty()) {
-        return named(want, "[input.border] target");
-    }
-    if peers.is_empty() {
-        return Err("no remote host in the config".into());
-    }
-    Err(format!(
-        "{} remote hosts and no target: set [input.hotkey] target to one of {:?}",
-        peers.len(),
-        peers
-    ))
+    let pick = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    options.iter().find(|o| **o == pick).map(|o| o.to_string())
 }
 
 /// Watches the keyboards for the gesture, for as long as the daemon lives.
-pub fn start(cfg: Arc<RwLock<Config>>) {
+pub fn start(cfg: Arc<RwLock<Config>>, cache: Arc<std::sync::Mutex<crate::Cache>>) {
     std::thread::spawn(move || {
         let mut pressed: HashSet<u16> = HashSet::new();
         let mut down = false;
@@ -226,7 +224,7 @@ pub fn start(cfg: Arc<RwLock<Config>>) {
             // event that arrives while it is held.
             if gesture && !down && last_fired.elapsed() >= COOLDOWN {
                 last_fired = Instant::now();
-                fire(&cfg);
+                fire(&cfg, &cache);
             }
             down = gesture;
         }
@@ -257,7 +255,7 @@ fn keyboards() -> Vec<std::path::PathBuf> {
 /// `kvm::send` and not a shortcut of our own: the pre-flight, the refusals
 /// and the audit line all live there, and a second path into the same
 /// action is a second place for them to diverge.
-fn fire(cfg: &Arc<RwLock<Config>>) {
+fn fire(cfg: &Arc<RwLock<Config>>, cache: &Arc<std::sync::Mutex<crate::Cache>>) {
     let Ok(c) = cfg.read() else { return };
     if !c.input.hotkey.enabled {
         return;
@@ -267,12 +265,90 @@ fn fire(cfg: &Arc<RwLock<Config>>) {
     if crate::kvm::target().is_some() {
         return;
     }
-    match pick_target(&c, c.input.hotkey.target.as_deref(), c.input.border.target.as_deref()) {
-        Ok(host) => match crate::kvm::send(&c, &host) {
-            Ok(msg) => crate::say!("hotkey: both Ctrl -> {msg}"),
-            Err(e) => crate::say!("hotkey: both Ctrl -> {host} refused: {e}"),
-        },
-        Err(e) => crate::say!("hotkey: both Ctrl, but {e}"),
+
+    // Pinned target wins and skips both rotation and the dialog: someone
+    // who named one machine does not want to be asked.
+    let pinned = c
+        .input
+        .hotkey
+        .target
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(want) = pinned {
+        drop(c);
+        return switch_to(cfg, &want);
+    }
+
+    // Reachability from the CACHED snapshot. Peeking and not refreshing is
+    // the point: see `crate::snapshot_peek`.
+    let snap = crate::snapshot_peek(cache);
+    let peers: Vec<(String, bool)> = c
+        .hosts
+        .iter()
+        .filter(|h| !h.is_local())
+        .map(|h| {
+            let up = snap
+                .as_ref()
+                .and_then(|s| s.hosts.iter().find(|x| x.name == h.name).map(|x| x.online))
+                // No snapshot yet (the daemon just started): treat everyone
+                // as a candidate rather than nobody.
+                .unwrap_or(true);
+            (h.name.clone(), up)
+        })
+        .collect();
+    let ask = c.input.hotkey.mode == "ask";
+    drop(c);
+
+    let view: Vec<(&str, bool)> = peers.iter().map(|(n, up)| (n.as_str(), *up)).collect();
+    let chosen = if ask {
+        let online: Vec<&str> = view.iter().filter(|(_, up)| *up).map(|(n, _)| *n).collect();
+        let pool: Vec<&str> =
+            if online.is_empty() { view.iter().map(|(n, _)| *n).collect() } else { online };
+        match pool.len() {
+            0 => None,
+            // Asking which of one is a dialog that answers itself.
+            1 => Some(pool[0].to_string()),
+            _ => match ask_which(&pool) {
+                Some(p) => Some(p),
+                None => {
+                    crate::say!("hotkey: both Ctrl, nothing chosen");
+                    return;
+                }
+            },
+        }
+    } else {
+        let last = LAST.lock().ok().and_then(|l| l.clone());
+        next_target(&view, last.as_deref()).map(str::to_string)
+    };
+
+    match chosen {
+        Some(host) => {
+            let cfg2 = Arc::clone(cfg);
+            switch_to(&cfg2, &host);
+        }
+        None => crate::say!("hotkey: both Ctrl, but there is no remote host in the config"),
+    }
+}
+
+/// Asks for the switch, through the same door the tray uses.
+///
+/// `kvm::send` and not a shortcut of our own: the pre-flight, the refusals
+/// and the audit line all live there, and a second path into the same
+/// action is a second place for them to diverge.
+fn switch_to(cfg: &Arc<RwLock<Config>>, host: &str) {
+    let Ok(c) = cfg.read() else { return };
+    match crate::kvm::send(&c, host) {
+        Ok(msg) => {
+            if let Ok(mut l) = LAST.lock() {
+                *l = Some(host.to_string());
+            }
+            crate::say!("hotkey: both Ctrl -> {msg}");
+        }
+        // The target is NOT remembered on failure: the next press should
+        // try this machine again, not skip past it to the following one.
+        Err(e) => crate::say!("hotkey: both Ctrl -> {host} refused: {e}"),
     }
 }
 
@@ -324,55 +400,43 @@ mod tests {
     }
 
     #[test]
-    fn one_peer_needs_no_configuration() {
-        let c = cfg_with(&[("here", true), ("there", false)]);
-        assert_eq!(pick_target(&c, None, None).unwrap(), "there");
+    fn one_machine_up_always_gets_it() {
+        // The case that started this: two peers, one up. Pressing twice
+        // must not send the input at a machine that is down.
+        let peers = [("windows", true), ("mac", false)];
+        assert_eq!(next_target(&peers, None), Some("windows"));
+        assert_eq!(next_target(&peers, Some("windows")), Some("windows"));
     }
 
     #[test]
-    fn two_peers_without_a_target_is_an_error_not_a_coin_toss() {
-        // Sending the keyboard to the wrong machine is not something a
-        // default gets to decide.
-        let c = cfg_with(&[("here", true), ("a", false), ("b", false)]);
-        let e = pick_target(&c, None, None).unwrap_err();
-        assert!(e.contains("2 remote hosts"), "{e}");
-        assert_eq!(pick_target(&c, Some("b"), None).unwrap(), "b");
+    fn it_rotates_through_the_ones_that_are_up() {
+        let peers = [("a", true), ("b", true), ("c", true)];
+        assert_eq!(next_target(&peers, None), Some("a"));
+        assert_eq!(next_target(&peers, Some("a")), Some("b"));
+        assert_eq!(next_target(&peers, Some("b")), Some("c"));
+        assert_eq!(next_target(&peers, Some("c")), Some("a"), "wraps");
     }
 
     #[test]
-    fn a_target_that_is_not_a_peer_is_refused_by_name() {
-        let c = cfg_with(&[("here", true), ("there", false)]);
-        assert!(pick_target(&c, Some("here"), None).is_err(), "the local host is not a target");
-        let e = pick_target(&c, Some("ghost"), None).unwrap_err();
-        assert!(e.contains("ghost"), "{e}");
+    fn a_last_target_that_went_down_restarts_the_rotation() {
+        // Keeping the position of a machine that left the pool would make
+        // the next press land somewhere unrelated to where it was.
+        let peers = [("a", true), ("b", false), ("c", true)];
+        assert_eq!(next_target(&peers, Some("b")), Some("a"));
     }
 
     #[test]
-    fn the_border_target_answers_when_the_hotkey_has_none() {
-        // The case that made this fallback exist: two peers, nothing said
-        // for the hotkey, and `[input.border] target` already naming one.
-        let c = cfg_with(&[("here", true), ("a", false), ("b", false)]);
-        assert_eq!(pick_target(&c, None, Some("b")).unwrap(), "b");
-        // The hotkey's own target still wins over it.
-        assert_eq!(pick_target(&c, Some("a"), Some("b")).unwrap(), "a");
-        // And a border target that is not a peer is refused by name,
-        // rather than falling through to a guess.
-        let e = pick_target(&c, None, Some("ghost")).unwrap_err();
-        assert!(e.contains("[input.border] target") && e.contains("ghost"), "{e}");
+    fn with_nobody_up_it_still_tries() {
+        // `could not connect -- nothing was grabbed` is a better answer
+        // than a key that does nothing at all.
+        let peers = [("a", false), ("b", false)];
+        assert_eq!(next_target(&peers, None), Some("a"));
+        assert_eq!(next_target(&peers, Some("a")), Some("b"));
     }
 
     #[test]
-    fn with_no_target_anywhere_it_names_the_candidates() {
-        // "set a target" without saying which ones exist sends the person
-        // back to read the config file.
-        let c = cfg_with(&[("here", true), ("a", false), ("b", false)]);
-        let e = pick_target(&c, None, None).unwrap_err();
-        assert!(e.contains("\"a\"") && e.contains("\"b\""), "{e}");
+    fn no_peers_means_no_target() {
+        assert_eq!(next_target(&[], None), None);
     }
 
-    #[test]
-    fn no_peer_at_all_says_so() {
-        let c = cfg_with(&[("here", true)]);
-        assert!(pick_target(&c, None, None).unwrap_err().contains("no remote host"));
-    }
 }
