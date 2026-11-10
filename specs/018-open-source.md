@@ -424,12 +424,29 @@ a measurement.
    does not print that line; and the only remaining mentions of the old
    literal are this table and the rule, which is what "rotate, don't
    rewrite" means in practice.
-4. **Make the default config generic.** Placeholders, or the machine's own
-   hostname. *Check:* a fresh config on a machine with a different
-   hostname describes that machine.
-5. **Purge personal identifiers from code and scripts**, leaving the specs
-   as the record under an alias. *Check:* the grep table above reads zero
-   outside `specs/`.
+4. **Make the default config generic. Done 2026-11-10** (`7ca42b8`).
+   `DEFAULT_TOML` is a template now, rendered by `config::initial_config`:
+   the local name comes from `hostname`, `os` from the build, `units` only
+   on Linux, the peers are commented examples, and `[[devices]]`,
+   `border.target` and `follow.leader` name nobody. *Checked:* a fresh
+   `XDG_CONFIG_HOME` gets a config describing THIS machine with zero
+   surviving placeholders -- and the first run of that check measured a
+   stale `target/release/oxdesk`, because `cargo test` does not rebuild
+   it. Green tests plus a stale artifact reads exactly like a working
+   change.
+5. **Purge personal identifiers from code and scripts. Done 2026-11-10**
+   (`f971591` code, `db63f57` scripts), leaving the specs as the record
+   under an alias. Prose became the role ("the Windows machine"), literals
+   became `linux-pc` / `windows-pc` / `the-mac`, fixtures became `alice`.
+   Two were not text: a systemd unit the wizard WRITES carried
+   `file:///home/<me>/dev/...`, and `oxdesk-view` with no argument
+   defaulted to one of our hosts. The scripts' ssh aliases moved to a
+   gitignored `scripts/targets.sh` (with `targets.example.sh` committed),
+   the deploy REFUSES with no target, the Windows `scp` paths became
+   relative to the ssh user's home, and the two firewall scripts now
+   require the LAN range instead of defaulting to ours. *Checked:* zero
+   outside `specs/` and `.claude/`; the one remaining hit lives in the
+   untracked `targets.sh`.
 5b. **Reissue the Windows signing certificate.** Its subject is
    `CN=logi (assinatura local), O=infra pessoal` — the old name, in
    Portuguese, saying "personal infra" — and it is **embedded in every
@@ -454,9 +471,11 @@ a measurement.
      `serde(rename)`, 3 `hidpp` JSON keys, 5 request fields, 4 response
      keys, the copy queue's state values with the panel's CSS classes, and
      ~45 strings in `main.rs` and `hidpp`.
-   - 6c. **The panel's visible copy.** `index.html` still says
-     "copiando...", "chegou", "novidades". It is the page people actually
-     use, so it is the slice worth doing carefully rather than quickly.
+   - 6c. **The panel's visible copy. Done 2026-11-08** (`9bcb407`), which
+     this list did not record until 10/11 -- it still described
+     "copiando...", "chegou" and "novidades" as pending while
+     `index.html` had none of them. *Checked:* zero accented characters
+     and zero of those words in the file.
    - 6d. **The CLI and the OTA's vocabulary.** 29 flags and subcommands
      (`--conferir`, `--estado`, `--forcar`, `--curto`, `--pedir`,
      `--probe-nativo`, `kvm-soltar`, `clip-arq-*`, `esquerda/direita`),
@@ -466,8 +485,37 @@ a measurement.
      strips exactly that suffix, so renaming one side changes what an
      already-installed updater concludes about a published build. It
      moves with its tests, or not at all.
-   - 6e. **`scripts/`.** `deploy.sh` (79 lines), `check.sh` (11),
-     `build-binaries.sh` (4) -- variable names, not protocol.
+   - 6e. **`scripts/`. Done 2026-11-10** (`31e1e68`). 305 replacements
+     across eight scripts: shell identifiers, the variables of the
+     PowerShell embedded in `deploy.sh`, the `--pular-mac` flag (now
+     `--skip-mac`) and the footer a person reads. That footer was guarded
+     by a comment saying it is "parsed by other tools and people" -- the
+     reader turned out to be exactly one file,
+     `.claude/skills/deploy.md`, which moved in the same commit. The
+     comment now names it: a prohibition without a reason is one somebody
+     steps over, and I had already stepped over it before reading the
+     line.
+
+     *The sweep also broke something*, which is why 6f exists below:
+     it rewrote `erro` and `novo` INSIDE a `grep -E` pattern in
+     `distribute-ota-token.sh` that matches `oxdesk-ota`'s output
+     (`6c0181d` undoes it, along with two older defects in that file that
+     meant it had never run on Linux at all).
+
+   - 6f. **The error messages of the Rust crates.** 128 strings that 6b
+     did not reach, because 6b was scoped to `main.rs` and `hidpp`:
+     `"criar {dir}"`, `"gravar o pin"`, `"ler a identidade local"`,
+     `"o arquivo nao esta mais la"`, and the whole of `ota/` (`apply.rs`,
+     `exec.rs`, `plan.rs`, `release.rs`, `state.rs`). They reach a person
+     through the API's `message` field, the wizard and the logs, so they
+     are the slice a contributor reads most. Found on 10/11 while sizing
+     6d; a slice that exists in the code and not in the plan is the one
+     nobody does. *Checked for readers first:* no test and no UI code
+     matches on their text -- the GUI smoke tests key on the console
+     `level`, not the message.
+
+     `ota/src/state.rs`'s result words (`igual`, `mais-novo-aqui`) are
+     NOT in 6f: those are the state vocabulary of 6d and move with it.
 7. **Add `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`. Done 2026-11-08.**
    `LICENSE` (AGPL-3.0), `hidpp/LICENSE` (MIT), [[../THIRD-PARTY]],
    [[../CONTRIBUTING]] — which carries the inbound grant of
