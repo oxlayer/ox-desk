@@ -10,18 +10,18 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-falhas=0
+failures=0
 run() {
-  local titulo="$1"; shift
-  printf '  %-46s' "$titulo"
+  local title="$1"; shift
+  printf '  %-46s' "$title"
   if out=$("$@" 2>&1); then
     # A warning does not break the build, and so it goes unnoticed.
     # Showing it here is what gets a new warning noticed the day it shows
     # up.
-    local avisos
-    avisos=$(printf '%s\n' "$out" | grep -c '^warning:')
-    if [ "$avisos" -gt 0 ]; then
-      echo "ok ($avisos warning(s))"
+    local warnings
+    warnings=$(printf '%s\n' "$out" | grep -c '^warning:')
+    if [ "$warnings" -gt 0 ]; then
+      echo "ok ($warnings warning(s))"
       printf '%s\n' "$out" | grep '^warning:' | sed 's/^/      /' | head -8
     else
       echo "ok"
@@ -29,7 +29,7 @@ run() {
   else
     echo "FAILED"
     echo "$out" | grep -E '^(error|warning)' -A4 | head -20 | sed 's/^/      /'
-    falhas=$((falhas + 1))
+    failures=$((failures + 1))
   fi
 }
 
@@ -66,9 +66,9 @@ for c in hidpp oxdesk agent winput ota stream; do
 done
 
 echo
-if [ "$falhas" -eq 0 ]; then
+if [ "$failures" -eq 0 ]; then
   echo "all green"
 else
-  echo "$falhas target(s) with problems"
+  echo "$failures target(s) with problems"
 fi
-exit "$falhas"
+exit "$failures"

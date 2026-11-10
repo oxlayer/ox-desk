@@ -7,7 +7,7 @@
 # see the new stuff on the mac"). Three targets, two of them remote, one
 # needing a signature -- that is not a job for memory.
 #
-#   usage:  bash scripts/deploy.sh [--pular-mac]
+#   usage:  bash scripts/deploy.sh [--skip-mac]
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
@@ -19,8 +19,8 @@ if [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "/run/user/$(id -u)/gcr/ssh" ]; then
   export SSH_AUTH_SOCK="/run/user/$(id -u)/gcr/ssh"
 fi
 
-PULAR_MAC=0
-[ "${1:-}" = "--pular-mac" ] && PULAR_MAC=1
+SKIP_MAC=0
+[ "${1:-}" = "--skip-mac" ] && SKIP_MAC=1
 
 # WHERE this sends things. Not in the repo: a script someone runs must not
 # carry someone else's machines (.claude/rules/no-personal-data.md). Copy
@@ -36,9 +36,9 @@ if [ -z "$WIN" ]; then
   echo "  (or export OXDESK_WIN_SSH=<ssh alias>)" >&2
   exit 1
 fi
-# No Mac configured is the same as --pular-mac: the alternative is fifteen
+# No Mac configured is the same as --skip-mac: the alternative is fifteen
 # steps failing one by one against an empty host name.
-[ -z "$MAC" ] && PULAR_MAC=1
+[ -z "$MAC" ] && SKIP_MAC=1
 
 # `desconhecido` and `-sujo` are part of the build stamp that oxdesk parses
 # (oxdesk/build.rs, setup_comum.rs): they stay as they are.
@@ -59,7 +59,7 @@ OXDESK_BUILD_N="$(( $(cat BUILD_BASE 2>/dev/null || echo 0) + $(git rev-list --c
 export OXDESK_BUILD_N
 echo "== build #$OXDESK_BUILD_N $BUILD =="
 
-falhas=0
+failures=0
 
 # An "ok" step has to mean nothing went wrong -- neither our explicit
 # `ERROR` nor the shell complaining. (`ERRO` also matches `ERROR`.)
@@ -69,13 +69,13 @@ falhas=0
 # went to stderr, outside the variable the test read. A step that does
 # not capture stderr cannot fail, and a step that cannot fail is not a
 # check -- it is decoration.
-ruim() {
+bad() {
   printf '%s' "$1" | grep -qE 'ERRO|command not found|No such file|unbound variable|cannot'
 }
 
-passo() { printf '  %-44s' "$1"; }
+step() { printf '  %-44s' "$1"; }
 ok()    { echo "ok"; }
-erro()  { echo "FAILED"; echo "$1" | tail -6 | sed 's/^/      /'; falhas=$((falhas+1)); }
+fail()  { echo "FAILED"; echo "$1" | tail -6 | sed 's/^/      /'; failures=$((failures+1)); }
 
 # Runs a PowerShell script on Windows without going through shell quoting.
 # -EncodedCommand has no quoting at all; quotes and parentheses inside
@@ -88,9 +88,9 @@ psrun() {
 }
 
 # ---------- ubuntu ----------
-passo "ubuntu: build"
-if out=$(cargo build --release --manifest-path oxdesk/Cargo.toml 2>&1); then ok; else erro "$out"; fi
-passo "ubuntu: install and restart"
+step "ubuntu: build"
+if out=$(cargo build --release --manifest-path oxdesk/Cargo.toml 2>&1); then ok; else fail "$out"; fi
+step "ubuntu: install and restart"
 # `pkill -x oxdesk` before the restart: `systemctl restart` only kills the
 # copy systemd created. An orphan `oxdesk` (the GUI used to spawn a child
 # of its own in a boot race) keeps the port, the new daemon dies with
@@ -105,10 +105,10 @@ if out=$( { install -m755 oxdesk/target/release/oxdesk ~/.local/bin/oxdesk &&
             done &&
             curl -s --max-time 2 "localhost:8787/healthz" | grep -q "$BUILD" ||
             echo "ERROR: Ubuntu /healthz did not confirm $BUILD"; } 2>&1 ); then
-  if ruim "$out"; then erro "$out"; else ok; fi
-else erro "$out"; fi
+  if bad "$out"; then fail "$out"; else ok; fi
+else fail "$out"; fi
 
-passo "ubuntu: menu entry"
+step "ubuntu: menu entry"
 # The panel has no window of its own: it is a page served by the daemon,
 # so without this entry there is NO way to reach it from the desktop --
 # only the tray, and the tray is gone whenever the AppIndicator extension
@@ -126,17 +126,17 @@ if out=$( { install -m755 linux/oxdesk-panel ~/.local/bin/oxdesk-panel &&
             { desktop-file-validate ~/.local/share/applications/oxdesk.desktop ||
               echo "ERROR: invalid .desktop"; } &&
             { update-desktop-database ~/.local/share/applications 2>/dev/null || true; }; } 2>&1 ); then
-  if ruim "$out"; then erro "$out"; else ok; fi
-else erro "$out"; fi
+  if bad "$out"; then fail "$out"; else ok; fi
+else fail "$out"; fi
 
-passo "ubuntu: updater (oxdesk-ota)"
+step "ubuntu: updater (oxdesk-ota)"
 # The one that downloads the Release, checks the sum, swaps and reverts.
 # Goes to ALL THREE machines -- on Windows it only checks and reports
 # (specs/015).
 if out=$(cargo build --release --manifest-path ota/Cargo.toml 2>&1 &&
-         install -m755 ota/target/release/oxdesk-ota ~/.local/bin/oxdesk-ota 2>&1); then ok; else erro "$out"; fi
+         install -m755 ota/target/release/oxdesk-ota ~/.local/bin/oxdesk-ota 2>&1); then ok; else fail "$out"; fi
 
-passo "ubuntu: screen and KVM (oxdesk-stream)"
+step "ubuntu: screen and KVM (oxdesk-stream)"
 # The host runs on this machine when someone asks for its screen; the
 # client is installed too, for when it becomes the one watching.
 #
@@ -149,7 +149,7 @@ if out=$(cargo build --release --manifest-path stream/Cargo.toml 2>&1 &&
          install -m755 stream/target/release/oxdesk-view ~/.local/bin/ 2>&1 &&
          install -m755 stream/target/release/oxdesk-bridge ~/.local/bin/ 2>&1 &&
          install -m755 stream/target/release/oxdesk-kvm ~/.local/bin/ 2>&1 &&
-         mkdir -p ~/.local/state 2>&1); then ok; else erro "$out"; fi
+         mkdir -p ~/.local/state 2>&1); then ok; else fail "$out"; fi
 
 # ---------- windows ----------
 # Removes every leftover `<name>.new.exe` on Windows.
@@ -162,40 +162,40 @@ if out=$(cargo build --release --manifest-path stream/Cargo.toml 2>&1 &&
 #
 # Cleaning once at the top of the Windows section was not enough: whatever
 # leaves the file does it DURING the run. So the cleanup lives next to the
-# operation it protects, called by `envia` immediately before each upload.
+# operation it protects, called by `send` immediately before each upload.
 #
 # No variable is interpolated into this heredoc, on purpose: an expanding
 # heredoc is how this file broke once already.
-limpa_novos() {
+clean_leftovers() {
   { cat <<'PS1' | psrun; } 2>&1
 $d = Join-Path $env:LOCALAPPDATA 'oxdesk'
-$sobrou = @()
+$leftover = @()
 foreach ($n in 'oxdesk','oxdesk-agent','oxdesk-ota','oxdesk-view','oxdesk-bridge','oxdesk-host') {
   $p = Join-Path $d ($n + '.new.exe')
   if (Test-Path $p) {
     Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     try { Remove-Item -Force $p -ErrorAction Stop } catch { }
-    if (Test-Path $p) { $sobrou += $p }
+    if (Test-Path $p) { $leftover += $p }
   }
 }
-if ($sobrou.Count) { Write-Output ('ERROR: still in the way: ' + ($sobrou -join ', ')); exit 1 }
+if ($leftover.Count) { Write-Output ('ERROR: still in the way: ' + ($leftover -join ', ')); exit 1 }
 PS1
 }
 
 # Sends a signed binary to Windows as `<name>.new.exe`, clearing the way
 # first and naming the file when it cannot.
-envia() {
-  local src="$1" nome="$2" limpo saida codigo
-  limpo=$(limpa_novos)
-  if printf '%s' "$limpo" | grep -q 'ERROR'; then printf '%s\n' "$limpo"; return 1; fi
-  saida=$(timeout 180 scp -q "$src" "$WIN:AppData/Local/oxdesk/$nome.new.exe" 2>&1)
-  codigo=$?
-  [ "$codigo" -eq 0 ] && return 0
+send() {
+  local src="$1" name="$2" cleaned scp_out code
+  cleaned=$(clean_leftovers)
+  if printf '%s' "$cleaned" | grep -q 'ERROR'; then printf '%s\n' "$cleaned"; return 1; fi
+  scp_out=$(timeout 180 scp -q "$src" "$WIN:AppData/Local/oxdesk/$name.new.exe" 2>&1)
+  code=$?
+  [ "$code" -eq 0 ] && return 0
   # The upload failed, and `scp`'s message names no file -- which is how one
   # cause looked like three unrelated failures. So the step reports WHAT IS
   # THERE, from the machine itself, instead of leaving the reader to guess.
-  printf '%s\n' "$saida"
-  printf 'ERRO: o upload de %s falhou (exit %s). Estado em %%LOCALAPPDATA%%\\oxdesk:\n' "$nome" "$codigo"
+  printf '%s\n' "$scp_out"
+  printf 'ERRO: o upload de %s failed (exit %s). Estado em %%LOCALAPPDATA%%\\oxdesk:\n' "$name" "$code"
   { cat <<'PS1' | psrun; } 2>&1 | sed 's/^/    /'
 $d = Join-Path $env:LOCALAPPDATA 'oxdesk'
 Get-ChildItem $d -Filter '*.exe' -ErrorAction SilentlyContinue |
@@ -207,23 +207,23 @@ PS1
   return 1
 }
 
-passo "windows: build"
-if out=$(cargo build --release --target x86_64-pc-windows-gnu --manifest-path oxdesk/Cargo.toml 2>&1); then ok; else erro "$out"; fi
+step "windows: build"
+if out=$(cargo build --release --target x86_64-pc-windows-gnu --manifest-path oxdesk/Cargo.toml 2>&1); then ok; else fail "$out"; fi
 
 EXE=oxdesk/target/x86_64-pc-windows-gnu/release/oxdesk.exe
-ASSINADO=$(mktemp -u /tmp/oxdesk-assinado-XXXX.exe)
-passo "windows: sign"
+SIGNED=$(mktemp -u /tmp/oxdesk-assinado-XXXX.exe)
+step "windows: sign"
 # ALWAYS before copying: Defender removed the raw .exe the instant it was
 # written, twice, taking the scheduled task with it. See specs/008.
-if out=$(cp "$EXE" "$ASSINADO" && bash scripts/sign-windows.sh "$ASSINADO" 2>&1); then ok; else erro "$out"; fi
+if out=$(cp "$EXE" "$SIGNED" && bash scripts/sign-windows.sh "$SIGNED" 2>&1); then ok; else fail "$out"; fi
 
-passo "windows: upload and swap"
-if out=$(envia "$ASSINADO" oxdesk); then
+step "windows: upload and swap"
+if out=$(send "$SIGNED" oxdesk); then
   out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
-$novo = Join-Path $dst 'oxdesk.new.exe'
-if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
-$v = Get-AuthenticodeSignature $novo
+$new = Join-Path $dst 'oxdesk.new.exe'
+if (-not (Test-Path $new)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $new
 if ($v.Status -ne 'Valid') { Write-Output ("ERROR: signature " + $v.Status); exit 1 }
 Get-Process -Name oxdesk -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 600
@@ -232,24 +232,24 @@ Start-Sleep -Milliseconds 600
 # silently reverted the agent's write for an hour while this script said
 # "ok"), and bringing the number in from outside would need an expanding
 # heredoc -- which is how I broke this very step.
-$esperado = (Get-Item $novo).Length
-Copy-Item -Force $novo (Join-Path $dst 'oxdesk.exe')
-Remove-Item -Force $novo
+$expected = (Get-Item $new).Length
+Copy-Item -Force $new (Join-Path $dst 'oxdesk.exe')
+Remove-Item -Force $new
 Start-Sleep -Milliseconds 500
-$tem = (Get-Item (Join-Path $dst 'oxdesk.exe')).Length
-if ($tem -ne $esperado) {
-  Write-Output ('ERROR: written but has ' + $tem + ' bytes, expected ' + $esperado + ' -- antivirus reverting? check the exclusion for ' + $dst)
+$got = (Get-Item (Join-Path $dst 'oxdesk.exe')).Length
+if ($got -ne $expected) {
+  Write-Output ('ERROR: written but has ' + $got + ' bytes, expected ' + $expected + ' -- antivirus reverting? check the exclusion for ' + $dst)
   exit 1
 }
 schtasks /run /tn 'oxdesk' | Out-Null
 exit 0
 PS1
 )
-  if ruim "$out"; then erro "$out"; else ok; fi
-else erro "$out"; fi
-rm -f "$ASSINADO"
+  if bad "$out"; then fail "$out"; else ok; fi
+else fail "$out"; fi
+rm -f "$SIGNED"
 
-passo "windows: GUI shell"
+step "windows: GUI shell"
 # Only `main.js`: the rest of the shell is `node_modules` (299 MB of
 # Chromium) and does not change. The file started to matter because it is
 # where the build watcher lives -- the page also knows how to reload
@@ -260,9 +260,9 @@ passo "windows: GUI shell"
 # Takes effect on the app's next launch; we do not kill anyone's window.
 if out=$(timeout 60 scp -q gui/main.js \
            "$WIN:AppData/Local/oxdesk/gui/main.js" 2>&1); then ok
-else erro "$out"; fi
+else fail "$out"; fi
 
-passo "windows: agent"
+step "windows: agent"
 # The agent WAS LEFT BEHIND for a whole day: this script updated
 # `oxdesk.exe` and forgot `oxdesk-agent.exe`, which is exactly what Ubuntu
 # invokes over SSH to read devices and request a channel switch. An old
@@ -273,13 +273,13 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   AG=agent/target/x86_64-pc-windows-gnu/release/oxdesk-agent.exe
   AGSIG=$(mktemp -u /tmp/oxdesk-agent-assinado-XXXX.exe)
   if out=$(cp "$AG" "$AGSIG" && bash scripts/sign-windows.sh "$AGSIG" 2>&1 &&
-           envia "$AGSIG" oxdesk-agent); then
+           send "$AGSIG" oxdesk-agent); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
-$novo = Join-Path $dst 'oxdesk-agent.new.exe'
-$alvo = Join-Path $dst 'oxdesk-agent.exe'
-if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
-$v = Get-AuthenticodeSignature $novo
+$new = Join-Path $dst 'oxdesk-agent.new.exe'
+$target = Join-Path $dst 'oxdesk-agent.exe'
+if (-not (Test-Path $new)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $new
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
 # The agent is invoked and exits; there is no resident process to stop.
 # Size BEFORE moving, compared AFTER. In PowerShell, not passed through
@@ -287,24 +287,24 @@ if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exi
 # silently reverted the agent's write for an hour while this script said
 # "ok"), and bringing the number in from outside would need an expanding
 # heredoc -- which is how I broke this very step.
-$esperado = (Get-Item $novo).Length
-Copy-Item -Force $novo $alvo
-Remove-Item -Force $novo
+$expected = (Get-Item $new).Length
+Copy-Item -Force $new $target
+Remove-Item -Force $new
 Start-Sleep -Milliseconds 500
-$tem = (Get-Item $alvo).Length
-if ($tem -ne $esperado) {
-  Write-Output ('ERROR: written but has ' + $tem + ' bytes, expected ' + $esperado + ' -- antivirus reverting? check the exclusion for ' + $dst)
+$got = (Get-Item $target).Length
+if ($got -ne $expected) {
+  Write-Output ('ERROR: written but has ' + $got + ' bytes, expected ' + $expected + ' -- antivirus reverting? check the exclusion for ' + $dst)
   exit 1
 }
 exit 0
 PS1
 )
-    if ruim "$out"; then erro "$out"; else ok; fi
-  else erro "$out"; fi
+    if bad "$out"; then fail "$out"; else ok; fi
+  else fail "$out"; fi
   rm -f "$AGSIG"
-else erro "$out"; fi
+else fail "$out"; fi
 
-passo "windows: updater (oxdesk-ota)"
+step "windows: updater (oxdesk-ota)"
 # Signed like every .exe that lands here: Defender deletes the raw one on
 # write (specs/008). Here it does NOT swap binaries -- the Authenticode
 # key never leaves Ubuntu, so on that side oxdesk-ota checks and reports,
@@ -314,32 +314,32 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   OT=ota/target/x86_64-pc-windows-gnu/release/oxdesk-ota.exe
   OTSIG=$(mktemp -u /tmp/oxdesk-ota-assinado-XXXX.exe)
   if out=$(cp "$OT" "$OTSIG" && bash scripts/sign-windows.sh "$OTSIG" 2>&1 &&
-           envia "$OTSIG" oxdesk-ota); then
+           send "$OTSIG" oxdesk-ota); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
-$novo = Join-Path $dst 'oxdesk-ota.new.exe'
-$alvo = Join-Path $dst 'oxdesk-ota.exe'
-if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
-$v = Get-AuthenticodeSignature $novo
+$new = Join-Path $dst 'oxdesk-ota.new.exe'
+$target = Join-Path $dst 'oxdesk-ota.exe'
+if (-not (Test-Path $new)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $new
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
-$esperado = (Get-Item $novo).Length
-Copy-Item -Force $novo $alvo
-Remove-Item -Force $novo
+$expected = (Get-Item $new).Length
+Copy-Item -Force $new $target
+Remove-Item -Force $new
 Start-Sleep -Milliseconds 500
-$tem = (Get-Item $alvo).Length
-if ($tem -ne $esperado) {
-  Write-Output ('ERROR: written but has ' + $tem + ' bytes, expected ' + $esperado + ' -- antivirus reverting? check the exclusion for ' + $dst)
+$got = (Get-Item $target).Length
+if ($got -ne $expected) {
+  Write-Output ('ERROR: written but has ' + $got + ' bytes, expected ' + $expected + ' -- antivirus reverting? check the exclusion for ' + $dst)
   exit 1
 }
 exit 0
 PS1
 )
-    if ruim "$out"; then erro "$out"; else ok; fi
-  else erro "$out"; fi
+    if bad "$out"; then fail "$out"; else ok; fi
+  else fail "$out"; fi
   rm -f "$OTSIG"
-else erro "$out"; fi
+else fail "$out"; fi
 
-passo "windows: screen viewer"
+step "windows: screen viewer"
 # The viewer stopped being Mac-only when NVDEC started decoding -- and it
 # is what removes the last RDP from the system. No `libavcodec` on that
 # side: the .exe's DLL list has only Windows stuff, and the decoder comes
@@ -349,12 +349,12 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   VW=stream/target/x86_64-pc-windows-gnu/release/oxdesk-view.exe
   VWSIG=$(mktemp -u /tmp/oxdesk-view-assinado-XXXX.exe)
   if out=$(cp "$VW" "$VWSIG" && bash scripts/sign-windows.sh "$VWSIG" 2>&1 &&
-           envia "$VWSIG" oxdesk-view); then
+           send "$VWSIG" oxdesk-view); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
-$novo = Join-Path $dst 'oxdesk-view.new.exe'
-if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
-$v = Get-AuthenticodeSignature $novo
+$new = Join-Path $dst 'oxdesk-view.new.exe'
+if (-not (Test-Path $new)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $new
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
 # It may be open: whoever is watching closes the window when they want.
 Get-Process -Name oxdesk-view -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -364,36 +364,36 @@ Start-Sleep -Milliseconds 400
 # silently reverted the agent's write for an hour while this script said
 # "ok"), and bringing the number in from outside would need an expanding
 # heredoc -- which is how I broke this very step.
-$esperado = (Get-Item $novo).Length
-Copy-Item -Force $novo (Join-Path $dst 'oxdesk-view.exe')
-Remove-Item -Force $novo
+$expected = (Get-Item $new).Length
+Copy-Item -Force $new (Join-Path $dst 'oxdesk-view.exe')
+Remove-Item -Force $new
 Start-Sleep -Milliseconds 500
-$tem = (Get-Item (Join-Path $dst 'oxdesk-view.exe')).Length
-if ($tem -ne $esperado) {
-  Write-Output ('ERROR: written but has ' + $tem + ' bytes, expected ' + $esperado + ' -- antivirus reverting? check the exclusion for ' + $dst)
+$got = (Get-Item (Join-Path $dst 'oxdesk-view.exe')).Length
+if ($got -ne $expected) {
+  Write-Output ('ERROR: written but has ' + $got + ' bytes, expected ' + $expected + ' -- antivirus reverting? check the exclusion for ' + $dst)
   exit 1
 }
 exit 0
 PS1
 )
-    if ruim "$out"; then erro "$out"; else ok; fi
-  else erro "$out"; fi
+    if bad "$out"; then fail "$out"; else ok; fi
+  else fail "$out"; fi
   rm -f "$VWSIG"
-else erro "$out"; fi
+else fail "$out"; fi
 
-passo "windows: tab bridge"
+step "windows: tab bridge"
 # Without it, Connect on Windows falls back to the native window (specs/016).
 if out=$(cargo build --release --target x86_64-pc-windows-gnu \
            --manifest-path stream/Cargo.toml --bin oxdesk-bridge 2>&1); then
   PT=stream/target/x86_64-pc-windows-gnu/release/oxdesk-bridge.exe
   PTSIG=$(mktemp -u /tmp/oxdesk-bridge-assinado-XXXX.exe)
   if out=$(cp "$PT" "$PTSIG" && bash scripts/sign-windows.sh "$PTSIG" 2>&1 &&
-           envia "$PTSIG" oxdesk-bridge); then
+           send "$PTSIG" oxdesk-bridge); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
-$novo = Join-Path $dst 'oxdesk-bridge.new.exe'
-if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
-$v = Get-AuthenticodeSignature $novo
+$new = Join-Path $dst 'oxdesk-bridge.new.exe'
+if (-not (Test-Path $new)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $new
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
 # An open tab holds the file: the session drops and reopens.
 Get-Process -Name oxdesk-bridge -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -403,24 +403,24 @@ Start-Sleep -Milliseconds 400
 # silently reverted the agent's write for an hour while this script said
 # "ok"), and bringing the number in from outside would need an expanding
 # heredoc -- which is how I broke this very step.
-$esperado = (Get-Item $novo).Length
-Copy-Item -Force $novo (Join-Path $dst 'oxdesk-bridge.exe')
-Remove-Item -Force $novo
+$expected = (Get-Item $new).Length
+Copy-Item -Force $new (Join-Path $dst 'oxdesk-bridge.exe')
+Remove-Item -Force $new
 Start-Sleep -Milliseconds 500
-$tem = (Get-Item (Join-Path $dst 'oxdesk-bridge.exe')).Length
-if ($tem -ne $esperado) {
-  Write-Output ('ERROR: written but has ' + $tem + ' bytes, expected ' + $esperado + ' -- antivirus reverting? check the exclusion for ' + $dst)
+$got = (Get-Item (Join-Path $dst 'oxdesk-bridge.exe')).Length
+if ($got -ne $expected) {
+  Write-Output ('ERROR: written but has ' + $got + ' bytes, expected ' + $expected + ' -- antivirus reverting? check the exclusion for ' + $dst)
   exit 1
 }
 exit 0
 PS1
 )
-    if ruim "$out"; then erro "$out"; else ok; fi
-  else erro "$out"; fi
+    if bad "$out"; then fail "$out"; else ok; fi
+  else fail "$out"; fi
   rm -f "$PTSIG"
-else erro "$out"; fi
+else fail "$out"; fi
 
-passo "windows: screen host (oxdesk-stream)"
+step "windows: screen host (oxdesk-stream)"
 # Windows became a HOST of our protocol (v4): DXGI -> NVENC -> QUIC.
 # It needs a signature for the same reason as oxdesk -- Defender deleted
 # the raw .exe the instant it was written, twice (specs/008).
@@ -442,13 +442,13 @@ if out=$(cargo build --release --target x86_64-pc-windows-gnu \
   # works if the previous one finished cleanly is not a step, it is a
   # trap.
   if out=$(cp "$HOSTEXE" "$HOSTSIG" && bash scripts/sign-windows.sh "$HOSTSIG" 2>&1 &&
-           envia "$HOSTSIG" oxdesk-host); then
+           send "$HOSTSIG" oxdesk-host); then
     out=$({ cat <<'PS1' | psrun; } 2>&1
 $dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
-$novo = Join-Path $dst 'oxdesk-host.new.exe'
-$alvo = Join-Path $dst 'oxdesk-host.exe'
-if (-not (Test-Path $novo)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
-$v = Get-AuthenticodeSignature $novo
+$new = Join-Path $dst 'oxdesk-host.new.exe'
+$target = Join-Path $dst 'oxdesk-host.exe'
+if (-not (Test-Path $new)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $new
 if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
 Get-Process -Name oxdesk-host -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 400
@@ -457,13 +457,13 @@ Start-Sleep -Milliseconds 400
 # silently reverted the agent's write for an hour while this script said
 # "ok"), and bringing the number in from outside would need an expanding
 # heredoc -- which is how I broke this very step.
-$esperado = (Get-Item $novo).Length
-Copy-Item -Force $novo $alvo
-Remove-Item -Force $novo
+$expected = (Get-Item $new).Length
+Copy-Item -Force $new $target
+Remove-Item -Force $new
 Start-Sleep -Milliseconds 500
-$tem = (Get-Item $alvo).Length
-if ($tem -ne $esperado) {
-  Write-Output ('ERROR: written but has ' + $tem + ' bytes, expected ' + $esperado + ' -- antivirus reverting? check the exclusion for ' + $dst)
+$got = (Get-Item $target).Length
+if ($got -ne $expected) {
+  Write-Output ('ERROR: written but has ' + $got + ' bytes, expected ' + $expected + ' -- antivirus reverting? check the exclusion for ' + $dst)
   exit 1
 }
 # The task runs the .exe DIRECTLY, with no .cmd wrapper.
@@ -480,7 +480,7 @@ if ($tem -ne $esperado) {
 # No argument: the host defaults to 9777. Passing the number here would
 # require nesting quotes in /tr, which has already broken three times on
 # this bridge.
-$env1 = $alvo
+$env1 = $target
 Remove-Item (Join-Path $dst 'oxdesk-host.cmd') -ErrorAction SilentlyContinue
 # A task that does NOT run on its own: `once` at 00:00 has already
 # passed, and we only wake it with `schtasks /run`. `/it` is the point --
@@ -493,16 +493,16 @@ if ($LASTEXITCODE -ne 0) { Write-Output ('ERROR: schtasks ' + $r); exit 1 }
 exit 0
 PS1
 )
-    if ruim "$out"; then erro "$out"; else ok; fi
-  else erro "$out"; fi
+    if bad "$out"; then fail "$out"; else ok; fi
+  else fail "$out"; fi
   rm -f "$HOSTSIG"
-else erro "$out"; fi
+else fail "$out"; fi
 
 # ---------- mac ----------
-if [ "$PULAR_MAC" -eq 1 ]; then
+if [ "$SKIP_MAC" -eq 1 ]; then
   echo "  mac: skipped"
 else
-  passo "mac: send source"
+  step "mac: send source"
   # `oxdesk-stream` goes along: the Mac is the remote-screen CLIENT, and
   # leaving its binary behind has already happened once -- the one who
   # noticed was the user, not me.
@@ -513,17 +513,17 @@ else
   # (specs/015).
   if out=$(for d in hidpp oxdesk stream ota; do
              rsync -az --delete --exclude target -e "ssh -o BatchMode=yes" "$d" "$MAC:~/oxdesk/" || exit 1
-           done 2>&1); then ok; else erro "$out"; fi
+           done 2>&1); then ok; else fail "$out"; fi
 
-  passo "mac: updater (oxdesk-ota)"
+  step "mac: updater (oxdesk-ota)"
   # Built THERE, like every Mac binary. It deliberately does not depend on
   # brew (build-binaries.sh refuses if it does): whatever repairs the
   # machine must not need ffmpeg to come up.
   if out=$(timeout 300 ssh -n -o BatchMode=yes "$MAC" \
             "cd ~/oxdesk/ota && OXDESK_BUILD='$BUILD' OXDESK_BUILD_N='$OXDESK_BUILD_N' ~/.cargo/bin/cargo build --release 2>&1 | tail -3 &&
              install -m755 target/release/oxdesk-ota ~/.local/bin/oxdesk-ota &&
-             ~/.local/bin/oxdesk-ota --help > /dev/null" 2>&1); then ok; else erro "$out"; fi
-  passo "mac: build and restart"
+             ~/.local/bin/oxdesk-ota --help > /dev/null" 2>&1); then ok; else fail "$out"; fi
+  step "mac: build and restart"
   # No cross-compile from Linux to macOS: it needs Apple's SDK, so the
   # build happens there. OXDESK_BUILD travels along because the copy has no
   # .git. Two things this step learned on a day it said `ok` seven times
@@ -545,10 +545,10 @@ else
              done
              echo \"ERROR: Mac /healthz did not confirm $BUILD: \$(curl -s --max-time 2 localhost:8787/healthz)\"
              exit 1" 2>&1); then
-    if ruim "$out"; then erro "$out"; else ok; fi
-  else erro "$out"; fi
+    if bad "$out"; then fail "$out"; else ok; fi
+  else fail "$out"; fi
 
-  passo "mac: screen (oxdesk-stream, client and host)"
+  step "mac: screen (oxdesk-stream, client and host)"
   # brew's PKG_CONFIG_PATH: `ffmpeg-next` only finds libavcodec through
   # it, and SSH does not load the shell profile.
   #
@@ -592,10 +592,10 @@ else
                  [ -f \"\$d\" ] || echo \"ERROR: \$b asks for \$d and it does not exist on this machine\"
                done
              done" 2>&1); then
-    if ruim "$out"; then erro "$out"; else ok; fi
-  else erro "$out"; fi
+    if bad "$out"; then fail "$out"; else ok; fi
+  else fail "$out"; fi
 
-  passo "mac: sign the host"
+  step "mac: sign the host"
   # A stable signature is what makes the Screen Recording permission
   # survive a rebuild: an ad-hoc binary ties TCC to the cdhash, which
   # always changes.
@@ -613,9 +613,9 @@ else
              if codesign -dv ~/.local/bin/oxdesk-host 2>&1 | grep -q adhoc; then
                echo 'ERROR: the binary stayed ad-hoc; run create-identity.sh on the Mac'
                exit 1
-             fi" 2>&1); then ok; else erro "$out"; fi
+             fi" 2>&1); then ok; else fail "$out"; fi
 
-  passo "mac: signing scripts"
+  step "mac: signing scripts"
   # Signing the host with a STABLE identity is what makes the Screen
   # Recording permission survive a rebuild: cargo's binary is
   # ad-hoc/linker-signed and the cdhash always changes, so TCC loses the
@@ -623,9 +623,9 @@ else
   # in the Mac's Terminal (`create-identity.sh`) -- over SSH the keychain
   # is locked.
   if out=$(scp -q -o BatchMode=yes mac/create-identity.sh mac/sign.sh "$MAC:.local/bin/" 2>&1 &&
-           ssh -n -o BatchMode=yes "$MAC" "chmod +x ~/.local/bin/create-identity.sh ~/.local/bin/sign.sh" 2>&1); then ok; else erro "$out"; fi
+           ssh -n -o BatchMode=yes "$MAC" "chmod +x ~/.local/bin/create-identity.sh ~/.local/bin/sign.sh" 2>&1); then ok; else fail "$out"; fi
 
-  passo "mac: screen host LaunchAgent"
+  step "mac: screen host LaunchAgent"
   # The host MUST be born in the graphical session: capture depends on a
   # TCC permission granted to whoever launched it, and over SSH
   # AVFoundation hangs instead of failing. `RunAtLoad false` -- it only
@@ -639,9 +639,9 @@ else
              # idempotent.
              sleep 1
              launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/app.oxdesk.host.plist 2>/dev/null || \
-             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/app.oxdesk.host.plist" 2>&1); then ok; else erro "$out"; fi
+             launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/app.oxdesk.host.plist" 2>&1); then ok; else fail "$out"; fi
 
-  passo "mac: GUI shell"
+  step "mac: GUI shell"
   # Windows got a loose `main.js` on every deploy; the Mac had the shell
   # inside an `app.asar`, editable only with an asar tool -- which exists
   # on neither this machine nor that one. Result: the Mac's shell was
@@ -672,8 +672,8 @@ else
              fi
              grep -q supervisorCommand "$APP/Contents/Resources/app/main.js" ||
                echo "ERROR: the main.js that reached the Mac is not the one from this repo"' 2>&1); then
-    if ruim "$out"; then erro "$out"; else ok; fi
-  else erro "$out"; fi
+    if bad "$out"; then fail "$out"; else ok; fi
+  else fail "$out"; fi
 fi
 
 # ---------- OTA token ----------
@@ -683,57 +683,60 @@ fi
 # that. See specs/015.
 TOKEN="$HOME/.config/oxdesk/ota-token"
 if [ -f "$TOKEN" ]; then
-  passo "windows: OTA token"
+  step "windows: OTA token"
   if out=$(timeout 60 scp -q "$TOKEN" \
              "$WIN:AppData/Local/oxdesk/ota-token" 2>&1); then ok
-  else erro "$out"; fi
-  if [ "$PULAR_MAC" -eq 0 ]; then
-    passo "mac: OTA token"
+  else fail "$out"; fi
+  if [ "$SKIP_MAC" -eq 0 ]; then
+    step "mac: OTA token"
     # `chmod 600` on that side: scp preserves the source mode, but relying
     # on that is relying on another machine's umask -- and the wizard
     # refuses a token readable by others.
     if out=$(ssh -n -o BatchMode=yes "$MAC" 'mkdir -p ~/.config/oxdesk' 2>&1 &&
              scp -q -o BatchMode=yes "$TOKEN" "$MAC:.config/oxdesk/ota-token" 2>&1 &&
              ssh -n -o BatchMode=yes "$MAC" 'chmod 600 ~/.config/oxdesk/ota-token' 2>&1); then ok
-    else erro "$out"; fi
+    else fail "$out"; fi
   fi
 else
   echo "  OTA token: does not exist at $TOKEN -- OTA will not work (specs/015)"
 fi
 
 # ---------- final check ----------
-# The lines printed from here on are parsed by other tools and people:
-# `== conferencia ==`, `FORA DE SINCRONIA` and `tres maquinas no mesmo
-# build` stay exactly as they are.
-echo "== conferencia =="
+# The lines printed from here on are the ones a person reads to decide
+# the fleet is consistent, and they are quoted verbatim in
+# .claude/skills/deploy.md. `== check ==`, `OUT OF SYNC` and `all three
+# machines on the same build` move together with that file or not at all
+# -- see .claude/rules/english-only.md. Nothing machine-parses them: the
+# only reader is that skill (checked across the repo and .github).
+echo "== check =="
 sleep 6
-declare -A visto
-visto[ubuntu]=$(curl -s --max-time 8 http://127.0.0.1:8787/healthz 2>/dev/null)
-visto[windows]=$(echo "(Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 'http://127.0.0.1:8787/healthz').Content" | psrun)
-[ "$PULAR_MAC" -eq 1 ] || visto[mac]=$(timeout 25 ssh -n -o BatchMode=yes "$MAC" \
+declare -A seen
+seen[ubuntu]=$(curl -s --max-time 8 http://127.0.0.1:8787/healthz 2>/dev/null)
+seen[windows]=$(echo "(Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 'http://127.0.0.1:8787/healthz').Content" | psrun)
+[ "$SKIP_MAC" -eq 1 ] || seen[mac]=$(timeout 25 ssh -n -o BatchMode=yes "$MAC" \
   'curl -s --max-time 8 http://127.0.0.1:8787/healthz' 2>/dev/null)
 
-for h in "${!visto[@]}"; do
-  b=$(printf '%s' "${visto[$h]}" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')
-  n=$(printf '%s' "${visto[$h]}" | sed -n 's/.*"n":\([0-9]*\).*/\1/p')
+for h in "${!seen[@]}"; do
+  b=$(printf '%s' "${seen[$h]}" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')
+  n=$(printf '%s' "${seen[$h]}" | sed -n 's/.*"n":\([0-9]*\).*/\1/p')
   if [ "$b" = "$BUILD" ]; then
     printf '  %-10s #%s %s\n' "$h" "${n:-?}" "$b"
   else
-    printf '  %-10s %s  <-- FORA DE SINCRONIA (esperado %s)\n' "$h" "${b:-sem resposta}" "$BUILD"
-    falhas=$((falhas+1))
+    printf '  %-10s %s  <-- OUT OF SYNC (expected %s)\n' "$h" "${b:-no answer}" "$BUILD"
+    failures=$((failures+1))
   fi
 done
 
 echo
-if [ "$falhas" -ne 0 ]; then
-  echo "$falhas problema(s)"
-elif [ "$PULAR_MAC" -eq 1 ]; then
-  # NOT "tres maquinas": with --pular-mac the mac was never asked, and
+if [ "$failures" -ne 0 ]; then
+  echo "$failures problem(s)"
+elif [ "$SKIP_MAC" -eq 1 ]; then
+  # NOT "all three machines": with --skip-mac the mac was never asked, and
   # saying three when two were measured is the same silence the rules are
   # about. This is the line a person reads to decide the fleet is
   # consistent, so it has to name what was left out.
-  echo "${#visto[@]} de 3 maquinas no mesmo build: $BUILD (mac fora: --pular-mac)"
+  echo "${#seen[@]} of 3 machines on the same build: $BUILD (mac left out: --skip-mac)"
 else
-  echo "tres maquinas no mesmo build: $BUILD"
+  echo "all three machines on the same build: $BUILD"
 fi
-exit "$falhas"
+exit "$failures"

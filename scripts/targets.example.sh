@@ -11,7 +11,7 @@
 OXDESK_WIN_SSH="windows-pc"
 
 # ssh alias of the Mac. Leave empty if you have none -- the deploy then
-# behaves as if --pular-mac had been passed.
+# behaves as if --skip-mac had been passed.
 OXDESK_MAC_SSH="the-mac"
 
 # The LAN range allowed to reach ssh, for enable-sshd.sh / enable-ufw.sh.

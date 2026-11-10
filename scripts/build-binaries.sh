@@ -116,7 +116,7 @@ esac
 # what it was linked against is worse than one that fails to build.
 fixar_prefixo_ffmpeg() {
   [ "$ALVO" = mac ] || return 0
-  local f="$1" nome="$2" d novo a b
+  local f="$1" name="$2" d new a b
   # Both prefixes come from the ONE declaration: `@7` is the declared one
   # and `${FFMPEG_PREFIXO%@*}` is the same formula unversioned. Deriving
   # them beats writing the paths twice, and beats a substitution with
@@ -124,19 +124,19 @@ fixar_prefixo_ffmpeg() {
   # `opt\/ffmpeg@7\/` in the message.
   local sem="${FFMPEG_PREFIXO%@*}"
   for d in $(otool -L "$f" | grep -o "$sem/[^ ]*"); do
-    novo="$FFMPEG_PREFIXO/${d#"$sem"/}"
+    new="$FFMPEG_PREFIXO/${d#"$sem"/}"
     a=$(stat -f %i "$d" 2>/dev/null)
-    b=$(stat -f %i "$novo" 2>/dev/null)
+    b=$(stat -f %i "$new" 2>/dev/null)
     if [ -z "$a" ] || [ -z "$b" ]; then
-      falha "$nome: $novo does not exist -- install the $FFMPEG_FORMULA keg, or fix the alias"
+      falha "$name: $new does not exist -- install the $FFMPEG_FORMULA keg, or fix the alias"
       return 1
     fi
     if [ "$a" != "$b" ]; then
-      falha "$nome: $d and $novo are DIFFERENT files; not rewriting the package's linkage"
+      falha "$name: $d and $new are DIFFERENT files; not rewriting the package's linkage"
       return 1
     fi
-    install_name_tool -change "$d" "$novo" "$f" || { falha "$nome: install_name_tool on $d"; return 1; }
-    echo "  $nome: $d -> $novo (same keg, inode $a)"
+    install_name_tool -change "$d" "$new" "$f" || { falha "$name: install_name_tool on $d"; return 1; }
+    echo "  $name: $d -> $new (same keg, inode $a)"
   done
 }
 
@@ -169,18 +169,18 @@ if [ "$COMPILAR" -eq 1 ]; then
   compilar || { echo "ERROR: the build failed"; exit 1; }
 fi
 
-falhas=0
-falha() { echo "ERROR: $1"; falhas=$((falhas + 1)); }
+failures=0
+falha() { echo "ERROR: $1"; failures=$((failures + 1)); }
 
 # Dependencies the binary carries with it. Each system answers differently,
 # and each answer has already been a real problem or would be one silently.
 conferir_dependencias() {
-  local b="$1" nome="$2" deps
+  local b="$1" name="$2" deps
   case "$ALVO" in
     linux)
       deps=$(ldd "$b" 2>&1)
       if printf '%s\n' "$deps" | grep -q 'not found'; then
-        falha "$nome: missing library"; printf '%s\n' "$deps" | grep 'not found'
+        falha "$name: missing library"; printf '%s\n' "$deps" | grep 'not found'
       fi
       ;;
     windows)
@@ -188,7 +188,7 @@ conferir_dependencias() {
       # ffmpeg installed, and a missing DLL gives no warning at build time.
       deps=$(x86_64-w64-mingw32-objdump -p "$b" | grep 'DLL Name')
       if printf '%s\n' "$deps" | grep -qiE 'libgcc|libstdc|libwinpthread|avcodec|avutil|avformat'; then
-        falha "$nome: depends on a DLL Windows does not have"
+        falha "$name: depends on a DLL Windows does not have"
         printf '%s\n' "$deps" | grep -iE 'libgcc|libstdc|libwinpthread|avcodec|avutil|avformat'
       fi
       ;;
@@ -201,9 +201,9 @@ conferir_dependencias() {
       # control plane, the second is what repairs the machine when the
       # rest broke. An updater that needs ffmpeg to start would be useless
       # exactly when it is needed.
-      if { [ "$nome" = oxdesk ] || [ "$nome" = oxdesk-ota ]; } &&
+      if { [ "$name" = oxdesk ] || [ "$name" = oxdesk-ota ]; } &&
          printf '%s\n' "$deps" | grep -q '/opt/homebrew'; then
-        falha "$nome: should not depend on brew"
+        falha "$name: should not depend on brew"
       fi
       # Every brew dylib has to come from the declared prefix. Coming from
       # `/opt/homebrew/opt/ffmpeg/` (unversioned) is exactly the case that
@@ -211,7 +211,7 @@ conferir_dependencias() {
       local fora
       fora=$(printf '%s\n' "$deps" | grep '/opt/homebrew' | grep -v "$FFMPEG_PREFIXO/" || true)
       if [ -n "$fora" ]; then
-        falha "$nome: brew dylib outside $FFMPEG_PREFIXO (wrong PKG_CONFIG_PATH?)"
+        falha "$name: brew dylib outside $FFMPEG_PREFIXO (wrong PKG_CONFIG_PATH?)"
         printf '%s\n' "$fora"
       fi
       # The major is what OTA checks on the other side. If the runner
@@ -219,9 +219,9 @@ conferir_dependencias() {
       # not a week later in a silent OTA refusal on the Mac.
       if printf '%s\n' "$deps" | grep -q "$FFMPEG_PREFIXO" &&
          ! printf '%s\n' "$deps" | grep -q "$FFMPEG_SONAME"; then
-        falha "$nome: expected $FFMPEG_SONAME ($FFMPEG_FORMULA) and did not find it -- did the major change?"
+        falha "$name: expected $FFMPEG_SONAME ($FFMPEG_FORMULA) and did not find it -- did the major change?"
       fi
-      printf '%s\n' "$deps" | grep '/opt/homebrew' | sed "s/^/  $nome:/" || true
+      printf '%s\n' "$deps" | grep '/opt/homebrew' | sed "s/^/  $name:/" || true
       ;;
   esac
 }
@@ -233,26 +233,26 @@ mkdir -p "$SAIDA"
 printf '%-24s %12s  %s\n' binary bytes sha256
 LINHAS=""
 while IFS= read -r b; do
-  nome=$(basename "$b")
-  [ -f "$b" ] || { falha "$nome does not exist at $b"; continue; }
+  name=$(basename "$b")
+  [ -f "$b" ] || { falha "$name does not exist at $b"; continue; }
   # Copy FIRST, then check: `fixar_prefixo_ffmpeg` edits the copy, so
   # checking and hashing the original would describe a file that is not the
   # one in the package. The build output in target/ is never touched.
-  cp "$b" "$SAIDA/" || { falha "$nome: copy failed"; continue; }
-  d="$SAIDA/$nome"
+  cp "$b" "$SAIDA/" || { falha "$name: copy failed"; continue; }
+  d="$SAIDA/$name"
   tipo=$(file -b "$d")
-  printf '%s' "$tipo" | grep -qE "$FORMATO" || falha "$nome: unexpected format: $tipo"
-  fixar_prefixo_ffmpeg "$d" "$nome"
+  printf '%s' "$tipo" | grep -qE "$FORMATO" || falha "$name: unexpected format: $tipo"
+  fixar_prefixo_ffmpeg "$d" "$name"
   # After the rewrite, not before: `install_name_tool` writing a longer path
   # can change the file's size, and a table that reports the size of a file
   # nobody ships is a table that lies.
   bytes=$(wc -c < "$d" | tr -d ' ')
-  [ "$bytes" -gt 100000 ] || falha "$nome: only $bytes bytes"
-  conferir_dependencias "$d" "$nome"
+  [ "$bytes" -gt 100000 ] || falha "$name: only $bytes bytes"
+  conferir_dependencias "$d" "$name"
   soma=$(shasum -a 256 "$d" | cut -d' ' -f1)
-  printf '%-24s %12s  %s\n' "$nome" "$bytes" "$soma"
-  printf '%s  %s\n' "$soma" "$nome" >> "$SAIDA/SHA256SUMS"
-  LINHAS="$LINHAS| \`$nome\` | $bytes | \`${soma:0:16}\` |
+  printf '%-24s %12s  %s\n' "$name" "$bytes" "$soma"
+  printf '%s  %s\n' "$soma" "$name" >> "$SAIDA/SHA256SUMS"
+  LINHAS="$LINHAS| \`$name\` | $bytes | \`${soma:0:16}\` |
 "
 done <<< "$BINARIOS"
 
@@ -264,8 +264,8 @@ if [ -f "$daemon" ]; then
   grep -aqF "$OXDESK_BUILD" "$daemon" || falha "oxdesk does not carry the stamp $OXDESK_BUILD"
 fi
 
-if [ "$falhas" -ne 0 ]; then
-  echo "$falhas problem(s): not packaged"
+if [ "$failures" -ne 0 ]; then
+  echo "$failures problem(s): not packaged"
   exit 1
 fi
 

@@ -60,10 +60,10 @@ mv "$TMP" "$EXE"
 #
 # The question worth asking is "is this signed by OUR key and intact", and
 # with the right CA the same binary answers `Signature verification: ok`.
-if saida=$(osslsigncode verify -CAfile "$DIR/cert.pem" "$EXE" 2>&1); then
-  printf '%s\n' "$saida" | grep -E 'Signature verification|Subject:|Timestamp time' | sed 's/^/  /'
+if scp_out=$(osslsigncode verify -CAfile "$DIR/cert.pem" "$EXE" 2>&1); then
+  printf '%s\n' "$scp_out" | grep -E 'Signature verification|Subject:|Timestamp time' | sed 's/^/  /'
 else
   echo "ERROR: the signature did not verify against $DIR/cert.pem" >&2
-  printf '%s\n' "$saida" | tail -20 >&2
+  printf '%s\n' "$scp_out" | tail -20 >&2
   exit 1
 fi

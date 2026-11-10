@@ -13,7 +13,7 @@ set -uo pipefail
 g=$'\033[32m'; y=$'\033[33m'; r=$'\033[31m'; d=$'\033[2m'; n=$'\033[0m'
 ok(){   printf "  ${g}OK${n}    %s\n" "$1"; }
 aviso(){ printf "  ${y}WARN${n}  %s\n" "$1"; }
-ruim(){ printf "  ${r}FAIL${n}  %s\n" "$1"; }
+bad(){ printf "  ${r}FAIL${n}  %s\n" "$1"; }
 nota(){ printf "  ${d}·     %s${n}\n" "$1"; }
 sec(){  printf "\n%s\n" "$1"; }
 
@@ -21,12 +21,12 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/oxdesk/config.toml"
 
 sec "── Overlay ────────────────────────────────────────"
 if ! command -v tailscale >/dev/null 2>&1; then
-  ruim "tailscale not installed -- see scripts/install-tailscale.sh"
+  bad "tailscale not installed -- see scripts/install-tailscale.sh"
   exit 1
 fi
 ESTADO=$(tailscale status --json 2>/dev/null)
 if [ -z "$ESTADO" ]; then
-  ruim "tailscaled did not answer"
+  bad "tailscaled did not answer"
   exit 1
 fi
 
@@ -60,7 +60,7 @@ else
     case "$SAIDA" in
       *direct*)  ok "$p -- $SAIDA" ;;
       *via\ DERP*|*relay*) aviso "$p -- RELAY: $SAIDA" ;;
-      *)         ruim "$p -- $SAIDA" ;;
+      *)         bad "$p -- $SAIDA" ;;
     esac
   done
   nota "relay (DERP) = restrictive NAT on both sides, CGNAT included."
@@ -75,17 +75,17 @@ sec "── Is mDNS still alive? ───────────────�
 nota "nsswitch: $(grep -E '^hosts:' /etc/nsswitch.conf | sed 's/^hosts: *//')"
 ACHOU=0
 if [ -r "$CONF" ]; then
-  while read -r nome; do
-    [ -z "$nome" ] && continue
-    case "$nome" in *.local) ;; *) continue ;; esac
+  while read -r name; do
+    [ -z "$name" ] && continue
+    case "$name" in *.local) ;; *) continue ;; esac
     ACHOU=1
-    if OUT=$(getent hosts "$nome" 2>/dev/null | head -1) && [ -n "$OUT" ]; then
-      ok "$nome -> ${OUT%% *}"
+    if OUT=$(getent hosts "$name" 2>/dev/null | head -1) && [ -n "$OUT" ]; then
+      ok "$name -> ${OUT%% *}"
     else
       # Not resolving may be the machine asleep, not broken DNS. Saying
       # "mDNS FAILED" about a closed laptop would send you to fix what is
       # not broken.
-      aviso "$nome does not resolve (machine off, or mDNS broken)"
+      aviso "$name does not resolve (machine off, or mDNS broken)"
     fi
   done < <(grep -oE '"[^"]+\.local"' "$CONF" | tr -d '"' | sort -u)
 fi

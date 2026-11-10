@@ -13,15 +13,20 @@ checking that the three report the same build.
 The footer is what matters:
 
 ```
-== conferencia ==
+== check ==
   mac        #75 d72074b
   windows    #75 d72074b
   ubuntu     #75 d72074b
 
-tres maquinas no mesmo build: d72074b
+all three machines on the same build: d72074b
 ```
 
-Any `FORA DE SINCRONIA` (out of sync) means that machine fell behind —
+With `--skip-mac` the last line says `2 of 3 machines on the same build:
+<build> (mac left out: --skip-mac)` instead, and that wording is
+deliberate: saying three when two were measured is the silence the rules
+are about.
+
+Any `OUT OF SYNC` means that machine fell behind —
 usually because a step failed further up and its `ok` was a lie. Every
 Windows step captures stderr and checks the size of the file that
 landed, precisely because this has happened

@@ -23,8 +23,8 @@ fi
 
 # No fallback to a name: this grants ssh access to an account, and
 # guessing whose would be the worst possible default.
-ALVO_USER="${SUDO_USER:-}"
-[ -n "$ALVO_USER" ] || { echo "run it with sudo, so SUDO_USER says who gets access" >&2; exit 1; }
+TARGET_USER="${SUDO_USER:-}"
+[ -n "$TARGET_USER" ] || { echo "run it with sudo, so SUDO_USER says who gets access" >&2; exit 1; }
 
 # The range allowed to reach ssh. Required: opening a firewall to a
 # network we guessed is a rule for somebody else's network.
@@ -56,7 +56,7 @@ PermitRootLogin no
 
 # Only this user. An explicit AllowUsers is cheaper to audit than
 # remembering which system accounts have a shell.
-AllowUsers $ALVO_USER
+AllowUsers $TARGET_USER
 
 # No forwarding: nothing here needs it, and X11/agent forwarding are the
 # two ends through which a compromised host reaches back.
@@ -67,11 +67,11 @@ EOF
 sshd -t && echo "  config valid"
 
 echo "== 3. authorizing the existing key (if any) =="
-HOME_DIR=$(getent passwd "$ALVO_USER" | cut -d: -f6)
-install -d -m 0700 -o "$ALVO_USER" -g "$ALVO_USER" "$HOME_DIR/.ssh"
+HOME_DIR=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+install -d -m 0700 -o "$TARGET_USER" -g "$TARGET_USER" "$HOME_DIR/.ssh"
 touch "$HOME_DIR/.ssh/authorized_keys"
 chmod 600 "$HOME_DIR/.ssh/authorized_keys"
-chown "$ALVO_USER:$ALVO_USER" "$HOME_DIR/.ssh/authorized_keys"
+chown "$TARGET_USER:$TARGET_USER" "$HOME_DIR/.ssh/authorized_keys"
 echo "  $HOME_DIR/.ssh/authorized_keys ready ($(wc -l < "$HOME_DIR/.ssh/authorized_keys") key(s))"
 
 echo "== 4. firewall: 22 and 3389 from the LAN only =="
@@ -92,7 +92,7 @@ cat <<EOF
 
 == done ==
 
-Listening on 22, key only, user $ALVO_USER only.
+Listening on 22, key only, user $TARGET_USER only.
 
 Let me know and I will do the rest: generate the key on Windows, authorize
 it here, switch the daemon's edge back to focus and turn on the file

@@ -21,16 +21,16 @@ TARGETS="$(dirname "$0")/targets.sh"
 WIN="${OXDESK_WIN_SSH:-}"
 MAC="${OXDESK_MAC_SSH:-}"
 
-falhou=0
+failed=0
 for h in "$@" ${MAC:+"$MAC"} ${WIN:+"$WIN"}; do
   if [ -n "$WIN" ] && [ "$h" = "$WIN" ]; then
     scp -q -o BatchMode=yes "$TOKEN" "$WIN:AppData/Local/oxdesk/ota-token" &&
       ssh -T -o BatchMode=yes "$WIN" 'icacls "$env:LOCALAPPDATA\oxdesk\ota-token" /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null; & "$env:LOCALAPPDATA\oxdesk\oxdesk-ota.exe" --conferir | Out-String' 2>&1 |
-      grep -E '^(erro|igual|novo|há|ha |build)' | cut -c1-100 || falhou=1
+      grep -E '^(fail|igual|new|há|ha |build)' | cut -c1-100 || failed=1
   else
     ssh -T -o BatchMode=yes "$h" 'umask 077; mkdir -p ~/.config/oxdesk; cat > ~/.config/oxdesk/ota-token' < "$TOKEN" &&
-      ssh -T -o BatchMode=yes "$h" '~/.local/bin/oxdesk-ota --conferir' 2>&1 | tail -1 | cut -c1-100 || falhou=1
+      ssh -T -o BatchMode=yes "$h" '~/.local/bin/oxdesk-ota --conferir' 2>&1 | tail -1 | cut -c1-100 || failed=1
   fi
   echo "  ^ $h"
 done
-exit "$falhou"
+exit "$failed"
