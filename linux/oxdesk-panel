@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Opens the oxdesk panel, starting the daemon first if it is not answering.
+#
+# This is what the desktop entry runs, and it is a script and not a bare
+# `xdg-open` for one reason: the panel is a page SERVED BY the daemon, not
+# an app of its own. A launcher that only opened the URL would show a
+# connection error exactly when someone goes looking for the menu -- which
+# is when the daemon is not running.
+#
+# No path of this machine is written here. The entry carries the absolute
+# path (substituted at install time, since `.desktop` does not expand
+# `$HOME`), and the port comes from the config, because a second machine
+# may not use 8787.
+set -uo pipefail
+
+config="${XDG_CONFIG_HOME:-$HOME/.config}/oxdesk/config.toml"
+port=$(sed -n 's/^[[:space:]]*port[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+  "$config" 2>/dev/null | head -1)
+url="http://127.0.0.1:${port:-8787}"
+
+# `/` and not an API route: the index is static, while the fleet routes do
+# SSH to the other machines and take seconds on a cold start.
+answering() { curl -fsS --max-time 2 -o /dev/null "$url/" 2>/dev/null; }
+
+if ! answering; then
+  systemctl --user start oxdesk.service >/dev/null 2>&1 || true
+  # Wait for the port, not for a fixed number of seconds.
+  for _ in $(seq 1 40); do
+    answering && break
+    sleep 0.25
+  done
+fi
+
+if ! answering; then
+  # Loud, and in the open: a launcher that fails silently teaches people
+  # the icon is broken.
+  msg="oxdesk is not answering on $url. Try: systemctl --user status oxdesk.service"
+  command -v zenity >/dev/null && zenity --error --no-markup --text="$msg" 2>/dev/null
+  echo "$msg" >&2
+  exit 1
+fi
+
+exec xdg-open "$url"

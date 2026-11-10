@@ -90,6 +90,27 @@ if out=$( { install -m755 oxdesk/target/release/oxdesk ~/.local/bin/oxdesk &&
   if ruim "$out"; then erro "$out"; else ok; fi
 else erro "$out"; fi
 
+passo "ubuntu: menu entry"
+# The panel has no window of its own: it is a page served by the daemon,
+# so without this entry there is NO way to reach it from the desktop --
+# only the tray, and the tray is gone whenever the AppIndicator extension
+# is off. A `.desktop` entry pointing at a personal path was deleted in
+# specs/018 step 2 and nothing generic replaced it; this is the generic
+# replacement.
+#
+# `@BIN@` is substituted here and not written in the repo, because a
+# `.desktop` file cannot expand `$HOME` and a hardcoded /home/<name> is
+# exactly what step 2 removed.
+if out=$( { install -m755 linux/oxdesk-panel ~/.local/bin/oxdesk-panel &&
+            mkdir -p ~/.local/share/applications &&
+            sed "s|@BIN@|$HOME/.local/bin|g" linux/oxdesk.desktop \
+              > ~/.local/share/applications/oxdesk.desktop &&
+            { desktop-file-validate ~/.local/share/applications/oxdesk.desktop ||
+              echo "ERROR: invalid .desktop"; } &&
+            { update-desktop-database ~/.local/share/applications 2>/dev/null || true; }; } 2>&1 ); then
+  if ruim "$out"; then erro "$out"; else ok; fi
+else erro "$out"; fi
+
 passo "ubuntu: updater (oxdesk-ota)"
 # The one that downloads the Release, checks the sum, swaps and reverts.
 # Goes to ALL THREE machines -- on Windows it only checks and reports

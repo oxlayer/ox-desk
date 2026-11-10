@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=oxdesk
+GenericName=LAN control panel
+Comment=Panel for the machines on this LAN: screen, clipboard, keyboard and mouse
+Exec=@BIN@/oxdesk-panel
+TryExec=@BIN@/oxdesk-panel
+Icon=computer
+Terminal=false
+StartupNotify=true
+Categories=Network;RemoteAccess;
+Keywords=kvm;remote;screen;clipboard;
