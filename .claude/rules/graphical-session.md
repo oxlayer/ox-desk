@@ -95,6 +95,37 @@ yet`, and re-enabling it brings the icon up on its own in ~4 s with no
 restart -- `org.kde.StatusNotifierItem-<pid>-4`, the 4th attempt, which
 is the backoff showing its work.
 
+## The environment is part of that timeline too
+
+Same shape, different symptom, and it cost a day: **never spawn one of
+our binaries by bare name.**
+
+`kvm.rs` did `Command::new("oxdesk-kvm")`. A systemd user service gets
+the user manager's environment, and at boot that `PATH` does **not** yet
+contain `~/.local/bin`. So both Ctrl failed with
+`No such file or directory (os error 2)` about a file that was there,
+executable, and counted `ok` by the panel.
+
+What hid it: `systemctl --user show-environment` *does* have
+`~/.local/bin` later in the session, so a service restarted after that
+point inherits it. Every `deploy.sh` restart worked, and the next boot
+broke again. The report was "sometimes it doesn't work, I just started
+the PC", which is the mechanism stated exactly.
+
+The fix is not to order the unit, nor to set `Environment=PATH=` in it --
+same lesson as above: ordering cannot wait for something that is not
+there yet, and a second copy of the PATH is a second thing to keep right.
+Resolve next to `current_exe`, where `deploy.sh`, `install.sh` and
+`target/release` all keep the binaries side by side: `sys::own_bin`, with
+the decision in `sys::sibling_in` and its tests.
+
+And the companion lesson, which is the more expensive one: **a check that
+measures the wrong side of a boundary is a green light for a broken
+feature.** `binaries` asked "do the files exist in `~/.local/bin`" when
+the question was "can the process that must launch them reach them". It
+now asks the daemon's own resolver, for the binaries the daemon itself
+spawns (`setup_common::DAEMON_LAUNCHES`).
+
 ## See also
 
 - [[windows-locked-screen]] — the same boundary, on the Windows side
