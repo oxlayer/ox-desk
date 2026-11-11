@@ -451,6 +451,31 @@ pub fn verdict(line: &str, clock: &str) -> Check {
 /// Comparing the two stamps turns a day of confusion into one panel line.
 /// And it is the same hole OTA has: it restarts, asks `/healthz`, hears
 /// the old build and **reverts a good update**.
+/// The binaries the DAEMON launches itself, as opposed to the ones the
+/// wizard runs by absolute path.
+///
+/// Only these can be defeated by a bad `PATH`, so only these are worth
+/// asking about. Today it is one, and the list exists so the next spawn
+/// added to the daemon shows up here instead of being discovered by a
+/// gesture that quietly does nothing.
+pub const DAEMON_LAUNCHES: &[&str] = &["oxdesk-kvm"];
+
+/// Of `names`, the ones the daemon could not resolve next to itself.
+///
+/// `exists in ~/.local/bin` was the whole check, and it reported **ok**
+/// while the daemon failed with ENOENT on a file that was there and
+/// executable: the files were in one place and the daemon was looking in
+/// another -- `PATH`, which a systemd user service does not share with
+/// your shell. A check that measures the wrong side of a boundary is a
+/// green light for a broken feature.
+///
+/// `resolve` is `sys::own_bin`, which returns a bare relative name
+/// exactly when it could not find the file beside the running daemon --
+/// so "not absolute" means "this would fall back to PATH".
+pub fn unresolvable(names: &[&str], resolve: impl Fn(&str) -> std::path::PathBuf) -> Vec<String> {
+    names.iter().filter(|n| !resolve(n).is_absolute()).map(|n| n.to_string()).collect()
+}
+
 /// Reads one `key: ok|missing` line out of what `oxdesk-host --check`
 /// printed.
 ///
@@ -605,6 +630,25 @@ mod tests {
         );
         assert_eq!(m.state, crate::setup::State::Missing);
         assert!(m.detail.contains("is not installed"), "{}", m.detail);
+    }
+
+    /// The check that said ok while the gesture was failing.
+    #[test]
+    fn a_binary_the_daemon_cannot_resolve_is_reported() {
+        // What `own_bin` returns when the file is not beside the daemon:
+        // a bare name, to be looked up in a PATH the service may not have.
+        let bare = |n: &str| std::path::PathBuf::from(n);
+        assert_eq!(unresolvable(&["oxdesk-kvm"], bare), vec!["oxdesk-kvm".to_string()]);
+
+        let found = |n: &str| std::path::PathBuf::from("/home/x/.local/bin").join(n);
+        assert!(unresolvable(&["oxdesk-kvm"], found).is_empty());
+    }
+
+    /// And the list is the one the daemon actually spawns -- the wizard's
+    /// own calls use absolute paths and cannot be broken this way.
+    #[test]
+    fn the_list_covers_what_the_daemon_launches() {
+        assert!(DAEMON_LAUNCHES.contains(&"oxdesk-kvm"));
     }
 
     /// The bug that shipped: `screen-recording` parsed and

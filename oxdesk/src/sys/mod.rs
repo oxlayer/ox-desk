@@ -89,3 +89,83 @@ pub struct ClientSpec {
 
     pub file: Option<&'static str>,
 }
+
+/// The file name of one of our binaries on this platform.
+fn exe_name(name: &str) -> String {
+    if cfg!(windows) { format!("{name}.exe") } else { name.to_string() }
+}
+
+/// Which path to use for a sibling binary: pure, so the decision has a
+/// test. `dir` is the directory of the running executable and `present`
+/// says whether the candidate is in it.
+///
+/// Falling back to the bare name rather than failing is deliberate: it
+/// keeps PATH working for a developer who installed the binaries
+/// somewhere else, and it is the behaviour this had before.
+pub fn sibling_in(dir: Option<&std::path::Path>, name: &str, present: bool) -> std::path::PathBuf {
+    match (dir, present) {
+        (Some(d), true) => d.join(exe_name(name)),
+        _ => std::path::PathBuf::from(exe_name(name)),
+    }
+}
+
+/// The absolute path of one of our own binaries, resolved **next to this
+/// one** instead of through `PATH`.
+///
+/// The bug it fixes, because it is not obvious from the symptom. The
+/// daemon runs as a systemd user service, and that service's `PATH` is
+/// systemd's own -- it does **not** contain `~/.local/bin`, which is
+/// where the binaries are installed. So `Command::new("oxdesk-kvm")`
+/// failed with ENOENT ("No such file or directory") about a file that was
+/// right there, executable, and which the panel happily counted.
+///
+/// What made it look random: after `deploy.sh` the service is restarted
+/// from a shell whose environment DOES have that directory, so the
+/// gesture worked for the rest of the day and broke again at the next
+/// boot. Reported as "sometimes it doesn't work, I just started the PC",
+/// which is exactly right -- the PATH depended on who started the daemon.
+///
+/// `current_exe` is the right anchor: `deploy.sh`, `install.sh` and
+/// `target/release` all keep these binaries side by side.
+pub fn own_bin(name: &str) -> std::path::PathBuf {
+    let exe = std::env::current_exe().ok();
+    let dir = exe.as_deref().and_then(|p| p.parent());
+    let present = dir.map(|d| d.join(exe_name(name)).exists()).unwrap_or(false);
+    sibling_in(dir, name, present)
+}
+
+#[cfg(test)]
+mod sibling_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn a_sibling_that_is_there_wins_over_the_path() {
+        let got = sibling_in(Some(Path::new("/home/x/.local/bin")), "oxdesk-kvm", true);
+        assert_eq!(got, Path::new("/home/x/.local/bin").join(exe_name("oxdesk-kvm")));
+        assert!(got.is_absolute(), "an absolute path is the whole point: {got:?}");
+    }
+
+    /// Absent, or no idea where we are: the bare name, so PATH still gets
+    /// its chance. Never an absolute path to a file we did not find.
+    #[test]
+    fn without_a_sibling_it_falls_back_to_the_bare_name() {
+        assert_eq!(
+            sibling_in(Some(Path::new("/home/x/.local/bin")), "oxdesk-kvm", false),
+            Path::new(&exe_name("oxdesk-kvm"))
+        );
+        assert_eq!(sibling_in(None, "oxdesk-kvm", true), Path::new(&exe_name("oxdesk-kvm")));
+    }
+
+    /// On Windows the file has a suffix, and `PATHEXT` only covers the
+    /// PATH lookup we are deliberately not using any more.
+    #[test]
+    fn the_windows_suffix_is_not_forgotten() {
+        let n = exe_name("oxdesk-kvm");
+        if cfg!(windows) {
+            assert_eq!(n, "oxdesk-kvm.exe");
+        } else {
+            assert_eq!(n, "oxdesk-kvm");
+        }
+    }
+}

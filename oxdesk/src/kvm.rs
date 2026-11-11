@@ -189,7 +189,11 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     // keys), so sending the kernel's too would double it. On Windows it is
     // the opposite: `SendInput` repeats nothing, and without the kernel's
     // holding backspace deletes a single character.
-    let mut cmd = crate::sys::child("oxdesk-kvm");
+    // Next to this binary, not through PATH: a systemd user service does
+    // not inherit `~/.local/bin`, and the failure only showed up on a
+    // freshly booted machine. See `sys::own_bin`.
+    let kvm_bin = crate::sys::own_bin("oxdesk-kvm");
+    let mut cmd = crate::sys::child(&kvm_bin.to_string_lossy());
     cmd.arg(&dest);
     if h.os.as_deref() == Some("linux") {
         cmd.arg("--no-repeat");
@@ -199,7 +203,7 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err))
         .spawn()
-        .map_err(|e| format!("could not run oxdesk-kvm: {e}"))?;
+        .map_err(|e| format!("could not run {}: {e}", kvm_bin.display()))?;
 
     // Confirm it SURVIVED, not just that it was born.
     //

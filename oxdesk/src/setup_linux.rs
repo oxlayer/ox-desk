@@ -90,6 +90,22 @@ fn binaries() -> Check {
     if let Some(p) = crate::setup_common::daemon_on_disk(&dir.join("oxdesk")) {
         return Check::missing("binaries", p);
     }
+    // Being on disk is not the same as being reachable by the process
+    // that has to launch it. This is the half that was missing while the
+    // panel said `ok` and both Ctrl did nothing.
+    let unreachable =
+        crate::setup_common::unresolvable(crate::setup_common::DAEMON_LAUNCHES, crate::sys::own_bin);
+    if !unreachable.is_empty() {
+        return Check::missing(
+            "binaries",
+            format!(
+                "{} is on disk but not beside the running daemon ({}): it would be looked up in \
+                 PATH, which a user service does not share with your shell",
+                unreachable.join(", "),
+                dir.display()
+            ),
+        );
+    }
     Check::ok("binaries", format!("{} binaries in {}", BINS.len(), dir.display()))
 }
 
