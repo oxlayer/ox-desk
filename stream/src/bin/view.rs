@@ -504,7 +504,7 @@ mod visual {
                 println!("  {} frames drawn, {:.0} fps", self.n, self.n as f64 / secs);
                 // The title is shown to the person: stays pt-BR.
                 window.set_title(&format!(
-                    "oxdesk-stream — {:.0} fps desenhados",
+                    "oxdesk-stream — {:.0} fps drawn",
                     self.n as f64 / secs
                 ));
             }

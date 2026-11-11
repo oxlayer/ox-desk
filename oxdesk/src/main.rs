@@ -423,7 +423,7 @@ fn patch_config(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let merged = {
         let guard = match cfg.read() {
             Ok(g) => g,
-            Err(_) => return err_json(req, 500, "estado da config corrompido"),
+            Err(_) => return err_json(req, 500, "corrupt config state"),
         };
         let mut base = match serde_json::to_value(&*guard) {
             Ok(serde_json::Value::Object(m)) => m,
@@ -483,7 +483,7 @@ fn post_focus(mut req: Request, cfg: &RwLock<Config>) {
     };
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
-        Err(_) => return err_json(req, 500, "estado da config corrompido"),
+        Err(_) => return err_json(req, 500, "corrupt config state"),
     };
     // LAN mode: capture here and send over the network. It does not go
     // through the HID++ planner because there is nothing to plan -- no
@@ -570,7 +570,7 @@ fn post_remap(mut req: Request) {
         return err_json(req, 400, "falta confirm: isto muda o comportamento fisico do botao");
     }
     let (Some(cid), Some(to)) = (parse_id(&b.cid), parse_id(&b.to)) else {
-        return err_json(req, 400, "cid/to invalidos (use 0x0053 ou decimal)");
+        return err_json(req, 400, "invalid cid/to (use 0x0053 or decimal)");
     };
     match hidpp::remap(b.slot, cid, to) {
         Ok(detail) => ok_json(req, serde_json::json!({ "ok": true, "detail": detail }).to_string()),
@@ -641,7 +641,7 @@ fn post_clipboard_send(mut req: Request, cfg: &RwLock<Config>) {
     };
     let snap = match cfg.read() {
         Ok(g) => g.clone(),
-        Err(_) => return err_json(req, 500, "estado da config corrompido"),
+        Err(_) => return err_json(req, 500, "corrupt config state"),
     };
     match clip_files::send_offer(&snap, &host) {
         Ok(d) => ok_json(req, serde_json::json!({ "ok": true, "detail": d }).to_string()),
@@ -1068,7 +1068,7 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     // during network calls or during respond.
     let snap_cfg = match cfg.read() {
         Ok(g) => g.clone(),
-        Err(_) => return err_json(req, 500, "estado da config corrompido"),
+        Err(_) => return err_json(req, 500, "corrupt config state"),
     };
 
     match path.as_str() {

@@ -335,7 +335,7 @@ fn main() -> ExitCode {
             let host = args.get(2).and_then(|s| s.parse::<u8>().ok());
             let secs = args.get(3).and_then(|s| s.parse::<u64>().ok());
             let (Some(slot), Some(host), Some(secs)) = (slot, host, secs) else {
-                return fail("uso: guard <slot> <host 1-based> <segundos>");
+                return fail("usage: guard <slot> <host 1-based> <seconds>");
             };
             let budget_ms = secs * 1000;
             let started = std::time::Instant::now();

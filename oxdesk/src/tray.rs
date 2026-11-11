@@ -364,7 +364,7 @@ pub fn watch(handle: ksni::blocking::Handle<OxdeskTray>, cfg: Arc<std::sync::RwL
             // A simple signature: what the menu shows, concatenated.
             // The file offer goes into the signature, and not only into
             // building the menu: the tray host CACHES the menu we push.
-            // Without it the "Mandar arquivos" item would only show up the
+            // Without it the "Send files to ..." item would only show up the
             // next time something else changed -- or never, on an idle
             // machine.
             let key = format!(
