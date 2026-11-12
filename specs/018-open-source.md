@@ -379,6 +379,15 @@ on purpose:
 - fork PRs get read permissions only;
 - any future step that needs a secret must be unreachable from a fork.
 
+That first bullet earned its keep on 2026-11-11, which is why it is worth
+noting here rather than only in the spec that spent it. The CLA step in
+[[021-licensing-and-contributions]] wanted
+`cla-assistant/github-action` — the standard answer, 349 stars — and that
+action **requires** `pull_request_target`. Having the rule already written
+turned a convenience argument into a two-minute decision, and the
+replacement needs no token at all, which satisfies the fourth bullet by
+construction instead of by discipline.
+
 ### 6. The irreversible part is the rewrite, not the visibility
 
 Visibility can be flipped back. A rewritten history cannot be

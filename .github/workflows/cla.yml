@@ -1,0 +1,70 @@
+# Blocks a pull request until its author has agreed to the inbound terms.
+# Why the mechanism is a file and a shell script rather than the CLA bot
+# everyone uses: scripts/cla.sh says, at the top. The decision is specs/021.
+name: cla
+
+# `pull_request`, and never `pull_request_target`. The latter is what the
+# archived cla-assistant action needs, and it runs with THIS repository's
+# token on an event a fork controls -- ruled out in writing by specs/018,
+# under "Public plus a `pull_request` trigger means running strangers' code".
+#
+# No `paths` filter, unlike binaries.yml: a docs-only pull request is still
+# a contribution of copyrightable text, and it is the cheap case anyway --
+# one Linux runner for a few seconds.
+#
+# The default types (opened, synchronize, reopened) are what we want:
+# pushing the signature commit fires `synchronize` and the check runs
+# again. Granting someone push access fires nothing, so that case needs a
+# manual re-run -- a rare, one-click problem.
+on:
+  pull_request:
+    branches: [main]
+
+# Read-only, and no secret is referenced anywhere in this file. That is
+# what makes the job safe to start from a fork: there is nothing here for
+# a pull request to steal, only something for it to fail.
+permissions:
+  contents: read
+
+concurrency:
+  group: cla-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  agreed:
+    name: inbound terms
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The BASE revision, deliberately. `scripts/cla.sh` is the gate,
+          # and a gate checked out from the pull request is a gate the pull
+          # request can edit to pass itself. Only ONE file is read from the
+          # contributor's side, in the next step, and it is data.
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: The ledger as the pull request leaves it
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # By pull-request number, not by head SHA: a fork's commits are
+          # not in `origin`, but `refs/pull/N/head` is -- so this one line
+          # works for a fork and for a local branch alike.
+          git fetch --depth=1 origin "+refs/pull/$PR/head:refs/cla-head"
+          git show refs/cla-head:.cla/signed >"$RUNNER_TEMP/signed" \
+            || : >"$RUNNER_TEMP/signed"
+
+      - name: Agreed to the inbound terms
+        # Through `env:` rather than `${{ }}` inside the command: a login
+        # interpolated straight into a shell line is the standard Actions
+        # script-injection hole. These three values cannot currently carry
+        # a metacharacter, which is an argument for not relying on it.
+        env:
+          LOGIN: ${{ github.event.pull_request.user.login }}
+          ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          KIND: ${{ github.event.pull_request.user.type }}
+        run: |
+          bash scripts/cla.sh "$LOGIN" "$ASSOCIATION" "$KIND" \
+            --signed "$RUNNER_TEMP/signed" \
+            --base .cla/signed

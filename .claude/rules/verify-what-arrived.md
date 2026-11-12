@@ -1,6 +1,10 @@
-# Sent is not arrived; and a number nobody prints, nobody checks
+# Sent is not arrived; a check that measured nothing passes; a number nobody prints, nobody checks
 
-Two faces of the same rule, both paid for dearly.
+Faces of one rule, each paid for separately: **a step that reports
+success has not thereby done its job.** Something can be sent and not
+arrive, an exit code can be eaten before anyone reads it, a check can
+pass by measuring nothing, and a number nobody prints is a number nobody
+checks.
 
 ## 1. Every remote step checks what arrived
 
@@ -36,6 +40,36 @@ So: when the exit code is the thing being checked, do not pipe. Redirect
 to a file and read it, or capture into a variable like the steps in
 `deploy.sh` do, or set `pipefail` and mean it. A filtered command is for
 reading; an unfiltered one is for deciding.
+
+## 1c. A check that measured nothing passes
+
+The exit code can also be honest and still meaningless, because the
+thing being checked was never reached. Twice in two days:
+
+| Gate | What it printed | What it had actually measured |
+|---|---|---|
+| the panel's `binaries` step | `ok — 6 binaries` | that six files exist in `~/.local/bin` — while the daemon that has to *launch* them could not resolve the name, so the hotkey did nothing |
+| `scripts/spdx.sh` | `all 0 files declare a licence`, exit 0 | nothing. Its `cd` had failed, `git ls-files` ran in the wrong directory and returned no files |
+
+Both are worse than a missing gate, because `check.sh` and the panel
+print `ok` beside them, and `ok` is what stops anyone looking.
+
+The second one was found by taking `shellcheck`'s dullest warning
+seriously — SC2164, `cd` without `|| exit`. With `set -uo pipefail` and
+no `-e`, a failed `cd` **continues**. Guarding the `cd` fixes one cause;
+what fixes the shape is the rule below.
+
+**A gate must be able to say how many things it checked, and zero must be
+an error.** A loop over an empty list succeeds in every language. So
+print the count, and refuse it when it is zero: `spdx.sh` now exits 1
+naming its cwd, because no revision of this repository has ever had zero
+source files. Same question for any new check — *what does it print when
+it has nothing to look at?* If the answer is `ok`, it is not a check yet.
+
+And measure the side that fails. Files existing is not the same claim as
+a process being able to launch them, which is why the panel now asks the
+daemon's own resolver instead of the filesystem
+([[graphical-session]]).
 
 ## 2. A number that matters must appear in the log
 

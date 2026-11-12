@@ -30,10 +30,36 @@ If that is not acceptable to you, say so in the issue before writing code.
 A patch nobody can merge wastes your time, not ours, and we would rather
 tell you up front.
 
-Sign your commits with `git commit -s` (a `Signed-off-by` line, the
-[Developer Certificate of Origin](https://developercertificate.org/)). It
-certifies you have the right to submit the code. It is not the grant
-above; we ask for both.
+### How you agree
+
+Two things, and one commit does both:
+
+1. **Add a line to [`.cla/signed`](.cla/signed)** in your pull request:
+
+   ```
+   <your-github-login> <terms-version> <date, yyyy-mm-dd>
+   ```
+
+   The check prints the exact line to paste, with today's date, so there
+   is nothing to look up. That line is the record of the grant above, and
+   the middle field is the version of these terms you are agreeing to; if the terms ever change in substance
+   the version moves, and an old signature stops counting, because nobody
+   agreed to terms that did not exist on the day they signed.
+
+2. **Commit it with `git commit -s`**, which adds a `Signed-off-by` line
+   (the [Developer Certificate of Origin](https://developercertificate.org/)).
+   That certifies you have the right to submit the code. It is *not* the
+   grant above, and it is not a substitute for it; we ask for both.
+
+There is no bot to wait for and no account to connect:
+[`.github/workflows/cla.yml`](.github/workflows/cla.yml) reads the file
+and tells you exactly what to add if it is missing. The list is
+append-only — a pull request that removes or edits an existing line fails
+the check, whoever opens it.
+
+If you already have push access here you do not sign anything: being
+invited is the agreement, and a maintainer cannot grant themselves a
+licence to their own copyright.
 
 ## What you need to know about the hardware
 

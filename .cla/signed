@@ -1,0 +1,17 @@
+# Agreements to the inbound terms stated in CONTRIBUTING.md. One line per
+# contributor, in the order they arrived:
+#
+#     <github-login> <terms-version> <date-signed>
+#
+# Add your own line, in your own pull request, committed with
+# `git commit -s`. That is the whole process: the line is the record and
+# your commit is the signature. scripts/cla.sh reads this file and
+# .github/workflows/cla.yml is what runs it on a pull request.
+#
+# Nobody with push access appears here. Being invited as a collaborator,
+# or being a member of the organisation, is already an agreement -- and a
+# maintainer cannot grant themselves a licence to their own copyright.
+#
+# The list is append-only. Editing or removing a line fails the check,
+# because either would let one author drop somebody else's signature or
+# backdate their own to terms they never read.

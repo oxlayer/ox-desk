@@ -11,7 +11,7 @@
 #
 # usage:  bash scripts/check.sh
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 failures=0
 run() {
@@ -42,6 +42,12 @@ run() {
 # added the file. See specs/021.
 echo "== licence =="
 run "spdx: every source file declares one" bash scripts/spdx.sh
+# The other half of specs/021: the gate that keeps the inbound grant real.
+# What runs here is the gate's own behaviour, not this repository's state --
+# it needs a pull request to have an opinion about, and a local run has
+# none. What CAN rot locally is the decision table, so it ships a
+# self-test of both directions and that is what this line exercises.
+run "cla: the inbound-terms gate still gates" bash scripts/cla.sh --self-test
 
 # `agent` and `winput` are Windows-only (pure Win32): on Linux `winput`
 # compiles EMPTY because of `#![cfg(windows)]`, and the agent cannot find

@@ -35,7 +35,7 @@ secrets in source, English only.
 4. [`E_ACCESSDENIED` in DXGI: four causes, and the most common is the screensaver](.claude/rules/windows-locked-screen.md)
 5. [Windows without a mouse has no cursor, and drawing it in the stream doesn't help whoever looks at the monitor](.claude/rules/cursor-without-mouse.md)
 6. [What depends on the graphical session is not born over SSH](.claude/rules/graphical-session.md)
-7. [Sent is not arrived; a number nobody prints, nobody checks](.claude/rules/verify-what-arrived.md)
+7. [Sent is not arrived; a check that measured nothing passes; a number nobody prints, nobody checks](.claude/rules/verify-what-arrived.md)
 8. [Capture pixel ≠ injection point](.claude/rules/coordinate-spaces.md)
 9. [Code for another OS compiles here — switch the `cfg` and check](.claude/rules/check-the-other-cfg.md)
 10. [One supervisor per daemon — and never the GUI](.claude/rules/one-supervisor-per-daemon.md)

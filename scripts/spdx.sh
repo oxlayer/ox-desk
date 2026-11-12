@@ -13,7 +13,7 @@
 # This answers it on every run of check.sh, including for the file added
 # next week by someone who never read this script.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 YEAR=2026
 HOLDER='oxlayer'
@@ -118,6 +118,19 @@ while IFS= read -r f; do
 done < <(files)
 
 total="$(files | wc -l | tr -d ' ')"
+
+# Zero files is never the truth about this repository, so it is the
+# check failing rather than the repository being clean -- and the message
+# it used to print was "all 0 files declare a licence", exit 0. Measured
+# on 2026-11-11: with the `cd` above failing, `git ls-files` writes "not a
+# git repository" to stderr, returns nothing, and the licence gate passes
+# vacuously. Guarding the `cd` fixes that one cause; this fails closed
+# whatever the cause, including an export with no .git at all.
+if [ "$total" -eq 0 ]; then
+  echo 'no source files found at all: this check is broken, not the repo' >&2
+  echo "  cwd: $PWD" >&2
+  exit 1
+fi
 
 if [ "${1:-}" = '--fix' ]; then
   if [ "${#missing[@]}" -eq 0 ]; then

@@ -89,8 +89,12 @@ cares about. Prefer removing the constraint to managing it.
 
 1. **`CONTRIBUTING.md` stating the inbound terms**, so the grant is where
    a contributor actually looks, not only in a signing flow.
-2. **A CLA bot on pull requests**, because an unautomated agreement is an
-   agreement nobody signed.
+2. **An automated check on pull requests**, because an unautomated
+   agreement is an agreement nobody signed. **Done:**
+   [`.cla/signed`](../.cla/signed) plus
+   [`scripts/cla.sh`](../scripts/cla.sh), and not the CLA bot everyone
+   uses — the reason is under "Order of work", step 3, and it is a
+   security decision rather than a preference.
 3. **`SPDX-License-Identifier` headers** in every source file, plus a
    `NOTICE` naming the copyright holder. Two reasons, and both matter
    later: AGPL compliance expects the notice, and a relicence is an
@@ -186,8 +190,118 @@ dual licensing requires owning the rights.
    licence. Both failure directions were tested by breaking them on
    purpose, because a check that has never failed is a check nobody has
    tested.
-3. **CLA bot on pull requests.** *Check:* a throwaway PR from another
-   account is blocked until signed.
+
+   **And it still failed open.** Found on 2026-11-11 by running
+   `shellcheck` over the new CLA script and taking its least interesting
+   warning seriously: SC2164, `cd` without `|| exit`. The script has
+   `set -uo pipefail` and no `-e`, so a failed `cd` **continued**, and
+   `git ls-files` in the wrong directory returns nothing:
+
+   ```
+   $ bash .../spdx.sh          # from a tree with no .git
+   fatal: not a git repository
+   all 0 files declare a licence
+   $ echo $?
+   0
+   ```
+
+   A licence gate that reports success because it found no files is worse
+   than no gate, because `check.sh` prints `ok` beside it. Two fixes, one
+   per cause: the `cd` is guarded, and a file count of **zero is now an
+   error naming the cwd** — which fails closed whatever the reason,
+   including a source export with no `.git` at all. Both verified by
+   reproducing the vacuous pass first.
+
+   The lesson is not about `cd`. It is that this check had been green
+   since the day it was written, and "green" was never once distinguished
+   from "ran".
+3. ~~**CLA bot on pull requests.**~~ **Done, and not with a bot.** The
+   mechanism is [`.cla/signed`](../.cla/signed) — one line per
+   contributor, `<login> <terms-version> <date>` — read by
+   [`scripts/cla.sh`](../scripts/cla.sh) from
+   [`.github/workflows/cla.yml`](../.github/workflows/cla.yml) on every
+   pull request.
+
+   **Why not `cla-assistant/github-action`,** which is the obvious choice
+   and was the one this step meant. Two facts, both measured on
+   2026-11-11:
+
+   - it has been **archived and read-only since 2026-03-23**: *"I no
+     longer have the bandwidth to maintain this project."* Releases keep
+     working, so this alone is a reason to pin rather than to refuse;
+   - it requires **`pull_request_target`**, and [[018-open-source]]'s own
+     adversarial review rules that trigger out in writing, first bullet:
+     *"never `pull_request_target`, which runs with the base
+     repository's token."*
+
+   Together they are decisive. `pull_request_target` hands this
+   repository's **write** token to a job an outside fork starts, and the
+   thing holding it would be a third-party action nobody is maintaining.
+   That is the one combination the security review existed to prevent, so
+   the convenient answer was the wrong one. Writing the rule down three
+   weeks earlier is what made it a two-minute decision instead of an
+   argument.
+
+   What the signature-as-a-commit model buys, beyond avoiding that:
+
+   | | Bot comment | A line in a file |
+   |---|---|---|
+   | Who authenticates the claim | the bot, against a comment | GitHub, against a commit the account pushed |
+   | Where the record lives | a JSON file a bot writes | the diff a maintainer approves |
+   | Secrets needed | a token with write access | **none** |
+   | If the pull request is never merged | a signature for a contribution we did not take | no record, and none needed |
+
+   That last row is the symmetry worth naming: the record lands exactly
+   when the contribution does.
+
+   Three holes, and what closes each:
+
+   - **The gate is in the repository the pull request edits.** A gate
+     checked out from the pull request is a gate the pull request edits to
+     pass itself, so the workflow checks out
+     `github.event.pull_request.base.sha` and reads **one data file** from
+     the contributor's side, fetched by `refs/pull/N/head` so a fork works
+     the same as a branch.
+
+     Measured rather than assumed, against a local origin serving a real
+     `refs/pull/3/head` whose commit replaces `scripts/cla.sh` with
+     `exit 0`:
+
+     | What the job runs | Author who signed nothing |
+     |---|---|
+     | `scripts/cla.sh` from `base.sha` — what ships | **exit 1**, refused |
+     | `scripts/cla.sh` from the pull request | exit 0, anyone passes |
+
+     One line of YAML separates those two rows, which is the argument for
+     spending a paragraph on it.
+
+     A thing that is *not* a hole, noted because the first version of that
+     test called it one: a contributor adding a line for **their own**
+     login is not forging a signature, it is the mechanism. The check
+     looks up the pull request's author and nobody else, so a line naming
+     somebody else buys nothing.
+   - **A ledger is as droppable as it is appendable.** The check compares
+     every base line for verbatim survival, so removing somebody else's
+     signature or backdating your own fails as the deletion it is. It runs
+     for *everyone*, including the people who owe no signature: a check
+     that trusts whoever it exempts protects nothing.
+   - **Nobody's name may be in a script a stranger runs**
+     ([[../.claude/rules/no-personal-data]]). So the exemption is
+     structural rather than an allowlist — `author_association` of
+     `OWNER`, `MEMBER` or `COLLABORATOR` owes nothing, because push access
+     *is* the agreement and a maintainer cannot grant themselves a licence
+     to their own copyright. It needs no token, no API call and no name.
+
+   *Check:* `bash scripts/cla.sh --self-test` — 23 cases, both directions
+   of every decision, wired into `check.sh`. Verified by hand on
+   2026-11-11: an unsigned `CONTRIBUTOR` is refused with the exact line to
+   paste; the same author passes once the line exists; an `OWNER` is told
+   there is nothing to sign; a pull request that drops another signature
+   fails **even for the owner**; `a;rm -rf /` is refused as not the shape
+   of a login. The remaining check is the one this step always wanted and
+   cannot have yet — a throwaway pull request from another account —
+   because Actions schedules nothing until the allowance resets
+   ([[013-ci-cd]]).
 4. **Then [[020-native-mac]]**, which is what converts the right into a
    real option rather than a theoretical one.
 
