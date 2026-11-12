@@ -102,23 +102,45 @@ So the binary now arrives **already signed**, via
 
 - key pair generated **here** with openssl (`~/.config/oxdesk/signing`, `600`, outside
   the repo). The private key never leaves this machine — better than exporting
-  the private key of a certificate created on Windows.
+  the private key of a certificate created on Windows. The recipe is
+  [`scripts/new-signing-cert.sh`](../scripts/new-signing-cert.sh); it used
+  to be a command somebody ran once and wrote down nowhere, which is how
+  the subject below drifted.
 - `osslsigncode` (installed via linuxbrew, no sudo) signs with SHA-256 and a
   DigiCert timestamp, so the signature survives the
   certificate's expiry.
 - only the **public** certificate goes to Windows, imported into
-  `LocalMachine\Root` and `LocalMachine\TrustedPublisher`. It is valid on that
-  machine and no other.
+  `Root` and `TrustedPublisher`. Measured on 2026-11-11: it is in **four**
+  stores, not two — `LocalMachine` and `CurrentUser` of each. It is valid
+  on that machine and no other.
 
-Result checked by Windows itself:
+Result checked by Windows itself, on 2026-11-11:
 
 ```
-assinatura: [Valid] Assinatura verificada.
-assinante:  O=infra pessoal, CN=oxdesk (assinatura local)
-carimbo:    CN=DigiCert SHA256 RSA4096 Timestamp Responder 2026 1
+status:  Valid
+subject: O=infra pessoal, CN=logi (assinatura local)
+thumb:   673B01CE3B8A60E37BAF68F83B48206F31672409
 ```
 
 The file survived the write, the task was recreated and the daemon came up.
+
+### The subject this document used to claim
+
+Until today the block above read `CN=oxdesk (assinatura local)`. **No
+certificate ever had that subject.** The rename sweep in
+[[018-open-source]] step 6 edited the project's old name out of a *pasted
+measurement*, so the spec quoted output that was never printed — while
+the certificate itself, which the sweep could not reach, kept saying
+`logi`. The divergence survived because nobody re-ran the command the
+block was quoting.
+
+That is the failure mode [[../.claude/rules/no-personal-data]] draws its
+line to avoid, from the other direction: a spec quoting a real
+measurement is **evidence**, and evidence is the one thing a search and
+replace must not touch. Rename the thing, then re-measure and paste what
+it says now. If the thing cannot be renamed yet, the stale name is the
+honest answer and the gap is the finding — which is exactly what step 5b
+turned out to be.
 
 > **Every Windows build goes through the script.** Sending a raw `.exe`
 > there is not just risky — it has already been deleted twice, and the second time

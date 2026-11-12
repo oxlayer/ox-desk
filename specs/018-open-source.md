@@ -456,17 +456,38 @@ a measurement.
    require the LAN range instead of defaulting to ours. *Checked:* zero
    outside `specs/` and `.claude/`; the one remaining hit lives in the
    untracked `targets.sh`.
-5b. **Reissue the Windows signing certificate.** Its subject is
-   `CN=logi (assinatura local), O=infra pessoal` — the old name, in
-   Portuguese, saying "personal infra" — and it is **embedded in every
-   Windows binary we publish**, valid until 2031. Windows shows the
-   publisher name in its own dialogs, so this is user-visible text, not
-   metadata. Reissuing means a new key and certificate, re-importing into
-   that machine's Trusted Root and Trusted Publishers stores, and
-   re-signing; binaries signed with the old one keep working while the old
-   certificate stays trusted ([[008-security]]). *Check:*
-   `openssl x509 -subject` shows the project's name in English, and
-   `Get-AuthenticodeSignature` on Windows still says `Valid`.
+5b. **Reissue the Windows signing certificate. Staged 2026-11-11, one
+   step left.** Its subject is `CN=logi (assinatura local), O=infra
+   pessoal` — the old name, in Portuguese, saying "personal infra" — and
+   it is **embedded in every Windows binary we publish**, valid until
+   2031. Windows shows the publisher name in its own dialogs, so this is
+   user-visible text, not metadata.
+
+   Done: the recipe is now
+   [`scripts/new-signing-cert.sh`](../scripts/new-signing-cert.sh) instead
+   of a command nobody wrote down, and a replacement pair is generated and
+   waiting — `CN=oxdesk (local signing), O=oxlayer`, RSA-3072, SHA-256,
+   `codeSigning` EKU, five years, thumbprint
+   `1A499DFAEB12150A7BE8075D59D3F59DFA22E1FD`.
+
+   **Remaining, and it needs a human:** importing that certificate into
+   the Windows machine's `Root` and `TrustedPublisher` stores
+   (`LocalMachine` and `CurrentUser`, four in all — measured, where
+   [[008-security]] said two). Adding a code-signing root is a
+   trust-weakening action by nature, so it is one an agent should not
+   perform unattended; the commands are printed by the staging run.
+
+   The ordering is now enforced rather than remembered: `--activate`
+   **asks Windows** whether it holds the staged thumbprint and refuses
+   otherwise, because signing with a publisher that machine has never seen
+   restarts the Defender race that has already eaten the `.exe` twice. The
+   old key keeps signing until then, so a deploy today is unaffected. The
+   outgoing pair is kept, not deleted — `osslsigncode verify -CAfile`
+   needs the certificate that actually signed a binary.
+
+   *Check:* `openssl x509 -subject` shows the project's name in English,
+   and `Get-AuthenticodeSignature` on Windows says `Valid` with the
+   thumbprint above.
 6. **Translate what a contributor reads.** Four slices, because the wire
    format moves with its consumer or not at all. *Check per slice:* no
    Portuguese identifier, field name or string left in it, and
