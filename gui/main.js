@@ -186,7 +186,7 @@ function createWindow(route = '/') {
     height: 780,
     minWidth: 380,
     minHeight: 460,
-    title: 'Machines',
+    title: 'OxDesk',
     icon: path.join(__dirname, 'icon.png'),
     backgroundColor: '#0c0e12',
     autoHideMenuBar: true,
@@ -365,7 +365,7 @@ async function refreshTray() {
     ? list.map((d) => `${d.name}: ${d.battery_percent ?? '?'}%`).join(' | ')
     : 'no devices';
   tray.setToolTip(
-    'oxdesk' + (low.length ? '  [BATERIA BAIXA]' : '') + '\n' + summary
+    'OxDesk' + (low.length ? '  [LOW BATTERY]' : '') + '\n' + summary
   );
 }
 
@@ -417,7 +417,7 @@ async function checkSetup() {
 function createTray() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
   tray = new Tray(img.resize({ width: 22, height: 22 }));
-  tray.setToolTip('oxdesk');
+  tray.setToolTip('OxDesk');
   tray.on('click', toggle);
   refreshTray();
   // The tray is read at a glance: keep it fresh without the user asking.

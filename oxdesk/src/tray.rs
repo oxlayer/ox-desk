@@ -74,7 +74,7 @@ impl ksni::Tray for OxdeskTray {
     }
 
     fn title(&self) -> String {
-        "oxdesk".into()
+        "OxDesk".into()
     }
 
     fn icon_name(&self) -> String {
@@ -96,7 +96,7 @@ impl ksni::Tray for OxdeskTray {
             None => "input here".into(),
         };
         ksni::ToolTip {
-            title: "oxdesk".into(),
+            title: "OxDesk".into(),
             description: format!("{location}\n{summary}"),
             icon_name: String::new(),
             icon_pixmap: Vec::new(),

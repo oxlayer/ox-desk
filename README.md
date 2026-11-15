@@ -1,4 +1,4 @@
-# oxdesk
+# OxDesk
 
 Drive several computers from one keyboard, one mouse and one panel, over
 your own LAN. Switch machines, see their screens, share the clipboard and
