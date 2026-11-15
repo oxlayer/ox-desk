@@ -333,16 +333,9 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, clock: Result<String,
         return Check::missing("ota", format!("{} is not installed; run the deploy", bin.display()));
     }
     // The clock is THIS machine's configuration; the token is a
-    // credential. Both can be missing at once, and reporting only one
-    // hides the other: whoever reads the panel fixes what is written and
-    // thinks they are done.
-    //
-    // The concrete case: without a token, all three machines say the
-    // token is missing -- and that phrase would fit a machine with no
-    // clock at all, which will never check anything even after the token
-    // arrives.
-    // It is a masked pending item, not a diagnosis error, and that is why
-    // the message now adds both.
+    // credential. Both can be wrong at once, and reporting only one hides
+    // the other: whoever reads the panel fixes what is written and thinks
+    // they are done. So a token problem names the clock too.
     let (clock, clock_missing) = match clock {
         Ok(t) => (t, None),
         Err(e) => (String::new(), Some(format!("the timer is not up: {e}"))),
@@ -352,18 +345,11 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, clock: Result<String,
         None => s,
     };
 
-    // Without a token nothing works, and the symptom would be an API
-    // "Not Found" that sends you looking at CI. So the missing token is
-    // the diagnosis.
-    if !token.is_file() {
-        return Check::missing(
-            "ota",
-            and_also(format!(
-                "the read token is missing at {}: the repo is private and the API answers \"Not Found\" without it",
-                token.display()
-            )),
-        );
-    }
+    // No token is not a problem any more. It was while the repository was
+    // private, when the API answered "Not Found" without one; since
+    // 2026-11-15 oxlayer/ox-desk is public and answers anyone, and
+    // oxdesk-ota sends no token when it has none. A token that IS there
+    // still has to be private, below.
     // A secret readable by any process on the machine is a leaked secret
     // -- and the Mac is precisely the one that leaves the house.
     #[cfg(unix)]
@@ -722,23 +708,33 @@ mod tests {
     fn unreadable_age_does_not_pass_as_fresh() {
         assert_eq!(verdict("igual\tabc\tfrase", "x").state, crate::setup::State::Missing);
     }
-    /// Token and clock missing together must show up together.
-    ///
-    /// Without a token all three machines say the token is missing, and that
-    /// phrase would fit a machine with no clock at all -- which will not
-    /// check anything even after the token arrives. Whoever reads the
-    /// panel fixes what is written and thinks they are done.
+    /// A missing token used to be the diagnosis, while the repository was
+    /// private; it masked a missing clock on all three machines. Public, the
+    /// token is optional, and the step must say only what is really wrong.
     #[test]
-    fn missing_token_and_clock_both_show_up() {
-        let m = ota(
+    fn a_missing_clock_is_reported_and_a_missing_token_is_not() {
+        // Since 2026-11-15 the repository is public: no token is needed,
+        // and its absence must not send anyone looking for one.
+        let no_clock = ota(
             std::path::Path::new("/bin/sh"), // exists, to get past the first check
             std::path::Path::new("/does/not/exist/token"),
             Err("task 'ota' does not exist".into()),
         );
-        assert_eq!(m.state, crate::setup::State::Missing);
-        assert!(m.detail.contains("read token is missing"), "{}", m.detail);
-        assert!(m.detail.contains("timer is not up"), "{}", m.detail);
-        assert!(m.detail.contains("task 'ota' does not exist"), "{}", m.detail);
+        assert_eq!(no_clock.state, crate::setup::State::Missing);
+        assert!(no_clock.detail.contains("timer is not up"), "{}", no_clock.detail);
+        assert!(no_clock.detail.contains("task 'ota' does not exist"), "{}", no_clock.detail);
+        assert!(!no_clock.detail.contains("token"), "{}", no_clock.detail);
+
+        // With the clock up, the step goes on to ask oxdesk-ota for its
+        // state. /bin/sh does not understand `--state --short`, which reads
+        // as "never checked" -- and still nothing about a token.
+        let clock_up = ota(
+            std::path::Path::new("/bin/sh"),
+            std::path::Path::new("/does/not/exist/token"),
+            Ok("timer ok".into()),
+        );
+        assert!(clock_up.detail.contains("never checked"), "{}", clock_up.detail);
+        assert!(!clock_up.detail.contains("token"), "{}", clock_up.detail);
     }
 
     /// The Mac case: the GUI started a `oxdesk` as its child, the child

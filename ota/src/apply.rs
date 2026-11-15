@@ -183,10 +183,14 @@ fn steps(ctx: &Context, st: &mut State) -> Result<(), String> {
             e
         }
     })?;
+    // "Not Found" has two causes, and the public repository made the first
+    // the likely one: no Release has been published there yet. A private
+    // fork with no token is the other, so the message names both.
     let l = release::parse(&json).map_err(|e| {
         if ctx.token.is_none() {
-            format!("{e} (private repo with no token: put a read-only PAT at {})",
-                plan::token_path(ctx.system, &ctx.base).display())
+            format!("{e} (no Release published in {} yet; or, for a private repository, \
+                     no read-only token at {})",
+                ctx.repo, plan::token_path(ctx.system, &ctx.base).display())
         } else {
             e
         }
