@@ -5,7 +5,7 @@
 > but **has not run on the MacBook yet** (it was offline that day).
 
 > **Warning: still red.** On 2026-11-10 the count is **22 consecutive runs**
-> with the same signature, the newest being `dc94b55`. Nothing new to
+> with the same signature, the newest being `7f850fc`. Nothing new to
 > diagnose: the cause was measured on the 8th and is below, under
 > [When the minutes run out](#when-the-minutes-run-out-2026-11-08) —
 > the November allowance is spent, the spending limit is US$ 0, and
@@ -175,7 +175,7 @@ Measured on the first run, without cache (2026-11-05):
 | mac | 2min24 | 3 × 10 = 30 |
 | **total** | | **40** |
 
-With cache, measured on the run of `3209296`:
+With cache, measured on the run of `94f5558`:
 
 | Job | Duration | Minutes billed |
 |---|---|---|
@@ -198,7 +198,7 @@ cancelled after 15 minutes — here nothing is ever scheduled.
 
 What rules out our own code: the workflow file is byte-identical between the
 run that succeeded at 02:37 and the one that failed at 03:10 on the same
-branch (`git diff 27f558e eca3b8a -- .github/workflows/`), and `gh run rerun`
+branch (`git diff d427387 3a2dc91 -- .github/workflows/`), and `gh run rerun`
 reproduces it on attempt 2. GitHub's own status page was fully operational.
 
 **The cause, measured.** The old billing endpoints are gone (`410`, and they
@@ -270,9 +270,9 @@ sha256sum *.tar.gz > SHA256SUMS
 gh release create v0.2.8 *.tar.gz SHA256SUMS --verify-tag --generate-notes
 ```
 
-Done this way for **v0.2.8** (#229 `89aeb68`), after which the three machines
-answered `igual: em dia no build #229 89aeb68` ("same: up to date on build
-#229 89aeb68"). The packages are unsigned,
+Done this way for **v0.2.8** (#229 `de994c7`), after which the three machines
+answered `igual: em dia no build #229 de994c7` ("same: up to date on build
+#229 de994c7"). The packages are unsigned,
 exactly like CI's: the Mac signs with its local identity after downloading,
 and the Windows key never leaves the LAN ([[008-security]]).
 

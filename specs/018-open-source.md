@@ -269,10 +269,10 @@ reference, in a repo where the history is documentation.
    commits still works: the keychain password is a new random value and
    the SSH public key never granted anything by being published.
 2. **The citations survive anyway.** Measured before doing it:
-   `fcf777a`, `27f558e` and `eca3b8a` — the hashes cited in
+   `4174f65`, `d427387` and `3a2dc91` — the hashes cited in
    [[017-product]] and [[013-ci-cd]] — are all **ancestors of the
    `v0.2.8` tag**, and there are eleven release tags from `v0.1.0` to
-   `v0.2.8`. Git keeps everything a tag reaches, so `git show fcf777a^`
+   `v0.2.8`. Git keeps everything a tag reaches, so `git show 4174f65^`
    still resolves after the branch is rewritten.
 
 So the squash is narrower than it sounds: **it cleans the branch, not the
@@ -442,7 +442,7 @@ a measurement.
    does not print that line; and the only remaining mentions of the old
    literal are this table and the rule, which is what "rotate, don't
    rewrite" means in practice.
-4. **Make the default config generic. Done 2026-11-10** (`981b8b5`).
+4. **Make the default config generic. Done 2026-11-10** (`7ea01c2`).
    `DEFAULT_TOML` is a template now, rendered by `config::initial_config`:
    the local name comes from `hostname`, `os` from the build, `units` only
    on Linux, the peers are commented examples, and `[[devices]]`,
@@ -453,7 +453,7 @@ a measurement.
    it. Green tests plus a stale artifact reads exactly like a working
    change.
 5. **Purge personal identifiers from code and scripts. Done 2026-11-10**
-   (`ec113c4` code, `5a094c0` scripts), leaving the specs as the record
+   (`cdcf452` code, `fd426b4` scripts), leaving the specs as the record
    under an alias. Prose became the role ("the Windows machine"), literals
    became `linux-pc` / `windows-pc` / `the-mac`, fixtures became `alice`.
    Two were not text: a systemd unit the wizard WRITES carried a
@@ -502,16 +502,16 @@ a measurement.
    format moves with its consumer or not at all. *Check per slice:* no
    Portuguese identifier, field name or string left in it, and
    `scripts/check.sh` green.
-   - 6a. **The wizard. Done 2026-11-08** (`f9bb7b7`): step ids, JSON
+   - 6a. **The wizard. Done 2026-11-08** (`a5865b6`): step ids, JSON
      fields, six routes, ~145 measured messages, `setup.html`, and the
      GUI's two consumers. *Checked:* zero accented lines in `setup*.rs`
      except two comments that quote what a pt-BR Windows prints, which is
      the point of them.
-   - 6b. **The API contract. Done 2026-11-08** (`56133e7`): 16
+   - 6b. **The API contract. Done 2026-11-08** (`8b364ac`): 16
      `serde(rename)`, 3 `hidpp` JSON keys, 5 request fields, 4 response
      keys, the copy queue's state values with the panel's CSS classes, and
      ~45 strings in `main.rs` and `hidpp`.
-   - 6c. **The panel's visible copy. Done 2026-11-08** (`de25f01`), which
+   - 6c. **The panel's visible copy. Done 2026-11-08** (`6dbbecf`), which
      this list did not record until 10/11 -- it still described
      "copiando...", "chegou" and "novidades" as pending while
      `index.html` had none of them. *Checked:* zero accented characters
@@ -561,7 +561,7 @@ a measurement.
      `hidapi`'s build script wants the Apple SDK. Mac-only code is
      verified by reading until CI can run, which is itself blocked on
      [[013-ci-cd]].
-   - 6e. **`scripts/`. Done 2026-11-10** (`c15f40d`). 305 replacements
+   - 6e. **`scripts/`. Done 2026-11-10** (`25d825e`). 305 replacements
      across eight scripts: shell identifiers, the variables of the
      PowerShell embedded in `deploy.sh`, the `--pular-mac` flag (now
      `--skip-mac`) and the footer a person reads. That footer was guarded
@@ -575,7 +575,7 @@ a measurement.
      *The sweep also broke something*, which is why 6f exists below:
      it rewrote `erro` and `novo` INSIDE a `grep -E` pattern in
      `distribute-ota-token.sh` that matches `oxdesk-ota`'s output
-     (`b71d492` undoes it, along with two older defects in that file that
+     (`34eb3f9` undoes it, along with two older defects in that file that
      meant it had never run on Linux at all).
 
    - 6f. **The error messages of the Rust crates.** 128 strings that 6b
@@ -673,7 +673,7 @@ because the `dir` scan takes 2m38s and 2.82 GB to produce them, while
 `git` mode sees only tracked content and takes 1.6s. Use `git` mode.
 
 The single real finding: an **XDG Desktop Portal ScreenCast restore
-token** in a README at `b86b2c37` (2026-11-03). It grants screen capture
+token** in a README at `9cae0b9c` (2026-11-03). It grants screen capture
 only through the local portal to the app id that was granted it, so it is
 worthless to anyone remote — but it is a per-session grant that belongs in
 nobody's README.

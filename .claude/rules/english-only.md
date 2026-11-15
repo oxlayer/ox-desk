@@ -65,7 +65,7 @@ class names. A rename that touched only the daemon would have left failed
 rows unstyled -- which reads as a design choice, not a bug.
 
 And the one that did bite, found on 2026-11-15: `/api/changelog` renamed
-its field `data` to `date` in the rename of 2026-11-07 (`fcf777a`), and
+its field `data` to `date` in the rename of 2026-11-07 (`4174f65`), and
 the panel kept reading `i.data`. From then on every entry in "What's new"
 showed with no date, and nothing reported an error, because an undefined
 field renders as nothing.
