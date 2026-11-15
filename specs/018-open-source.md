@@ -294,6 +294,13 @@ the first post-squash build is #241 and the sequence stays monotonic.
 the number must come out greater than the `n` in the newest published
 package name.
 
+**In the public history it is 0.** The public repository grafts `main`
+back onto the 240 pre-squash commits, so `rev-list --count` counts them
+again, and a base of 240 would count them twice: the first public build
+would have been #526 instead of #288. Measured before the change: the
+newest Release (`v0.2.8`) is #229, and the Windows machine runs #282, so
+#288 keeps the sequence monotonic everywhere.
+
 **What it does cost, and what was done about it:** the commit messages.
 A squash collapses them, and today's carried measurements that were not
 anywhere else. Those were moved into documents first —
