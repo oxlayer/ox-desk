@@ -6,8 +6,8 @@ GSConnect ↔ KDE Connect, paired and with TLS. Verified:
 `Paired: true`, `Connected: true`,
 `EncryptionInfo: 'Verification key: 4BCF0AF8'`.
 
-The **Deskflow clipboard does not work on Wayland** here: it needs
-`libportal` ≥ 0.10 and Ubuntu 26.04 ships 0.9.1. That is why the
+The **Deskflow clipboard does not work on Wayland** on the Ubuntu machine:
+it needs `libportal` ≥ 0.10 and Ubuntu 26.04 ships 0.9.1. That is why the
 transport is KDE Connect.
 
 ## Policy is the product, protocol is not
@@ -15,18 +15,18 @@ transport is KDE Connect.
 The protocol is solved. What is missing is **policy**, and that is where
 our system adds value:
 
-| GSConnect key | Value here | Reason |
+| GSConnect key | Value on Ubuntu | Reason |
 |---|---|---|
-| `receive-content` | `true` | the Windows clipboard arrives here |
-| `send-content` | `false` | the clipboard **from here does not leave** |
+| `receive-content` | `true` | the Windows clipboard arrives on Ubuntu |
+| `send-content` | `false` | the Ubuntu clipboard **does not leave** |
 
-Asymmetric on purpose: Bitwarden runs on this machine. Automatic sync in
-both directions would mirror a copied password to the other machine,
-where it stays until overwritten.
+Asymmetric on purpose: the password manager runs on the Ubuntu
+machine. Automatic sync in both directions would mirror a copied password
+to the other machine, where it stays until overwritten.
 
 ### What we want beyond that
 
-- **Blocklist by source app.** If focus was on Bitwarden, do not
+- **Blocklist by source app.** If focus was on the password manager, do not
   propagate — not even with sync on. This is the policy KDE Connect
   lacks.
 - **TTL.** A received clipboard expires after N seconds.
@@ -61,7 +61,7 @@ parties.
 Neither `wl-clipboard` (Wayland does not let you read the selection
 without focus; `ext-data-control` does not appear among this
 compositor's globals) nor the `org.freedesktop.portal.Clipboard` portal
-(it exists, but is tied to a session with a permission dialog).
+(it exists, but is tied to a session with a permission dialog) works here.
 
 The same `org.gnome.Mutter.RemoteDesktop` we already use to inject input
 provides the whole clipboard — `EnableClipboard`, `SelectionRead`,
@@ -113,7 +113,7 @@ directions; a change that matches it is not resent.
 Both have a notification API (`AddClipboardFormatListener`,
 `NSPasteboard`'s `changeCount`) that would require a message loop or
 objc inside a daemon that has neither. Polling every 2 s does the job:
-you cannot feel it when switching machines.
+it is not noticeable when switching machines.
 
 A detail that would cost time: PowerShell's `Get-Clipboard` appends a
 CRLF at the end. Without trimming, every read would look like new text
@@ -141,5 +141,6 @@ showed up with the cursor and the screen host.
   if it is missed, it is new work.
 - 256 KB cap. A developer's clipboard sometimes carries an entire file
   pasted by accident.
-- The Mac needed its key authorized on Ubuntu (`Host ubuntu` in its
-  `~/.ssh/config` already existed; this side accepting it was missing).
+- The Mac needed its key authorized on Ubuntu (`Host ubuntu-host` in its
+  `~/.ssh/config` already existed; the Ubuntu side accepting it was
+  missing).

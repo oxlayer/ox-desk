@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: 2026 oxlayer
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The FFmpeg-free Mac path of specs/020 (ScreenCaptureKit -> VideoToolbox),
+# run on GitHub's macOS runner: an Apple virtual machine with a virtual
+# display, whose image already grants Screen Recording to /bin/bash. It is
+# a functional check (the chain produces H.264), not the performance
+# measurement, which belongs to real hardware. See specs/020-native-mac.md,
+# "Measured on GitHub's macOS runner".
+name: mac-native-probe
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'stream/src/mac_native.rs'
+      - 'stream/src/host_mac.rs'
+      - 'stream/src/bin/mac-*.rs'
+      - '.github/workflows/mac-native-probe.yml'
+permissions:
+  contents: read
+env:
+  RUST_VERSION: '1.99.1'
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The machine
+        run: |
+          sw_vers; uname -m
+          system_profiler SPHardwareDataType | grep -E 'Model|Chip|Memory' || true
+          system_profiler SPDisplaysDataType 2>&1 | sed -n '1,30p'
+      # Only because the stream crate still links ffmpeg on macOS; the
+      # probes themselves call no FFmpeg. specs/020 step 5 removes this.
+      - name: Dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: |
+          brew install ffmpeg@7 pkgconf
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig" >> "$GITHUB_ENV"
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+      - name: Build the probes
+        run: >-
+          cargo build --release --locked --manifest-path stream/Cargo.toml
+          --bin oxdesk-probe-mac-native --bin oxdesk-probe-mac-capture --bin oxdesk-host
+      - name: VideoToolbox alone
+        timeout-minutes: 3
+        run: stream/target/release/oxdesk-probe-mac-native
+      - name: ScreenCaptureKit to VideoToolbox, fresh binary
+        timeout-minutes: 3
+        run: stream/target/release/oxdesk-probe-mac-capture
+      - name: The same chain from oxdesk-host
+        timeout-minutes: 3
+        run: stream/target/release/oxdesk-host --probe-native

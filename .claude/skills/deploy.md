@@ -5,8 +5,8 @@ cd ~/dev/oxdesk && ./scripts/deploy.sh
 ```
 
 Builds for Ubuntu, cross-compiles and signs for Windows, sends the
-source and builds on the Mac, restarts everything, and finishes by
-checking that the three report the same build.
+source to the Mac and builds there, restarts everything, and finishes by
+checking that all three report the same build.
 
 ## Reading the output
 
@@ -23,14 +23,13 @@ all three machines on the same build: d72074b
 
 With `--skip-mac` the last line says `2 of 3 machines on the same build:
 <build> (mac left out: --skip-mac)` instead, and that wording is
-deliberate: saying three when two were measured is the silence the rules
-are about.
+deliberate: claiming three when two were measured is exactly the kind of
+silent gap the rules are about.
 
-Any `OUT OF SYNC` means that machine fell behind —
-usually because a step failed further up and its `ok` was a lie. Every
-Windows step captures stderr and checks the size of the file that
-landed, precisely because this has happened
-([[../rules/verify-what-arrived]]).
+Any `OUT OF SYNC` means that machine fell behind, usually because a step
+failed further up and its `ok` was false. Every Windows step captures
+stderr and checks the size of the file that landed, precisely because
+this has happened ([[../rules/verify-what-arrived]]).
 
 ## Don't edit the tree while the deploy runs
 
@@ -40,11 +39,11 @@ produces two binaries with the **same stamp and different code** —
 Ubuntu and Windows with the old file, the Mac with the new one, and the
 footer check saying "three machines on the same build".
 
-It's the stamp lying, which is worse than visible divergence: the panel
-finds divergence, this it doesn't.
+The stamp is then wrong, which is worse than visible divergence: the
+panel detects divergence, and it cannot detect this.
 
-It happened. If you edited in the middle, the way out is to commit and
-run again — with a clean tree the stamp is valid again.
+This has happened. If the tree was edited mid-deploy, commit and run
+again — with a clean tree the stamp is valid again.
 
 ## What the deploy does NOT ship
 
@@ -73,9 +72,9 @@ It's not a problem; the next deploy syncs.
 
 ## Restarting the Electron shell (tray)
 
-The tray menu lives in Electron's **main process**. `vigiaBuild()`
+The tray menu lives in Electron's **main process**. `watchBuild()`
 reloads the *page* when the build changes, but not the main process — so
-a change in `gui/main.js` only takes effect by restarting the app.
+a change in `gui/main.js` only takes effect when the app restarts.
 
 ```bash
 pkill -f 'oxdesk/gui/node_modules/electron/dist/electron'
@@ -94,11 +93,11 @@ app running the whole time. The binary path always matches.
 **`env -u ELECTRON_RUN_AS_NODE` is not optional.** With that variable in
 the environment, electron runs as plain node, `app` comes back
 `undefined` and it dies in `app.requestSingleInstanceLock()` — a message
-that says nothing about the variable. I've already taken down the user's
-GUI this way.
+that says nothing about the variable. This has already taken down a
+running GUI.
 
-Always check that it came back — killing and not relaunching leaves the
-person without a tray:
+Always check that it came back — killing it without relaunching leaves
+the desktop without a tray:
 
 ```bash
 # `pgrep -af electron` matches the very command you typed
@@ -113,21 +112,21 @@ The Vulkan/ozone warning in the log is cosmetic.
 ### On the Mac and on Windows
 
 The deploy **ships** `main.js` to both (`Resources/app/main.js` on the
-Mac, `%LOCALAPPDATA%\oxdesk\gui\main.js` on Windows), but doesn't kill
-anyone's window: it takes effect on the app's next launch.
+Mac, `%LOCALAPPDATA%\oxdesk\gui\main.js` on Windows), but doesn't close
+any open window: it takes effect on the app's next launch.
 
 To force it on the Mac:
 
 ```bash
-ssh mac 'pkill -f "Oxdesk.app/Contents/MacOS/Oxdesk"; sleep 1; open -a ~/Applications/Oxdesk.app'
-# check WHICH shell loaded -- the renderer process's `--app-path` doesn't
-# lie, and it's the only way to know whether it was `app/` or a forgotten
-# `app.asar`:
-ssh mac 'ps -eo command | grep -o "app-path=[^ ]*Oxdesk[^ ]*" | sort -u'
+ssh mac-host 'pkill -f "Oxdesk.app/Contents/MacOS/Oxdesk"; sleep 1; open -a ~/Applications/Oxdesk.app'
+# check WHICH shell loaded -- the renderer process's `--app-path` is
+# reliable, and it's the only way to know whether it was `app/` or a
+# forgotten `app.asar`:
+ssh mac-host 'ps -eo command | grep -o "app-path=[^ ]*Oxdesk[^ ]*" | sort -u'
 ```
 
-Until now the Mac shell lived in an `app.asar` that **no step touched**
-— it was weeks old and nobody knew. It became a loose `Resources/app/`
+Previously the Mac shell lived in an `app.asar` that **no step touched**
+— it was weeks old before anyone noticed. It became a loose `Resources/app/`
 (the classic Electron layout, still supported), with `app.asar` renamed
 to `.off`, `ElectronAsarIntegrity` removed from `Info.plist` and the
 bundle re-signed ad-hoc. The deploy step is idempotent and redoes the
@@ -139,6 +138,5 @@ conversion if someone reinstalls the app.
 node ./node_modules/.bin/electron . --setup
 ```
 
-Opens fullscreen on the setup page. It's the same as what the tray does
-with "Configurar esta máquina" (Configure this machine) — see
-[[configure-a-machine]].
+Opens fullscreen on the setup page. It's the same as the tray's "Set up
+this machine" — see [[configure-a-machine]].

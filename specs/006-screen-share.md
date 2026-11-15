@@ -12,9 +12,9 @@ orchestrates **lifecycle and credentials**, not protocol.
 
 ### Ubuntu seen from Windows — already done, zero software
 
-`gnome-remote-desktop` 50.2 **is installed and running** here with RDP
-**enabled** on 3389, its own TLS certificate and credentials configured.
-Verified: listening, and Windows reaches it
+`gnome-remote-desktop` 50.2 **is installed and running** on the Ubuntu
+machine with RDP **enabled** on 3389, its own TLS certificate and
+credentials configured. Verified: listening, and Windows reaches it
 (`Test-NetConnection … -Port 3389` → `True`).
 
 From Windows: `mstsc` → `ubuntu-host.local`. Microsoft's client.
@@ -24,7 +24,7 @@ grdctl status          # state, port, fingerprint
 grdctl rdp disable     # turn off
 ```
 
-> ⚠️ It is a password-protected RDP server open to the whole LAN, on the
+> **Warning:** it is a password-protected RDP server open to the whole LAN, on the
 > main machine. `oxdesk` should **show this as a risk** in the panel, not
 > as a silent feature.
 
@@ -36,13 +36,13 @@ session: it is no good for simultaneous use or for gaming.
 
 ### Gaming / low latency
 
-**Sunshine** (host on Windows) + **Moonlight** (client here). Hardware
+**Sunshine** (host on Windows) + **Moonlight** (client on Ubuntu). Hardware
 encoding, latency an order of magnitude below RDP or RustDesk.
 
 ### Outside the LAN
 
-**Self-hosted RustDesk** (`hbbs`/`hbbr`). "Our own and secure" without
-writing anything. On the LAN it does not even need a relay.
+**Self-hosted RustDesk** (`hbbs`/`hbbr`). Self-hosted and under our own
+control, without writing anything. On the LAN it does not even need a relay.
 
 ## What `oxdesk` does
 
@@ -61,8 +61,8 @@ POST /api/hosts/{id}/screen   {"intent": "work" | "game" | "glance"}
 - `game` → Sunshine/Moonlight (latency)
 - `glance` → RustDesk (just look, without taking over the session)
 
-Mapping intent to tool is the part missing in the world. Choosing between
-three clients with technical names is what makes this irritating today.
+Mapping intent to tool is the piece no existing tool provides. Choosing
+between three clients with technical names is the friction today.
 
 ## Wayland: the caveat
 
@@ -75,9 +75,9 @@ captures **the Ubuntu screen**, test it on 26.04 — do not trust the docs.
 
 ## Implemented (2026-11-03) — native to each OS, with the GUI dispatching
 
-**The user's decision**, made against the alternative of a self-hosted
-RustDesk. RustDesk had two real arguments in its favor — the same client
-on all three OSes, and only **outbound** connections, which would matter
+**Decided** against the alternative of a self-hosted RustDesk. RustDesk
+had two real arguments in its favor — the same client on all three OSes,
+and only **outbound** connections, which would matter
 on a Mac with MDM — and lost because it is a large external dependency
 and a relay to maintain, while the native route brings up no new daemon
 anywhere.
@@ -89,7 +89,7 @@ protocol. There is no single one all three serve out of the box:
 |---|---|---|---|
 | Ubuntu | RDP | `gnome-remote-desktop` (**user** daemon) | already active, `*:3389`, TLS and credentials set |
 | Windows | RDP | native `TermService` | turned on 2026-11-03, NLA mandatory, firewall LAN-only |
-| macOS | VNC | Screen Sharing | to be enabled by the user |
+| macOS | VNC | Screen Sharing | to be enabled on the Mac |
 
 ### [`oxdesk/src/screen.rs`](../oxdesk/src/screen.rs) does not implement a protocol
 
@@ -100,9 +100,8 @@ client. Video, input and TLS belong to the programs that already exist.
 That is why `GET /api/screen` is separate from `POST`: the UI needs to
 know whether the button will work **before** the person clicks. A button
 that opens nothing is worse than a disabled button with the reason
-written next to it — and the reason is specific (*"sem cliente rdp
-instalado aqui (procurei: …)"* — no rdp client installed here (looked
-for: …), *"3389 não respondeu"* — 3389 did not respond), not an
+written next to it — and the reason is specific (*"no rdp client
+installed here (looked for: …)"*, *"…:3389 did not answer"*), not an
 "unavailable".
 
 The per-platform client table lives in `sys::screen_clients`, in order of
@@ -119,7 +118,7 @@ clients with two UIs.
 ### Windows was turned on with scope, not opened up
 
 `fDenyTSConnections = 0` and the user-mode firewall rules enabled — but
-with `-RemoteAddress 192.168.1.0/24` and only on the `Private,Domain`
+with `-RemoteAddress 192.0.2.0/24` and only on the `Private,Domain`
 profiles. The rule ships with `Any` in both, which would open RDP on
 **any network** the laptop connected to. `UserAuthentication = 1` (NLA)
 to authenticate before painting a login screen. The *shadow* rule
@@ -128,10 +127,10 @@ to authenticate before painting a login screen. The *shadow* rule
 ### Verified
 
 - **Windows → Ubuntu: ready.** `mstsc.exe /v:ubuntu-host.local:3389`,
-  target responding in 0.4 ms. I did not trigger it: opening RDP against
-  the user `gnome-remote-desktop` mirrors the session the person is
-  using, and that click is theirs.
-- **Ubuntu → Windows: 3389 already opens** from here; only the client is
+  target responding in 0.4 ms. Not triggered during verification: opening
+  RDP against the user `gnome-remote-desktop` mirrors the session the
+  person at the machine is using, so that click is left to them.
+- **Ubuntu → Windows: 3389 already opens** from Ubuntu; only the client is
   missing, which comes in via
   [`scripts/enable-sshd.sh`](../scripts/enable-sshd.sh) together with
   `openssh-server`.

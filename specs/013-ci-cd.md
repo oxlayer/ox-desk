@@ -1,10 +1,10 @@
 # 013 — Binaries via CI
 
-> Status: implemented. Linux and Windows checked against what this
-> Ubuntu compiles; the Mac package was checked by format and stamp,
+> Status: implemented. Linux and Windows checked against what the
+> Ubuntu machine compiles; the Mac package was checked by format and stamp,
 > but **has not run on the MacBook yet** (it was offline that day).
 
-> ⚠️ **Still red.** On 2026-11-10 the count is **22 consecutive runs**
+> **Warning: still red.** On 2026-11-10 the count is **22 consecutive runs**
 > with the same signature, the newest being `dc94b55`. Nothing new to
 > diagnose: the cause was measured on the 8th and is below, under
 > [When the minutes run out](#when-the-minutes-run-out-2026-11-08) —
@@ -50,10 +50,10 @@ ordinary branch runs once, not twice.
 
 ## What CI does not do
 
-**It does not sign.** The Authenticode key does not leave this machine
-([`008`](008-security.md)), and uploading the key to a GitHub secret
+**It does not sign.** The Authenticode key does not leave the Ubuntu
+machine ([`008`](008-security.md)), and uploading the key to a GitHub secret
 would trade the trust model for convenience. The Mac identity
-lives in a keychain over there. That is why the Windows and Mac packages carry
+lives in a keychain on the Mac. That is why the Windows and Mac packages carry
 `unsigned` in the name:
 
 - a raw `.exe` arriving on Windows is what Defender deletes on write;
@@ -66,8 +66,8 @@ and the rule is everything on the LAN. The exception in
 [`012`](012-outside-the-lan.md) is narrow and does not cover this.
 
 The no-cloud rule ([`008`](008-security.md)) applies to the running
-system: no data from the machines goes through GitHub. What leaves here
-is the code, which was already there.
+system: no data from the machines goes through GitHub. What leaves the
+LAN is the code, which was already there.
 
 **It does not package the Electron shell.** `gui/` has no logic, and the deploy
 only takes `main.js`.
@@ -98,8 +98,8 @@ Linux minute also costs half of a Windows one.
 **Tar, not a loose binary.** `upload-artifact` loses the execute
 bit. Checked in the downloaded package: `-rwxr-xr-x`.
 
-**Rust pinned at `1.99.1`**, the version on this Ubuntu. It goes up on purpose,
-together with the machine, and not on its own on a Tuesday.
+**Rust pinned at `1.99.1`**, the version on the Ubuntu machine. It goes up on purpose,
+together with the machine, and never on its own.
 
 **Actions pinned by SHA.** An action tag is mutable, and the release job
 has write permission. `contents: write` exists only there.
@@ -108,8 +108,8 @@ has write permission. `contents: write` exists only there.
 runs on the newer one; the reverse does not.
 
 **`build-binaries.sh` runs locally.** The binary list cannot
-live only in a YAML nobody executes. `--sem-compilar` checks what is already
-in `target/`.
+live only in a YAML nobody executes. `--no-build`
+checks what is already in `target/`.
 
 ## Known limits
 
@@ -140,7 +140,7 @@ in `target/`.
   runner is not the hardware the ceiling was written for. It
   keeps running and printing the number, without deciding. Since `check.sh`
   does not test `oxdesk-stream` either, **today nothing automatic blocks this
-  regression**: whoever touches the conversion runs the test here.
+  regression**: whoever touches the conversion runs the test locally.
 - **Without a Mac runner there is no release.** In the tag test, the job waited 15
   minutes without a runner and was cancelled (`The job was not acquired by
   Runner`, with a capacity shortage warning for macOS arm64). It is not our
@@ -162,8 +162,9 @@ again by `sha256sum -c` on the downloaded package.
 
 ## Cost
 
-The repo is private on the organization's Free plan: 2,000 minutes per month, and
-a macOS minute counts **ten times**. Each job is rounded up.
+The repo was private at the time, on the organization's Free plan: 2,000
+minutes per month, and a macOS minute counts **ten times**. Each job is
+rounded up.
 
 Measured on the first run, without cache (2026-11-05):
 
@@ -223,7 +224,7 @@ Where it went in November:
 | repo | Linux | macOS | macOS in US$ |
 |---|---:|---:|---:|
 | ox-desk | 283 min | 151.3 min | 9.38 |
-| ox-code | 154 min | — | — |
+| another repository | 154 min | — | — |
 
 The cost table above predicted this shape: **the Mac is 78% of the bill**
 (US$ 9.38 of 12.00) out of 151 minutes of wall clock, because a macOS minute
@@ -249,20 +250,20 @@ entry of a matrix, and it cannot be verified until the allowance resets.
 ### Publishing a Release without CI
 
 The fleet is kept current by `deploy.sh`, so a dead CI blocks only OTA — and
-OTA is what the Mac has when it is away from home. The release job is a
-handful of commands, and they run here:
+OTA is what the Mac has when it is away from the LAN. The release job is a
+handful of commands, and they run on the Ubuntu machine:
 
 ```bash
 bash scripts/build-binaries.sh linux
 bash scripts/build-binaries.sh windows
 # `deploy.sh` rsyncs the crates to the Mac and NOT `scripts/`, so the script
 # has to travel too:
-ssh mac 'mkdir -p ~/oxdesk/scripts'
-scp scripts/build-binaries.sh mac:oxdesk/scripts/
-# No cross-compile to macOS, and the copy over there has no .git, so the
+ssh mac-host 'mkdir -p ~/oxdesk/scripts'
+scp scripts/build-binaries.sh mac-host:oxdesk/scripts/
+# No cross-compile to macOS, and the copy on the Mac has no .git, so the
 # stamp travels in the environment:
-ssh mac 'cd ~/oxdesk && PATH=$HOME/.cargo/bin:/opt/homebrew/bin:$PATH OXDESK_BUILD=<hash> OXDESK_BUILD_N=<n> bash scripts/build-binaries.sh mac'
-scp mac:oxdesk/dist/oxdesk-mac-*.tar.gz dist/
+ssh mac-host 'cd ~/oxdesk && PATH=$HOME/.cargo/bin:/opt/homebrew/bin:$PATH OXDESK_BUILD=<hash> OXDESK_BUILD_N=<n> bash scripts/build-binaries.sh mac'
+scp mac-host:oxdesk/dist/oxdesk-mac-*.tar.gz dist/
 # In a directory holding ONLY the three packages of THIS build: `dist/` keeps
 # old ones, and the release job requires exactly three.
 sha256sum *.tar.gz > SHA256SUMS
@@ -270,7 +271,8 @@ gh release create v0.2.8 *.tar.gz SHA256SUMS --verify-tag --generate-notes
 ```
 
 Done this way for **v0.2.8** (#229 `89aeb68`), after which the three machines
-answered `igual: em dia no build #229 89aeb68`. The packages are unsigned,
+answered `igual: em dia no build #229 89aeb68` ("same: up to date on build
+#229 89aeb68"). The packages are unsigned,
 exactly like CI's: the Mac signs with its local identity after downloading,
 and the Windows key never leaves the LAN ([[008-security]]).
 

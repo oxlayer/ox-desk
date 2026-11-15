@@ -29,10 +29,9 @@ an error.
 
 ## The grant is manual, and there is no way around it
 
-Screen Recording is granted in **Ajustes → Privacidade e Segurança →
-Gravação de Tela** (Settings → Privacy & Security → Screen Recording),
-and it can't be done from outside: it is exactly the protection Apple
-built. For a LaunchAgent without an interface the system may not even
+Screen Recording is granted in **System Settings → Privacy & Security →
+Screen Recording**, and it can't be done from outside: it is exactly the
+protection Apple built. For a LaunchAgent without an interface the system may not even
 show the dialog.
 
 Once granted, everything unlocks at once:
@@ -43,20 +42,23 @@ h264_videotoolbox pronto, 28 Mbps alvo
 host na porta 9777
 ```
 
+(As logged then, in Portuguese: "screen 1", "h264_videotoolbox ready,
+28 Mbps target", "host on port 9777".)
+
 468 frames in 10 s, 46.8 fps, zero lost.
 
 **Watch out the next time the binary changes:** TCC ties the grant to
 the executable's hash. In theory a rebuild invalidates it and the host
 goes back to hanging with the same silence. If that happens after a
-deploy, don't look for a bug — it's the grant. (Not yet observed here;
-noted as a suspicion, not as a fact.)
+deploy, don't look for a bug — it's the grant. (Not yet observed in the
+reference deployment; noted as a suspicion, not as a fact.)
 
 ## `setsid` doesn't exist on macOS
 
 The line that woke up unix hosts was `setsid nohup ...`. On the Mac it
 died with `command not found` **before** reaching nohup — the host never
-started and the symptom arrived as "it called VNC". Today `setsid` is
-conditional.
+started, and the reported symptom was that VNC opened instead. Today
+`setsid` is conditional.
 
 ## The session is a timeline, not a location (10/11)
 
@@ -76,8 +78,8 @@ native tray did not come up (... org.kde.StatusNotifierWatcher ...
 Half an hour later the watcher was on the bus with four other icons
 registered on it, and oxdesk had no tray and no clipboard, because
 neither had asked again. `systemctl --user restart` fixed both in the
-same second -- a bug whose remedy is "a person notices" is an outage
-wearing a polite log line.
+same second -- and a bug whose only remedy is that a person notices is an
+outage, however polite its log line.
 
 **Ordering the unit does not fix this.** `org.kde.StatusNotifierWatcher`
 is owned by the AppIndicator extension, which loads after GNOME Shell is
@@ -97,8 +99,8 @@ is the backoff showing its work.
 
 ## The environment is part of that timeline too
 
-Same shape, different symptom, and it cost a day: **never spawn one of
-our binaries by bare name.**
+Same shape, different symptom, and it took a day to find: **never spawn
+one of our binaries by bare name.**
 
 `kvm.rs` did `Command::new("oxdesk-kvm")`. A systemd user service gets
 the user manager's environment, and at boot that `PATH` does **not** yet
@@ -109,8 +111,8 @@ executable, and counted `ok` by the panel.
 What hid it: `systemctl --user show-environment` *does* have
 `~/.local/bin` later in the session, so a service restarted after that
 point inherits it. Every `deploy.sh` restart worked, and the next boot
-broke again. The report was "sometimes it doesn't work, I just started
-the PC", which is the mechanism stated exactly.
+broke again. The report was that it sometimes failed right after the PC
+had started, which is the mechanism stated exactly.
 
 The fix is not to order the unit, nor to set `Environment=PATH=` in it --
 same lesson as above: ordering cannot wait for something that is not

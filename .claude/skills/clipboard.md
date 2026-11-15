@@ -1,15 +1,15 @@
 # Clipboard between the machines
 
-Text synced across the three, without KDE Connect. Design details in
-[[../../specs/004-clipboard.md]].
+Text synced across the three machines, without KDE Connect. Design
+details in [[../../specs/004-clipboard.md]].
 
 ## How to check that it is alive
 
 ```bash
 # Ubuntu -> peers
-echo -n "teste-$(date +%s)" | xclip -selection clipboard
+echo -n "test-$(date +%s)" | xclip -selection clipboard
 sleep 5
-ssh mac 'pbpaste'
+ssh mac-host 'pbpaste'
 ```
 
 On Windows you **can't** check over SSH: the clipboard is per window
@@ -22,39 +22,41 @@ schtasks /run /tn oxdesk-read-clipboard
 ```
 
 where the script does `Get-Clipboard -Raw | Out-File ...` and you read
-the file. The same session boundary that shows up with the cursor and
-the screen host ([[../rules/cursor-without-mouse]]).
+the file. It is the same session boundary that shows up with the cursor
+and the screen host ([[../rules/cursor-without-mouse]]).
 
 ## When it doesn't propagate
 
-The source `oxdesk` log tells you. `journalctl --user -u oxdesk -n 30 | grep clip`:
+The log of the source machine's `oxdesk` says why.
+`journalctl --user -u oxdesk -n 30 | grep clip`:
 
 | Message | Cause |
 |---|---|
 | `command not found: oxdesk` | wrong remote path — the SSH shell doesn't load the login PATH |
-| `recusou (exit status: 1)` with empty stderr | the peer's `oxdesk` is old and doesn't know `clip-set` — deploy |
-| `nao consegui falar com <host>` | SSH doesn't connect: key, mDNS or machine offline |
+| `refused (exit status: 1)` with empty stderr | the peer's `oxdesk` is old and doesn't know `clip-set` — deploy |
+| `could not talk to <host>` | SSH doesn't connect: key, mDNS or machine offline |
 | nothing in the log | the source didn't see the copy; on Windows/Mac the sampling is every 2 s |
 
 ## The Mac key
 
-The Mac reaches the Ubuntu machine through the `ubuntu` alias in its
+The Mac reaches the Ubuntu machine through the `ubuntu-host` alias in its
 `~/.ssh/config`, which carries the right `IdentityFile`. Testing with
-`user@ubuntu-host.local` gives `Permission denied` even with
-everything right — it's the alias that has the key. Always use the alias
-that the `oxdesk` config declares in `ssh = `.
+`user@ubuntu-host.local` gives `Permission denied` even when everything is
+right — it's the alias that carries the key. Always use the alias that the
+`oxdesk` config declares in `ssh = `.
 
 If the key isn't authorized on this side:
 
 ```bash
-ssh mac 'cat ~/.ssh/id_ed25519_logi.pub' >> ~/.ssh/authorized_keys
+ssh mac-host 'cat ~/.ssh/id_ed25519_logi.pub' >> ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
 ```
 
 ## Limits
 
-**Text** only, capped at 256 KB. Images and files don't travel — KDE
-Connect did that; if it's missed, it's new work.
+**Text** only, capped at 256 KB. Images and files don't travel with the
+text clipboard (KDE Connect carried them). Files are handled separately,
+below; images would be new work.
 
 ---
 
@@ -70,14 +72,13 @@ all three systems.
 
 | Limit | Value | What it decides |
 |---|---|---|
-| `TETO_EMBUTIDO` | 8 MiB | goes by itself to all peers |
-| `TETO_TOTAL` | 2 GiB | above this it's an accident, refuse |
-| `TETO_ARQUIVOS` | 2000 | same, for a large but light tree |
+| `INLINE_CAP` | 8 MiB | sent automatically to all peers |
+| `TOTAL_CAP` | 2 GiB | above this it's an accident: refuse |
+| `FILE_COUNT_CAP` | 2000 | same, for a large tree of small files |
 
-Between 8 MiB and 2 GiB we do **not** send by ourselves: the tray shows
-"Mandar arquivos para `<host>`" (Send files to `<host>`) and you pick a
-destination. Copying 1.4 GB to two machines nobody is looking at wastes
-someone else's bandwidth and disk.
+Between 8 MiB and 2 GiB nothing is sent automatically: the tray shows
+"Send files to `<host>`" and you pick a destination. Copying 1.4 GB to two
+machines nobody is looking at wastes bandwidth and disk on both.
 
 Above 8 MiB to a unix destination it goes by `rsync --partial`; with
 Windows at either end it goes by `tar`, because Windows has `tar.exe`
@@ -88,7 +89,7 @@ and `scp.exe` in `system32` but **has no rsync** (measured).
 Copy a file on Ubuntu without clicking in Nautilus:
 
 ```bash
-printf 'file://%s\r\n' "$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "/caminho/com espaço.txt")" \
+printf 'file://%s\r\n' "$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "/path/with space é.txt")" \
   | xclip -selection clipboard -t text/uri-list
 ```
 
@@ -100,7 +101,7 @@ scp windows/probes/file-to-clipboard.ps1 'windows-host:AppData/Local/oxdesk/'
 ssh windows-host 'schtasks /create /tn oxdesk-file-to-clipboard /tr "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $env:LOCALAPPDATA\oxdesk\file-to-clipboard.ps1" /sc once /st 00:00 /it /f; schtasks /run /tn oxdesk-file-to-clipboard'
 
 # macOS: the pasteboard is per user, so over SSH it works
-ssh mac 'osascript -l JavaScript -e "ObjC.import(\"AppKit\");const pb=\$.NSPasteboard.generalPasteboard;pb.clearContents;pb.writeObjects(\$([\$.NSURL.fileURLWithPath(\"/tmp/x.txt\")]))"'
+ssh mac-host 'osascript -l JavaScript -e "ObjC.import(\"AppKit\");const pb=\$.NSPasteboard.generalPasteboard;pb.clearContents;pb.writeObjects(\$([\$.NSURL.fileURLWithPath(\"/tmp/x.txt\")]))"'
 ```
 
 ## Check what arrived
@@ -114,22 +115,22 @@ xclip -selection clipboard -t x-special/gnome-copied-files -o   # starts with `c
 ssh windows-host 'schtasks /run /tn oxdesk-read-clipboard; Start-Sleep 3; Get-Content $env:LOCALAPPDATA\oxdesk\clipboard.txt'
 
 # macOS
-ssh mac 'osascript -l JavaScript /tmp/ler-pb.js'
+ssh mac-host 'osascript -l JavaScript /tmp/read-pb.js'
 ```
 
 `x-special/gnome-copied-files` always starts with **`copy`**, never
 `cut`: `cut` tells the destination to delete the source after pasting,
-and the source is on another machine. We have no way of knowing the
-paste happened, and deleting someone's file by mistake has no undo.
+and the source is on another machine. There is no way to know that the
+paste happened, and deleting a user's file by mistake cannot be undone.
 
 ## Traps that have already cost time
 
-- **PowerShell doesn't wait for a GUI process.** The text clipboard to
-  Windows had been intermittent forever because of this. See
+- **PowerShell doesn't wait for a GUI process.** This is why the text
+  clipboard to Windows had long been intermittent. See
   [[../rules/remote-powershell]], trap #4.
-- **A repeated name is refused**, not renamed: two `igual.txt` from
+- **A repeated name is refused**, not renamed: two `same.txt` from
   different folders would land on top of each other in the staging
-  folder and you would paste one thinking there were two.
+  folder, and you would paste one thinking there were two.
 - **The staging folder is `~/.cache/oxdesk/clipboard/`**, outside `/tmp`:
   on some distros `/tmp` is tmpfs, and 2 GB of clipboard in RAM is a way
   to meet the OOM killer. It keeps the last 5 deliveries.

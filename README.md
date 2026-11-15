@@ -4,8 +4,8 @@ Drive several computers from one keyboard, one mouse and one panel, over
 your own LAN. Switch machines, see their screens, share the clipboard and
 move files — without a cloud account in the middle.
 
-> **Status: alpha.** It runs every day on a three-machine deployment
-> (Ubuntu, Windows, macOS) and that is where every number in
+> **Status: alpha.** It runs daily on a three-machine reference
+> deployment (Ubuntu, Windows, macOS), where every number in
 > [`specs/`](specs/) was measured. Treat anything outside that shape as
 > untested.
 
@@ -22,8 +22,8 @@ the other machine's receiver.
 | Deskflow / Barrier | no | yes |
 | GSConnect / KDE Connect | no | talks, but neither |
 
-Nobody glues the three together. That is what this is; the rest is the
-shell that makes it usable. Full argument in
+No existing project combines the three. oxdesk does; the rest of it is
+the shell that makes that usable. The full argument is in
 [`specs/000-overview.md`](specs/000-overview.md).
 
 ## How it works
@@ -46,13 +46,13 @@ Mutter's ScreenCast API on Linux, Desktop Duplication on Windows,
 AVFoundation on macOS; NVENC where there is an NVIDIA GPU, VideoToolbox on
 the Mac.
 
-## Requirements, honestly
+## Requirements
 
 This is not a tool you can try on one laptop:
 
 - **Two or more computers on the same LAN**, reachable by mDNS or a
   tailnet name. Never by IP — [`specs/007`](specs/007-device-routing.md)
-  explains what that cost us.
+  records the failures behind that rule.
 - **Linux:** GNOME on Wayland. Capture goes through Mutter's private
   ScreenCast and RemoteDesktop APIs, so other compositors are not
   supported yet.
@@ -105,15 +105,16 @@ This file used to be a 901-line runbook about a Deskflow-based setup that
 no longer exists, with IP addresses, a MAC address and three machines'
 hostnames in it. Every lesson in it already lives in the specs above —
 Deskflow alone is discussed in eight of them — so it was deleted rather
-than anonymized. It is still there in the history the release tags reach:
+than anonymized. It remains in the history the release tags reach:
 `git show v0.2.8:README.md`.
 
 ## Contributing
 
-Read [`CLAUDE.md`](CLAUDE.md) first: it indexes the rules that exist
-because something already cost time. Three are not negotiable — nothing
+Read [`CLAUDE.md`](CLAUDE.md) first: it indexes the project's rules, each
+of which records a past failure. Three are not negotiable — nothing
 shipped identifies a person or a machine, no credential lives in source,
-and everything is in English.
+and everything is in English. [`CONTRIBUTING.md`](CONTRIBUTING.md) has
+the rest.
 
 A measurement beats an opinion. If you change behaviour, say what you ran
 and what it printed.

@@ -20,9 +20,9 @@ The scheduled task on Windows is called **`oxdesk`**, and the executable
 ## `taskkill`, not `Stop-Process`
 
 Over SSH, `Stop-Process -Force` **does not kill a process in the
-interactive session**. A `oxdesk-host` survived three attempts and
-held port 9777, making the following tests fail for the wrong reason — I
-lost time thinking capture was broken.
+interactive session**. An `oxdesk-host` survived three attempts and
+held port 9777, making the following tests fail for the wrong reason —
+and time went into the theory that capture was broken.
 
 `taskkill /F /IM name.exe` kills it.
 

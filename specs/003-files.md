@@ -5,7 +5,7 @@
 OpenSSH is already on both machines and SFTP comes with it. There is no
 reason to invent a transport: what is missing is **UI**, not protocol.
 
-KDE Connect has an `sftp` plugin (it is in `windows-host`'s
+KDE Connect has an `sftp` plugin (it is in the Windows machine's
 `incoming-capabilities`), but it depends on its daemon and mounts via
 KIO — outside our control. Plain SSH is simpler and already authenticated.
 
@@ -15,20 +15,20 @@ KIO — outside our control. Plain SSH is simpler and already authenticated.
 in batch mode. Read-only, fast, nothing mounted:
 
 ```bash
-echo "ls -la /caminho" | sftp -b - windows-host
+echo "ls -la /path" | sftp -b - windows-host
 ```
 
-**Mounting (optional)** — `sshfs` (already installed here) for when you
-want to open it in Nautilus or an editor:
+**Mounting (optional)** — `sshfs` (already installed on the Ubuntu
+machine) for when you want to open it in Nautilus or an editor:
 
 ```bash
 sshfs windows-host:/C:/Users/user ~/mnt/windows-host -o reconnect,idmap=user
 ```
 
-Warning: `sshfs` dies badly when the host goes down, and the host
-**already went down once today** because of an IP change. `-o reconnect`
-helps; even so, mounting is an optional convenience, never the main path
-of the UI.
+Warning: `sshfs` dies badly when the host goes down, and in the reference
+deployment the host **already went down once** because of an IP change.
+`-o reconnect` helps; even so, mounting is an optional convenience, never
+the main path of the UI.
 
 ## Paths on Windows
 
@@ -59,7 +59,7 @@ upload, no delete.
 
 The daemon is a privilege surface ([`008`](008-security.md)) and can
 already run SSH, so listing grants nothing new — but writing does, and
-writing by accident from a panel I serve myself is the kind of mistake
+writing by accident from a locally served panel is the kind of mistake
 that has no undo.
 
 ### Route
@@ -85,14 +85,15 @@ SSH handshakes: **809 ms** measured to list a folder. With `pwd` and
 
 As a bonus, `pwd` in the same batch gives the canonical path confirmed by
 the server, and `display` and `parent` come from it — the UI navigates by
-what the server says, not by what I assumed.
+what the server says, not by what the client assumed.
 
 ### The parser is anchored on the month, not on a field count
 
-I wrote "name = everything after the 8th field". There are **nine**
-(mode, links, owner, group, size, month, day, time, name), and the test
-caught it: `.` and `..` slipped through the filter because the name read
-was another piece of the line, and the "size" read was the group name.
+The first parser took "name = everything after the 8th field". There are
+**nine** fields (mode, links, owner, group, size, month, day, time, name),
+and the test caught it: `.` and `..` slipped through the filter because the
+name read was another piece of the line, and the "size" read was the group
+name.
 
 Fixing the index to 9 would not be enough — some SFTP servers omit the
 group, and then there are eight. Looking for the **month** field finds

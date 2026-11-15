@@ -1,7 +1,7 @@
 # Contributing to oxdesk
 
-Thanks for looking. Two things to read before anything else, then the
-practical part.
+Thank you for your interest. There are two things to read before anything
+else, then the practical part.
 
 ## What you need to know about the licence
 
@@ -79,17 +79,18 @@ run is hard to review:
 - **NVENC**: an NVIDIA GPU, or the screen path costs more CPU.
 
 If you only have one of the three platforms, say which in the pull
-request. Half the bugs here are "works on mine".
+request. Many bugs here only reproduce on one platform.
 
 ## How we work
 
 Read [`CLAUDE.md`](CLAUDE.md) first. It indexes
-[`.claude/rules/`](.claude/rules/), and every rule in there exists because
-something already cost someone a day. Three are not negotiable:
+[`.claude/rules/`](.claude/rules/), and every rule in there records a
+failure that has already happened at least once. Three are not
+negotiable:
 
 | Rule | In one line |
 |---|---|
-| [`no-personal-data`](.claude/rules/no-personal-data.md) | Nothing shipped identifies a person, a machine or a household. Specs may name a real machine as evidence; defaults may not, because the next user inherits them |
+| [`no-personal-data`](.claude/rules/no-personal-data.md) | Nothing shipped identifies a person, a machine or a household. Specs may describe a real machine as evidence, under an alias; defaults may not, because the next user inherits them |
 | [`no-secrets-in-source`](.claude/rules/no-secrets-in-source.md) | No credential, and no key a script will authorize on someone else's machine |
 | [`english-only`](.claude/rules/english-only.md) | Code, comments, commits, logs, errors, UI — one language |
 
@@ -100,8 +101,8 @@ and one pass" is a useful sentence and a guess dressed as a cause is not.
 
 **Write down what failed.** The specs in [`specs/`](specs/) are the real
 documentation, and they are full of things that did not work and why.
-That is on purpose: it is what stops the next person repeating an
-afternoon.
+That is deliberate: it keeps the next person from repeating the same
+mistake.
 
 ## Before opening a pull request
 
@@ -113,9 +114,9 @@ If it fails on the licence step because you added a file, write the header
 with `bash scripts/spdx.sh --fix` and read it before committing: it says
 AGPL for everything except `hidpp/`, which is MIT.
 
-It has to be green. It builds for Windows too, from Linux, because half of
+It has to be green. It builds for Windows too, from Linux, because part of
 some crates only compiles there — and code for another OS passes
-`cargo build` here by not being read at all
+`cargo build` here by not being compiled at all
 ([`check-the-other-cfg`](.claude/rules/check-the-other-cfg.md)).
 
 Commit messages in English, in the imperative, saying **why**. The

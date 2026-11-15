@@ -7,7 +7,7 @@ thinking you changed them all is the standard mistake.
 | Machine | Path |
 |---|---|
 | Ubuntu | `~/.config/oxdesk/config.toml` |
-| macOS | `~/.config/oxdesk/config.toml` (via `ssh mac`) |
+| macOS | `~/.config/oxdesk/config.toml` (via `ssh mac-host`) |
 | Windows | `%APPDATA%\oxdesk\config.toml` (`C:/Users/user/AppData/Roaming/oxdesk/`) |
 
 `oxdesk/default-config.toml` is only the seed for a new installation.
@@ -16,10 +16,9 @@ Editing it does **not** change any machine that is already running.
 ## How this came up
 
 We removed RDP from the panel by editing the Ubuntu config and
-`default-config.toml`. The Ubuntu panel cleared. The user replied:
-*"kdp disappeared from ubuntu but I still see it in the windows and mac
-gui"* — because each agent reads its own machine's config and serves its
-own panel.
+`default-config.toml`. The Ubuntu panel cleared. The next report: RDP was
+gone on Ubuntu but still showed in the Windows and Mac panels — because
+each agent reads its own machine's config and serves its own panel.
 
 ## Procedure
 

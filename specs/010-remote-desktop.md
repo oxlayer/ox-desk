@@ -1,8 +1,8 @@
 # 010 — Our own remote screen (`oxdesk-stream`)
 
-User request, after seeing the dependency on the Windows App:
-*"I want our own implementation, maybe based on rustdesk, written in rust
-like parsec"* — with **GPU H.264 and UDP+FEC from the start**, and audio,
+Motivation: the remote screen depended on the Windows App on the Mac. The
+goal is an implementation of our own, in Rust, in the spirit of RustDesk
+and Parsec — with **GPU H.264 and UDP+FEC from the start**, and audio,
 pairing and NAT later.
 
 ## The size of this, stated before starting
@@ -10,10 +10,10 @@ pairing and NAT later.
 It is the codebase of a RustDesk. Per-OS capture, hardware encoding,
 transport with controlled loss, per-OS input injection, decoding and
 rendering on the client, audio, crypto and pairing. **Weeks, not one
-night.** Any other promise would be a lie, and the project has already
-paid dearly for optimistic silence.
+night.** A shorter estimate would be wrong, and optimistic silence has
+already cost this project.
 
-Until ours is any good, the Windows App stays on the Mac. It goes away
+Until ours is usable, the Windows App stays on the Mac. It goes away
 when ours actually replaces it, not when ours exists.
 
 ## The terrain, measured (2026-11-04)
@@ -57,8 +57,8 @@ QUIC delivers all four and **is UDP**:
 Writing that by hand would be reimplementing QUIC, worse. `quinn` is the crate.
 
 The peer's identity becomes the **TLS certificate**: pairing is trusting a
-public key, which is the model the user had already described — *"it shows
-up on the other computer to accept and is saved in the keychain"*.
+public key, which matches the pairing model already required — the request
+shows up on the other computer to be accepted, and is saved in the keychain.
 
 ### Layers
 
@@ -87,9 +87,9 @@ cannot mean rewriting the pipeline.
 
 | v | delivers | the unknown it kills |
 |---|---|---|
-| **v1** | ✅ **DONE** — screen captured, NVENC, file | Wayland capture and NVENC really work |
-| **v2** | ✅ **DONE** — arrives, decodes and draws on the Mac | transport and decoding |
-| **v3** | ✅ **DONE** — input from the Mac arrives and is applied | the loop closes: it is usable |
+| **v1** | **DONE** — screen captured, NVENC, file | Wayland capture and NVENC really work |
+| **v2** | **DONE** — arrives, decodes and draws on the Mac | transport and decoding |
+| **v3** | **DONE** — input from the Mac arrives and is applied | the loop closes: it is usable |
 | **v4** | FEC, rate control, Windows as host (DXGI) | quality and the second platform |
 | **v5** | audio, PIN pairing, NAT | the rest |
 
@@ -105,12 +105,12 @@ not become a video server. `oxdesk` learns to **launch** and **pair**
 
 ## The Parsec Virtual Display Adapter is not junk to sweep away
 
-The user wants to remove Parsec once ours works. Fair — but that virtual
+The plan is to remove Parsec once ours works. Fair — but the virtual
 display adapter it installs has a function: it gives the machine a
 **screen to capture when no monitor is connected**, and allows the
 client's resolution instead of the host's.
 
-If the Windows machine there sometimes runs without a monitor, deleting the
+If the Windows machine sometimes runs without a monitor, deleting the
 adapter takes away a capability we would have to rebuild (a virtual display
 driver is serious business, signed, in kernel). The decision waits until v4
 is up and we can measure whether it is missed — not until cleanup time.
@@ -127,6 +127,10 @@ NVENC carregado (dlopen de libnvidia-encode)
 por quadro: p50 3.56ms  p95 3.83ms
 39.3 Mbps a 60fps
 ```
+
+(Output in Portuguese, as printed then: "NVENC loaded (dlopen of
+libnvidia-encode)", "120 frames 1920x1080 in 0.77s", "per frame",
+"39.3 Mbps at 60fps".)
 
 And `ffprobe` reads the file: `h264`, profile `High`, `1920x1080`,
 `yuv420p`, **120 frames** — the same ones that went in.
@@ -180,6 +184,9 @@ total:  p50 6.38ms  p95 7.03ms  (orçamento 16.6ms a 60fps)
 2.0 MB = 5.5 Mbps a 60fps
 ```
 
+(In English: "format", "180 frames … in 2.38s", "copy", and
+"(budget 16.6ms at 60fps)".)
+
 `ffprobe` reads 180 frames, `h264` High, `2560x1440`, and an extracted
 frame shows the real desktop — VS Code, terminal, dock.
 
@@ -225,6 +232,9 @@ together and writing the Mac client — decode with VideoToolbox and draw.
 quadros perdidos (chegaram incompletos): 0
 ```
 
+(In English: "770 whole frames in 10.0s", "1989 datagrams", "frames lost
+(arrived incomplete): 0".)
+
 The file that arrived there has 770 `h264` High `2560x1440` frames, and an
 extracted frame shows the Ubuntu desktop. On loopback, where the clock is
 the same, the **capture → reassembled frame** latency is **p50 6.6 ms**.
@@ -237,7 +247,7 @@ quinn rejects it with *"invalid remote address"*. The local socket is now
 created from the destination's family. It is the third time a name with
 two families has bitten this project (see [`002`](002-ssh.md)).
 
-**The connection driver was not running.** This one was ugly: the host
+**The connection driver was not running.** This one was subtle: the host
 announced *"80 fps, 0 rejected"* and the receiver saw **zero**.
 `send_datagram` only **enqueues**; what puts it on the wire is the
 connection driver, which is a tokio task. The send loop blocked the thread
@@ -247,8 +257,7 @@ prevents the driver from running.
 Two lessons stay: the channel between capture and network is a **tokio**
 one, and a `send_datagram` failure is no longer swallowed — it was the
 silent `break` that made the host report success while nothing went out.
-Same pattern as `langfuse` and `backfill_gate` in the other repo: the
-silent no-op is worse than the loud error.
+The silent no-op is worse than the loud error.
 
 ### The cross-machine latency measurement is wrong, and that is stated
 
@@ -272,6 +281,8 @@ already delivers the whole frame, in order, without loss.
 host: 79 fps, 1.5 Mbps, 0 recusados
 ```
 
+(In English: "1080 frames decoded in 15s", "0 refused".)
+
 Decoding by brew's `libavcodec`, color conversion by `swscale`, window by
 `winit` + `softbuffer`.
 
@@ -291,7 +302,7 @@ plus a counter that goes up with every frame: without it the interface
 would spend CPU asking whether anything arrived.
 
 **`ffmpeg-next` is pinned to macOS in the config.** The two machines have
-different libavcodec versions from brew (61 on the Mac, 62 here), and
+different libavcodec versions from brew (61 on the Mac, 62 on Ubuntu), and
 pinning per platform solves it without pretending they are the same — the
 Linux host does not decode anything.
 
@@ -315,6 +326,8 @@ input #1: Mouse { x: 1200.0, y: 700.0 }
 ...
 input #7: Rolagem { dx: 0.0, dy: 15.0 }
 ```
+
+(In English: "input connected (stream …)"; `Rolagem` is the scroll event.)
 
 Seven events, no rejection — the cursor drew a square on the Ubuntu screen.
 
@@ -387,8 +400,8 @@ interactive session. Two separate probes (session 0 and session 1) ruled
 out "it's the session" as the explanation.
 
 Hence the split into `Monitor` (opens the display, reads size and origin)
-and `Tela` (starts duplicating): encoder first, duplication after. As a
-bonus it is a better design — if NVENC is not available, we fail before
+and `Screen` (starts duplicating): encoder first, duplication
+after. As a bonus it is a better design — if NVENC is not available, we fail before
 taking over someone's screen.
 
 ### Interactive session: not optional
@@ -434,8 +447,8 @@ Meanwhile:
 |---|---|
 | Mac → Ubuntu | **ours** |
 | Mac → Windows | **ours** |
-| Ubuntu → Windows | RDP (viewer missing here) |
-| Windows → Ubuntu | RDP (viewer missing there) |
+| Ubuntu → Windows | RDP (no viewer on Ubuntu) |
+| Windows → Ubuntu | RDP (no viewer on Windows) |
 
 Two ways to close it: `libavcodec-dev` via apt, or **NVDEC** — both
 machines have an NVIDIA GPU and `moq-nvenc` already exposes the decoder's
@@ -445,7 +458,7 @@ path that fits the rest.
 ## The Mac host: the design decided by measurement (2026-11-04)
 
 The Mac is the last gap -- it watches the other two and does not serve its
-own screen. Before writing the pipeline, I measured what the machine offers:
+own screen. Before writing the pipeline, we measured what the machine offers:
 
 ```
 libavdevice: linkado e registrado
@@ -454,11 +467,14 @@ encoder libx264: existe
 entrada avfoundation: existe
 ```
 
+(In English: "libavdevice: linked and registered", "encoder …: exists",
+"input avfoundation: exists".)
+
 That decides the design: **capture via `avfoundation` and encoding via
 `h264_videotoolbox`, with no new FFI.** The alternative was raw
 ScreenCaptureKit and VideoToolbox -- hundreds of lines of Objective-C
 bridging to reach the same place, and brew's ffmpeg is already installed
-because it is what decodes in the viewer over there.
+because it is what decodes in the viewer on the Mac.
 
 `avdevice` went into the `ffmpeg-next` features only on macOS. Linux and
 Windows do not need it: they capture via PipeWire and DXGI.
@@ -484,12 +500,12 @@ is what `ffmpeg -f avfoundation` itself does. A non-null pointer proves two
 things at once: the device is compiled into the library and `avdevice` was
 registered -- without the registration, the name does not resolve.
 
-## "Terrible quality" on Ubuntu -> Windows was three bugs of ours (2026-11-04)
+## Poor quality on Ubuntu -> Windows was three bugs in our code (2026-11-04)
 
-The user compared the two paths and only one was bad: Mac -> Windows
-(decoded by `swscale`) was great; Ubuntu -> Windows (our GPU path) was, in
-his words, terrible. Different path, same network, same screen: the problem
-was our code, not the bandwidth.
+Side by side, only one of the two paths was bad: Mac -> Windows (decoded by
+`swscale`) looked good; Ubuntu -> Windows (our GPU path) was reported as
+very poor. Different path, same network, same screen: the problem was our
+code, not the bandwidth.
 
 Three independent causes, all found by measurement after the comparison
 pointed at the guilty path.
@@ -503,7 +519,7 @@ weeks.
 
 It only showed up because the Mac's Retina screen (3360x2100) also
 announced "8 Mbps alvo" ("8 Mbps target") and the number was absurd enough
-for me to redo the math. **The Windows host never printed the target** --
+to prompt redoing the math. **The Windows host never printed the target** --
 that is why the bug survived there. Today all three print it: a number
 nobody sees is a number nobody checks.
 
@@ -512,9 +528,9 @@ nobody sees is a number nobody checks.
     maxBitRate    = alvo * 2     // "may spend double when everything changes"
     vbvBufferSize = alvo / 60    // but the frame can't exceed alvo/60 bits
 
-Two lines that contradicted each other. The `maxBitRate` headroom could
-never be spent because the VBV, sized by the average, limited any frame to
-16 KB. Scrolling a page is exactly when the encoder needs to spend -- and
+(`alvo` is the target bitrate.) Two lines that contradicted each other.
+The `maxBitRate` headroom could never be spent because the VBV, sized by
+the average, limited any frame to 16 KB. Scrolling a page is exactly when the encoder needs to spend -- and
 that was exactly when it could not, so it raised the QP up to `maxQP`. That
 came out as blur **in motion**, which is where the person is looking.
 
@@ -531,16 +547,16 @@ budget goes from 16 KB to 60 KB.
 
 ### 3. The conversion aliased and was also the bottleneck (decode_nv.rs)
 
-`nv12_to_bgra` sampled by nearest neighbor, with a comment of mine saying
+`nv12_to_bgra` sampled by nearest neighbor, with a comment saying
 bilinear was "the next step if it bothers anyone". It did: shrinking 1440p
 into a window aliases every letter, and only on the GPU path -- the
 `swscale` of the other path was already bilinear. Side by side the
 difference jumps out.
 
 **Fixing that alone would have made it worse.** Bilinear quadruples the
-luma reads, so I measured before trusting it: **28.25 ms per frame, ceiling
-of 35 fps** -- and the user's viewer showed exactly **27 fps drawn**. The
-network delivered 60 and drawing held it back. Nobody had measured the
+luma reads, so it was measured before being trusted: **28.25 ms per frame,
+ceiling of 35 fps** -- and the viewer in the report showed exactly **27 fps
+drawn**. The network delivered 60 and drawing held it back. Nobody had measured the
 conversion because it does not look like a bottleneck; it is just a loop.
 
 Two fixes in the same loop:
@@ -557,8 +573,8 @@ Two fixes in the same loop:
 
 The three bugs were invisible individually and visible together, and all
 three were found by the same move: **comparing two paths that should give
-the same result**. The Mac served as the control. Without it I would have
-blamed the network.
+the same result**. The Mac served as the control. Without it the network
+would have taken the blame.
 
 The second pattern: two of the three survived because the number that
 would have exposed them was not printed anywhere (the target on Windows) or
@@ -568,7 +584,7 @@ minutes and pointed straight at them.
 ## The cursor nobody drew (2026-11-07)
 
 The receiver came off the Windows machine, and with it the cursor. Not from
-the video -- from the **monitor**. The person drove the machine from the
+the video -- from the **monitor**. A user drove the machine from the
 other side through the LAN KVM, looked at its physical screen, and saw
 hover effects answering with nothing to say where the pointer was.
 
@@ -591,7 +607,7 @@ changes where the pointer *is*, not whether the OS paints it.
 | Viewer on another machine | inside the captured frame | `cursor.rs`, composed into the staging texture |
 | **Somebody in front of the Windows monitor** | **on the desktop** | **`cursor_win.rs`, a layered window** |
 
-The second row was empty, and it is the one that hurt. There is no frame of
+The second row was empty, and it is the one that mattered. There is no frame of
 ours in that path at all: the host log of the session that triggered this
 shows `input connected` plus eight `MouseRel` and **not one
 `sending frame`** -- nobody was watching a video, so composing into the
@@ -634,7 +650,7 @@ typing.
   classic Windows arrow (12x19 of visible arrow inside its 32x32 bitmap).
   It is an env var and not a config field because it is tuned by eye, on
   the machine, and a rebuild to discover that 1 was too small would be
-  absurd.
+  wasteful.
 - The shape is always the arrow. The system's text bar and resize arrows
   only exist when the system has a cursor -- and then it is drawing it
   itself and we are hidden.

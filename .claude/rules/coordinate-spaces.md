@@ -1,6 +1,6 @@
 # Capture pixel ≠ injection point
 
-The protocol carries `Evento::Mouse` in **frame pixels**: the viewer
+The protocol carries `Event::Mouse` in **frame pixels**: the viewer
 knows the size of what it receives and maps the window onto it
 (`remote_point`, in `stream/src/bin/view.rs`). The host, on the
 other side, injects in the **system's** coordinate space — and the two
@@ -18,14 +18,14 @@ are not the same space on every machine.
 takes the pointer to twice the position: pointing at the middle of the
 window throws the cursor to the bottom-right corner, because double of
 everything is larger than the screen and the system clamps at the edge.
-It arrived as *"the cursor position on the mac didn't match"*.
+Reported symptom: the cursor position on the Mac did not match.
 
 The conversion is `point_from_pixel` in `stream/src/input.rs`
 (platform-neutral, with tests), and the scale comes from the **video
 mode**:
 
 ```rust
-CGDisplayModeGetPixelWidth(modo) / CGDisplayModeGetWidth(modo)   // 2.0
+CGDisplayModeGetPixelWidth(mode) / CGDisplayModeGetWidth(mode)   // 2.0
 ```
 
 **`CGDisplayPixelsWide` doesn't work for this.** Despite the name, it
@@ -40,6 +40,9 @@ can't be diagnosed without it:
 ```
   2 pixel(s) de captura por ponto de ponteiro
 ```
+
+That is the line as logged then: "2 capture pixel(s) per pointer point",
+which is also what current builds print.
 
 ## Windows: latent, not active
 
@@ -56,6 +59,9 @@ because over SSH you read session 0 and the number is invalid):
 sem-dpi-aware: cursor=1258,1369 virtual=2560x1440
 com-dpi-aware: cursor=1258,1369 virtual=2560x1440
 ```
+
+(`sem-dpi-aware` is "without DPI awareness", `com-dpi-aware` "with DPI
+awareness".)
 
 Identical ⇒ the effective scale is 100% and the path is correct today.
 (The `DpiValue=0x1` in `HKCU\Control Panel\Desktop\PerMonitorSettings`
@@ -79,8 +85,8 @@ arithmetic on the other side came out `120/15*120 = 960`, or **eight
 notches per physical click**. On a wheel that free-spins, one flick sent
 the page to the end.
 
-It arrived as *"o mouse nao funciona direito"*, and movement and clicks
-were fine -- which is what made it hard to name. The host log settled it:
+Reported symptom: the mouse misbehaved, yet movement and clicks were
+fine -- which is what made it hard to name. The host log settled it:
 every `MouseRel` arrived and the cursor overlay drew. The wheel was the
 only broken thing.
 
@@ -106,7 +112,7 @@ corner, which the clamp disguises, and not relative movement, which
 doesn't even go through the conversion.
 
 ```bash
-oxdesk-input-send <host>:<porta+1> --abs 1680 1050   # middle of the frame
+oxdesk-input-send <host>:<port+1> --abs 1680 1050   # middle of the frame
 ```
 
 And for any number the protocol carries: **the unit is named once, in

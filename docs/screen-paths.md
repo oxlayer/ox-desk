@@ -1,8 +1,9 @@
 # The screen paths
 
-Four combinations of who watches and who is watched. Since NVDEC
-(2026-11-04) **all of them are ours** — none goes through RDP or VNC,
-except the Mac as host, which doesn't produce frames yet.
+Five combinations of who watches and who is watched. Since NVDEC
+(2026-11-04) **all of them are ours**: none goes through RDP or VNC. The
+Mac as host still captures through FFmpeg's `avfoundation`, which
+[`specs/020`](../specs/020-native-mac.md) replaces with ScreenCaptureKit.
 
 | From (watches) | To (host) | Capture | Encode | Decode |
 |---|---|---|---|---|
@@ -18,7 +19,7 @@ AVFoundation hangs instead of failing
 ([[../.claude/rules/graphical-session]]).
 
 The Mac decodes with ffmpeg because it has no NVDEC. That stopped being a
-detail when it became the **control group**: the Mac path used
+detail when the Mac became the **control group**: the Mac path used
 `swscale` (bilinear) and looked great while the GPU path, with
 nearest-neighbor sampling, jagged every letter. Comparing the two is what
 pointed to the bug — see [[../specs/010-remote-desktop.md]].
@@ -28,9 +29,9 @@ pointed to the bug — see [[../specs/010-remote-desktop.md]].
 QUIC (`quinn`): video by **datagram** (losing a frame is better than
 delaying), input by **stream** (it can't lose a key or reorder).
 
-The host serves **one client at a time**. A second `oxdesk-sink`
-trying to measure while someone is watching times out — it's not a bug,
-it's the accept queue.
+The host serves **one client at a time**. A second `oxdesk-sink` trying
+to measure while someone is watching times out. That is not a bug; it is
+the accept queue.
 
 ## Input
 
@@ -59,8 +60,8 @@ monitor`. The host then asks for `RecordVirtual`, at 1920×1080, and GNOME
 creates the monitor `Meta-0` for as long as the host lives.
 
 The virtual stream renegotiates the format right after it is born, with
-the same size. Swapping the `Codificador` (encoder) at that moment caused
-SIGSEGV (exit 139), so the host keeps the one it has.
+the same size. Swapping the encoder at that moment caused SIGSEGV
+(exit 139), so the host keeps the one it has.
 
 Measured on 2026-11-07: 25 frames in 10 s, zero lost, with the screen
 still. Mutter only delivers a frame when something changes.

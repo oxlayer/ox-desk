@@ -30,10 +30,10 @@ one day this turned a failure into a green line:
 | What ran | What it really did | What the pipe said |
 |---|---|---|
 | `brew install ffmpeg@7 \| tail -25` | failed: `make: *** [frameworkinstallapps] Error 2` | exit 0 |
-| `oxdesk-ota --conferir \| tail -4` | exit 1, repo private without a token | exit 0 |
+| `oxdesk-ota --check \| tail -4` | exit 1, repo private without a token | exit 0 |
 | `bash scripts/deploy.sh \| tail -32` | exit 1, one step failed | exit 0 |
 
-The deploy was not even at fault: it ends in `exit "$falhas"`, and the
+The deploy was not even at fault: it ends in `exit "$failures"`, and the
 pipe discarded it.
 
 So: when the exit code is the thing being checked, do not pipe. Redirect
@@ -88,9 +88,9 @@ one test and pointed straight at it; today it is a budget test that
 breaks the build.
 
 **If a protection, a target or a cost doesn't appear anywhere, assume it
-is wrong.** See also the `dispatch.backfill_gate` flag in the other
-repo: it existed, was documented, was turned on, and wasn't read by any
-code.
+is wrong.** The same failure has been seen outside this repository, in a
+`dispatch.backfill_gate` flag that existed, was documented, was turned
+on, and wasn't read by any code.
 
 ## See also
 

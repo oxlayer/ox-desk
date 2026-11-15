@@ -1,7 +1,7 @@
 # 009 — Task manager
 
-The user's request: *"see statistics, usage and be able to end a task on
-the other PC too"*.
+Goal: see statistics and usage, and be able to end a task, on the other
+machines too.
 
 `GET /api/processes?host=<name>` and `POST /api/processes/kill`, plus the
 **Tarefas** (Tasks) panel in the dashboard. Works for all three hosts,
@@ -39,7 +39,7 @@ suspects it.
 Same stance as `/api/focus` and `set-host`: killing a process on someone's
 machine does not come from a distracted click, and has no undo. The body
 requires `confirm: true`, and the UI arms before acting — the first click
-swaps the button for `encerrar | forçado` (end | forced), the second acts.
+swaps the button for `end | forced`, the second acts.
 
 `pid` 0 and 1 are refused on the server.
 
@@ -57,7 +57,7 @@ exactly how that bug showed up the first time.
 
 `remote::run(host, cmd, timeout)` resolves local versus remote, chooses
 `sh -c` or `powershell -Command`, and filters the post-quantum warning
-that Windows OpenSSH spits on stderr.
+that Windows OpenSSH prints on stderr.
 
 ## Verified
 

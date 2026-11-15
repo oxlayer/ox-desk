@@ -16,9 +16,8 @@ internet is Deskflow's opt-in update check, which ships with
 runs SSH and triggers HID++ channel switches** — it is privilege
 surface, not a website. Whoever reaches the API reaches both machines.
 
-If one day you want to open it to the phone, do not bind on `0.0.0.0`: expose it
-through an SSH tunnel or a reverse proxy with auth. The difference is
-intentional.
+To open it to a phone, do not bind on `0.0.0.0`: expose it through an SSH
+tunnel or a reverse proxy with auth. The difference is intentional.
 
 ## Trust between the machines
 
@@ -44,7 +43,7 @@ make comparison easier. It may never accept on your behalf.
 | Risk | State | Mitigation |
 |---|---|---|
 | GNOME RDP on 3389, password, whole LAN | **on** | `grdctl rdp disable`; the panel should show this as a risk |
-| Clipboard mirroring the Bitwarden password | mitigated | `send-content=false` — one-way ([`004`](004-clipboard.md)) |
+| Clipboard mirroring a copied password | mitigated | `send-content=false` — one-way ([`004`](004-clipboard.md)) |
 | SSH key with admin access on Windows | accepted | passphrase + session agent |
 | `hidraw` accessible to the user | necessary | `uaccess` via udev, only for the locally logged-in user |
 | Input traveling over the LAN (Deskflow) | accepted | TLS 1.3, fingerprint checked |
@@ -68,8 +67,9 @@ it is access control.
 
 `Trojan:Win32/Bearfoos.A!ml` — **quarantine and removal** of
 `oxdesk.exe`, plus deletion of the scheduled task and the corresponding
-`TaskCache` keys. In the middle of a test session, which incidentally
-explained the "it hangs and won't budge no matter what": there was no daemon.
+`TaskCache` keys. In the middle of a test session, which also explained
+the reported symptom (the session hung and nothing brought it back): there
+was no daemon.
 
 ### Why it took issue
 
@@ -89,7 +89,7 @@ detection listed the **file and the task together** — it was the combination.
 
 ### The chosen way out: sign, not exclude
 
-The user preferred signing to opening an exception in the antivirus. An exclusion
+Signing was chosen over opening an exception in the antivirus. An exclusion
 would solve it in one command, but it turns off inspection of a path — and
 inspection is exactly what protects against someone writing there.
 
@@ -100,8 +100,8 @@ sign it. It is a race that cannot be won on that side.
 So the binary now arrives **already signed**, via
 [`scripts/sign-windows.sh`](../scripts/sign-windows.sh):
 
-- key pair generated **here** with openssl (`~/.config/oxdesk/signing`, `600`, outside
-  the repo). The private key never leaves this machine — better than exporting
+- key pair generated **on the Ubuntu machine** with openssl (`~/.config/oxdesk/signing`,
+  `600`, outside the repo). The private key never leaves that machine — better than exporting
   the private key of a certificate created on Windows. The recipe is
   [`scripts/new-signing-cert.sh`](../scripts/new-signing-cert.sh); it used
   to be a command somebody ran once and wrote down nowhere, which is how
@@ -121,6 +121,10 @@ status:  Valid
 subject: O=infra pessoal, CN=logi (assinatura local)
 thumb:   673B01CE3B8A60E37BAF68F83B48206F31672409
 ```
+
+The certificate's subject is in Portuguese: `O=infra pessoal` is
+"personal infrastructure", and `CN=logi (assinatura local)` is
+"logi (local signature)".
 
 The file survived the write, the task was recreated and the daemon came up.
 
@@ -172,7 +176,7 @@ Signing solved it for `oxdesk.exe`. **It did not solve it for
 name and silently reverted under the right name. Windows spent an hour
 running the previous version while the deploy said `ok`.
 
-The user authorized the exclusion of `%LOCALAPPDATA%\oxdesk`. The cost is
+The exclusion of `%LOCALAPPDATA%\oxdesk` was authorized. The cost is
 real and is written down here: **Defender stopped scanning that folder**,
 so whatever lands there is not checked. In exchange, delivery stopped
 depending on a heuristic that changes its mind between signature versions.
@@ -180,7 +184,7 @@ depending on a heuristic that changes its mind between signature versions.
 ### The lesson worth more than the exclusion
 
 The deploy step said **"ok" without checking the result**. `Move-Item`
-did not complain, the antivirus reverted afterwards, and the report lied. Now
+did not complain, the antivirus reverted afterwards, and the report was wrong. Now
 the expected size travels in the command and the step compares it after writing.
 
 And the check was tested with a deliberately wrong size, until it
@@ -190,6 +194,9 @@ failed:
 ERRO: gravou mas o arquivo tem 458792 bytes, esperado 999999
       -- antivirus revertendo? confira a exclusao de C:\...\oxdesk
 ```
+
+In English: "ERROR: wrote it, but the file has 458792 bytes, expected
+999999 -- antivirus reverting? check the exclusion of C:\...\oxdesk".
 
 A check that has never failed is not a known check. This applies to the
 other deploy stages that today only look at the signature.

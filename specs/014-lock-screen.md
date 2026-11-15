@@ -1,4 +1,4 @@
-# 013 — Windows lock screen (Parsec-style)
+# 014 — Windows lock screen (Parsec-style)
 
 > Status: **mechanism proven**, service not written. The measurement with
 > the machine actually locked is still missing.
@@ -15,24 +15,26 @@ desktops inside the `WinSta0` window station. DXGI does not duplicate a
 desktop that is not the input desktop, and only `LocalSystem` can attach
 to the `Winlogon` desktop.
 
-This matters more now than it did yesterday: accessing from outside the
-house ([spec 012](012-outside-the-lan.md)), the machine will be locked
-almost all the time. Today that is exactly the state in which it does
-not serve a screen.
+This matters more once the machine is reached from outside the LAN
+([spec 012](012-outside-the-lan.md)): it will then be locked almost all
+the time, and today that is exactly the state in which it does not serve
+a screen.
 
 ## What was measured
 
-With `oxdesk-probe-system`, on this machine (Windows 10 Pro,
-2560x1440):
+With `oxdesk-probe-system`, on the Windows machine of the reference
+deployment (Windows 10 Pro, 2560x1440). The probe printed Portuguese;
+English translations are added as `#` comments.
 
 **As the user, through the SSH session:**
 
 ```
-pid 29568 sessão 0
-sessão do console: 1
+pid 29568 sessão 0                  # session 0
+sessão do console: 1                # console session: 1
 USERNAME=user (SYSTEM? false)
-mesa desta thread: Default
+mesa desta thread: Default          # this thread's desktop: Default
 mesa de ENTRADA: não consegui abrir (Função incorreta. 0x80070001)
+                                    # INPUT desktop: could not open (Incorrect function.)
 ```
 
 The whole session boundary in five lines: SSH lands in session 0, the
@@ -43,16 +45,16 @@ console is session 1, and the input desktop does not even open
 
 ```
 winlogon.exe pid 524
-privilégio SeDebugPrivilege: ligado
+privilégio SeDebugPrivilege: ligado                 # privilege SeDebugPrivilege: enabled
 privilégio SeIncreaseQuotaPrivilege: ligado
 privilégio SeAssignPrimaryTokenPrivilege: ligado
-LANCEI pid 11656 na mesa winsta0\Winlogon
-  → pid 11656 sessão 1
-  → USERNAME=windows-host$ (SYSTEM? true)
-  → mesa desta thread: Winlogon
-  → mesa de ENTRADA: Default
-  → anexado à mesa de entrada: Default
-  → DUPLICOU: 2560x1440
+LANCEI pid 11656 na mesa winsta0\Winlogon           # LAUNCHED pid 11656 on desktop winsta0\Winlogon
+  → pid 11656 sessão 1                              # session 1
+  → USERNAME=WINDOWS-HOST$ (SYSTEM? true)
+  → mesa desta thread: Winlogon                     # this thread's desktop
+  → mesa de ENTRADA: Default                        # INPUT desktop
+  → anexado à mesa de entrada: Default              # attached to the input desktop
+  → DUPLICOU: 2560x1440                             # DUPLICATED
 ```
 
 In other words: the path works. A SYSTEM process launched this way
@@ -78,7 +80,7 @@ Privileges: `SeDebugPrivilege` to open winlogon,
 `CreateProcessAsUser`. Without them the call fails with
 `ERROR_PRIVILEGE_NOT_HELD`, and the message does not mention privileges.
 
-A detail that would cost a scare: the child is born with
+A detail that matters: the child is born with
 `CREATE_NO_WINDOW`. With `CREATE_NEW_CONSOLE` it would open a black
 window **on the lock screen** — right where nobody wants to see one.
 
@@ -92,9 +94,10 @@ reports of it working as SYSTEM. There are also reports of DXGI
 initializing on Winlogon and returning **empty** frames without failing
 — hence the need to fall back to GDI.
 
-This cannot be decided by reading, and the test requires actually locking
-the machine — which costs the password to get back in. So it was left as
-an explicit request, not something to do alone.
+This cannot be decided by reading. The test requires actually locking
+the machine, and getting back in takes the account password at the
+console, so it is left as an explicit step for an operator at the
+machine rather than something to run unattended.
 
 ```powershell
 # lock, wait, run as SYSTEM, read
@@ -116,8 +119,8 @@ A new binary, not the current host:
 ### The decision that is not obvious
 
 Running the host **always** as SYSTEM is more privilege than it needs
-95% of the time, and this machine has already had `oxdesk.exe` deleted by
-Defender once (spec 008). A permanent SYSTEM binary that captures the
+95% of the time, and the reference Windows machine has already had
+`oxdesk.exe` deleted by Defender once (spec 008). A permanent SYSTEM binary that captures the
 screen and injects keystrokes is exactly the profile an antivirus hates
 — with reason.
 
@@ -143,8 +146,8 @@ assembling the pipeline.
 
 - The probe log (`C:\ProgramData\oxdesk\probe-sistema.log`) is written in
   UTF-8 and PowerShell reads it as ANSI: accents arrive garbled.
-  Cosmetic and it does not affect the measurement, but it will confuse
-  someone.
+  Cosmetic, and it does not affect the measurement, but it is misleading
+  to read.
 - `SendSAS` (remote Ctrl+Alt+Del) was not tried. Without it the machine
   cannot be unlocked from outside — only the lock screen can be seen.
 

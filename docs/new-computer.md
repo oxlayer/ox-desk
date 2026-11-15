@@ -8,7 +8,7 @@ shows. The installers ship inside the binary, so the repo isn't needed.
 
 1. Install [Homebrew](https://brew.sh) and `oxdesk`.
 2. In the wizard, press the steps in order. The permissions come after
-   `Assinar` (Sign).
+   the **Screen host signed** step.
 3. At the **Tailscale** step, Terminal opens: type the password and open
    the login link. **Do not install the app** ([`specs/012`](../specs/012-outside-the-lan.md)).
 
@@ -16,8 +16,8 @@ shows. The installers ship inside the binary, so the repo isn't needed.
 
 1. Install `oxdesk` and Tailscale, and log in to Tailscale.
 2. In the wizard, press the steps in order.
-3. At the **Tela sem monitor ligado** (Screen with no monitor on) step,
-   accept the administrator prompt.
+3. At the **A screen with no monitor attached** step, accept the
+   administrator prompt.
 
 ## Ubuntu
 
@@ -27,7 +27,7 @@ shows. The installers ship inside the binary, so the repo isn't needed.
 
 ## What remains manual
 
-- The Tailscale login: it is the consent of whoever owns the account.
+- The Tailscale login: it is the consent of the account's owner.
 - The macOS permissions: Apple doesn't allow granting them from outside.
 - The OTA token, which is created once and distributed with
   `scripts/distribute-ota-token.sh`

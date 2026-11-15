@@ -1,13 +1,13 @@
 # Audit a repository before making it public
 
-Run this before flipping visibility, and again before any repository of
-ours goes public. Plan and findings of the first run:
-[`specs/018`](../../specs/018-open-source.md).
+Run this before changing a repository's visibility, and again before any
+other repository of the project goes public. Plan and findings of the
+first run: [`specs/018`](../../specs/018-open-source.md).
 
-The order matters: the cheap greps first, because one of them found a
-script that would have handed SSH access to anyone who ran it, and no
-amount of later tooling would have caught that — it is not a secret, it is
-a behaviour.
+The order matters: the cheap greps come first, because one of them found a
+script that would have given a fixed key SSH access to the machine of
+anyone who ran it, and no later tooling would have caught that — it is not
+a secret, it is a behaviour.
 
 ## 1. Credentials of a known shape, over all history
 
@@ -24,7 +24,7 @@ exhaustive (`git count-objects -vH`); if it is not, go straight to step 5.
 ## 2. Credentials that do **not** look like credentials
 
 The greps above only find secrets shaped like secrets. These two found the
-real ones:
+ones that mattered:
 
 ```bash
 grep -rn -iE 'unlock-keychain|password|passphrase|secret|token' \
@@ -37,7 +37,7 @@ nothing; a script that *authorizes* it on the machine running the script
 grants everything. Read every hit and ask "whose machine does this change,
 and who chose the key?" ([[../rules/no-secrets-in-source]]).
 
-## 3. Files whose name is a confession
+## 3. Files named like credentials
 
 ```bash
 git log --all --diff-filter=A --name-only --pretty=format: | sort -u |
@@ -72,9 +72,10 @@ not a ceiling.
 
 ## 6. Leakage from unrelated work
 
-Grep for every other client, product and credential store the team has.
-Expect false positives and resolve them before believing a count:
-`grep -i <name>` returned 32 files, all of them `interface` and `surface`.
+Grep for the names of every other client, product and credential store the
+team works with. Expect false positives and resolve them before trusting a
+count: a short name also matches inside longer words, and one such
+search returned 32 files without a single real hit.
 
 ## 7. The workflows
 
@@ -86,14 +87,14 @@ Expect false positives and resolve them before believing a count:
 ## 8. The legal minimum, or nobody can contribute
 
 `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`. A public repository with no
-license is "all rights reserved", which makes the whole exercise
-pointless.
+license is "all rights reserved", which defeats the purpose of publishing
+it.
 
 ## 9. Then flip, and only then
 
-Turn on **secret scanning** and **push protection** immediately after —
-both free on public repositories, and the only part of this that keeps
-working without anyone remembering to run it.
+Turn on **secret scanning** and **push protection** immediately after.
+Both are free on public repositories, and they are the only part of this
+procedure that keeps working without anyone remembering to run it.
 
 ## Rotate, don't rewrite
 

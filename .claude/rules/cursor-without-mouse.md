@@ -11,8 +11,8 @@ GetCursorInfo -> ok=True flags=0 hCursor=0 pos=1356,728
 
 `flags=0` is hidden, `hCursor=0` is "no cursor exists". **The position
 is still correct** — that's why hover responds and nothing shows up,
-which is exactly how the symptom arrives: *"I see the mouse working on
-hover but the cursor doesn't show"*.
+which is exactly how the symptom is reported: hover effects follow the
+mouse, but no cursor is visible.
 
 It is the normal state of a machine driven only by KVM: the dongle is at
 the other end.
@@ -36,15 +36,16 @@ And here lies the verification trap. The composited arrow exists
 whoever is looking at the machine's physical monitor **sees nothing**,
 because there Windows still has no cursor.
 
-I confirmed the fix by decoding the h264 and looking at the frame — the
-arrow was there, at the right pixel — and reported it solved. The user
-was looking at the monitor. I verified the right thing in the wrong
-place.
+The fix was first confirmed by decoding the h264 and looking at the
+frame — the arrow was there, at the right pixel — and reported as
+solved. The report had come from someone looking at the physical
+monitor. The right thing had been verified in the wrong place.
 
 **Before declaring a visual problem solved, check WHERE the person is
-looking.** The host log tells you: a session with `input conectado` and
-no video `conectado:` at all means KVM without a viewer — that is, the
-person is in front of the physical monitor.
+looking.** The host log tells you: a session with `input connected` and
+no video `connected:` at all means KVM without a viewer — that is, the
+person is in front of the physical monitor. (Builds from before the
+English rename log these as `input conectado` and `conectado:`.)
 
 ## What Parsec does (and what doesn't work)
 
@@ -58,12 +59,14 @@ cursor faithfully"*, i.e. the client sees no pointer at all. Our
 synthetic arrow does more than that in the viewer.
 
 **Mouse Keys doesn't solve it** — Parsec suggests it, and we measured
-that it doesn't work on this machine (Windows 10):
+that it doesn't work on the reference Windows machine (Windows 10):
 
 ```
 Flags no registro: 63      (MouseKeys LIGADO)
 GetCursorInfo:     flags=0 hCursor=0
 ```
+
+(The first line reads "Flags in the registry: 63 (MouseKeys ON)".)
 
 There is also no API call that solves it: the functions that should show
 the cursor (`ShowCursor`) have no effect without a mouse present. That's
@@ -84,7 +87,7 @@ clicks (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST |
 WS_EX_NOACTIVATE`) following `GetCursorPos`. It works on the physical
 monitor and is captured by DXGI along with it, but it is extra Win32 to
 maintain and doesn't get along with exclusive fullscreen games — which
-is precisely the KVM use case on this machine.
+is precisely the KVM use case on the reference Windows machine.
 
 ## See also
 
@@ -93,14 +96,18 @@ is precisely the KVM use case on this machine.
 
 ## Outcome (2026-11-04)
 
-The user plugged the spare dongle into the Windows machine. The result,
-measured:
+A spare Unifying receiver was plugged into the Windows machine. The
+result, measured:
 
 ```
 Get-PnpDevice -Class Mouse  ->  HID-compliant mouse
 host log                    ->  forma de ponteiro: Cor 32x32 pitch=128 (4096 bytes)
                                 cursor desenhado em 1356,728 (32x32)
 ```
+
+(The host log lines read "pointer shape: Color 32x32 pitch=128 (4096
+bytes)" and "cursor drawn at 1356,728 (32x32)"; current builds print them
+in English.)
 
 A Unifying receiver **with nothing paired** is enough: it enumerates
 mouse and keyboard interfaces by itself. Windows went back to drawing
@@ -110,7 +117,7 @@ of our arrow.
 
 The built-in arrow stays in the code and is still right: it covers
 whoever watches a machine that has no mouse at all. What changed is that
-it is no longer the normal path for this machine.
+it is no longer the normal path for the reference Windows machine.
 
 With a system cursor present, DXGI's `Visible` started to mean
 something, so we respect it again — a fullscreen game hides the pointer

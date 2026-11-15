@@ -1,7 +1,8 @@
 # One supervisor per daemon — and never the GUI
 
-It cost a whole day. The Mac served a ten-day-old binary while **every**
-deploy step said `ok`, and the one who noticed was the user.
+It took a whole day to find. The Mac served a ten-day-old binary while
+**every** deploy step said `ok`, and it was noticed by a person using the
+machine, not by any check.
 
 ## What was happening
 
@@ -36,7 +37,7 @@ machine, where the GUI is how you reach the wizard.
 ### 2. Whoever restarts clears the port first
 
 `pkill -x oxdesk` before `kickstart -k` / `systemctl restart`. It's not
-brutality: `-k` already kills the supervised copy anyway, so the net
+excessive: `-k` already kills the supervised copy anyway, so the net
 effect is exactly *"also the ones the supervisor doesn't know about"*.
 It is in `plan::Plan::clear` (OTA) and in the `deploy.sh` steps.
 
@@ -46,7 +47,7 @@ correct**.
 
 ### 3. The panel compares who serves with what is on disk
 
-`oxdesk versao` prints the stamp of the **file**; `env!("OXDESK_BUILD")` is
+`oxdesk version` prints the stamp of the **file**; `env!("OXDESK_BUILD")` is
 the stamp of **who answers**. A divergence becomes a panel line
 (`setup_common::stamp_verdict`). Being on disk is not being live.
 

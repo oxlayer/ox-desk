@@ -8,11 +8,12 @@ Linux" and grew.
 The reference deployment is three machines — Ubuntu, Windows and a Mac —
 and that is where every measurement in these specs was taken. It is a
 reference, not an assumption: anything that works only on those three is a
-bug, and anything that names them outside a spec is a defect.
+bug, and anything that names them is a defect; specs use the stable aliases
+([`.claude/rules/no-personal-data.md`](.claude/rules/no-personal-data.md)).
 
-**This repository is going public.** [`specs/018`](specs/018-open-source.md)
-is the plan of record: what the pre-publish audit found, in what order the
-work happens, and the argument against each part of it. Three rules come
+**This repository is public** (since 2026-11-15). [`specs/018`](specs/018-open-source.md)
+is the record of how it got there: what the pre-publish audit found, in
+what order the work happened, and the argument against each part of it. Three rules come
 from it and apply to every change from now on — no personal data, no
 secrets in source, English only.
 
@@ -39,7 +40,7 @@ secrets in source, English only.
 8. [Capture pixel ≠ injection point](.claude/rules/coordinate-spaces.md)
 9. [Code for another OS compiles here — switch the `cfg` and check](.claude/rules/check-the-other-cfg.md)
 10. [One supervisor per daemon — and never the GUI](.claude/rules/one-supervisor-per-daemon.md)
-11. [Nothing shipped identifies a person, a machine or a household](.claude/rules/no-personal-data.md)
+11. [Nothing in the tree identifies a person, a machine or a household](.claude/rules/no-personal-data.md)
 12. [No credential and no authorized identity lives in source](.claude/rules/no-secrets-in-source.md)
 13. [Every word a contributor reads is English](.claude/rules/english-only.md)
 14. [Uploading to Windows: one cause can look like three failures](.claude/rules/windows-uploads.md)
@@ -82,7 +83,7 @@ receiver.
 
 **Never write an IP in config.** The Windows IP changed once and broke
 Deskflow, SSH and the panel all at once. Use mDNS, or the tailnet name on
-the machine that leaves the house ([`specs/012`](specs/012-outside-the-lan.md)).
+a machine that leaves the LAN ([`specs/012`](specs/012-outside-the-lan.md)).
 
 **On the Mac, Tailscale is the brew one, never the app.** Its network
 extension took down the machine's internet on 2026-11-07.
@@ -97,15 +98,17 @@ the pairing follows the dongle, not the machine. See [`specs/005`](specs/005-inp
 ## Working rules in this repo
 
 1. **Verify, don't assume.** Half the findings here contradict the
-   official documentation — and half contradict what I myself wrote in
-   the previous commit. GNOME's `InputCapture` exists and does **not**
-   work for enabling capture on demand; the "locked screen" I diagnosed
-   was a screen that was off; the "faulty" dongle is not proven. Test
-   before asserting, and correct what you already asserted.
+   official documentation — and half contradict what this repository
+   itself said in the previous commit. GNOME's `InputCapture` exists and
+   does **not** work for enabling capture on demand; a "locked screen"
+   diagnosis turned out to be a screen that was off; the "faulty" dongle
+   is not proven. Test before asserting, and correct what was already
+   asserted.
 2. **Measure before optimizing, and print what you measured.** Two bugs
    survived for weeks for lack of one log line.
 3. **Record the failures, not just the successes.** They are worth more
-   than what works, because they avoid repeating the lost afternoon.
+   than what works, because they keep the same investigation from being
+   done twice.
 4. **Everything in English** — code, comments, commits, file names, log
    lines, error messages and UI strings
    ([`.claude/rules/english-only`](.claude/rules/english-only.md)). It

@@ -34,9 +34,9 @@ by label:
 
 | | Items | Which |
 |---|---:|---|
-| Linux | 6 | `wayland`, `receptor`, `input-kvm`, `nvenc`, `binarios`, `daemon` |
-| **macOS** | **9** | `ffmpeg`, `identidade`, `assinatura`, `gravacao-de-tela`, `acessibilidade`, `launchagent`, `tailscale`, `binarios`, `daemon` |
-| Windows | 5 | `sshd`, `chave-admin`, `tela-virtual`, `protetor-de-tela`, `binarios` |
+| Linux | 6 | `wayland`, `receiver`, `input-kvm`, `nvenc`, `binaries`, `daemon` |
+| **macOS** | **9** | `ffmpeg`, `identity`, `signature`, `screen-recording`, `accessibility`, `launchagent`, `tailscale`, `binaries`, `daemon` |
+| Windows | 5 | `sshd`, `admin-key`, `virtual-display`, `screen-lock`, `binaries` |
 | Shared | 4 | |
 
 The daemon even carries two scripts inside the binary with `include_str!`
@@ -50,9 +50,9 @@ Nine items against five and six, and the extra ones are not arbitrary:
 | Item | Why it exists | Can it go? |
 |---|---|---|
 | `ffmpeg` | The only platform that links it, for capture and encode | **Yes** — both are Apple frameworks underneath. [[020-native-mac]] |
-| `identidade` + `assinatura` | A local signing identity keeps the binary's designated requirement stable, so a rebuild does not lose the TCC grant | No, but they are **one** concern and should be one item |
-| `gravacao-de-tela` + `acessibilidade` | TCC grants, which Apple does not let software give itself | No. Present them as "do this in Settings, I will re-check" and never claim to have fixed them |
-| `launchagent`, `binarios`, `daemon` | Same as the other platforms | No |
+| `identity` + `signature` | A local signing identity keeps the binary's designated requirement stable, so a rebuild does not lose the TCC grant | No, but they are **one** concern and should be one item |
+| `screen-recording` + `accessibility` | TCC grants, which Apple does not let software give itself | No. Present them as "do this in Settings, I will re-check" and never claim to have fixed them |
+| `launchagent`, `binaries`, `daemon` | Same as the other platforms | No |
 | `tailscale` | Optional, for reaching the machine outside the LAN | Should be behind "do you want this?", not in the main list |
 
 So nine becomes six: drop `ffmpeg`, merge the signing pair, and move
@@ -91,8 +91,8 @@ claim it fixed something.
 
 ### 3. Physical state
 
-The floor's hardest floor, found the hard way on 2026-11-08: the
-reference MacBook's panel broke, and `CGGetActiveDisplayList` answered
+The hardest part of the floor, found on 2026-11-08: the reference Mac
+lost its built-in display, and `CGGetActiveDisplayList` answered
 **zero** active displays. No wizard, no API and no permission produces a
 framebuffer. On Windows the equivalent gap has a software answer -- a
 virtual display driver, already a step (`virtual-display`) -- and on
@@ -105,7 +105,7 @@ physical, the wizard's job is to **name it in one line** and stop
 pretending. The `display` step's `why` says there is no software fix and
 names the dummy plug.
 
-The same accident found the second instance of the same shape: that Mac's
+The same incident exposed a second instance of the same shape: that Mac's
 console belonged to another account, so the five installed LaunchAgents
 could not run, and `launchctl print` only says `Could not print domain`.
 A wizard cannot log a person in. It can say who holds the console, which

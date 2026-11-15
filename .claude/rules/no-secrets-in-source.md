@@ -43,10 +43,10 @@ audit found. The key comes from whoever runs the script, and with no key
 the script **refuses**:
 
 ```sh
-# ❌ never
+# never
 PUB='ssh-ed25519 AAAAC3... someone@somewhere'
 
-# ✅ the person running it decides, and silence is not consent
+# instead: the person running it decides, and silence is not consent
 PUB="${1:-$(cat ~/.ssh/id_ed25519.pub 2>/dev/null)}"
 [ -n "$PUB" ] || { echo "usage: $0 '<ssh public key>'"; exit 2; }
 ```

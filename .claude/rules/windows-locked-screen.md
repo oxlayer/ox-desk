@@ -7,17 +7,17 @@ receiving input.
 
 ## The screensaver is cause number one, and it cost three diagnoses
 
-On 2026-11-04 the user couldn't reach the Windows machine. I diagnosed
-"locked screen"; then "half-installed video driver". Both wrong:
-`LogonUI` **absent**, RTX 3050 with status OK and `cfg=0`, and still
-refused.
+On 2026-11-04 the Windows machine's screen could not be reached. The
+first diagnosis was "locked screen", the second "half-installed video
+driver". Measurement ruled out both: `LogonUI` **absent**, RTX 3050 with
+status OK and `cfg=0`, and still refused.
 
 It was `Bubbles.scr` running. The screensaver lives on its own desktop
 ("Screen-saver"), which becomes the input desktop — and our process, on
 `Default`, loses access.
 
-What got me out of the hole was **listing processes** instead of testing
-one more hypothesis:
+What found it was **listing processes** instead of testing one more
+hypothesis:
 
 ```powershell
 Get-Process | Where-Object { $_.Path -like '*.scr' }
@@ -70,12 +70,12 @@ process list instead of the favorite hypothesis.
 
 Not to be confused with power saving having turned off the video output.
 There `DuplicateOutput` **passes**, and the symptom is harder to find:
-DXGI returns `Parado` (idle) forever, there is never a first frame, and
+DXGI returns `CaptureState::Idle` forever, there is never a first frame, and
 the client sits on black without anyone complaining.
 
 Solved in `host_win.rs`: `wake_screen()` at startup (a
 `MOUSEEVENTF_MOVE` of +1 and -1 in the same call — one of (0,0) is a
-no-op and Windows discards it), `TelaAcesa` holding `ES_DISPLAY_REQUIRED`
+no-op and Windows discards it), `ScreenAwake` holding `ES_DISPLAY_REQUIRED`
 while we serve, and a watchdog that nudges at 3 s and recreates the
 duplication at 9 s if no frame shows up.
 

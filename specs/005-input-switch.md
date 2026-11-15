@@ -33,8 +33,8 @@ possible in both directions.
 
 ## Edge detection: mutter directly, not the portal
 
-Correction of a wrong claim of mine. This spec said "everything through the
-portal, no hacks", based on my having seen
+Correction of an earlier claim. This spec said "everything through the
+portal, no hacks", based on having seen
 `org.freedesktop.portal.InputCapture` **accept** `CreateSession`.
 Accepting is not responding.
 
@@ -97,25 +97,27 @@ Enable()           -> ok
 [Release] ponteiro devolvido
 ```
 
+(`barreira` = barrier; `ponteiro devolvido` = pointer given back.)
+
 **It is possible to use only the detection** and give the pointer back right away,
 without capturing or forwarding input via libei. That is the trigger for the
 physical route, coming for free.
 
-### Three things that cost attempts
+### Three things that took several attempts
 
 **The barrier goes on the zone's BOUNDARY, not on its last column.**
 With `x = x + w - 1` (2559) mutter refuses:
 `AccessDenied: Line overlaps with monitor region`. It has to be
 `x = x + w` (2560).
 
-**`ConnectToEIS` before `Enable`.** I did not confirm it is
+**`ConnectToEIS` before `Enable`.** It was not confirmed to be
 mandatory — it went into the test to eliminate the hypothesis, and the event
 arrived with it present. It stays as the known-good order until someone measures
 without it.
 
 **Injected vs. real movement.** The first test timed out with the
-devices on the Windows channel: the pointer here was injected by
-Deskflow via libei, and injected movement may not cross a compositor
+devices on the Windows channel: the pointer on the Ubuntu machine was
+injected by Deskflow via libei, and injected movement may not cross a compositor
 barrier. The event only came with the device **on the local channel**. That
 is not a limitation — it is exactly mode B, where the device is local by
 definition.
@@ -126,20 +128,20 @@ HID++ needs to open `/dev/hidraw*`. The Solaar rule
 (`/usr/lib/udev/rules.d/60-solaar.rules`) grants it via `TAG+="uaccess"`,
 which becomes an ACL for the logged-in user.
 
-**Gotcha already paid for:** the `hidraw` nodes were created at 11:37 and Solaar was
+**Known gotcha:** the `hidraw` nodes were created at 11:37 and Solaar was
 installed at 13:22 — the rule did not exist when the nodes were created, no ACL
 was applied, and `solaar config` died with `No supported device found`,
 with `getfacl /dev/hidraw0` showing only `user::rw-` (root).
 
 ```bash
 sudo udevadm trigger --subsystem-match=hidraw --action=add   # or replug the receiver
-getfacl /dev/hidraw0 | grep user                           # confirm the ACL
+getfacl /dev/hidraw0 | grep "^user:$USER:"                 # confirm the ACL
 ```
 
 `oxdesk` should **check this at startup** and report it in the API/GUI when it is
 missing, instead of failing obscurely at switch time.
 
-Mapping on this machine:
+Mapping on the Ubuntu machine of the reference deployment:
 
 | hidraw | device |
 |---|---|
@@ -178,7 +180,7 @@ oxdesk-agent devices                      # slots, number of channels, current c
 oxdesk-agent host-info <slot>
 oxdesk-agent set-host <slot> <n> --confirm
 oxdesk-agent input-age                    # ms since the last input
-oxdesk-agent guard <slot> <n> <segundos>  # dead-man's switch
+oxdesk-agent guard <slot> <n> <seconds>   # dead-man's switch
 oxdesk-agent raw <slot> <feature> <func>  # protocol probing
 ```
 
@@ -190,8 +192,8 @@ on Windows are ~300 lines of unsafe FFI already solved there).
 First attempt: write failed with an empty `hidapi error:`. Cause:
 on Windows the Logitech receiver exposes **one HID collection per report
 type** — usage 1 = short (`0x10`, 7 bytes), usage 2 = long (`0x11`,
-20 bytes), usage 4 = very long. I opened the first one in the list (usage 2)
-and wrote a short report to it. Wrong size, write refused.
+20 bytes), usage 4 = very long. The code opened the first one in the list
+(usage 2) and wrote a short report to it. Wrong size, write refused.
 
 Solution: **always use the long report on the usage 2 collection**, even for
 functions that would fit in the short one. That way writes and reads stay in the same
@@ -212,24 +214,24 @@ slot 2 (MX Keys Keyboard):  3 canais, atual = 2
 (Program output: each device has 3 channels, current = 2; func 1: all three
 channels with status=1, paired.)
 
-So **`windows-host` is channel 2**, confirmed, and the devices
+So **the Windows machine is channel 2**, confirmed, and the devices
 know three hosts — all paired.
 
-The `ubuntu-host` channel **has not been read yet**, and it does not go into the config
+The Ubuntu machine's channel **has not been read yet**, and it does not go into the config
 as a guess: sending the device to a wrong channel leaves it
 unreachable from both machines. The risk-free discovery is a keypress:
-press Easy-Switch until the device shows up here, and then
+press Easy-Switch until the device shows up on Ubuntu, and then
 `solaar config <slot> change-host` reports the current channel.
 
-> I tried to read the channel names via `0x1815` func 2 and the layout did not
-> yield anything (`02 80 00…`, no ASCII). I gave up: the likely write
-> function sits next to the read one in the same feature, and probing function
-> indexes blindly could **rename** a host. Not worth the risk for
-> information that a keypress resolves.
+> Reading the channel names via `0x1815` func 2 was attempted, and the layout
+> did not yield anything (`02 80 00…`, no ASCII). The attempt was dropped: the
+> likely write function sits next to the read one in the same feature, and
+> probing function indexes blindly could **rename** a host. Not worth the risk
+> for information that a keypress resolves.
 
 ### There is no rollback on this side
 
-Correction of a design error of mine: the first version of this spec said
+Correction of an earlier design error: the first version of this spec said
 "if the target does not confirm, go back to the previous channel". **That is
 impossible.**
 
@@ -245,8 +247,8 @@ Two design consequences:
 **1. Pre-flight replaces rollback.** Every check happens
 *before* the irreversible act, because afterwards there is nothing to do. That is why
 `POST /api/focus` is **dry-run by default** and only executes with
-`"confirm": true` — same principle as the destructive-trigger rule of the
-other repo: the action is irreversible, so preview is mandatory.
+`"confirm": true` — the general rule for destructive triggers: the action
+is irreversible, so preview is mandatory.
 
 **2. The dead-man's switch lives on the TARGET.** Whoever can give the
 device back is whoever comes to hold it. This inverts the responsibility: the
@@ -297,7 +299,7 @@ remaining paths, in order:
 
 1. the Easy-Switch button on the device itself (physical, always works);
 2. any USB keyboard;
-3. SSH from another machine to `ubuntu-host`.
+3. SSH from another machine to the Ubuntu machine.
 
 The GUI has to show item 1 **before** any switch, not after.
 
@@ -356,8 +358,8 @@ POST /api/focus {"host":"windows-host","confirm":true}
 sees slots 1 and 2 online and Windows none; in the other direction both slots
 go to channel 2 and are ONLINE on Windows.)
 
-**It is Logitech Flow, working, without cloud and without an account.** The piece
-no open project had.
+**This is the Logitech Flow behavior, without cloud and without an account**:
+the piece no open project had.
 
 ### `input-age` over SSH is useless — proven
 
@@ -398,6 +400,9 @@ border: vigiando borda 'right' -> windows-host
 border: ACTIVATED barreira=1 activation=1 cursor=(2560.0, 555.18)
 ```
 
+(Log: barrier 1 on the right edge, EIS = yes; watching edge 'right' ->
+windows-host.)
+
 ### Three bugs only the live test showed
 
 **1. solaar reports failure on a switch that worked.**
@@ -407,11 +412,13 @@ border: ACTIVATED barreira=1 activation=1 cursor=(2560.0, 555.18)
 18:06:23  border: MX Anywhere 3: FALHOU --      ← EMPTY message, 35 s later
 ```
 
+(`FALHOU` = failed.)
+
 The devices were on Windows, channel 2: **the switch had
 worked.** On a successful switch the device disappears in the middle of the
-command, solaar hangs until the timeout and returns an empty error. I already
-handled this case in the Rust agent (`"sem resposta é o caso ESPERADO"`, "no
-response is the EXPECTED case") and forgot it in the solaar path.
+command, solaar hangs until the timeout and returns an empty error. This case
+was already handled in the Rust agent (`"sem resposta é o caso ESPERADO"`, "no
+response is the EXPECTED case") but had been missed in the solaar path.
 
 Fix: **solaar's exit code is not a source of truth.** We verify
 by the observable effect — if the slot left this receiver, it switched.
@@ -435,7 +442,7 @@ verification takes ~5 s and the second event came in before the first finished.
 
 Mouse and keyboard are independent commands, seconds each. Observed:
 the mouse left and the keyboard stayed for a few seconds — **a real and
-transient state**, not a read error (I suspected the parser and was wrong;
+transient state**, not a read error (the parser was suspected first, wrongly;
 the API and `solaar show` agreed at the same instant).
 
 The real risk is the second one failing and the split state becoming
@@ -500,8 +507,8 @@ The cooldown also comes before collection: inside it we do not even count, we on
 give it back pulled back. This keeps the count from rising during the ~5 s of the
 previous switch.
 
-The inversion is the elegant detail: the churn I first treated as a bug
-became the intent signal.
+The inversion is the key detail: the churn first treated as a bug became
+the intent signal.
 
 ### It needs the interactive session
 
@@ -561,6 +568,8 @@ Reported from real use:
 sem resposta para feature 0x00 func 0x00 ... switch_failed
 ```
 
+(`sem resposta para` = no response for.)
+
 Touching the Windows edge with the devices **on another machine**
 made the agent try `set_host` and fail at `feature_index` — which is
 absence, not failure. Now it checks presence first:
@@ -571,7 +580,7 @@ absence, not failure. Now it checks presence first:
 ### Slots are per receiver, and do not match between machines
 
 Discovered when gathering the devices: Windows had **slot 1 online**
-and slot 2 empty, while here both exist. `set-host 2` from there
+and slot 2 empty, while on Ubuntu both exist. `set-host 2` from Windows
 failed because of that, not because of a bug.
 
 The `oxdesk` config already resolves by device **name**. The agent
@@ -625,8 +634,9 @@ Consequences:
    divergence** between machines.
 2. "Is it online?" becomes a millisecond HID++ ping, not a 6-15 s
    `solaar show`.
-3. The protocol code already exists in [`agent/src/hidpp.rs`](../agent/src/hidpp.rs)
-   and is platform-agnostic: it becomes a shared crate.
+3. The protocol code already exists (then in `agent/src/hidpp.rs`) and is
+   platform-agnostic: it becomes a shared crate, today
+   [`hidpp/`](../hidpp/src/protocol.rs).
 
 That was the plan from the start ("the boundary of this module was designed
 so that an HID++ 0x1814 implementation over /dev/hidraw replaces the
@@ -678,7 +688,7 @@ what it actually does: `HID++ 0x1814 setCurrentHost`.
 ### The tests changed subject
 
 The 5 old tests covered the parser of `solaar`'s output, which no longer
-exists. Instead of accepting the drop to zero, I wrote **7** on the
+exists. Instead of accepting the drop to zero, **7** were written on the
 pure functions that remained: `barrier_line` on the four edges, with a secondary
 monitor offset and an invalid edge; and config parsing —
 `Expect` default, `down`/`any`, and the channel map by name.
@@ -719,7 +729,8 @@ where the follower is:
 
 ### Validated, on the hard path
 
-I tested the direction that goes through the peer, not the local one:
+The test exercised the direction that goes through the peer, not the local
+one:
 
 ```
 # only the leader goes back to channel 1; the keyboard stays on 2
@@ -730,7 +741,7 @@ follow: MX Keys Wireless Keyboard: pedi a windows-host que o mandasse para o can
 -> MX Keys Wireless Keyboard  online=True canal=1
 ```
 
-(Log: "I asked windows-host to send it to channel 1"; both devices then online
+(Log: "asked windows-host to send it to channel 1"; both devices then online
 on channel 1.)
 
 It acted **once** and settled down — more than that would be a loop.
@@ -745,7 +756,7 @@ for the same host. Fixed by having the agent report the HID++ name
 The measurement that closed the argument, in the same test:
 
 ```
-here:     slot 1 = MX Anywhere 3            slot 2 = MX Keys
+Ubuntu:   slot 1 = MX Anywhere 3            slot 2 = MX Keys
 Windows:  slot 1 = MX Keys                  slot 2 = MX Anywhere 3
 ```
 
@@ -785,7 +796,7 @@ timeouts of the 4 empty ones. With the cache, we scan 2 — and a full scan
 every 10, otherwise a device paired later would never show up.
 `/api/devices`: 1.63 s → **0.36 s**.
 
-**4. Do not wait for SSH on the hot path** (the user's idea). The agent
+**4. Do not wait for SSH on the hot path.** The agent
 probe was ~2.2 s of the 3.9 s. A background refresher
 ([`peers.rs`](../oxdesk/src/peers.rs)) keeps the peers' state every
 6 s, and `"fast": true` reads the cache:
@@ -823,7 +834,7 @@ slot 2  0x1000 getCapability -> 04 04 c0 06 0a   (critical = 0x0a = 10%)
 Validated against an independent source: `upower`, which reads through the kernel's
 `hid-logitech-hidpp` driver, reports **the same** — 5%,
 `warning-level: critical`. Both devices are almost out of charge, and
-that explains the "lost ping" I had attributed to power
+that explains the "lost ping" previously attributed to power
 saving: a device at 5% is slow to respond.
 
 Battery does **not** go into the hot path (`survey_opts(false)`): it costs
@@ -831,7 +842,8 @@ two round trips per device and does not influence the switch decision.
 
 ## Button remapping (0x1B04)
 
-Read from your hardware, and the names match what Solaar displayed:
+Read from the reference deployment's hardware; the names match what Solaar
+displayed:
 
 ```
 slot 1 (MX Anywhere 3) -- 7 controles
@@ -882,19 +894,19 @@ GET  controls                   todos -> padrao
 (Forward remapped to the middle button, read back, restored to default
 ("padrao"), and all read back as default.)
 
-And the test caught two bugs before the user felt them:
+The test caught two bugs before they reached real use:
 
 **`to = 0` does not restore the default.** The write returned `ok` and the
 device kept reporting the old remapping. In 0x1B04 the
 default is restored by remapping the control **to itself**. Now
 `to: "0"` is translated to the `cid` itself.
 
-Had I trusted the `ok` return instead of reading back, I would have
-left the user's Forward button altered and reported success.
+Trusting the `ok` return instead of reading back would have left the
+Forward button altered while reporting success.
 
 **The ping gate needed a retry.** `remap` failed with
-`slot 1 nao responde` ("slot 1 does not respond") seconds after a successful read. I
-had put a retry in `survey` and forgotten it in `remap` and `change_host`
+`slot 1 nao responde` ("slot 1 does not respond") seconds after a successful read.
+A retry existed in `survey` but had been left out of `remap` and `change_host`
 — with the devices at 5% battery, a single ping is lost. All three
 now retry (3 to 4 times, 180 ms apart).
 
@@ -902,15 +914,16 @@ now retry (3 to 4 times, 180 ms apart).
 
 The keyboard has 24 controls, and at 5% it cannot sustain the ~50 round
 trips: `/api/controls` returns
-`MX Keys Wireless Keyboard (erro: sem resposta)` while the mouse, with
+`MX Keys Wireless Keyboard (erro: sem resposta)` ("error: no response")
+while the mouse, with
 7 controls, completes. The error appears per device instead of
 bringing down the whole response.
 
-## Why the Windows edge "did not work" — it was my bug
+## Why the Windows edge "did not work" — a presence-check bug
 
-User complaint: hitting the edge on Windows sometimes does not bring the
-devices. The agent's log — which only exists since we stopped flying
-blind on that side — showed this 25 times in 5 minutes:
+Reported symptom: hitting the edge on Windows sometimes did not bring the
+devices. The agent's log — which exists only since logging was added on
+that side — showed this 25 times in 5 minutes:
 
 ```
 21:24:54  BORDA TOCADA em (0,516) mas nenhum dos slots [1,2] esta neste receptor
@@ -922,15 +935,15 @@ blind on that side — showed this 25 times in 5 minutes:
 
 The edge **was detected** — the cursor position is right there. What failed
 was the **presence check**, saying there was no device
-while the user was moving the mouse on that machine. Impossible.
+while the mouse was being moved on that machine. That is impossible.
 
-Cause: I checked presence with `host_info`, which costs **two** round
+Cause: presence was checked with `host_info`, which costs **two** round
 trips with a 700 ms timeout each, and **no retry**. With the devices at
-5% battery, that gets lost. I had already fixed exactly this on the
-Linux side and forgotten it in the agent — the second time the same oversight
+5% battery, that gets lost. Exactly this had already been fixed on the
+Linux side and was missing in the agent — the second time the same oversight
 showed up.
 
-Now there is `Receiver::present(slot, tentativas)` in the shared
+Now there is `Receiver::present(slot, tentativas)` (`tentativas` = attempts) in the shared
 crate, with `ping` (250 ms) and retry, and both sides use it. One
 retry implementation, not two.
 
@@ -940,23 +953,23 @@ Real problem observed: **three instances at the same time**, competing
 for the same receiver and tripling the HID++ traffic. The Startup shortcut
 plus a manual launch stack up.
 
-Two guards, and both cost a wrong attempt:
+Two guards, each of which needed a second attempt:
 
 **Console session.** Launching over SSH creates an instance in session 0 that
 sees no input at all (`area=(0,0 1024x768)`, idle equal to the uptime) and still
 contends for the receiver. `WTSGetActiveConsoleSessionId` +
 `ProcessIdToSessionId` refuse this with an explicit message.
 
-**Single instance, in the `Local\` namespace.** My first version used
+**Single instance, in the `Local\` namespace.** The first version used
 `Global\`, and **two instances got through**: `Global` requires
 `SeCreateGlobalPrivilege`, and when creation fails there is no way to
 distinguish "already exists" from "could not create". Since the session guard already
 blocks the cross-session case, the per-session namespace is exactly the scope
 that was missing.
 
-> Method note: while testing, I counted two processes and almost reported the
-> guard as broken. They were the good instance plus the refused one **exiting** —
-> my measurement racing the teardown. The log had a single
+> Method note: during testing, a count of two processes nearly led to reporting
+> the guard as broken. They were the good instance plus the refused one **exiting** —
+> the measurement was racing the teardown. The log had a single
 > `watch-edge START`, and that is what decides, not `Get-Process`.
 
 ### Deploying on Windows needs a rename, not a direct `scp`
@@ -966,9 +979,9 @@ instance keeps it open, and the script still printed "trocado" ("swapped"). Now:
 send it as `.new.exe`, `Remove-Item` the current one, `Move-Item`, and
 **check size and date** — do not trust the absence of an error.
 
-## The wait I was paying for nothing: 2.27 s → 66 ms
+## The unnecessary wait: 2.27 s → 66 ms
 
-The user kept feeling a delay after fast mode, and was right.
+A delay was still reported after fast mode, and the report was right.
 Timed in isolation, without the API or verification:
 
 ```
@@ -988,9 +1001,9 @@ In the daemon `feature_index` is already memoized, so the real cost is
 ### What the rest was
 
 **`set_host` waited 700 ms for a reply that never comes.** On a
-successful switch the device leaves the radio **before** replying — I
-already knew this (I treated absence as success) and still paid the
-whole `REPLY_TIMEOUT`, on each device. `set_host_nowait` writes the
+successful switch the device leaves the radio **before** replying — this
+was already known (absence was treated as success), yet the code still paid
+the whole `REPLY_TIMEOUT`, on each device. `set_host_nowait` writes the
 report and returns: **0.6 ms**.
 
 **`feature_index` cost a round trip per call.** It is stable
@@ -1006,9 +1019,9 @@ confirmation became a background log (`verificacao: slot 1 saiu em
 
 Measured: `plan()` in fast mode responds in **0.98 ms**.
 
-### The tension this creates, and it is your decision
+### The tension this creates: a usage decision
 
-I lowered the dwell from 3 touches in 400 ms to **2 in 300 ms**, and made it
+The dwell was lowered from 3 touches in 400 ms to **2 in 300 ms**, and made
 configurable:
 
 ```toml
@@ -1017,19 +1030,19 @@ hold_hits = 2          # 1 = switch on the first touch
 hold_window_ms = 300
 ```
 
-But crossing the edge here **is not like Flow**: there the cursor comes back for
-free, here it is a radio re-pairing. With `hold_hits = 2` the
+But crossing the edge in oxdesk **is not like Flow**: there the cursor comes back
+for free, here it is a radio re-pairing. With `hold_hits = 2` the
 normal movement up to the right edge already fires — observed during the
 tests, the devices left three times unintentionally.
 
-`hold_hits = 1` gives the immediacy you asked for, at the cost of switching
+`hold_hits = 1` gives the immediacy that was requested, at the cost of switching
 machines on a graze. `3` avoids the accident and brings back the delay. There is no
-right choice without knowing your usage.
+right choice independent of how the edge is used.
 
 ## Battery status is the device's claim, not ours
 
-Complaint: "keyboard has been charging for 30 minutes already" — and the panel said
-`descarregando` ("discharging"). Investigated in the raw bytes:
+Reported symptom: the keyboard had been charging for 30 minutes, yet the panel
+said `descarregando` ("discharging"). Investigated in the raw bytes:
 
 ```
 MX Keys   0x1000 getLevel -> 32 14 00    = 50%, next 20%, status 0
@@ -1039,12 +1052,12 @@ MX Anywhere 3 0x1004 getStatus -> 05 01 01 01  = 5%, level 1,
 
 **Charging was working**: the keyboard had gone up from 5% to 50%, and
 the mouse went from 5% to 70% during the investigation itself. What was
-wrong was my label.
+wrong was the panel's label.
 
 The MX Keys reports `status = 0` ("discharging") **on the cable, with the charge
 rising**. `upower`, which reads through the kernel driver, reports the same — the
-false claim is the firmware's. But I displayed it as if it were my own
-reading, in a field called `battery_level`, as if it were the level.
+false claim is the firmware's. But the panel displayed it as if it were oxdesk's
+own reading, in a field called `battery_level`, as if it were the level.
 
 Fixes:
 
@@ -1060,9 +1073,9 @@ Fixes:
 
 ## Immediate switch at the edge, on request
 
-`hold_hits = 1`: switch on the first touch, no dwell. The user
-asked for it explicitly after I presented the trade-off — the right
-edge is not a frequent path for them.
+`hold_hits = 1`: switch on the first touch, no dwell. Chosen explicitly
+for the reference deployment after weighing the trade-off above — there,
+the right edge is not a frequent path.
 
 The repo default stays `2`, so whoever installs it is not surprised.
 
@@ -1077,8 +1090,8 @@ Replaced by `oxdesk.service`, which is what actually matters to watch.
 
 ## When the devices "switch hosts on their own": the list (2026-11-04)
 
-It cost the user's morning twice. The next person — probably
-me — deserves a list instead of an investigation.
+This took two mornings of investigation. The next person deserves a
+checklist instead of an investigation.
 
 **Who can move a device, and none of them show up if you look
 only at one machine's panel:**
@@ -1086,7 +1099,7 @@ only at one machine's panel:**
 | Actor | Where | How to turn off | Gotcha |
 |---|---|---|---|
 | Edge (GNOME) | `border.rs`, Ubuntu | `input.border.enabled` | Barriers are created at boot; the flag is now read **on touch** |
-| Edge (Win32) | `border_win.rs`, Windows | the same flag, **on that** machine | Different file — fixing one does not fix the other, and I fell for it |
+| Edge (Win32) | `border_win.rs`, Windows | the same flag, **on that** machine | Different file — fixing one does not fix the other; this was missed once |
 | Dead-man's switch | `border_win.rs`, `Guard` | together with the edge | Gives everything back if nobody types within 25 s |
 | Reconciler | `follow.rs` | `input.follow.enabled` | Asked the peer and believed it without checking; today it has a circuit breaker |
 | USB power | **Windows, outside our code** | see below | **Logs nothing anywhere** |
@@ -1141,7 +1154,7 @@ intermittently -- documented by Logitech itself.
 **What this explains, which nothing before explained:**
 
 - The devices always go back to **channel 1**, not to a MACHINE.
-  When the user took the Ubuntu receiver to Windows, they
+  When the Ubuntu receiver was moved to Windows, the devices
   converged to channel 1 **on Windows**. It is not "something pulls toward
   Ubuntu"; it is "they drop host 2 and fall onto the stable host".
 - The relationship with the battery, which was the piece that did not fit: more charge
@@ -1161,8 +1174,8 @@ intermittently -- documented by Logitech itself.
 a short extension cable to get it away from the case and from the vicinity of the
 other USB 3 ports.
 
-**The process lesson:** I chased six software actors before
-measuring which port the receiver was on. The investigation order at the start
+**The process lesson:** six software actors were investigated before
+anyone measured which port the receiver was on. The investigation order at the start
 of this section now begins with the physical -- speed and bus of both
 receivers -- because it costs one command and rules out the whole class.
 
@@ -1171,8 +1184,8 @@ receivers -- because it costs one command and rules out the whole class.
 Swapping the two dongles between the machines, the stickiness followed the **dongle**,
 not the machine: the devices went to wherever dongle A was, and
 stayed there stable for minutes -- on the same machine and the same USB
-3.0 ports I had blamed. **That brought down the USB
-3.0 noise hypothesis**, which I had built with a battery ladder that seemed
+3.0 ports that had been blamed. **That brought down the USB
+3.0 noise hypothesis**, which had been built on a battery ladder that seemed
 to confirm it.
 
 With dongle B on Ubuntu, the HID++ reads that go through it came back
@@ -1194,16 +1207,16 @@ behaves like that; and the "always on host 1" convergence was convergence on the
 **Remedy:** use only dongle A, and reach the other machine through the remote
 screen (specs/010) instead of moving the devices.
 
-#### Caveat: the title of this section claims more than I measured
+#### Caveat: the title of this section claims more than was measured
 
-I wrote "dongle B is defective" on the same day I saw the garbage, and
-commit cb5722c carries that sentence. It may be right, but the two
+"Dongle B is defective" was written on the same day the garbage was seen,
+and commit cb5722c carries that sentence. It may be right, but the two
 corrupted reads **do not prove it**: at that moment the devices
 were dropping off dongle B all the time, and an HID++ read from a
 device that has already gone off the air returns exactly this kind of nonsensical
 payload. Garbage in the response is a symptom compatible with a defective receiver
-**and** with an absent device -- and I had both conditions
-together.
+**and** with an absent device -- and both conditions held at the
+same time.
 
 What was measured, and is enough for the practical decision:
 
@@ -1241,7 +1254,7 @@ add here later.
 
 ## Open
 
-- `ubuntu-host` channel: one Easy-Switch keypress resolves it.
+- The Ubuntu machine's channel: one Easy-Switch keypress resolves it.
 - Edge detection through the `InputCapture` portal — the API exists in GNOME 50
   (the backend declares it and `CreateSession` is accepted), but it is D-Bus + libei, and
   v1 may not be enough.

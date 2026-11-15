@@ -8,17 +8,17 @@ address from either side, and it keeps the disclosure in one place.
 
 Please do not open a public issue for a vulnerability.
 
-No personal e-mail address is published here on purpose: a security
-contact has to be a role, not a person, or it rots the first time someone
-changes jobs — and this repository's own
+No personal e-mail address is published here, on purpose: a security
+contact has to be a role, not a person, or it goes stale the first time
+someone changes jobs — and this repository's own
 [`no-personal-data`](.claude/rules/no-personal-data.md) rule forbids
 shipping one. When a role address exists on the project's domain it goes
 here, next to the advisory link rather than instead of it.
 
 **What to expect:** an acknowledgement, a fix or a documented reason not
 to fix, and credit in the advisory unless you ask otherwise. This is a
-small project, so the honest answer about timelines is that there is no
-staffed rotation; a report is read by a person who may be asleep.
+small project with no staffed on-call rotation, so there is no guaranteed
+response time; reports are handled as maintainer time allows.
 
 ## What is in scope
 
@@ -52,10 +52,10 @@ The parts where a mistake crosses a trust boundary:
   ([`no-secrets-in-source`](.claude/rules/no-secrets-in-source.md)).
 - **Input injection types anywhere on the target.** That is the product.
   The boundary is who may connect, not what they can do once connected.
-- **The specs name real machines and describe the topology.** Deliberate:
-  a measurement without a real machine on a real day is an anecdote.
-  Obscurity is not a control here, but note that defaults and scripts
-  never carry those names.
+- **The specs describe real machines and their topology.** Deliberate: a
+  measurement without a real machine on a real day is an anecdote.
+  Obscurity is not a control here, but note that the specs refer to those
+  machines by alias, and defaults and scripts never carry their names.
 - **Windows Defender heuristics.** `Trojan:Win32/Bearfoos.A!ml` on an
   unsigned binary and `Trojan:Win32/PowExcEnv.H!MTB` on our own
   `-EncodedCommand` are model guesses, not findings. The binaries are

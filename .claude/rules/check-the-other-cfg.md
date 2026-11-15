@@ -24,11 +24,11 @@ cp /tmp/main.rs.bak oxdesk/src/main.rs
 ```
 
 That is how the `setup_mac.rs` of [`015`](../../specs/015-ota.md) was
-verified with the MacBook offline the whole day: zero errors, zero
+verified while the Mac was offline for a whole day: zero errors, zero
 warnings. Had there been a `?` in the wrong place or an extra argument
-in a call, I would have found out **after** sending the deploy and
-waiting seven minutes of remote compilation — and the deploy would say
-`FALHOU` on a line that explains nothing.
+in a call, it would have surfaced only **after** the deploy was sent and
+seven minutes of remote compilation had passed — and the deploy would
+have said `FALHOU` ("failed") on a line that explains nothing.
 
 ## What this does NOT cover
 
@@ -56,8 +56,9 @@ call into the system. `point_from_pixel` and `wheel_notches` are both
 there for exactly this reason.
 
 In other words: "don't claim it works on the Mac without having run it
-there" still holds. What switching the `cfg` eliminates is the silliest
-class of error, which is exactly the one that costs the round trip.
+there" still holds. What switching the `cfg` eliminates is the most
+trivial class of error, which is exactly the one that costs the round
+trip.
 
 ## See also
 

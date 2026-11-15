@@ -2,10 +2,13 @@
 
 ## Inviolable rule: never write an IP
 
-On 2026-11-03 Windows moved from `192.168.1.43` to `192.168.1.42` (same
+On 2026-11-03 Windows moved from `192.0.2.28` to `192.0.2.20` (same
 MAC `00:00:5e:00:53:01`). It broke all at once: Deskflow (`No route to
 host` in a loop), SSH, and the panel. **GSConnect survived** — it
 discovers by broadcast.
+
+(Addresses in this spec are documentation values: RFC 5737 for IPv4,
+RFC 7042 for the MAC.)
 
 The lesson: what discovers by name heals itself; what is pinned to an IP
 breaks.
@@ -18,7 +21,7 @@ avahi-daemon:        active
 libnss-mdns:         0.15.1-5
 ```
 
-`getent hosts windows-host.local` → `192.168.1.42`, stable. All configs
+`getent hosts windows-host.local` → `192.0.2.20`, stable. All configs
 use the name: `Deskflow.conf`, `~/.ssh/config` and
 `~/.config/oxdesk/config.toml`.
 
@@ -54,9 +57,9 @@ solaar config 2 change-host
   -> [ 1:ubuntu-host, 2:windows-host, 3:ASSET-TAG-0001 ]
 ```
 
-Channel 3 is a **MacBook**. The name `ASSET-TAG-0001` is a corporate
-asset tag, not the hostname mDNS will announce — when integrating, check
-its real `.local`.
+Channel 3 is a **MacBook**. Its name on the keyboard (shown here as
+`ASSET-TAG-0001`) is a corporate asset tag, not the hostname mDNS will
+announce — when integrating, check its real `.local`.
 
 It is **not** in `[[hosts]]` yet: a peer without a host block does not
 enter routing, and that is better until the daemon is running there.
@@ -81,7 +84,7 @@ automated — it is an action on the router.
 
 ## Device identity (Logitech)
 
-See [`005`](005-input-switch.md). Mapping on this machine:
+See [`005`](005-input-switch.md). Mapping on the Ubuntu machine:
 
 | hidraw | device | receiver slot |
 |---|---|---|
@@ -89,5 +92,6 @@ See [`005`](005-input-switch.md). Mapping on this machine:
 | `hidraw2` | `046D:4090` MX Keys | 2 |
 | `hidraw3` | `046D:408A` MX Anywhere 3 | 1 |
 
-Both are paired here **and** on the Windows receiver, on different
-Easy-Switch channels. That is what makes the physical route possible.
+Both are paired with the Ubuntu receiver **and** with the Windows one, on
+different Easy-Switch channels. That is what makes the physical route
+possible.

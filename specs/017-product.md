@@ -26,7 +26,7 @@ This changes two old premises, and this spec is the record of those changes:
 telemetry, machines on the same network find each other via mDNS and connect directly,
 with the same key-based pairing. The rendezvous server only comes in when
 direct LAN does not exist. No local feature may come to depend
-on it: losing the server takes away access from outside, and never from inside the house.
+on it: losing the server takes away access from outside, and never from inside the LAN.
 
 **Every computer is host and client.** It is a single install, with a single
 identity, that serves its own screen and opens others'. The list of
@@ -118,7 +118,7 @@ Not migrated on purpose: `~/.local/state/`. The updater's `estado.json` is
 rewritten on the next tick, and its `anterior/` is a rollback copy of
 binaries named `logid`/`logistream-*` -- restoring those would roll back to
 something no supervisor launches. The Ubuntu updater ran with no state at all
-and answered `mais-novo-aqui`: it compares `/healthz` against the Release, not
+and answered `mais-novo-aqui` ("newer here"): it compares `/healthz` against the Release, not
 its own memory, so a lost state file cannot make it downgrade.
 
 It goes in its own PR, after pairing phase A is live.
@@ -127,8 +127,8 @@ It goes in its own PR, after pairing phase A is live.
 
 1. **Key-based pairing.** It applies in every scenario, including today's
    Tailscale.
-2. **Path telemetry**, to measure how much falls back to relay: at home, on 4G
-   and outside.
+2. **Path telemetry**, to measure how much falls back to relay: on the LAN, on 4G
+   and from other networks.
 3. **A rendezvous and relay binary** (`oxdesk-encontro`), which we host
    and which other people can host too.
 4. **Cloudflare only as a hosting option**, and never as a dependency.
@@ -177,7 +177,7 @@ period of observation, as the `observe` → `enforce` lesson says.
 
 | Phase | Host | Client |
 |---|---|---|
-| **A, observe** | Presents the persistent identity. Asks for the client certificate, without requiring it, and logs `cliente <digital> autorizado/desconhecido/sem certificado` | Presents the identity. Checks the host fingerprint when there is `OXDESK_PIN` and refuses if it does not match. Without `OXDESK_PIN`, it carries on as today and warns in the log |
+| **A, observe** | Presents the persistent identity. Asks for the client certificate, without requiring it, and logs `cliente <digital> autorizado/desconhecido/sem certificado` ("client <fingerprint> authorized/unknown/no certificate") | Presents the identity. Checks the host fingerprint when there is `OXDESK_PIN` and refuses if it does not match. Without `OXDESK_PIN`, it carries on as today and warns in the log |
 | **B, pin** | Same as phase A | `oxdesk` passes the fingerprint over SSH. Without a fingerprint, the panel does not open the session |
 | **C, require** | Refuses clients without a certificate and clients not on the list | Same as phase B |
 
@@ -196,7 +196,8 @@ machines.
   peer that serves screens and adds itself to that peer's list, every time. Without this
   the KVM and the native viewer, which never pass through the panel, would be refused.
 - **The refusal reaches the person:** the TLS alert carries
-  `este computador (<fp>) nao esta autorizado neste host`.
+  `este computador (<fp>) nao esta autorizado neste host` ("this computer (<fp>)
+  is not authorized on this host").
 - **Proven on each host** with a session from an authorized machine (video arrived) and a
   client with a throwaway identity (refused with the message above). Before switching,
   the host logs showed only `authorized` connections.
@@ -279,7 +280,7 @@ The cost is relay bandwidth. Signaling is negligible.
 
 | Option | Bandwidth | Note |
 |---|---|---|
-| VPS in São Paulo | a few TB included | Cheap, but we operate it |
+| A regional VPS | a few TB included | Cheap, but we operate it |
 | Cloudflare (Realtime TURN) | ~1 TB free/month, then ~US$ 0.05/GB | No operations; price to be checked before deciding |
 | AWS sa-east-1 | ~US$ 0.15/GB | Expensive for video |
 | Hetzner, DigitalOcean | cheap bandwidth | No region in Brazil: adds latency |

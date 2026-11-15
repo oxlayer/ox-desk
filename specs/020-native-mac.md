@@ -117,17 +117,17 @@ before someone tries to support an older Mac.
 ## Measured so far (2026-11-08)
 
 **Step 1 passed.** `oxdesk-probe-mac-native`, hand-written FFI, no media
-crate:
+crate (Portuguese words in its output translated as `#` comments):
 
 ```
 CVPixelBuffer: ok, stride 5120
-VTCompressionSession: criada
+VTCompressionSession: criada                  # created
 parameter set 0: 16 bytes, nal_type 7 (SPS), length prefix 4 bytes
 parameter set 1: 4 bytes, nal_type 8 (PPS)
-callback: 1 chamada(s), OSStatus 0
+callback: 1 chamada(s), OSStatus 0            # 1 call(s)
 access unit: 18231 bytes
-nal 0: tipo 6 (SEI), 30 bytes
-nal 1: tipo 5 (IDR slice), 18193 bytes
+nal 0: tipo 6 (SEI), 30 bytes                 # type 6
+nal 1: tipo 5 (IDR slice), 18193 bytes        # type 5
 ```
 
 So the encoder half is settled: `h264_videotoolbox` is a wrapper and the
@@ -146,13 +146,13 @@ Capture and encode are therefore proved together.
 First the grant: `ScreenCaptureKit` answered `-3801 The user declined TCCs
 for application, window, display capture` from three places -- a fresh
 probe binary, `oxdesk-host --probe-nativo` over SSH, and `oxdesk-host`
-launched by a LaunchAgent inside the graphical session. The owner then
-granted Screen Recording by hand, and the whole native chain ran:
+launched by a LaunchAgent inside the graphical session. Screen Recording
+was then granted by hand at the machine, and the whole native chain ran:
 ScreenCaptureKit handed a `CVPixelBuffer` straight to VideoToolbox and an
 H.264 access unit came out, with no FFmpeg and no Homebrew anywhere in it.
 
-Then, the same day, **the reference MacBook fell and its panel broke** --
-and not only the glass. Measured over SSH, three ways that agree:
+Then, the same day, **the reference Mac lost its built-in display.**
+Measured over SSH, three ways that agree:
 
 | Question | Answer |
 |---|---|
@@ -171,7 +171,7 @@ restores one; there is no software display on macOS, unlike Windows
 Sequoia's high-performance screen sharing is reported to fail without
 one).
 
-Two things came out of that accident and are worth more than the delay.
+Two things came out of that incident that matter more than the delay.
 
 **One: the wizard would have called that Mac healthy.** Screen Recording
 granted, binary signed, LaunchAgent loaded, zero frames servable, and not
@@ -186,24 +186,54 @@ belonged to a different account, so uid 501's five installed LaunchAgents
 could not run, and `launchctl print`'s error does not say that. The
 `daemon` step now names who holds the console.
 
-One thing already learned in favour of the native path, by accident:
+One point already learned in favour of the native path, incidentally:
 ScreenCaptureKit **returns a loud error** where AVFoundation, per
 [[../.claude/rules/graphical-session]], simply *hangs* without the grant --
 "macOS is the worst of the three, because it doesn't fail". The native API
 fails. That is worth more than it sounds for a wizard that has to tell
 someone what is wrong.
 
+## Measured on GitHub's macOS runner (2026-11-15)
+
+With the repository public, macOS runners cost nothing, so the probes ran
+where a display does exist: an Apple virtual machine (`VirtualMac2,1`,
+Apple M1 virtual, 7 GB, macOS 15.8.2) with a 1024x768 virtual display. The
+workflow is [`mac-native-probe.yml`](../.github/workflows/mac-native-probe.yml),
+run by hand or by a pull request that touches the Mac capture code.
+
+| Probe | Result |
+|---|---|
+| `oxdesk-probe-mac-native`: VideoToolbox alone | SPS 11 B, PPS 4 B, one 14,065-byte access unit (SEI + IDR), callback `OSStatus 0` |
+| `oxdesk-probe-mac-capture`: ScreenCaptureKit to VideoToolbox, fresh binary | 1 display, `CVPixelBuffer` 1024x768 straight to the encoder, 9,749 bytes of H.264 in 814 ms |
+| `oxdesk-host --probe-native`: the same chain from the host | 9,800 bytes in 387 ms |
+
+Capture works with no one granting anything, because the runner image
+already holds Screen Recording for `/bin/bash` (`auth_value 2` in both TCC
+databases), and the probes run as its children. VideoToolbox logs
+`IOServiceMatchingfailed for: AppleM2ScalerParavirtDriver` and encodes
+anyway.
+
+**What this changes:** steps 2 to 4 can be written and checked in CI while
+the reference Mac has no display: the encoder behind a flag, the decoder,
+and the capture, each with a functional check (the NAL types come out, the
+frame decodes, the sizes match).
+
+**What it does not change:** the performance comparison in step 2 (fps,
+p50/p95 and bitrate against the FFmpeg path) is about the reference
+hardware, and a virtual GPU is not that hardware. That check still waits
+for step 1c.
+
 ## Order of work
 
 1. **A probe, like `mac-probe` was for FFmpeg.** **Done** — see above.
    *Check:* the probe prints the NAL types of one encoded frame.
 1b. **Grant Screen Recording to `oxdesk-host`** in System Settings, which
-   is also what makes the Mac a screen host again. Only the machine's
-   owner can do it ([[019-one-onboarding]], the floor). **Done** -- the
+   is also what makes the Mac a screen host again. Only a person at the
+   machine can do it ([[019-one-onboarding]], the floor). **Done** -- the
    grant was given and the chain produced a frame.
 1c. **Attach a display.** Not a step anybody planned, and now the one that
-   blocks the measurement: a broken panel means zero active displays and
-   nothing to capture. *Check:* the wizard's `display` step says
+   blocks the measurement: without its built-in display the Mac has zero
+   active displays and nothing to capture. *Check:* the wizard's `display` step says
    `N active display(s)`.
 2. **Encoder behind a flag**, same frames in, both paths measured.
    *Check:* a table of fps, p50/p95 and bitrate for both, on the

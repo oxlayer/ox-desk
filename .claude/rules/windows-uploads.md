@@ -48,12 +48,12 @@ evidence.
 
 ## What the code does about it now
 
-- Every upload goes through `envia()`, which clears the staging path
+- Every upload goes through `send()`, which clears the staging path
   **immediately before its own `scp`** rather than once at the top of the
   section. Cleaning at the top was tried and only moved the failure to a
   later step, which is itself evidence that whatever leaves the file does
   it *during* the run.
-- When an upload fails, `envia()` asks the machine what is there — the
+- When an upload fails, `send()` asks the machine what is there — the
   most recent `.exe` files with size and time, and the running `oxdesk*`
   processes — and prints it with the error. The next occurrence produces
   evidence instead of a sentence with no filename.
@@ -67,8 +67,8 @@ evidence.
    environment and not from the code.
 2. **Measure before writing the cause into a comment.** The claim that the
    SFTP server refuses to overwrite sat in `deploy.sh` long enough to be
-   quoted as fact, including by me. It cost an afternoon of chasing the
-   wrong thing.
+   quoted as fact, including during this investigation. It cost an
+   afternoon of chasing the wrong thing.
 
 ## See also
 

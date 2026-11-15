@@ -57,13 +57,15 @@ machine:
 ```
 erro: o GitHub respondeu: Not Found (repo privado sem token:
       ponha um PAT de leitura em ~/.config/oxdesk/ota-token)
+#  error: GitHub answered: Not Found (private repo without a token:
+#         put a read-only PAT in ~/.config/oxdesk/ota-token)
 ```
 
 Exit code 1, so it fails loudly — the token is still load-bearing while
 the Releases are private, and deleting the plumbing today would stop OTA
 on all three machines.
 
-The good news is that it is a deletion and not a redesign: the token is
+It is a deletion and not a redesign: the token is
 `Option<String>` the whole way down (`apply::read_token` →
 `exec::api`/`exec::download` → `exec::token_config`, which already returns
 `None` for absent and for blank). What goes, once public:
@@ -77,7 +79,7 @@ The good news is that it is a deletion and not a redesign: the token is
 | Documenting it | section 1 of [[../.claude/skills/enable-ota]], and the token part of [[015-ota]] |
 
 *Check:* an OTA run on a machine with **no token file at all** answers
-`igual` instead of `Not Found`.
+`igual` ("same") instead of `Not Found`.
 
 ## What "publishable" means
 
@@ -192,12 +194,12 @@ The spread, by file:
 
 | Identifier | Files | Where |
 |---|---:|---|
-| `ubuntu-host` | 22 | 9 specs, 5 `oxdesk`, 2 `stream`, scripts |
-| `windows-host` | 20 | 8 specs, 7 `oxdesk`, README |
-| `windows-host` | 14 | scripts, specs |
-| `/home/user` | 9 | 6 `oxdesk`, README, gui |
-| `C:\Users\user` | 6 | |
-| `/Users/user` | 4 | |
+| The Ubuntu machine's hostname | 22 | 9 specs, 5 `oxdesk`, 2 `stream`, scripts |
+| The Windows machine's hostname | 20 | 8 specs, 7 `oxdesk`, README |
+| The Windows machine's SSH alias | 14 | scripts, specs |
+| Linux home-directory path | 9 | 6 `oxdesk`, README, gui |
+| Windows home-directory path | 6 | |
+| macOS home-directory path | 4 | |
 
 The split decides the work: in **specs** these names are evidence — a real
 machine on a real day is what makes a measurement worth reading, and
@@ -244,8 +246,8 @@ Written down so nobody repeats the search:
   233 commits for `ghp_`, `github_pat_`, `gh[osu]_`, `BEGIN … PRIVATE KEY`,
   `AKIA…`, `xox[baprs]-` and `AIza…`: nothing.
 - **No leakage from unrelated work.** No other client, product or
-  credential store appears. The 32 files matching a short name are `interface`
-  and `surface`.
+  credential store appears. The hits for short names were all inside
+  longer words, and were resolved one by one.
 - **The workflow holds no secrets.** Only `${{ github.token }}`, and the
   release job is gated on `startsWith(github.ref, 'refs/tags/v')`.
 - **No private keys and no tailnet names committed.** Only the two public
@@ -454,9 +456,9 @@ a measurement.
    (`ec113c4` code, `5a094c0` scripts), leaving the specs as the record
    under an alias. Prose became the role ("the Windows machine"), literals
    became `linux-pc` / `windows-pc` / `the-mac`, fixtures became `alice`.
-   Two were not text: a systemd unit the wizard WRITES carried
-   `file:///home/<me>/dev/...`, and `oxdesk-view` with no argument
-   defaulted to one of our hosts. The scripts' ssh aliases moved to a
+   Two were not text: a systemd unit the wizard WRITES carried a
+   home-directory path (`file:///home/<user>/dev/...`), and
+   `oxdesk-view` with no argument defaulted to one of our hosts. The scripts' ssh aliases moved to a
    gitignored `scripts/targets.sh` (with `targets.example.sh` committed),
    the deploy REFUSES with no target, the Windows `scp` paths became
    relative to the ssh user's home, and the two firewall scripts now
@@ -465,7 +467,8 @@ a measurement.
    untracked `targets.sh`.
 5b. **Reissue the Windows signing certificate. Staged 2026-11-11, one
    step left.** Its subject is `CN=logi (assinatura local), O=infra
-   pessoal` — the old name, in Portuguese, saying "personal infra" — and
+   pessoal` — the old name, in Portuguese, saying "local signing" and
+   "personal infra" — and
    it is **embedded in every Windows binary we publish**, valid until
    2031. Windows shows the publisher name in its own dialogs, so this is
    user-visible text, not metadata.
@@ -487,7 +490,7 @@ a measurement.
    The ordering is now enforced rather than remembered: `--activate`
    **asks Windows** whether it holds the staged thumbprint and refuses
    otherwise, because signing with a publisher that machine has never seen
-   restarts the Defender race that has already eaten the `.exe` twice. The
+   restarts the Defender race that has already deleted the `.exe` twice. The
    old key keeps signing until then, so a deploy today is unaffected. The
    outgoing pair is kept, not deleted — `osslsigncode verify -CAfile`
    needs the certificate that actually signed a binary.
@@ -540,7 +543,7 @@ a measurement.
      rename needs that deploy, which today means the Mac.
 
      *Checked:* 164 tests green plus the full cross build, and the live
-     migration measured on this machine — `~/.local/state/oxdesk-ota/estado.json`
+     migration measured on the Ubuntu machine — `~/.local/state/oxdesk-ota/estado.json`
      held `"resultado": "mais-novo-aqui"` and the new binary read it.
 
      **A bug fell out of it.** `oxdesk-host` printed `acessibilidade: ok`
@@ -566,8 +569,8 @@ a measurement.
      reader turned out to be exactly one file,
      `.claude/skills/deploy.md`, which moved in the same commit. The
      comment now names it: a prohibition without a reason is one somebody
-     steps over, and I had already stepped over it before reading the
-     line.
+     steps over, and this sweep had already stepped over it before the
+     line was read.
 
      *The sweep also broke something*, which is why 6f exists below:
      it rewrote `erro` and `novo` INSIDE a `grep -E` pattern in
@@ -578,7 +581,8 @@ a measurement.
    - 6f. **The error messages of the Rust crates.** 128 strings that 6b
      did not reach, because 6b was scoped to `main.rs` and `hidpp`:
      `"criar {dir}"`, `"gravar o pin"`, `"ler a identidade local"`,
-     `"o arquivo nao esta mais la"`, and the whole of `ota/` (`apply.rs`,
+     `"o arquivo nao esta mais la"` ("create {dir}", "write the pin",
+     "read the local identity", "the file is no longer there"), and the whole of `ota/` (`apply.rs`,
      `exec.rs`, `plan.rs`, `release.rs`, `state.rs`). They reach a person
      through the API's `message` field, the wizard and the logs, so they
      are the slice a contributor reads most. Found on 10/11 while sizing
@@ -619,9 +623,9 @@ a measurement.
     and **that file was not in the repository**. With `set -euo pipefail`
     the install aborted there, after copying the binary and before the
     service, the hidraw ACL and the GSConnect step. The unit is now
-    tracked, rebuilt from the one running on this machine minus the two
-    things that cannot be published: a Portuguese description and
-    `Documentation=file:///home/<user>/dev/oxdesk/...`, a personal path
+    tracked, rebuilt from the one running on the Ubuntu machine minus the
+    two things that cannot be published: a Portuguese description and a
+    `Documentation=file:///home/<user>/...` line, a home-directory path
     that `no-personal-data` forbids. `KillMode=process` carries its
     reason with it — restarting the daemon must not take down an
     `oxdesk-kvm` holding someone's keyboard.
@@ -634,8 +638,8 @@ a measurement.
     reports missing binaries. Either `install.sh` grows to the full set
     with the full dependency check, or it says plainly that it installs
     the control plane only and points at `scripts/deploy.sh` for the
-    rest. Neither can be verified from here — it needs a machine that
-    has never had oxdesk on it.
+    rest. Neither can be verified on the reference deployment — it needs
+    a machine that has never had oxdesk on it.
 
 10. **Flip visibility; enable secret scanning and push protection.**
     *Check:* a tag build runs the macOS job with US$ 0.00 billed — the
@@ -683,7 +687,7 @@ That commit is not reachable from `main`. Which is the point:
 | `main` | **35 commits** |
 | `v0.2.8`, the newest tag | **229 commits**, and **not an ancestor of `main`** |
 | On the remote right now | **13 branches + 11 tags** |
-| In that other lineage | **14 commits** touching `/home/user`, **69** touching `logistream` |
+| In that other lineage | **14 commits** touching home-directory paths, **69** touching `logistream` |
 
 The squash produced a clean `main`. It did not remove anything from the
 remote: the pre-squash, pre-rename history is still there, carried by the
@@ -691,11 +695,11 @@ tags and the stale branches, and **flipping visibility publishes all of
 it** — including the paths and the old name the cleanup existed to leave
 behind. A clean `main` in front of that is a facade.
 
-Scale honestly: the scanner says this 275-commit universe holds exactly
+In proportion: the scanner says this 275-commit universe holds exactly
 one low-severity secret, and the author's own name is already on every
 commit of `main`, so "personal data" here means usernames in old paths
-rather than anything newly disclosed. The exposure is embarrassment and
-a broken promise, not a breach.
+rather than anything newly disclosed. The exposure is reputational, and
+a promise of the cleanup broken; it is not a breach.
 
 ### The decision, which is not a technical one
 
@@ -717,6 +721,57 @@ step. **B** buys the least for the most.
 
 Whichever it is, it has to happen **before** step 10, not after: a
 repository cannot be made public twice.
+
+## Outcome (2026-11-15)
+
+**Option A would not have worked, for a reason the table above did not
+know: GitHub does not let anyone delete `refs/pull/N/head`.** All 28 pull
+requests had their heads in the pre-squash lineage. Deleting the branches
+and tags would have left those refs fetchable, and the pull request pages
+readable with their diffs, by anyone once the repository was public. Only
+GitHub Support can remove a pull request.
+
+So the route was C, with one change: the full history was kept, not only
+`main`, because the commit dates are the record of the work.
+
+1. **The original repository became the archive.** Renamed to
+   `oxlayer/ox-desk-archive`, it stays private, with the unscrubbed history,
+   pull requests #1–#29 and Releases v0.1.0–v0.2.8.
+2. **A new repository took the name `oxlayer/ox-desk`**, because the
+   updater has it compiled in ([`ota/src/apply.rs`](../ota/src/apply.rs)).
+   Until a Release exists there, OTA reads a 404, stops with "GitHub
+   answered: Not Found" and swaps nothing.
+3. **Its history is the old one, scrubbed.** `main` was grafted back onto
+   the 240 pre-squash commits, one line of 288 commits from 2026-11-03, and
+   every commit kept its author, dates and subject (compared commit by
+   commit). `git-filter-repo` then rewrote every file version and message,
+   removing the portal restore token, the two SSH public keys that scripts
+   used to authorize, home-directory paths, and one personal account
+   address. Checked from a fresh clone of GitHub, with the archive as the
+   control: each removed item is present in the old history and absent from
+   all 288 new commits.
+4. **Two commits on top**, before the push: the hashes cited in specs were
+   remapped to the rewritten commits, and `BUILD_BASE` went to 0 (see
+   [History](#history-rotated-first-then-squashed)).
+5. **Only `main` and the 11 tags were pushed**, with Actions disabled until
+   the flip. More than three tags in one push create no workflow events, so
+   no old Release was rebuilt.
+6. **Then the flip**, with secret scanning, push protection and private
+   vulnerability reporting turned on.
+
+**Step 10's check passed.** The first public build (Linux, Windows and
+macOS) billed US$ 0.00 net: 7 Linux minutes and 6 macOS minutes, both
+discounted in full. It ran with the organization's allowance exhausted and
+its spending limit at US$ 0, the two conditions that had stopped every run
+since 2026-11-08.
+
+**One thing learned at the first pull request.** The CLA gate exempts
+members by `author_association`, and GitHub reports a member whose
+organization membership is private as `CONTRIBUTOR` in workflow events.
+The gate refused the maintainer's first pull request for that reason, which
+is the correct direction to fail in. The membership was made public, and
+[[../CONTRIBUTING]] now says that members need public membership for the
+exemption.
 
 ## See also
 

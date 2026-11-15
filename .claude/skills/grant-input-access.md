@@ -15,7 +15,7 @@ sudo udevadm trigger --subsystem-match=input
 ## Check
 
 ```bash
-test -r /dev/input/event17 && echo ok || echo "sem acesso"
+test -r /dev/input/event17 && echo ok || echo "no access"
 getfacl -p /dev/input/event17 | grep '^user:'
 # a line `user:<you>:rw-` must appear besides `user::rw-`
 ```
@@ -30,11 +30,11 @@ away when the session ends. Joining the `input` group would give
 permanent access to **all** input devices, to any process of the
 account, even with the session closed — a free passive keylogger.
 
-Practical bonus: `uaccess` takes effect at `udevadm trigger` time; a new
-group only takes effect in a new session (you have to log out).
+A practical benefit: `uaccess` takes effect at `udevadm trigger` time; a
+new group only takes effect in a new session (you have to log out).
 
-The `046d` filter is Logitech, on purpose: it's not meant to open the
-laptop keyboard or the webcam. A new device in the KVM = add its
+The `046d` filter is Logitech, on purpose: the rule is not meant to open
+the laptop keyboard or the webcam. To add a new device to the KVM, add its
 `idVendor` explicitly.
 
 ## Find the devices

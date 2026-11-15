@@ -6,8 +6,8 @@ Implemented in Rust in [`oxdesk/`](../oxdesk/). The Python prototype
 
 ## Symmetric: every node is a peer, none is central
 
-**Decision of 2026-11-03, by the user:** with the daemon running, *any*
-machine can become the host; what decides is where the person is sitting.
+**Decision of 2026-11-03:** with the daemon running, *any* machine can
+become the host; what decides is where the person is sitting.
 
 The first version of this spec said "on Ubuntu it runs as the control plane,
 on Windows as an agent". That was wrong for two reasons:
@@ -16,8 +16,9 @@ on Windows as an agent". That was wrong for two reasons:
    issue `ChangeHost` ([`005`](005-input-switch.md#discovered-constraint-only-the-holder-of-the-device-can-push-it)).
    A central node that does not have the device cannot move anything — it can
    only *ask*.
-2. **There are three machines**, not two: Ubuntu, Windows and a MacBook on
-   channel 3. Electing one as central is arbitrary.
+2. **There are three machines**, not two, in the reference deployment:
+   Ubuntu, Windows and a MacBook on channel 3. Electing one as central is
+   arbitrary.
 
 ### The model
 
@@ -33,21 +34,21 @@ matters is derived, not configured:
 Asking for focus is therefore a **forward**, not a command:
 
 ```
-me (any node)  --asks-->  current holder  --ChangeHost-->  target
+requester (any node)  --asks-->  current holder  --ChangeHost-->  target
 ```
 
-If I am already the holder, the forward is local. If I am the target,
-I am asking to be handed the device. If I am neither, I am just the
-intermediary — and that is legitimate: the GUI on any machine must be able
-to move focus between the other two.
+If the requesting node is already the holder, the forward is local. If it
+is the target, it is asking to be handed the device. If it is neither, it
+is just the intermediary — and that is legitimate: the GUI on any machine
+must be able to move focus between the other two.
 
 ### Transport between peers: SSH
 
 It stays SSH, for symmetry and because it already works
 ([`002`](002-ssh.md)): no new port, no new auth, and macOS already ships
 sshd. **Open item:** Ubuntu does not have sshd yet — today it only dials
-out. For the symmetry to hold, `openssh-server` here goes into the
-bootstrap.
+out. For the symmetry to hold, `openssh-server` on the Ubuntu machine goes
+into the bootstrap.
 
 > Discarded alternative: our own LAN protocol with mTLS. It would mean
 > reimplementing what SSH already delivers, and multiplying surface — see
@@ -68,10 +69,10 @@ an aspiration: the daemon only compiled on Linux. Windows had
 `oxdesk-agent`, a one-shot CLI, with no API, no tray, no window — and
 the Ubuntu GUI reached the other machine over SSH, calling the CLI by hand.
 
-The user noticed through the gap this leaves: *"why is there no GUI and
-taskbar shortcut on Windows, only here on Ubuntu?"*. The answer is that the
-**switch** became symmetric (`watch-edge` gave Windows the edge) but the
-**control plane** did not. Whoever was sitting at Windows had no panel.
+The gap surfaced as a report: Windows had no GUI and no taskbar shortcut;
+only the Ubuntu machine did. The reason is that the **switch** became
+symmetric (`watch-edge` gave Windows the edge) but the **control plane**
+did not. Whoever was sitting at Windows had no panel.
 
 ### What actually tied it to Linux
 
@@ -126,11 +127,11 @@ time equal to uptime. The rest of the daemon works there; only the edge does not
 
 It was implicit — `addr = "127.0.0.1"` and free text in `role` saying
 "this PC". The Windows dead-man's switch needs to know where to
-return the device to, and "the host that is not me" requires knowing who I
-am. Hence `local` in `[[hosts]]`, optional, with the loopback heuristic
-as a fallback for configs that already exist.
+return the device to, and "the host that is not me" requires each node to
+know which host it is. Hence `local` in `[[hosts]]`, optional, with the
+loopback heuristic as a fallback for configs that already exist.
 
-While writing this, a second reading of the same criterion showed up:
+During this change, a second implementation of the same criterion turned up:
 `follow.rs` had its **own** copy of `is_local`, which ignored the new
 flag. On a Windows box with `local = true` and a non-loopback address, `follow`
 and the edge would disagree about which machine is "me". The copy was removed and
@@ -148,13 +149,12 @@ in the user's session at login and does not ask for a stored password:
 schtasks /create /tn oxdesk /tr "%LOCALAPPDATA%\oxdesk\oxdesk.exe" /sc onlogon /it /f
 ```
 
-Verified: `pid 2356 sessão 1`, listening on 8787.
+Verified: `pid 2356 sessão 1` (session 1), listening on 8787.
 
-Before that I tried `Start-Process` over SSH. It started, answered `healthz` —
-and died together with the SSH session, because Windows OpenSSH kills the
-process tree on disconnect. It is the same principle as the
-`long-running-jobs` rule in the other repo: resident work does not live hanging
-off a session that goes away.
+An earlier attempt used `Start-Process` over SSH. It started, answered
+`healthz` — and died together with the SSH session, because Windows OpenSSH
+kills the process tree on disconnect. The general principle: resident work
+does not hang off a session that can go away.
 
 The binary is `windows_subsystem = "windows"`: without it a console window
 appears at every login and every time the GUI starts the daemon. It does not
@@ -171,19 +171,19 @@ config and does not find the daemon.
 
 > `npm install` did **not** download the Electron binary (13 packages in 5 s,
 > no `dist/`), despite `ignore-scripts = false`. Running `node
-> node_modules/electron/install.js` by hand fixed it. If the GUI there
+> node_modules/electron/install.js` by hand fixed it. If the GUI on Windows
 > stops opening after an `npm ci`, that is the first place to look.
 
 ### Session isolation also fools whoever is verifying
 
-I spent several rounds convinced that the GUI window did not open:
-`MainWindowHandle` came back `0` for the four Electron processes, and my
-`EnumWindows` found no window at all. The conclusion was wrong.
+Several rounds of verification concluded that the GUI window did not open:
+`MainWindowHandle` came back `0` for the four Electron processes, and an
+`EnumWindows` call found no window at all. The conclusion was wrong.
 
 `EnumWindows` only enumerates windows of the **window station of the caller's
-session**, and my SSH is in session 0. `MainWindowHandle`, from .NET, uses the
-same mechanism. It was not the window that did not exist — it was me looking from
-the wrong place, exactly the trap this spec already documented for
+session**, and the verifying SSH session was in session 0. `MainWindowHandle`,
+from .NET, uses the same mechanism. The window existed; the check was looking
+from the wrong place — exactly the trap this spec already documented for
 `GetCursorPos`, now applied to *verification*.
 
 What actually proved the GUI works was the renderer's stderr: a
@@ -213,8 +213,8 @@ Two pieces were missing, and neither was loosening the check:
    [`hidpp/src/protocol.rs`](../hidpp/src/protocol.rs), shared
    by both binaries: it is the contract *between the machines*, the worst
    possible place for two copies. (It was `survey()` inside the agent; the second
-   copy would diverge and show up as "agente nao respondeu JSON" in a log,
-   far from the cause.)
+   copy would diverge and show up as "agente nao respondeu JSON" ("agent did
+   not respond with JSON") in a log, far from the cause.)
 2. **`sshd` on Ubuntu**, via [`scripts/enable-sshd.sh`](../scripts/enable-sshd.sh),
    key-only and for a single user.
 
@@ -228,6 +228,10 @@ Windows side**:
        'MX Anywhere 3' esta offline aqui -- ja esta em outro canal
 ```
 
+(Output: `[ok]` dead-man's switch on the target — the agent responds; devices
+there: slot 1 (channel 1/3), slot 2 (channel 1/3). `[BLOQ]` (blocked) device
+ownership — 'MX Anywhere 3' is offline here, it is already on another channel.)
+
 The remaining blocks are the **right** ones: only whoever holds the device can
 push it, and at that moment it was on Ubuntu.
 
@@ -235,9 +239,9 @@ With that, `watch-edge` was retired — shortcut removed from
 `shell:startup`, processes terminated — and `[input.border]` turned on on
 Windows. The reconciler (`[input.follow]`) was left **off** there on
 purpose: it is one reconciler, not two. Ubuntu's already covers both
-machines, acting directly when the device is there and asking over SSH
-when it is here; turning both on would make both reach the same conclusion and
-act twice.
+machines, acting directly when the device is on Ubuntu and asking over SSH
+when it is on Windows; turning both on would make both reach the same
+conclusion and act twice.
 
 ### The host needs to declare its OS
 
@@ -250,7 +254,8 @@ detail is decoration and the agent probe already degrades to "did not respond".
 Hence `os = "windows" | "linux" | "macos"` in `[[hosts]]`, with inference
 for configs that already existed. On Unix the command goes with single quotes
 and without the `&` — which there would mean *background* and return an empty
-success, read as "agente nao respondeu JSON".
+success, read as "agente nao respondeu JSON" ("agent did not respond with
+JSON").
 
 ## API
 
@@ -259,7 +264,7 @@ Prefix `/api`. JSON everywhere. Always on `127.0.0.1` (see
 
 | Method | Route | Purpose |
 |---|---|---|
-| `GET` | `/healthz` | alive? Does **not** touch the network — it exists because the 800 ms health check was hitting `/api/status`, which takes 2 s. A real mistake already made. |
+| `GET` | `/healthz` | alive? Does **not** touch the network — it exists because the 800 ms health check was hitting `/api/status`, which takes 2 s. This mistake was made once. |
 | `GET` | `/api/hosts` | machines, state, services |
 | `GET` | `/api/hosts/{id}` | detail (uptime, RAM, HID devices) |
 | `POST` | `/api/hosts/{id}/focus` | **switch focus to this machine** — see [`005`](005-input-switch.md) |
@@ -288,7 +293,7 @@ we reference them by path.
 
 Each integration is a module with the same shape: `probe()`, `read()`,
 `apply()`. No external tool called directly from a handler —
-same reason as the [pure functions](../CLAUDE.md) rule in the other repo: the
+for the same reason: the
 handler resolves IDs, the adapter does I/O, the decision is a testable pure
 function.
 
@@ -316,8 +321,7 @@ Node and nothing opens. `run.sh` and `npm start` clear the variable.
 1. **Idempotent.** Every `apply` route can be called twice.
 2. **Say where the value came from.** `/api/config` returns the origin along
    with the value — default, file, or discovered.
-3. **Never write an IP.** See [`007`](007-device-routing.md) and the
-   *"O IP muda"* ("The IP changes") section of the README.
-4. **Fail loudly.** The other repo's `langfuse` taught us: a `catch`
-   that swallows an error costs hours. If an adapter did not find the tool,
-   that shows up in the API and in the GUI.
+3. **Never write an IP.** See [`007`](007-device-routing.md).
+4. **Fail loudly.** A `catch` that swallows an error costs hours of
+   diagnosis. If an adapter did not find the tool, that shows up in the API
+   and in the GUI.

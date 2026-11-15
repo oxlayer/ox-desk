@@ -24,10 +24,10 @@ That eliminates half the options before starting:
 
 | Tool | Carries our UDP? | Path |
 |---|---|---|
-| Cloudflare Tunnel (`cloudflared`) | ❌ TCP/HTTP only | — |
-| Cloudflare Mesh (formerly WARP Connector) | ✅ TCP/UDP/ICMP | **relay through the Cloudflare edge** |
-| Tailscale | ✅ | direct between peers; relay (DERP) only when NAT prevents it |
-| Plain WireGuard | ✅ | direct, but **no NAT traversal**: requires a reachable endpoint |
+| Cloudflare Tunnel (`cloudflared`) | no, TCP/HTTP only | — |
+| Cloudflare Mesh (formerly WARP Connector) | yes, TCP/UDP/ICMP | **relay through the Cloudflare edge** |
+| Tailscale | yes | direct between peers; relay (DERP) only when NAT prevents it |
+| Plain WireGuard | yes | direct, but **no NAT traversal**: requires a reachable endpoint |
 
 **Tailscale** was chosen. What decided it was not ease of use: it was the
 path. Every screen frame crosses the network 60 times per second, and
@@ -50,24 +50,24 @@ not as an oversight.
 ## The exposure this creates, and what was done
 
 The screen channel **encrypts and does not authenticate**. The client accepts any
-certificate (`AceitaQualquer`, in `stream/src/net.rs`, marked as
-temporary since it was written) and the host never asked the client for anything.
-Whoever reaches 9777 watches; whoever reaches 9778 types.
+certificate (`AceitaQualquer`, "accept anything", in `stream/src/net.rs`,
+marked as temporary since it was written) and the host never asked the
+client for anything. Whoever reaches 9777 watches; whoever reaches 9778 types.
 
-While the three machines stayed at home, "whoever reaches" was the home
+While the three machines stayed on one LAN, "whoever reaches" meant that
 LAN. **The MacBook leaving changes that**: on `0.0.0.0`, on a hotel Wi-Fi,
 it serves screen and keyboard to the whole hotel network.
 
 ### Done: `--bind`
 
 ```
-oxdesk-host [porta] [tela] [--bind todas|overlay|<endereço>] [--mbps N]
+oxdesk-host [port] [screen] [--bind todas|overlay|<address>] [--mbps N]
 ```
 
-- `todas` (all, the default) — `0.0.0.0`, exactly as always. No machine
+- `todas` ("all", the default) — `0.0.0.0`, exactly as always. No machine
   changes behavior without someone asking.
 - `overlay` — only the overlay address.
-- `<endereço>` (address) — by hand.
+- `<address>` — by hand.
 
 Two decisions the code enforces, each with a test that breaks if
 someone "improves" it:
@@ -96,8 +96,9 @@ The bitrate target scales with the area (~8 Mbps at 1080p, ~15 at 1440p,
 ~28 on Retina). The formula was **duplicated** — `nvenc.rs` and, by hand,
 `host_mac.rs` — and now lives in `quality.rs`, with a test.
 
-**Measured:** the home upload delivers ~136 Mbps (25 MB in 1.46 s against
-speed.cloudflare.com). That is, **the bottleneck is not on this end**: 15 Mbps
+**Measured:** the reference deployment's upload delivers ~136 Mbps (25 MB
+in 1.46 s against speed.cloudflare.com). That is, **the bottleneck is not on
+the host's end**: 15 Mbps
 goes out effortlessly. What squeezes is the other side — hotel Wi-Fi usually
 gives 10–50 Mbps of download, variable, with queueing.
 
@@ -111,15 +112,15 @@ the link gets worse mid-session, nothing reacts.
 
 The next step is to close the loop, and the signal already exists for free:
 `quinn` measures RTT, loss and congestion events on the path
-(`Connection::stats()`), and the host already counts `recusados` when
-congestion control refuses a datagram. Nothing consumes either
+(`Connection::stats()`), and the host already counts `recusados` (refused)
+when congestion control refuses a datagram. Nothing consumes either
 of them. Feeding that back into the encoder is, in one sentence, what Parsec's BUD
 does differently from ours.
 
 ## mDNS does not die, and this was measured
 
-A concern raised and **discarded by measurement**: on this machine `.local`
-names do not go through systemd-resolved.
+A concern raised and **discarded by measurement**: on the Ubuntu machine
+`.local` names do not go through systemd-resolved.
 
 ```
 hosts: files mdns4_minimal [NOTFOUND=return] dns
@@ -142,7 +143,7 @@ sudo tailscale up
 # Windows (done: MSI with TS_UNATTENDEDMODE=always)
 #   `always` keeps the tunnel up WITHOUT a logged-in user -- the machine
 #   stays reachable at the lock screen, which is the state it will be
-#   in when I want to reach it from outside.
+#   in when someone reaches it from outside.
 
 # check, on BOTH sides -- "direct" is a property of the pair
 bash scripts/check-overlay.sh
@@ -150,9 +151,9 @@ bash scripts/check-overlay.sh
 
 ## The test that counts
 
-Measuring "outside the LAN" from inside the house proves nothing. The only
+Measuring "outside the LAN" from inside the LAN proves nothing. The only
 honest test is **tethering the MacBook to a phone hotspot** (turning off the
-home Wi-Fi) and opening a real screen. What matters to measure there:
+LAN's Wi-Fi) and opening a real screen. What matters to measure there:
 
 - does `tailscale ping` say `direct` or `via DERP`? Relay = CGNAT on both
   sides; it works, but the screen feels it.

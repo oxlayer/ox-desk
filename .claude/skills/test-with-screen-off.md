@@ -1,8 +1,8 @@
 # Test the screen host with the screen off
 
-A regression that has already broken: with the video output turned off
-by power saving, the host started, accepted a client and **never sent a
-frame**. See [[../rules/windows-locked-screen]].
+A regression that has already happened once: with the video output
+turned off by power saving, the host started, accepted a client and
+**never sent a frame**. See [[../rules/windows-locked-screen]].
 
 The case only shows up when the machine has been left alone for a while
 — which is exactly when you want to reach it. That's why it's worth
@@ -19,14 +19,14 @@ session 0, where there is no desktop to turn off. Hence the task with
 $src = @"
 using System;
 using System.Runtime.InteropServices;
-public class Tela {
+public class Display {
   [DllImport("user32.dll")]
   public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 }
 "@
 Add-Type -TypeDefinition $src
 # HWND_BROADCAST=0xffff, WM_SYSCOMMAND=0x0112, SC_MONITORPOWER=0xF170, 2=turn off
-[Tela]::SendMessage([IntPtr]0xffff, 0x0112, [IntPtr]0xF170, [IntPtr]2) | Out-Null
+[Display]::SendMessage([IntPtr]0xffff, 0x0112, [IntPtr]0xF170, [IntPtr]2) | Out-Null
 ```
 
 ```powershell
@@ -48,17 +48,16 @@ cargo run --release --bin oxdesk-sink -- windows-host.local:9777 14
 ## 3. What passing looks like
 
 The `sink` must report frames (dozens in 14 s). And in the host log,
-`enviando quadro 0 CHAVE` right after `NVENC pronto` — **without** any
-`DuplicateOutput recusou` line and **without** `nenhum quadro em Ns`.
+`sending frame 0 KEY` right after `NVENC ready` — **without** any
+`DuplicateOutput refused` line and **without** `no frame in Ns`.
 
-If `nenhum quadro em 3s; acordando a tela` shows up, the watchdog saved
-the session but the startup wake-up failed — worth investigating,
+If `no frame in 3s; waking the screen` shows up, the watchdog saved the
+session but the startup wake-up failed. That is worth investigating,
 because the watchdog is a safety net, not the mechanism.
 
 ## 4. Clean up
 
-Leaving a task that turns off the screen on someone's machine causes
-confusion later:
+A leftover task that turns off the screen causes confusion later:
 
 ```powershell
 schtasks /delete /tn oxdesk-screen-off /f
