@@ -61,6 +61,12 @@ If you already have push access here you do not sign anything: being
 invited is the agreement, and a maintainer cannot grant themselves a
 licence to their own copyright.
 
+The check learns that from GitHub, which tells a workflow that someone is
+a member of the organization only when that membership is **public**. A
+member whose membership is private is reported as an outside contributor
+and asked to sign. Make the membership public (your GitHub profile,
+Organizations), or sign like anyone else.
+
 ## What you need to know about the hardware
 
 This is not a project you can try on one laptop, and a patch you cannot
@@ -90,7 +96,7 @@ negotiable:
 
 | Rule | In one line |
 |---|---|
-| [`no-personal-data`](.claude/rules/no-personal-data.md) | Nothing shipped identifies a person, a machine or a household. Specs may describe a real machine as evidence, under an alias; defaults may not, because the next user inherits them |
+| [`no-personal-data`](.claude/rules/no-personal-data.md) | Nothing in the tree identifies a person, a machine or a household. Specs keep their evidence and name machines by stable aliases (`ubuntu-host`, `windows-host`, `mac-host`); defaults never name one, because the next user inherits them |
 | [`no-secrets-in-source`](.claude/rules/no-secrets-in-source.md) | No credential, and no key a script will authorize on someone else's machine |
 | [`english-only`](.claude/rules/english-only.md) | Code, comments, commits, logs, errors, UI — one language |
 
