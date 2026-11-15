@@ -54,6 +54,8 @@ come and help shape them.
   use (Claude, Codex, Grok and more), from the same panel.
 - **A second brain:** Markdown notes with backlinks and a knowledge graph,
   next to the machines they are about.
+- **A helper that shows the way:** the mascot speaks up, in balloons that
+  tell you what to do next, and becomes the face of the AI agents.
 
 ## Get started
 
