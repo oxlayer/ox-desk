@@ -294,7 +294,7 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
 /// It was `ssh_detail` and required `h.ssh`, so the local machine went
 /// without: it has no SSH to itself. The card of whoever was looking at
 /// the panel showed no uptime or RAM, which is precisely the easiest card
-/// to check -- and the user noticed.
+/// to check -- and a person noticed it before any check did.
 ///
 /// What resolves local vs. remote is `remote::run`, which already existed
 /// for that. One path for both cases: the command is picked by the

@@ -73,7 +73,7 @@ fi
 sec "── Is mDNS still alive? ───────────────────────────"
 # The question exists because MagicDNS touches the system resolver, and
 # the config's `.local` names are how the machines find each other INSIDE
-# the house. If that breaks, the panel marks the others as dead while
+# the LAN. If that breaks, the panel marks the others as dead while
 # they sit a meter away.
 nota "nsswitch: $(grep -E '^hosts:' /etc/nsswitch.conf | sed 's/^hosts: *//')"
 ACHOU=0

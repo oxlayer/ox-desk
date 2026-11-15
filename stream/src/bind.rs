@@ -86,10 +86,10 @@ pub fn find_overlay(interfaces: &[(String, IpAddr)]) -> Result<IpAddr, String> {
     //
     // The first version required a single candidate and failed on every
     // real machine: Tailscale gives v4 **and** v6 on the same interface,
-    // and "found 2 overlay addresses" reached me from the real Windows
-    // box (Tailscale=fd7a:115c:a1e0::ab12:cd34 and Tailscale=100.88.10.20).
+    // and "found 2 overlay addresses" came from the reference Windows
+    // machine (one Tailscale v6 and one Tailscale v4 address).
     // In other words, `--bind overlay` would never have worked anywhere
-    // -- and the tests did not catch it because I wrote both cases with
+    // -- and the tests did not catch it because both cases were written with
     // two INTERFACES, which is the rare case, instead of one interface
     // with both families, which is the normal case.
     //
@@ -231,7 +231,7 @@ mod tests {
         let ifs = [
             i("Tailscale", "fd7a:115c:a1e0::ab12:cd34"),
             i("Tailscale", "100.88.10.20"),
-            i("Ethernet", "192.168.1.42"),
+            i("Ethernet", "192.168.1.50"),
         ];
         assert_eq!(find_overlay(&ifs).unwrap(), "100.88.10.20".parse::<IpAddr>().unwrap());
     }

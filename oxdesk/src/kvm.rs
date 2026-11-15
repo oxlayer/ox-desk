@@ -145,11 +145,9 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     // holding the keyboard now: the source.
     //
     // Without this the click failed silently and the only way back was the
-    // two-Ctrl rescue. The user reported exactly that: "tentei clicar no
-    // tray do windows para mandar para linux-pc e nao voltou, so
-    // funcionou apertando dois ctrl" ("I tried clicking the Windows tray
-    // to send to linux-pc and it did not come back, it only worked
-    // pressing two ctrl").
+    // two-Ctrl rescue. That is how it was reported: a click on the Windows
+    // tray to send the keyboard to the Linux machine did nothing, and only
+    // the double Ctrl brought it back.
     if !cfg!(target_os = "linux") {
         return ask_to_release(h).map(|()| format!("asked {host} to take the input back"));
     }

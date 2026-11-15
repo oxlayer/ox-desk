@@ -28,8 +28,8 @@
 //! Mutter delivers discrete events, so on the Linux side dwell is
 //! **density**: `hold_hits` activations within `hold_window_ms`. Here we
 //! measure **continuous** contact, which is what polling actually sees.
-//! The translation is: `hold_hits <= 1` means switch on first touch (what
-//! the user asked for), and above that we require staying on the edge for
+//! The translation is: `hold_hits <= 1` means switch on first touch (the
+//! reference deployment's choice), and above that we require staying on the edge for
 //! `hold_window_ms`. Same intent, different signals.
 
 use crate::config::Config;

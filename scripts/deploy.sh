@@ -477,8 +477,8 @@ if ($got -ne $expected) {
 # There used to be a .cmd here just to redirect output, because schtasks
 # is not a shell. The price was a visible console window in the
 # interactive session -- right in the middle of the screen someone is
-# watching. The user reported it as "that terminal that opens when
-# connecting to the screen".
+# watching. It was reported as a terminal window that opened whenever
+# someone connected to the screen.
 #
 # Now the host is `windows_subsystem = "windows"` (as oxdesk already was)
 # and redirects its own output to the same log file before the first

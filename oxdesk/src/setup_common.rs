@@ -739,7 +739,7 @@ mod tests {
 
     /// The Mac case: the GUI started a `oxdesk` as its child, the child
     /// held the port, and the launchd copy died in a loop. The two stamps
-    /// diverge -- and that must reach the panel, because the user noticed
+    /// diverge -- and that must reach the panel, because a person noticed
     /// it, not the deploy.
     #[test]
     fn diverging_stamp_shows_up() {
