@@ -70,14 +70,14 @@ This is not a tool you can try on one laptop:
 
 ## Install
 
-Build the workspace, install the daemon, then open the wizard — it checks
-every prerequisite on the machine it runs on, explains what is missing and
-fixes what it can:
+On Ubuntu, one script checks the build dependencies (and prints the `apt`
+line for whatever is missing), builds the six binaries, installs them in
+`~/.local/bin` and starts the daemon as a user service. Then open the
+wizard — it checks every prerequisite on the machine it runs on, explains
+what is missing and fixes what it can:
 
 ```bash
-cargo build --release --manifest-path oxdesk/Cargo.toml
-install -m755 oxdesk/target/release/oxdesk ~/.local/bin/
-oxdesk &                 # then open http://127.0.0.1:8787/setup
+bash install.sh          # then open http://127.0.0.1:8787/setup
 ```
 
 Repeat on each machine. [`docs/new-computer.md`](docs/new-computer.md) has
