@@ -48,6 +48,10 @@ run "spdx: every source file declares one" bash scripts/spdx.sh
 # none. What CAN rot locally is the decision table, so it ships a
 # self-test of both directions and that is what this line exercises.
 run "cla: the inbound-terms gate still gates" bash scripts/cla.sh --self-test
+# Every string a person reads in the panel and the wizard has a Brazilian
+# Portuguese translation (specs/022). Instant, and the failure names the
+# string: a missing entry shows up as English on a Portuguese screen.
+run "i18n: every visible string has pt-BR" python3 scripts/i18n-check.py
 
 # `agent` and `winput` are Windows-only (pure Win32): on Linux `winput`
 # compiles EMPTY because of `#![cfg(windows)]`, and the agent cannot find

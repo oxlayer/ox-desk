@@ -432,7 +432,7 @@ fn check_permissions() -> (Check, Check) {
 fn launchagent() -> Check {
     let label = "app.oxdesk.host";
     match run_timed("/bin/launchctl", &["print", &format!("gui/{}/{label}", uid())], 5) {
-        Ok(_) => Check::ok("launchagent", format!("{label} carregado")),
+        Ok(_) => Check::ok("launchagent", format!("{label} loaded")),
         Err(e) => Check::missing("launchagent", format!("{label}: {e}")),
     }
 }

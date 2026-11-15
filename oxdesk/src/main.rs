@@ -38,6 +38,7 @@ mod follow;
 mod hidpp;
 #[cfg(target_os = "linux")]
 mod hotkey;
+mod i18n;
 mod clip;
 mod clip_files;
 mod kvm;
@@ -96,6 +97,9 @@ fn json_header() -> Header {
 }
 fn html_header() -> Header {
     Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap()
+}
+fn js_header() -> Header {
+    Header::from_bytes(&b"Content-Type"[..], &b"application/javascript; charset=utf-8"[..]).unwrap()
 }
 fn nostore() -> Header {
     Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap()
@@ -1182,10 +1186,25 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             }
         }
 
-        "/api/changelog" => match serde_json::to_string(&changelog::entries()) {
-            Ok(b) => ok_json(req, b),
-            Err(e) => err_json(req, 500, &format!("serialize: {e}")),
-        },
+        // ?lang=pt-BR: the entries in the language the panel shows.
+        "/api/changelog" => {
+            let lang = i18n::lang_of(req.url());
+            match serde_json::to_string(&changelog::entries_for(lang)) {
+                Ok(b) => ok_json(req, b),
+                Err(e) => err_json(req, 500, &format!("serialize: {e}")),
+            }
+        }
+
+        // The translator and its catalogs (specs/022), loaded by both pages
+        // in <head>, before their own scripts.
+        "/i18n.js" => respond(
+            req,
+            Response::from_string(i18n::SCRIPT).with_header(js_header()).with_header(nostore()),
+        ),
+        "/i18n/catalogs.js" => respond(
+            req,
+            Response::from_string(i18n::catalogs_js()).with_header(js_header()).with_header(nostore()),
+        ),
 
         "/api/layout" => {
             let snap = match cfg.read() {

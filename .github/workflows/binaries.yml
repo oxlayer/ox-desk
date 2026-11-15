@@ -13,6 +13,8 @@ on:
       - 'ota/**'
       - 'winput/**'
       - 'scripts/build-binaries.sh'
+      - 'scripts/spdx.sh'
+      - 'scripts/i18n-check.py'
       - '.github/workflows/binaries.yml'
   # A pull request builds the same three targets, because a target that
   # only breaks after the merge is a target nobody checked. `push` above is
@@ -31,6 +33,8 @@ on:
       - 'ota/**'
       - 'winput/**'
       - 'scripts/build-binaries.sh'
+      - 'scripts/spdx.sh'
+      - 'scripts/i18n-check.py'
       - '.github/workflows/binaries.yml'
   workflow_dispatch:
 
@@ -137,7 +141,17 @@ jobs:
           cargo test --release --locked --manifest-path stream/Cargo.toml --lib \
             -- --skip decode_nv::tests::conversion_fits_the_budget
 
-      # The 12 ms budget holds for the home hardware. On a shared runner the
+      # The static gates scripts/check.sh runs locally: licence headers,
+      # the inbound-terms decision table, and a translation for every
+      # string a person reads (specs/022). They used to run only by hand.
+      - name: Gates (licence headers, inbound terms, translations)
+        if: matrix.target == 'linux'
+        run: |
+          bash scripts/spdx.sh
+          bash scripts/cla.sh --self-test
+          python3 scripts/i18n-check.py
+
+      # The 12 ms budget holds for the reference hardware. On a shared runner the
       # same code measured 12.18 ms and broke the build, so here it only
       # prints the number: it measures, but does not decide.
       # (The test name below lives in oxdesk-stream; keep it in sync if renamed.)

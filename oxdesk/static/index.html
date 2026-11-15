@@ -13,6 +13,8 @@
      it reads from. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:*; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="/i18n/catalogs.js"></script>
+<script src="/i18n.js"></script>
 <title>Machines</title>
 <style>
   :root{
@@ -448,15 +450,15 @@
 </style></head><body><div class="app">
 <aside class="side">
   <div class="sidetop"><span class="mark"></span><span class="tt">Machines</span></div>
-  <div class="grpfav"><div class="navgrp">Favoritos <span class="n" id="favn"></span></div>
+  <div class="grpfav"><div class="navgrp">Favourites <span class="n" id="favn"></span></div>
     <div id="favlist"></div></div>
   <div class="grpmachines"><div class="navgrp">Machines</div>
     <div id="machinelist"></div></div>
-  <div class="navgrp">Paineis</div>
+  <div class="navgrp">Panels</div>
   <div class="sidenav">
-    <div class="navit" data-sec="geral"><span class="ic">&#9636;</span><span class="lbl">Visao geral</span></div>
-    <div class="navit" data-sec="botoes"><span class="ic">&#9673;</span><span class="lbl">Botoes</span></div>
-    <div class="navit" data-sec="disposicao"><span class="ic">&#9638;</span><span class="lbl">Disposicao</span></div>
+    <div class="navit" data-sec="geral"><span class="ic">&#9636;</span><span class="lbl">Overview</span></div>
+    <div class="navit" data-sec="botoes"><span class="ic">&#9673;</span><span class="lbl">Buttons</span></div>
+    <div class="navit" data-sec="disposicao"><span class="ic">&#9638;</span><span class="lbl">Layout</span></div>
     <div class="navit" data-sec="tasks"><span class="ic">&#9776;</span><span class="lbl">Tasks</span></div>
     <div class="navit" data-sec="files"><span class="ic">&#9639;</span><span class="lbl">Files</span></div>
     <div class="navit" data-sec="log"><span class="ic">&#9783;</span><span class="lbl">Log</span></div>
@@ -496,7 +498,7 @@
   <div class="stamp" id="stamp">...</div>
   <div class="newswrap">
     <button class="newsbtn" id="newsbtn" title="what's new">&#9733;<span class="badge" id="newsbadge" hidden></span></button>
-    <div class="newspop" id="newspop"><h3>What's new</h3><div id="newslist"></div></div>
+    <div class="newspop" id="newspop"><h3>What's new</h3><div id="newslist" data-no-i18n></div></div>
   </div>
 </header>
 <section class="sec" data-sec="geral">
@@ -507,7 +509,7 @@
 <section class="sec" data-sec="botoes">
 <div class="ctlwrap">
   <div class="ctlhead">
-    <h2>Botoes</h2>
+    <h2>Buttons</h2>
     <span class="meta" id="ctlmeta"></span>
   </div>
   <div class="ctlbody" id="ctl"><div class="ctlnote">loading...</div></div>
@@ -552,11 +554,11 @@
 <section class="sec" data-sec="tasks">
 <div class="tkwrap">
   <div class="tkhead">
-    <h2>Tarefas</h2>
-    <div class="fshost" id="tkhost"></div>
+    <h2>Tasks</h2>
+    <div class="fshost" id="tkhost" data-no-i18n></div>
     <span class="meta" id="tkmeta"></span>
   </div>
-  <div class="tkhdr"><span class="pid">pid</span><span class="nm">processo</span>
+  <div class="tkhdr"><span class="pid">pid</span><span class="nm">process</span>
     <span class="cpu" id="tkcpu">cpu</span><span class="mem">mem MB</span>
     <span class="act"></span></div>
   <div class="tkbody" id="tkbody"><div class="tknote">loading...</div></div>
@@ -571,10 +573,10 @@
 <div class="fswrap">
   <div class="fshead">
     <h2>Files</h2>
-    <div class="fshost" id="fshost"></div>
+    <div class="fshost" id="fshost" data-no-i18n></div>
     <span class="meta" id="fsmeta"></span>
   </div>
-  <div class="fspath" id="fspath">...</div>
+  <div class="fspath" id="fspath" data-no-i18n>...</div>
   <div class="fsbody" id="fsbody"><div class="fsnote">loading...</div></div>
   <div class="fsnote">
     Read only: it lists folders, downloads nothing and deletes nothing.
@@ -587,18 +589,19 @@
 <section class="sec" data-sec="log">
 <div class="logwrap">
   <div class="loghead">
-    <h2>Log do daemon</h2>
+    <h2>Daemon log</h2>
     <span class="meta" id="logmeta"></span>
-    <label><input type="checkbox" id="follow" checked> acompanhar</label>
+    <label><input type="checkbox" id="follow" checked> follow</label>
   </div>
-  <div class="log" id="log"><div class="empty">loading...</div></div>
+  <div class="log" id="log" data-no-i18n><div class="empty">loading...</div></div>
 </div>
 </section>
 
 <footer>
-  <span>atualiza a cada <b id="rs"></b>s</span>
-  <span>JSON em <code>/api/status</code></span>
+  <span>refreshes every <b id="rs"></b> s</span>
+  <span>JSON at <code>/api/status</code></span>
   <span>build <code id="build">...</code></span>
+  <span class="lang" data-no-i18n><a href="#" data-lang="en">English</a> &middot; <a href="#" data-lang="pt-BR">Português</a></span>
 </footer>
 </main>
 </div>
@@ -613,7 +616,7 @@ function svcRow(s){
   if (s.expect === 'down')     { cls = s.up ? 'wa' : 'ok'; txt = s.up ? 'aberta' : 'fechada'; }
   else if (s.expect === 'any') { txt = s.up ? s.ms + ' ms' : 'off'; }
   else { cls = s.up ? 'ok' : 'no';
-         txt = s.up ? (s.ms != null ? s.ms + ' ms' : 'ok') : 'fora'; }
+         txt = s.up ? (s.ms != null ? s.ms + ' ms' : 'ok') : 'down'; }
   return `<tr><td class="l">${esc(s.label)}</td>
           <td class="p">:${s.port}</td>
           <td class="s ${cls}">${txt}</td></tr>`;
@@ -640,7 +643,7 @@ function card(h){
     }
     if (k.follow != null){
       const t = k.follow ? ('follows ' + (k.leader || '?')) : 'off';
-      kvm.push(`<span class="u ${k.follow ? 'warn' : ''}">reconciliador &middot; ${esc(t)}</span>`);
+      kvm.push(`<span class="u ${k.follow ? 'warn' : ''}">reconciler &middot; ${esc(t)}</span>`);
     }
   }
 
@@ -653,9 +656,9 @@ function card(h){
   const d = h.detail || {}, det = [];
   if (d.uptime_min != null){
     const m = d.uptime_min, dd = Math.floor(m/1440), hh = Math.floor((m%1440)/60);
-    det.push(`<span>no ar <b>${dd ? dd+'d ' : ''}${hh}h</b></span>`);
+    det.push(`<span>up <b>${dd ? dd+'d ' : ''}${hh}h</b></span>`);
   } else {
-    det.push(`<span>no ar <b>&mdash;</b></span>`);
+    det.push(`<span>up <b>&mdash;</b></span>`);
   }
   if (d.ram_total_gb){
     const used = d.ram_total_gb - (d.ram_free_gb || 0);
@@ -682,16 +685,16 @@ function card(h){
     <div class="top">
       <span class="dot ${h.online ? 'on' : ''}"></span>
       <div class="ident">
-        <div class="nm">${esc(h.name)}</div>
-        <div class="ro">${esc(h.role)}</div>
+        <div class="nm" data-no-i18n>${esc(h.name)}</div>
+        <div class="ro" data-no-i18n>${esc(h.role)}</div>
       </div>
       <span class="estado ${h.online ? 'on' : ''}">${h.online ? 'online' : 'offline'}</span>
     </div>
     <div class="scr" data-scr="${esc(h.name)}"></div>
     <details class="more" data-more="${esc(h.name)}"${OPEN_DETAILS.has(h.name) ? ' open' : ''}>
-      <summary>Detalhes</summary>
+      <summary>Details</summary>
       <div class="corpo">
-        <div class="end">${esc(h.addr)}</div>
+        <div class="end" data-no-i18n>${esc(h.addr)}</div>
         <div class="svc"><table>${h.services.map(svcRow).join('')}</table></div>
         ${units ? `<div class="units">${units}</div>` : ''}
         ${kvm.length ? `<div class="units">${kvm.join('')}</div>` : ''}
@@ -768,7 +771,7 @@ async function controls(){
         const current = c.remapped_to || '';
         if (!c.reprogrammable){
           return `<div class="ctlrow"><span class="cid">${esc(c.cid)}</span>` +
-                 `<span class="nm">${esc(c.name)}</span>` +
+                 `<span class="nm" data-no-i18n>${esc(c.name)}</span>` +
                  `<span class="fix">fixo (flags ${esc(c.flags)})</span></div>`;
         }
         const opts = ['<option value="0">default</option>'].concat(
@@ -777,11 +780,11 @@ async function controls(){
             `age como ${esc(t.name)}</option>`)
         ).join('');
         return `<div class="ctlrow"><span class="cid">${esc(c.cid)}</span>` +
-               `<span class="nm">${esc(c.name)}</span>` +
+               `<span class="nm" data-no-i18n>${esc(c.name)}</span>` +
                `<select data-slot="${dev.slot}" data-cid="${esc(c.cid)}">${opts}</select>` +
                `<span class="st"></span></div>`;
       }).join('');
-      return `<div class="ctldev">${esc(dev.device)} (slot ${dev.slot})</div>${rows}`;
+      return `<div class="ctldev"><span data-no-i18n>${esc(dev.device)}</span> (slot ${dev.slot})</div>${rows}`;
     }).join('');
 
     for (const sel of box.querySelectorAll('select')){
@@ -808,7 +811,7 @@ async function logs(){
     if (!d.entries.length){
       box.innerHTML = '<div class="empty">no entries</div>';
     } else {
-      // Keep the position: only scroll to the end if "acompanhar" is on.
+      // Keep the position: only scroll to the end if "follow" is on.
       const follow = document.getElementById('follow').checked;
       box.innerHTML = d.entries.map(e =>
         `<div class="${e.level}"><span class="t">${esc(e.time)}</span>` +
@@ -877,7 +880,7 @@ async function screens(){
     const via = p.ready ? `${p.kind} ${p.port}${lat} via ${p.client}` : '';
     box.innerHTML =
       `<button data-open="${esc(p.host)}" title="${esc(via)}"` +
-      `${p.ready ? '' : ' disabled'}>Conectar</button>` +
+      `${p.ready ? '' : ' disabled'}>Connect</button>` +
       (p.kind === 'oxdesk-stream' && p.ready
         ? `<button class="alt" data-window="${esc(p.host)}">Open in a separate window</button>` : '') +
       options +
@@ -1112,7 +1115,7 @@ async function openTab(host){
   s.canvas = document.createElement('canvas');
   s.canvas.tabIndex = 0; s.canvas.width = 1280; s.canvas.height = 720;
   s.notice = document.createElement('div'); s.notice.className = 'aviso';
-  s.notice.textContent = 'Conectando em ' + host + '...';
+  s.notice.textContent = 'Connecting to ' + host + '...';
   s.stats = document.createElement('div'); s.stats.className = 'medida';
   document.getElementById('screen').append(s.canvas, s.notice, s.stats);
   s.ws = new WebSocket(`ws://127.0.0.1:${d.port}/${d.token}`);
@@ -1176,7 +1179,7 @@ async function xferList(side){
   const who = side === 'lhs' ? `${esc(p.host)} (this machine)` : esc(p.host);
   const items = (d.entries || []).map((e, i) =>
     `<button class="item" data-i="${i}"><span>${e.kind === 'dir' ? '&#128193;' : '&#128196;'}</span>` +
-    `<span class="n">${esc(e.name)}</span>` +
+    `<span class="n" data-no-i18n>${esc(e.name)}</span>` +
     `<span class="t">${e.kind === 'dir' ? '' : fsSize(e.size)}</span></button>`).join('');
   box.innerHTML =
     `<div class="ptop"><div class="pquem">${who}</div><div class="pnav">` +
@@ -1200,8 +1203,8 @@ async function xferQueue(){
   const label = {running:'copying...', ok:'arrived', error:'failed'};
   const queue = document.getElementById('filequeue');
   const lines = t.slice(-4).reverse().map(x =>
-    `<div class="${x.state}">${esc(x.name)}: ${esc(x.from)} &rarr; ${esc(x.to)} &middot; ` +
-    `${label[x.state]}${x.detail ? ' &middot; ' + esc(x.detail) : ''}</div>`).join('');
+    `<div class="${x.state}"><span data-no-i18n>${esc(x.name)}: ${esc(x.from)} &rarr; ${esc(x.to)}</span> &middot; ` +
+    `<span>${label[x.state]}</span>${x.detail ? ' &middot; <span>' + esc(x.detail) + '</span>' : ''}</div>`).join('');
   queue.innerHTML = (XFER.error ? `<div class="error">${esc(XFER.error)}</div>` : '') + lines;
   if (XFER.wasBusy && !busy){ xferList('lhs'); xferList('rhs'); }
   XFER.wasBusy = busy;
@@ -1278,21 +1281,31 @@ document.getElementById('tabs').addEventListener('click', ev => {
 async function whatsNew(){
   let items = [];
   try{
-    const r = await fetch('/api/changelog', {cache:'no-store'});
+    const r = await fetch('/api/changelog?lang=' + encodeURIComponent(oxdeskI18n.lang), {cache:'no-store'});
     if (r.ok) items = await r.json();
   }catch(e){ return; }
   if (!items.length) return;
 
-  // "Seen" by the title of the newest entry, in browser storage: it is a
-  // per-person convenience, not state that needs to last.
-  let seen = null;
-  try{ seen = localStorage.getItem('oxdesk.news.seen'); }catch(e){}
-  const cut = items.findIndex(i => i.title === seen);
-  const unseen = cut < 0 ? (seen ? items.length : 0) : cut;
+  // "Seen" as how many entries there were when the list was last opened,
+  // in browser storage: entries are prepended, so the difference is what
+  // is new. It used to be the newest title, which does not survive a
+  // change of language; an old title is still read once.
+  let seenCount = null, seenTitle = null;
+  try{
+    seenCount = localStorage.getItem('oxdesk.news.seen.count');
+    seenTitle = localStorage.getItem('oxdesk.news.seen');
+  }catch(e){}
+  let unseen = 0;
+  if (seenCount !== null && Number(seenCount) >= 0){
+    unseen = Math.max(0, items.length - Number(seenCount));
+  } else if (seenTitle){
+    const cut = items.findIndex(i => i.title === seenTitle);
+    unseen = cut < 0 ? items.length : cut;
+  }
 
   document.getElementById('newslist').innerHTML = items.map((i, n) =>
     `<div class="novitem${n < unseen ? ' novo' : ''}">` +
-    `<div class="d">${esc(i.data)}</div>` +
+    `<div class="d">${esc(i.date)}</div>` +
     `<div class="t">${esc(i.title)}</div>` +
     `<div class="x">${esc(i.description)}</div></div>`).join('');
 
@@ -1304,7 +1317,7 @@ async function whatsNew(){
     const pop = document.getElementById('newspop');
     pop.classList.toggle('on');
     if (pop.classList.contains('on')){
-      try{ localStorage.setItem('oxdesk.news.seen', items[0].title); }catch(e){}
+      try{ localStorage.setItem('oxdesk.news.seen.count', String(items.length)); }catch(e){}
       badge.hidden = true;
       for (const el of pop.querySelectorAll('.novitem.novo')) el.classList.remove('novo');
     }
@@ -1346,8 +1359,8 @@ function lyRender(){
 
 function lyTile(h){
   return `<div class="lytile${h.local ? ' eu' : ''}" draggable="true" data-host="${esc(h.name)}">` +
-         `<span class="n">${esc(h.name)}</span>` +
-         `<span class="o">${esc(h.os)}${h.local ? ' - this one' : ''}</span></div>`;
+         `<span class="n" data-no-i18n>${esc(h.name)}</span>` +
+         `<span class="o"><span data-no-i18n>${esc(h.os)}</span>${h.local ? ' - this one' : ''}</span></div>`;
 }
 
 function lyEdges(edges, enabled){
@@ -1498,7 +1511,7 @@ function tkHosts(hosts){
   if (box.dataset.hosts === want) return;
   box.dataset.hosts = want;
   box.innerHTML = hosts.map(h =>
-    `<button data-host="${esc(h.name)}">${esc(h.name)}</button>`).join('');
+    `<button data-host="${esc(h.name)}" data-no-i18n>${esc(h.name)}</button>`).join('');
 }
 
 async function tasks(){
@@ -1527,7 +1540,7 @@ async function tasks(){
           `<button class="yes" data-kill="${p.pid}" data-force="1">forced</button>`
         : `<button data-ask="${p.pid}">end</button>`;
       return `<div class="tkrow"><span class="pid">${p.pid}</span>` +
-             `<span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>` +
+             `<span class="nm" title="${esc(p.name)}" data-no-i18n>${esc(p.name)}</span>` +
              `<span class="cpu">${p.cpu}</span>` +
              `<span class="mem">${p.mem_mb}</span>` +
              `<span class="act">${action}</span></div>`;
@@ -1588,8 +1601,8 @@ function fsWhen(e){
   // source actually knows, instead of inventing precision.
   if (e.mtime != null){
     const d = new Date(e.mtime * 1000);
-    return d.toLocaleDateString([], {day:'2-digit', month:'short'}) + ' ' +
-           d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    return d.toLocaleDateString(oxdeskI18n.lang, {day:'2-digit', month:'short'}) + ' ' +
+           d.toLocaleTimeString(oxdeskI18n.lang, {hour:'2-digit', minute:'2-digit'});
   }
   return e.mtime_text || '';
 }
@@ -1600,7 +1613,7 @@ function fsHosts(hosts){
   if (box.dataset.hosts === want) return;   // do not redraw on every tick
   box.dataset.hosts = want;
   box.innerHTML = hosts.map(h =>
-    `<button data-host="${esc(h.name)}">${esc(h.name)}</button>`).join('');
+    `<button data-host="${esc(h.name)}" data-no-i18n>${esc(h.name)}</button>`).join('');
 }
 
 async function files(){
@@ -1632,14 +1645,14 @@ async function files(){
       const nav = e.kind === 'dir'
         ? ` data-go="${esc(d.path.replace(/\/+$/, '') + '/' + e.name)}"` : '';
       return `<div class="fsrow ${e.kind}"${nav}><span class="ic">${icon}</span>` +
-             `<span class="nm">${esc(e.name)}</span>` +
+             `<span class="nm" data-no-i18n>${esc(e.name)}</span>` +
              `<span class="sz">${fsSize(e.size)}</span>` +
-             `<span class="wh">${esc(fsWhen(e))}</span></div>`;
+             `<span class="wh" data-no-i18n>${esc(fsWhen(e))}</span></div>`;
     }).join('');
     body.innerHTML = up + rows ||
       '<div class="fsnote">empty folder</div>';
     document.getElementById('fsmeta').textContent =
-      d.entries.length + ' item(ns) - ' + d.source +
+      d.entries.length + ' item(s) - ' + d.source +
       (d.truncated ? ' - lista cortada' : '');
   }catch(e){
     body.innerHTML = `<div class="fsnote">inacessivel: ${esc(e.message)}</div>`;
@@ -1733,11 +1746,11 @@ function machineRow(h, isFav){
   const flagged = hasKvm && (h.kvm.border || h.kvm.follow);
   return `<div class="navit" data-machine="${esc(h.name)}" title="${esc(h.role)}">` +
     `<span class="sdot${h.online ? ' on' : ''}"></span>` +
-    `<span class="lbl">${esc(h.name)}${flagged ? ' &middot;' : ''}</span>` +
+    `<span class="lbl" data-no-i18n>${esc(h.name)}${flagged ? ' &middot;' : ''}</span>` +
     `<span class="act">` +
       `<button data-screen="${esc(h.name)}" title="open this machine's screen">&#9654;</button>` +
       `<button class="fav${fav}" data-fav="${esc(h.name)}" ` +
-      `title="${isFav ? 'tirar dos favoritos' : 'fixar em favoritos'}">` +
+      `title="${isFav ? 'unpin from favourites' : 'pin to favourites'}">` +
       `${isFav ? '&#9733;' : '&#9734;'}</button>` +
     `</span></div>`;
 }

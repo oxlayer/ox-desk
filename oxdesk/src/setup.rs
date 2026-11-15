@@ -493,8 +493,8 @@ fn mac() -> Vec<Step> {
             title: "A display to capture",
             why: "with no display attached macOS has no framebuffer, and \
                      the screen host cannot serve a frame however many \
-                     permissions it holds. Measured on a MacBook whose panel \
-                     broke: zero active displays, every other step green, \
+                     permissions it holds. Measured on a Mac whose built-in \
+                     display had failed: zero active displays, every other step green, \
                      and nothing on this page said why the screen was dead. \
                      Unlike Windows there is no software display here -- an \
                      external monitor, or a cheap HDMI dummy plug, is what \
@@ -527,7 +527,7 @@ fn mac() -> Vec<Step> {
             id: "tailscale",
             title: "Tailscale (off the LAN)",
             why: "this is what reaches the other machines from outside the \
-                     house. Install it through brew, with its own service, \
+                     LAN. Install it through brew, with its own service, \
                      and never through the app: the app's network extension, \
                      without a login, took the Mac's internet down.",
             fix: Fix::Click {

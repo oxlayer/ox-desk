@@ -26,9 +26,30 @@ Done (2026-11-08): the wizard end to end, and the whole API contract --
 keys and its battery words. Zero Portuguese identifiers remain in any
 crate.
 
-Left, in [[../../specs/018-open-source]] step 6: the panel's visible copy
-in `index.html`, 29 CLI flags and subcommands, the OTA's state vocabulary
-with the build stamp's `-sujo`, and the variable names in `scripts/`.
+Done (2026-11-15): the panel's visible copy in `index.html` and
+`setup.html`, and the last Portuguese messages of the wizard. The CLI flags
+and the OTA's state words moved earlier and still accept their old
+spellings, read across a process boundary from binaries that predate them.
+
+Left: wire names whose readers live elsewhere (the `/api/files/transferencias`
+route, the panel's `data-sec` section ids), and variable names in
+`scripts/`. Each moves with its readers, per the next section.
+
+## What a person reads on screen: written in English, shown in two languages
+
+The panel and the setup wizard show their copy in English or Brazilian
+Portuguese ([[../../specs/022-two-languages]]). That does not reopen the
+mix this rule closed: the copy is still **written in English**, in the
+code, and the Portuguese lives in one place only,
+`oxdesk/static/i18n/pt-BR.json`, keyed by the English text.
+
+- A new string in the panel, the wizard or a `Check` message is written in
+  English, and its translation is added to the catalog in the same change.
+  `scripts/i18n-check.py` (in `check.sh`) fails while one is missing.
+- Never a Portuguese string in code, not even "only for the screen": the
+  catalog is the one place a translator has to look.
+- Logs, errors in the API, CLI output and everything a contributor reads
+  stay English only.
 
 ## Move a wire name with its reader, or not at all
 
@@ -42,6 +63,12 @@ enumerating them, not by grepping for what comes to mind.
 The one that bit: the copy queue's `andando`/`erro` reach the page as CSS
 class names. A rename that touched only the daemon would have left failed
 rows unstyled -- which reads as a design choice, not a bug.
+
+And the one that did bite, found on 2026-11-15: `/api/changelog` renamed
+its field `data` to `date` in the rename of 2026-11-07 (`fcf777a`), and
+the panel kept reading `i.data`. From then on every entry in "What's new"
+showed with no date, and nothing reported an error, because an undefined
+field renders as nothing.
 
 ## Translating, not transliterating
 
@@ -73,3 +100,5 @@ it rather than producing English that says less.
 - [[no-personal-data]] — the other half of making this readable by
   strangers
 - [[../../specs/018-open-source]] — the plan and the order of work
+- [[../../specs/022-two-languages]] — how the screen speaks Portuguese
+  without the code doing so

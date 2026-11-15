@@ -281,7 +281,7 @@ fn nvenc() -> Check {
     match crate::setup_common::run_timed("nvidia-smi", &["--query-gpu=name", "--format=csv,noheader"], 5) {
         Ok(s) => {
             let name = s.lines().next().unwrap_or("").trim().to_string();
-            Check::ok("nvenc", if name.is_empty() { "driver carregado".into() } else { name })
+            Check::ok("nvenc", if name.is_empty() { "driver loaded".into() } else { name })
         }
         Err(e) => Check::error("nvenc", format!("nvidia-smi: {e}")),
     }

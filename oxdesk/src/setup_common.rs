@@ -73,7 +73,7 @@ pub fn this_machine_config(cfg: &Config) -> Check {
         // Two "local" hosts make the panel, the border and input routing
         // disagree about who is "here", and each picks the first one it
         // finds -- which is not necessarily the same one.
-        n => Check::missing("config", format!("{n} hosts marcados como local: {}", locals.join(", "))),
+        n => Check::missing("config", format!("{n} hosts marked as local: {}", locals.join(", "))),
     }
 }
 
@@ -173,7 +173,7 @@ pub fn monitors_verdict(id: &str, output: &str) -> Check {
 /// because the two failures are different: `err != 0` means the question
 /// could not be asked, which is [`State::Error`], never "no display".
 ///
-/// Why this check exists: a MacBook whose panel broke reported **zero**
+/// Why this check exists: a Mac whose built-in display had failed reported **zero**
 /// active displays while every other step on the list was green. The
 /// screen host had its grant, was signed, was loaded -- and could not have
 /// served a frame, because there was no framebuffer to read. Nothing on
@@ -351,7 +351,7 @@ pub fn ota(bin: &std::path::Path, token: &std::path::Path, clock: Result<String,
     // oxdesk-ota sends no token when it has none. A token that IS there
     // still has to be private, below.
     // A secret readable by any process on the machine is a leaked secret
-    // -- and the Mac is precisely the one that leaves the house.
+    // -- and a laptop is precisely the machine that leaves the LAN.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

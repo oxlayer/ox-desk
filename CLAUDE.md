@@ -22,7 +22,7 @@ secrets in source, English only.
 | [`.claude/rules/`](.claude/rules/) | Inviolable rules — traps that have already cost time | Before touching any machine |
 | [`.claude/skills/`](.claude/skills/) | Procedures — recipes that worked | When the task is "how do I do X again" |
 | [`docs/`](docs/) | Domain knowledge with [[wikilinks]] | To understand how the pieces fit together |
-| [`specs/`](specs/) | Specifications, from `000-overview` to `021-licensing-and-contributions` | To understand *why* the system is the way it is |
+| [`specs/`](specs/) | Specifications, from `000-overview` to `022-two-languages` | To understand *why* the system is the way it is |
 | [`README.md`](README.md) | The product's front door: what it is, what it needs, how to install | Before changing anything a newcomer reads first |
 | [`THIRD-PARTY.md`](THIRD-PARTY.md) | What else is inside what we distribute, and under which terms | Before adding a dependency that ships in a package |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | The inbound licence grant, the hardware a patch needs, how we work | Before accepting or writing a contribution |
@@ -114,11 +114,12 @@ the pairing follows the dongle, not the machine. See [`specs/005`](specs/005-inp
    ([`.claude/rules/english-only`](.claude/rules/english-only.md)). It
    used to be a deliberate mix with the interface in pt-BR, and open
    source removed the premise: a contributor who cannot read a log line
-   cannot debug what printed it. The file names already moved with the
-   rename (`assinar.sh` became `sign.sh`,
-   [`specs/017`](specs/017-product.md)); `oxdesk/src` is the one crate
-   whose strings are still pending
-   ([`specs/018`](specs/018-open-source.md), step 6).
+   cannot debug what printed it. The person at the screen still gets
+   Portuguese if they want it: the panel and the wizard are **written** in
+   English and **shown** in English or Brazilian Portuguese, through one
+   catalog, `oxdesk/static/i18n/pt-BR.json`
+   ([`specs/022`](specs/022-two-languages.md)). A new visible string gets
+   its translation in the same change, or `check.sh` fails.
 5. **Minimal telemetry that can be turned off; cloud optional; LAN
    always.** Since 2026-11-07 ox-desk is a product
    ([`specs/017`](specs/017-product.md)): trust comes from each
