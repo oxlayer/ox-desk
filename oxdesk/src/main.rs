@@ -62,6 +62,7 @@ mod sys;
 mod telemetry;
 #[cfg(target_os = "linux")]
 mod tray;
+mod update;
 mod wait;
 
 use config::Config;
@@ -72,6 +73,10 @@ use tiny_http::{Header, Request, Response, Server};
 
 const PAGE: &str = include_str!("../static/index.html");
 const SETUP: &str = include_str!("../static/setup.html");
+/// The OxDesk mark (also the browser's favicon) and the mascot, both
+/// embedded like the pages they appear in.
+const FAVICON: &[u8] = include_bytes!("../static/favicon.png");
+const MASCOT: &[u8] = include_bytes!("../static/mascot.webp");
 
 /// Snapshot cache. It exists because /api/status does network and SSH --
 /// measured at 2.09 s in the Python version, against 0.6 ms for /healthz.
@@ -100,6 +105,9 @@ fn html_header() -> Header {
 }
 fn js_header() -> Header {
     Header::from_bytes(&b"Content-Type"[..], &b"application/javascript; charset=utf-8"[..]).unwrap()
+}
+fn image_header(mime: &str) -> Header {
+    Header::from_bytes(&b"Content-Type"[..], mime.as_bytes()).unwrap()
 }
 fn nostore() -> Header {
     Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap()
@@ -1022,6 +1030,13 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             Err(e) => err_json(req, 500, &e),
         };
     }
+    // "Check for updates" in the trays: asks the updater, installs nothing.
+    if path == "/api/update/check" && method == "POST" {
+        return match serde_json::to_string(&update::check()) {
+            Ok(b) => ok_json(req, b),
+            Err(e) => err_json(req, 500, &format!("serialize: {e}")),
+        };
+    }
     if path == "/api/setup/fix" && method == "POST" {
         return post_setup_repair(req, cfg);
     }
@@ -1278,6 +1293,17 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             Ok(b) => ok_json(req, b),
             Err(e) => err_json(req, 500, &format!("serialize: {e}")),
         },
+
+        // A browser asks for /favicon.ico on its own when a page declares
+        // no icon; both names get the same PNG.
+        "/favicon.png" | "/favicon.ico" => respond(
+            req,
+            Response::from_data(FAVICON.to_vec()).with_header(image_header("image/png")).with_header(nostore()),
+        ),
+        "/mascot.webp" => respond(
+            req,
+            Response::from_data(MASCOT.to_vec()).with_header(image_header("image/webp")).with_header(nostore()),
+        ),
 
         "/setup" | "/setup.html" => respond(
             req,

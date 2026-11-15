@@ -1,13 +1,77 @@
-# OxDesk
+<p align="center">
+  <img src="assets/oxdesk-banner.webp" alt="OxDesk, your productivity command center" width="560">
+</p>
 
-Drive several computers from one keyboard, one mouse and one panel, over
-your own LAN. Switch machines, see their screens, share the clipboard and
-move files — without a cloud account in the middle.
+<h1 align="center">OxDesk</h1>
 
-> **Status: alpha.** It runs daily on a three-machine reference
+<p align="center">
+  <b>All your computers. One desk.</b><br>
+  One keyboard, one mouse and one panel for every machine you own:
+  switch between them, see their screens, share the clipboard and send
+  files, over your own network, with no account and no cloud in the middle.
+</p>
+
+<p align="center">
+  <a href="#get-started"><b>Get started</b></a> ·
+  <a href="https://github.com/oxlayer/ox-desk/releases/latest">Download</a> ·
+  <a href="specs/000-overview.md">How it works</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
+</p>
+
+<p align="center">
+  <img alt="Licence: AGPL-3.0" src="https://img.shields.io/badge/licence-AGPL--3.0-8b5cf6">
+  <img alt="Runs on Linux, Windows and macOS" src="https://img.shields.io/badge/runs%20on-Linux%20%C2%B7%20Windows%20%C2%B7%20macOS-8b5cf6">
+  <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-f59e0b">
+</p>
+
+## Why OxDesk
+
+<img src="assets/oxdesk-mascot.webp" alt="The OxDesk mascot" width="170" align="right">
+
+- **Work across machines as if they were one.** Send your keyboard and
+  mouse to another computer with a hotkey, a click in the tray or the edge
+  of the screen. With a Logitech receiver, the devices themselves jump
+  channel: real hardware switching, not a software mirror.
+- **See and drive any of them.** OxDesk has its own remote screen,
+  hardware-encoded on each platform and carried over QUIC. No RDP, no VNC,
+  no third-party relay.
+- **Your clipboard and files follow you.** Copy text on one machine and
+  paste it on the next; browse another machine's folders and send files
+  across from the panel or the tray.
+- **Yours, end to end.** It runs on your network, and every machine is
+  trusted by its own key. No sign-up, no subscription, open source.
+- **Set up by a wizard, not a wiki.** It checks every prerequisite on the
+  machine it runs on, explains what is missing and fixes what it can.
+- **In English or Portuguese**, whichever your browser speaks.
+
+## Where it's going
+
+OxDesk aims to be the one hub for your machines, your automations and your
+knowledge. These are next, and **not built yet**: watch the repository, or
+come and help shape them.
+
+- **AI agents:** run automations and daily tasks with the AI you already
+  use (Claude, Codex, Grok and more), from the same panel.
+- **A second brain:** Markdown notes with backlinks and a knowledge graph,
+  next to the machines they are about.
+
+## Get started
+
+You need two or more computers on the same network. On Ubuntu:
+
+```bash
+git clone https://github.com/oxlayer/ox-desk.git && cd ox-desk
+bash install.sh          # then open http://127.0.0.1:8787/setup
+```
+
+Then the wizard takes over. For Windows and macOS, and the order to bring
+machines in, see [`docs/new-computer.md`](docs/new-computer.md); the full
+requirements are [below](#requirements).
+
+> **Alpha.** OxDesk runs every day on a three-machine reference
 > deployment (Ubuntu, Windows, macOS), where every number in
-> [`specs/`](specs/) was measured. Treat anything outside that shape as
-> untested.
+> [`specs/`](specs/) was measured. Outside that shape, expect rough edges,
+> and tell us about them.
 
 ## The gap it fills
 
