@@ -270,5 +270,8 @@
   "{} min ago: {}": "há {} min: {}",
   "{} h ago: {}": "há {} h: {}",
   "{} days ago: {}": "há {} dias: {}",
-  "OxDesk · Set up this machine": "OxDesk · Configurar esta máquina"
+  "OxDesk · Set up this machine": "OxDesk · Configurar esta máquina",
+  "Settings": "Configurações",
+  "Language": "Idioma",
+  "For the panel and the setup wizard. Saved in this browser, on this machine.": "Para o painel e o assistente de configuração. Fica salvo neste navegador, nesta máquina."
 }
