@@ -1,184 +1,185 @@
-# Novidades
+# What's new
 
-Uma entrada por coisa que mudou e que dá para notar usando. Vai embutida
-no binário (`include_str!`), então o que o painel mostra é sempre o que
-aquela máquina está rodando — não o que o repositório tem.
+One entry per change you can notice while using it. It is embedded in the
+binary (`include_str!`), so what the panel shows is always what that
+machine is running, not what the repository has.
 
-Formato: `## <data> · <título>` e uma linha de descrição.
+Format: `## <date> · <title>` and a description underneath.
 
-## 2026-11-04 · A imagem não congela mais até você mexer o mouse
-O laço da janela bloqueava esperando evento do sistema, e a thread de
-rede enchia o slot com o quadro novo sem acordar ninguém — então a
-imagem só atualizava quando você mexia o mouse ou digitava. Seu relato
-("congela numa mensagem do chat até eu mexer o mouse") descreveu o
-mecanismo exato. Agora a rede acorda a janela a cada quadro: medido, 720
-quadros desenhados a 59 fps com ninguém tocando em nada.
+## 2026-11-04 · The picture no longer freezes until you move the mouse
+The window loop blocked waiting for a system event, and the network thread
+filled the slot with the new frame without waking anyone up, so the
+picture only updated when you moved the mouse or typed. The report
+("it freezes on a chat message until I move the mouse") described the
+exact mechanism. Now the network wakes the window on every frame:
+measured, 720 frames drawn at 59 fps with nobody touching anything.
 
-## 2026-11-04 · Input do Mac para o Ubuntu: tecla presa e lentidão
-Cada evento era uma chamada ao compositor **esperando resposta**, na
-mesma thread que bombeia o vídeo — então a tecla esperava o quadro e o
-quadro esperava a tecla. Agora a injeção não espera resposta (ela não
-tem nada de útil). O host do Ubuntu também passou a respeitar 60 fps em
-vez de mandar 80: medido, 4,5 Mbps contra 6,2, sem diferença visível numa
-tela de 60 Hz. E o visualizador do Mac copia os pixels por linha em vez
-de um a um — eram 921 mil iterações por quadro para produzir bytes que já
-vinham no formato certo.
+## 2026-11-04 · Input from the Mac to Ubuntu: stuck keys and lag
+Every event was a call to the compositor **waiting for a reply**, on the
+same thread that pumps the video, so the key waited for the frame and the
+frame waited for the key. Now injection does not wait for a reply (there
+is nothing useful in it). The Ubuntu host also keeps to 60 fps instead of
+sending 80: measured, 4.5 Mbps against 6.2, with no visible difference on
+a 60 Hz screen. And the Mac viewer copies pixels a row at a time instead
+of one by one: that was 921 thousand iterations per frame to produce
+bytes that already arrived in the right format.
 
-## 2026-11-04 · O RDP saiu: o Windows também assiste pelo nosso protocolo
-O visualizador passou a compilar lá, decodificando por NVDEC — não existe
-`libavcodec` no Windows e era só isso que mantinha aquele caminho no
-mstsc. Os quatro trajetos entre as três máquinas agora são nossos.
-Medido daqui com a GPU: 840 quadros a 65 fps, zero perdido.
+## 2026-11-04 · RDP is gone: Windows watches through our protocol too
+The viewer now builds there, decoding with NVDEC. Windows has no
+`libavcodec`, and that alone was what kept that path on mstsc. All four
+paths between the three machines are ours now. Measured from here with
+the GPU: 840 frames at 65 fps, none lost.
 
-## 2026-11-04 · Decodificação pela GPU, sem depender do ffmpeg
-O NVDEC decodifica o nosso fluxo: 2560x1440 a 250 fps, 4 ms por quadro
-contando a volta para a CPU. A conversão de cor foi conferida contra o
-ffmpeg no mesmo quadro (média R=60 G=60 B=61 contra R=60 G=59 B=61 — um
-ponto de arredondamento). É o que vai liberar o visualizador no Windows,
-onde não existe libavcodec, e com ele o último RDP do sistema.
+## 2026-11-04 · GPU decoding, with no dependency on ffmpeg
+NVDEC decodes our stream: 2560x1440 at 250 fps, 4 ms per frame including
+the trip back to the CPU. The colour conversion was checked against
+ffmpeg on the same frame (mean R=60 G=60 B=61 against R=60 G=59 B=61, one
+step of rounding). This is what will unlock the viewer on Windows, where
+there is no libavcodec, and with it the last RDP in the system.
 
-## 2026-11-04 · O painel pode perguntar ao dispositivo onde ficam os canais
-`logid hosts <slot>` lê os hosts do próprio teclado (0x1815), com nome e
-tipo de rádio: canal 1 `ubuntu-host` (unifying), canal 2 `windows-host`
-(unifying), canal 3 `mac-host` (bluetooth). Isso encerrou uma
-hora de investigação errada: eu deduzia o pareamento pelo que os
-receptores mostram, e receptor não sabe nomear dispositivo ausente. O
-inventário agora também diz `paired`, separando "slot vazio" de "pareado,
-mas o dispositivo está em outra máquina" — antes os dois eram o mesmo
-JSON.
+## 2026-11-04 · The panel can ask the device where its channels go
+The `hosts <slot>` command reads the hosts stored in the keyboard itself
+(0x1815), with the name and radio type of each channel, unifying or
+bluetooth. That ended an hour of wrong investigation: I was inferring the
+pairing from what the receivers show, and a receiver cannot name a device
+that is not there. The inventory now also says `paired`, separating
+"empty slot" from "paired, but the device is on another machine". Before,
+the two were the same JSON.
 
-## 2026-11-04 · Botão para pausar a leitura dos dispositivos
-Os dispositivos voltam ao canal 1 sozinhos, com borda e reconciliador
-desligados nas três e nenhuma linha de log reivindicando. Eliminado todo
-código nosso que troca canal, sobraram duas hipóteses: a nossa leitura
-HID++ perturbando o rádio, ou o hardware. Em Disposição há agora um botão
-que pausa a sondagem por 10 minutos — troque de máquina durante a pausa:
-se ficar de pé, o problema é nosso; se voltar sozinho, é o rádio. Trocar
-de canal continua funcionando durante a pausa.
+## 2026-11-04 · A button to pause reading the devices
+The devices go back to channel 1 on their own, with the edge and the
+reconciler off on all three and no log line claiming it. With all of our
+channel-switching code ruled out, two hypotheses were left: our HID++
+reads disturbing the radio, or the hardware. Layout now has a button that
+pauses polling for 10 minutes. Switch machines during the pause: if it
+stays, the problem is ours; if it goes back on its own, it is the radio.
+Switching channels keeps working during the pause.
 
-## 2026-11-04 · Uptime, RAM e CPU em todos os cartões, sempre
-A máquina que você está olhando ficava sem detalhe nenhum: a leitura ia
-por SSH e ninguém faz SSH para si mesmo — daí você ver a RAM do MacBook
-pelo Windows e não pelo próprio MacBook. Agora o cartão local lê
-localmente. A RAM do Linux nunca tinha funcionado (os dois números saíam
-colados por dependerem da ordem do /proc/meminfo) e o bug sobreviveu
-porque esta é a única máquina Linux e o detalhe dela nunca era
-consultado. Entrou CPU junto, e a linha aparece sempre — com travessão
-quando não deu para ler, em vez de desaparecer.
+## 2026-11-04 · Uptime, RAM and CPU on every card, always
+The machine you were looking at had no detail at all: the reading went
+over SSH and nobody SSHs into themselves, which is why you could see the
+MacBook's RAM from Windows and not from the MacBook itself. Now the local
+card reads locally. Linux RAM had never worked (the two numbers came out
+glued together because they depended on the order of /proc/meminfo), and
+the bug survived because this is the only Linux machine and its detail
+was never asked for. CPU came along, and the line always shows, with a
+dash when it could not be read, instead of disappearing.
 
-## 2026-11-04 · Cursor no lugar certo e tela cheia que estica
-Dois defeitos meus, do mesmo conserto anterior. O cálculo da posição do
-mouse usava o tamanho da imagem como se fosse o da tela remota — numa
-janela de 1280x720 contra 2560x1440, seu cursor só alcançava o quarto
-superior esquerdo. E o desenho exigia casar o tamanho exato, então ao
-entrar em tela cheia todo quadro era descartado e ficava na tela o
-buffer antigo, pequeno, no canto. Agora a imagem se ajusta à janela sem
-distorcer (com barras quando a proporção difere) e o cursor é mapeado
-pela imagem, não pela janela.
+## 2026-11-04 · Cursor in the right place, and full screen that stretches
+Two defects of mine, from the same earlier fix. The mouse position used
+the picture's size as if it were the remote screen's: in a 1280x720
+window against 2560x1440, your cursor only reached the top-left quarter.
+And drawing required an exact size match, so on entering full screen
+every frame was discarded and the old, small buffer stayed in the corner.
+Now the picture fits the window without distortion (with bars when the
+aspect ratio differs) and the cursor is mapped through the picture, not
+through the window.
 
-## 2026-11-04 · Painel com barra lateral, favoritos e um painel por vez
-No estilo que você apontou no app do Windows: lateral translúcida com as
-máquinas em cima, favoritos logo abaixo e os painéis listados — o
-conteúdo troca no lugar em vez de ser um rolo único de cinco seções. A
-estrela fixa uma máquina em Favoritos; o ▶ ao lado dela abre a tela
-direto. Em janela estreita a lateral vira uma barra horizontal.
+## 2026-11-04 · Panel with a sidebar, favourites and one pane at a time
+In the style of the Windows app that was pointed out: a translucent
+sidebar with the machines at the top, favourites right below and the
+panes listed, and the content switches in place instead of being one long
+scroll of five sections. The star pins a machine to Favourites; the ▶
+next to it opens its screen directly. In a narrow window the sidebar
+becomes a horizontal bar.
 
-## 2026-11-04 · "Ver a tela" do Windows, daqui, já é o nosso
-O visualizador passou a compilar no Linux (libavcodec do apt), então o
-botão do painel do Ubuntu deixou de chamar RDP. Três defeitos saíram no
-caminho: reconectar era recusado, um handshake que falhava derrubava o
-host inteiro, e o primeiro quadro de uma reconexão às vezes vinha sem
-ser quadro-chave — a janela abria preta reclamando do decodificador.
-Agora nada sai antes de um quadro-chave, por garantia e não por sorte.
+## 2026-11-04 · "View screen" for Windows, from here, is ours now
+The viewer now builds on Linux (libavcodec from apt), so the button on
+the Ubuntu panel no longer calls RDP. Three defects came out on the way:
+reconnecting was refused, a failed handshake took down the whole host,
+and the first frame of a reconnection sometimes was not a keyframe, so
+the window opened black with the decoder complaining. Now nothing goes
+out before a keyframe, by guarantee and not by luck.
 
-## 2026-11-04 · A borda do Windows também obedece ao interruptor
-Eu havia corrigido só a do GNOME. O Windows tem implementação própria, e
-o log provou o estrago: dois segundos depois de desligar pela tela, ela
-se armou e devolveu mouse e teclado para o Ubuntu. Agora as duas leem a
-flag a cada volta — e o dead-man's switch, que devolvia os dispositivos
-se você não digitasse em 25s, para junto.
+## 2026-11-04 · The Windows edge obeys the switch too
+I had fixed only the GNOME one. Windows has its own implementation, and
+the log proved the damage: two seconds after it was turned off on screen,
+it armed itself and handed mouse and keyboard back to Ubuntu. Now both
+read the flag on every pass, and the dead man's switch, which handed the
+devices back if you did not type for 25 s, stops along with them.
 
-## 2026-11-04 · O Windows serve a própria tela pelo nosso protocolo
-Captura por DXGI, codificação na GPU, QUIC — o mesmo caminho do Ubuntu.
-Verificado daqui: 2560x1440, 174 quadros em 10s, zero perdido. No painel
-do Mac, "Ver a tela" do Windows já é o nosso, não RDP. No painel do
-Ubuntu continua RDP, porque o visualizador só compila no macOS por
-enquanto — e trocar um botão que funciona por um que diz "sem cliente"
-não seria progresso.
+## 2026-11-04 · Windows serves its own screen through our protocol
+DXGI capture, GPU encoding, QUIC: the same path as Ubuntu. Checked from
+here: 2560x1440, 174 frames in 10 s, none lost. On the Mac panel,
+"View screen" for Windows is ours now, not RDP. On the Ubuntu panel it
+is still RDP, because the viewer only builds on macOS for now, and
+swapping a button that works for one that says "no client" would not be
+progress.
 
-## 2026-11-04 · O painel mostra a borda e o reconciliador de cada máquina
-A borda é um comportamento de par: a do Windows apontada para cá
-devolvia mouse e teclado a cada encostada, enquanto esta tela dizia —
-com razão — que a borda daqui estava desligada. Era invisível sem abrir
-o painel da outra máquina. Agora cada cartão mostra o estado dos dois
-interruptores daquele host, em âmbar quando ligados.
+## 2026-11-04 · The panel shows each machine's edge and reconciler
+The edge is a behaviour of a pair: the Windows one, pointed this way,
+handed mouse and keyboard back at every touch, while this screen said,
+correctly, that the edge here was off. It was invisible without opening
+the other machine's panel. Now each card shows the state of that host's
+two switches, in amber when they are on.
 
-## 2026-11-04 · Os interruptores de borda e reconciliador agora desligam
-Desligar a borda pela tela não desligava nada: as barreiras eram criadas
-no boot e a flag nunca era lida de novo. O reconciliador, por sua vez,
-pedia ao outro computador que devolvesse o mouse, acreditava sem
-conferir, e repetia — sete vezes em dois minutos. Agora ele confere se
-o dispositivo saiu mesmo e, em três tentativas sem efeito, se desliga e
-diz por quê no log.
+## 2026-11-04 · The edge and reconciler switches now turn things off
+Turning the edge off on screen turned nothing off: the barriers were
+created at boot and the flag was never read again. The reconciler, in
+turn, asked the other computer to hand the mouse back, believed it
+without checking, and repeated, seven times in two minutes. Now it checks
+that the device really left and, after three attempts with no effect, it
+turns itself off and says why in the log.
 
-## 2026-11-04 · "Ver a tela" do Mac já usa o nosso, não RDP
-Clicar acorda o host da outra máquina sozinho e abre nossa janela. A
-imagem foi corrigida (ela era redimensionada errado), ganhou taxa de
-bits de LAN e keyframe a cada 2s para o erro cicatrizar. O Windows
-segue em RDP até existir captura lá.
+## 2026-11-04 · "View screen" for the Mac uses ours, not RDP
+Clicking wakes the other machine's host on its own and opens our window.
+The picture was fixed (it was scaled wrong), and it gained a LAN bitrate
+and a keyframe every 2 s so that errors heal. Windows stays on RDP until
+there is capture there.
 
-## 2026-11-04 · Tela remota própria: teclado e mouse já voltam
-O laço fechou — o input do cliente chega ao host e é aplicado. Falta
-trocar o botão "Ver a tela" para chamar o nosso em vez do RDP.
+## 2026-11-04 · Our own remote screen: keyboard and mouse go back
+The loop is closed: the client's input reaches the host and is applied.
+What is left is switching the "View screen" button to call ours instead
+of RDP.
 
-## 2026-11-04 · Tela remota própria: já dá para VER o Ubuntu no Mac
-A imagem é capturada, codificada pela GPU, atravessa a rede e é
-decodificada no M1 a 72 fps. Falta mandar teclado e mouse de volta para
-poder usar, e não só olhar.
+## 2026-11-04 · Our own remote screen: you can SEE Ubuntu on the Mac
+The picture is captured, encoded by the GPU, crosses the network and is
+decoded on the M1 at 72 fps. What is left is sending keyboard and mouse
+back, to use it and not only look.
 
-## 2026-11-04 · Tela remota própria: a imagem já chega no Mac
-Capturada no Ubuntu, codificada pela GPU e transmitida por QUIC: 77 fps
-a 1440p, 1,7 Mbps, sem perder quadro. Falta desenhar na tela e mandar o
-teclado e o mouse de volta.
+## 2026-11-04 · Our own remote screen: the picture reaches the Mac
+Captured on Ubuntu, encoded by the GPU and sent over QUIC: 77 fps at
+1440p, 1.7 Mbps, no frame lost. What is left is drawing it on screen and
+sending keyboard and mouse back.
 
-## 2026-11-04 · Tela remota própria: primeira metade pronta
-Captura do Wayland e codificação por GPU funcionando: 1440p a 75 fps em
-6,4 ms por quadro, 5,5 Mbps. Falta o transporte e o cliente do Mac.
+## 2026-11-04 · Our own remote screen: the first half is ready
+Wayland capture and GPU encoding working: 1440p at 75 fps in 6.4 ms per
+frame, 5.5 Mbps. What is left is the transport and the Mac client.
 
-## 2026-11-04 · Borda desligada, teclado vira o líder
-Os dispositivos trocavam de máquina sozinhos. A borda saiu de cena e a
-troca passa a ser o botão Easy-Switch; o reconciliador agora segue o
-teclado, não o mouse, para não desfazer o que você acabou de fazer.
+## 2026-11-04 · Edge off, the keyboard becomes the leader
+The devices switched machines on their own. The edge stepped aside and
+switching is now the Easy-Switch button; the reconciler now follows the
+keyboard, not the mouse, so it does not undo what you just did.
 
-## 2026-11-04 · Versão do build no rodapé
-Número incremental e commit, iguais nas três máquinas quando estão em
-dia — hash sozinho diz que estão diferentes, não qual está atrás.
+## 2026-11-04 · Build version in the footer
+An incremental number and the commit, the same on all three machines when
+they are up to date: a hash alone says they differ, not which one is
+behind.
 
-## 2026-11-04 · Gerenciador de tarefas
-Processos das três máquinas, ordenados por CPU, com encerrar em dois
-passos. A unidade de CPU é declarada: percentual no Unix, segundos
-acumulados no Windows.
+## 2026-11-04 · Task manager
+Processes of the three machines, sorted by CPU, with a two-step kill. The
+CPU unit is stated: a percentage on Unix, accumulated seconds on Windows.
 
-## 2026-11-04 · Disposição das máquinas na grade
-Arraste cada máquina para onde ela fica na mesa; as bordas saem daí.
-Vizinho que não consegue receber dispositivo aparece riscado, com o
-motivo.
+## 2026-11-04 · Machine layout on the grid
+Drag each machine to where it sits on the desk; the edges come from
+there. A neighbour that cannot receive devices shows struck through, with
+the reason.
 
-## 2026-11-04 · Windows parou de apagar o daemon
-O Defender removia o `logid.exe` como ameaça. O binário agora chega
-assinado, com carimbo de tempo.
+## 2026-11-04 · Windows stopped deleting the daemon
+Defender removed the daemon's executable as a threat. The binary now
+arrives signed, with a timestamp.
 
-## 2026-11-03 · Tela remota nativa de cada SO
-Botão "Ver a tela" no painel, com opções de teclado+mouse, som e
-microfone — cada uma desabilitada quando o cliente não sabe fazer.
+## 2026-11-03 · Each OS's native remote screen
+A "View screen" button on the panel, with options for keyboard and mouse,
+sound and microphone, each one disabled when the client cannot do it.
 
-## 2026-11-03 · Navegador de arquivos
-Lista pastas das três máquinas, local ou por SFTP. Só leitura.
+## 2026-11-03 · File browser
+Lists folders on the three machines, locally or over SFTP. Read only.
 
-## 2026-11-03 · O Mac entrou
-Terceira máquina no painel: status, arquivos e tela. Sem receptor
-Logitech, ele ainda não recebe teclado e mouse.
+## 2026-11-03 · The Mac joined
+A third machine on the panel: status, files and screen. With no Logitech
+receiver, it does not get keyboard and mouse yet.
 
-## 2026-11-03 · Painel e daemon no Windows
-Antes só existia no Ubuntu. Agora é o mesmo binário nos dois, com ícone
-no Menu Iniciar e na bandeja.
+## 2026-11-03 · Panel and daemon on Windows
+Before, it only existed on Ubuntu. Now it is the same binary on both, with
+an icon in the Start menu and in the tray.

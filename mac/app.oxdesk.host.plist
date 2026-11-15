@@ -6,7 +6,7 @@
   A LaunchAgent and not a launch over SSH, and the reason is hard: macOS
   screen capture depends on a TCC permission (Screen Recording), which is
   granted to whoever LAUNCHED the process. A process coming from SSH has no
-  grant at all -- and AVFoundation, instead of failing, **hangs**.
+  grant at all, and AVFoundation, instead of failing, **hangs**.
   Measured: `ffmpeg -f avfoundation -i 1` itself hangs forever when called
   over SSH, and the same command runs in the graphical session.
 
@@ -17,20 +17,26 @@
   RunAtLoad false: it only starts when someone asks for the screen, via
   `launchctl kickstart`. Capturing and encoding with nobody watching would
   waste the laptop's battery.
+
+  __HOME__ is a placeholder, not a path: launchd expands neither `~` nor
+  $HOME, so the paths must be absolute, and they belong to whoever's Mac
+  this lands on. `scripts/deploy.sh` replaces it with that Mac's own $HOME
+  on the way in and refuses the result if the placeholder survives. The
+  setup wizard writes the same agent from Rust (`setup_mac::repair`).
 -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>app.oxdesk.host</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/user/.local/bin/oxdesk-host</string>
+    <string>__HOME__/.local/bin/oxdesk-host</string>
     <string>9777</string>
     <string>Capture screen 0</string>
   </array>
   <key>RunAtLoad</key><false/>
   <key>KeepAlive</key><false/>
   <key>ProcessType</key><string>Interactive</string>
-  <key>StandardOutPath</key><string>/Users/user/.local/state/oxdesk-host.log</string>
-  <key>StandardErrorPath</key><string>/Users/user/.local/state/oxdesk-host.log</string>
+  <key>StandardOutPath</key><string>__HOME__/.local/state/oxdesk-host.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.local/state/oxdesk-host.log</string>
 </dict>
 </plist>

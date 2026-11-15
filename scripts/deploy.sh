@@ -637,7 +637,21 @@ else
   # AVFoundation hangs instead of failing. `RunAtLoad false` -- it only
   # comes up when someone asks for the screen, so it does not burn battery
   # capturing for nobody.
-  if out=$(scp -q -o BatchMode=yes mac/app.oxdesk.host.plist "$MAC:Library/LaunchAgents/" 2>&1 &&
+  #
+  # The plist carries __HOME__ instead of a path, because launchd expands
+  # neither `~` nor $HOME and the paths belong to whoever owns that Mac.
+  # The Mac fills in its OWN $HOME as the file lands (single quotes: it
+  # expands there, not here). Then the step proves what arrived: the host
+  # path is in the file, no placeholder survived, and plutil accepts it. A
+  # LaunchAgent pointing at a path that does not exist loads fine and never
+  # starts, which is the silent failure this guards against.
+  if out=$(ssh -o BatchMode=yes "$MAC" \
+            'mkdir -p "$HOME/Library/LaunchAgents" &&
+             f="$HOME/Library/LaunchAgents/app.oxdesk.host.plist" &&
+             sed "s|__HOME__|$HOME|g" > "$f" &&
+             grep -qF "$HOME/.local/bin/oxdesk-host" "$f" &&
+             ! grep -q __HOME__ "$f" &&
+             plutil -lint -s "$f"' < mac/app.oxdesk.host.plist 2>&1 &&
            ssh -n -o BatchMode=yes "$MAC" \
             "launchctl bootout gui/\$(id -u)/app.oxdesk.host 2>/dev/null || true;
              # bootstrap fails with an I/O error if the previous one is

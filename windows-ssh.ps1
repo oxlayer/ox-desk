@@ -66,8 +66,22 @@ icacls $akf /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-N
 icacls $akf
 
 Restart-Service sshd
+
+# The address to test with is read from this machine, never written in the
+# repo: it is the IPv4 of the interface that holds the default route.
+# It is only a hint for the test below, not config: config uses mDNS
+# names, because a DHCP address changes (specs/007-device-routing.md).
+$ip = $null
+$route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+  Sort-Object RouteMetric | Select-Object -First 1
+if ($route) {
+  $ip = (Get-NetIPAddress -InterfaceIndex $route.ifIndex -AddressFamily IPv4 `
+          -ErrorAction SilentlyContinue | Select-Object -First 1).IPAddress
+}
+if (-not $ip) { $ip = '<this-pc-address>' }
+
 Write-Host ''
-Write-Host 'Done. Test from Ubuntu:'
-Write-Host "  ssh -i ~/.ssh/id_ed25519_windows $env:USERNAME@192.168.1.43 'hostname'"
+Write-Host 'Done. Test from the machine you drive from:'
+Write-Host "  ssh $env:USERNAME@$ip 'hostname'"
 Write-Host ''
 Write-Host 'Undo:  Stop-Service sshd; Set-Service sshd -StartupType Disabled'
