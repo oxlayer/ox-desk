@@ -56,7 +56,7 @@ name became **oxdesk**.
 > saying `oxdesk` → `oxdesk`, the English paragraph below saying
 > `sign.sh` → `sign.sh`. A rename that rewrites its own record leaves nobody
 > able to read the old name in a log, a backup or an old machine. Restored
-> from `git show 9b226cf^`.
+> from `git show fcf777a^`.
 
 It was a two-sided change, and it had three traps measured beforehand:
 - **The installed OTA only knows the old names.** A transition version
