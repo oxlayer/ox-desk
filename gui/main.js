@@ -9,7 +9,7 @@
 // that only existed on Ubuntu, which was exactly the asymmetry people
 // complained about. What changes per OS is paths, and only those live in
 // `paths()`.
-const { app, BrowserWindow, Tray, Menu, shell, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, shell, nativeImage, Notification } = require('electron');
 
 /// On Linux the tray is native (ksni inside oxdesk). Windows and macOS keep
 /// Electron's tray until they get their own.
@@ -298,6 +298,33 @@ async function focus(host) {
   await refreshTray();
 }
 
+// "Check for updates": the daemon asks the updater and answers with one
+// sentence. The shell only shows it -- a balloon on Windows, which needs
+// no registered app id, and a notification elsewhere.
+function checkForUpdates() {
+  const show = (message) => {
+    if (process.platform === 'win32' && tray) {
+      tray.displayBalloon({ title: 'OxDesk', content: message });
+    } else if (Notification.isSupported()) {
+      new Notification({ title: 'OxDesk', body: message }).show();
+    }
+  };
+  const req = http.request(
+    { host: '127.0.0.1', port: PORT, path: '/api/update/check', method: 'POST', timeout: 90000 },
+    (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try { show(JSON.parse(body).message || 'Could not check for updates.'); }
+        catch (e) { show('Could not check for updates.'); }
+      });
+    }
+  );
+  req.on('error', () => show('Could not check for updates: the daemon did not answer.'));
+  req.on('timeout', () => { req.destroy(); show('Could not check for updates: no answer in 90 s.'); });
+  req.end();
+}
+
 async function refreshTray() {
   if (!tray) return;
   const [devs, cfg, kvm] = await Promise.all([
@@ -353,6 +380,7 @@ async function refreshTray() {
     { label: 'Set up this machine', click: () => open('/setup') },
     { label: 'Reload', click: () => win && win.reload() },
     { label: 'Open in the browser', click: () => shell.openExternal(URL) },
+    { label: 'Check for updates', click: checkForUpdates },
     { type: 'separator' },
     { label: 'Quit', click: () => { quitting = true; app.quit(); } }
   );

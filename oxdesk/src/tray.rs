@@ -214,8 +214,29 @@ impl ksni::Tray for OxdeskTray {
             }
             .into(),
         );
+        items.push(
+            StandardItem {
+                label: "Check for updates".into(),
+                activate: Box::new(|_: &mut OxdeskTray| check_for_updates()),
+                ..Default::default()
+            }
+            .into(),
+        );
         items
     }
+}
+
+/// On a thread: the check asks GitHub and can take seconds, and this menu
+/// shares its thread with DBusMenu. The answer goes to a desktop
+/// notification, and to the log if there is no notifier.
+fn check_for_updates() {
+    std::thread::spawn(|| {
+        let o = crate::update::check();
+        crate::say!("tray: updates: {}", o.message);
+        let _ = std::process::Command::new("notify-send")
+            .args(["--app-name=OxDesk", "OxDesk", &o.message])
+            .status();
+    });
 }
 
 impl OxdeskTray {

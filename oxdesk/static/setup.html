@@ -10,6 +10,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <script src="/i18n/catalogs.js"></script>
 <script src="/i18n.js"></script>
+<link rel="icon" type="image/png" href="/favicon.png">
 <title>OxDesk · Set up this machine</title>
 <style>
   /* Same tokens as the panel: the two pages are the same house, and
@@ -43,6 +44,9 @@
 
   /* ---- header ---- */
   header{margin-bottom:32px}
+  .hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+  .hero .mascot{width:78px;flex:none;margin-top:-4px;
+    filter:drop-shadow(0 2px 6px rgba(0,0,0,.2))}
   .eyebrow{font:11px/1 var(--mono);letter-spacing:.06em;color:var(--faint);
     margin-bottom:10px}
   h1{font-size:24px;font-weight:620;margin:0 0 5px;letter-spacing:-.02em}
@@ -164,9 +168,11 @@
 </head><body>
 <div class="wrap">
   <header>
+    <div class="hero"><div>
     <div class="eyebrow" id="eyebrow">measuring</div>
     <h1 id="machine">Set up this machine</h1>
     <p class="lead" id="lead">Measuring what is missing…</p>
+    </div><img class="mascot" src="/mascot.webp" alt=""></div>
     <div class="bar"><i id="barfill"></i></div>
     <div class="barlbl">
       <span><b id="done">0</b> of <b id="total">0</b> essentials ready</span>
