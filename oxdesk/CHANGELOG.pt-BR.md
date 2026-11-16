@@ -8,6 +8,12 @@ confere.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-16 · Fim das teclas presas quando a conexão cai
+Se a máquina que manda o teclado travava ou perdia a rede com uma tecla
+apertada, essa tecla ficava pressionada na outra máquina -- o Shift preso,
+digitando em maiúsculas. Agora a máquina que recebe solta toda tecla e
+botão ainda pressionados assim que a conexão termina.
+
 ## 2026-11-16 · O cursor some enquanto o controle está na outra máquina
 Enquanto o teclado e o mouse estavam na outra máquina, o cursor do Windows
 ficava parado no meio da tela. Agora ele some, e volta onde o controle

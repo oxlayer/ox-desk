@@ -182,7 +182,12 @@ first call of each method checked (spec 024).
 - **The grab waits until every key is up**, so a key held during the
   switch is not stuck down on one side and up on the other.
 - **Held keys tracked on both ends**: the target releases what it pressed
-  when the link ends, whatever the reason.
+  when the link ends, whatever the reason. **Built (v0.3.8)**:
+  `input::Held`, in all three hosts. Proven on the Ubuntu host with
+  `oxdesk-input-send --leave-held 42` (Shift down, then disconnect, as a
+  crashed source would): the old host released nothing, so Shift stayed
+  down until released by hand; the new one logged `released 1
+  key(s)/button(s) the client left held`.
 - **Gamepad virtual keys are not "a key held"**: a half-pressed trigger
   must not block a switch (mickey found this the hard way,
   `hooks.rs:565-582`).

@@ -91,6 +91,23 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // `--leave-held <evdev>`: presses the key and leaves WITHOUT releasing
+    // it -- a source that crashed mid-press. The host must release it on
+    // its own when the stream ends (`input::Held`); its log says
+    // "released 1 key(s)/button(s) the client left held". Use a key that
+    // types nothing alone (42 = left Shift).
+    if let Some(i) = std::env::args().position(|a| a == "--leave-held") {
+        let key: u32 = std::env::args().nth(i + 1).and_then(|v| v.parse().ok()).unwrap_or(42);
+        let mut buf = BytesMut::new();
+        Event::Key { keycode: key, pressed: true }.write(&mut buf);
+        send.write_all(&buf).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        send.finish()?;
+        println!("  key {key} pressed and left held");
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        return Ok(());
+    }
+
     // `--capslock`: turns the target machine's Caps Lock on and off.
     //
     // The keyboard needed a MEASURABLE test. "I typed and nothing showed

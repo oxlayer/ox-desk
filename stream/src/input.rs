@@ -52,6 +52,57 @@ pub fn chord_held(pressed: &std::collections::HashSet<u32>, chord: (u32, u32)) -
     pressed.contains(&chord.0) && pressed.contains(&chord.1)
 }
 
+// --- what a host holds on a client's behalf (spec 025 section 6) -----------
+
+/// The keys and buttons a host pressed for a client and has not released.
+///
+/// A source that exits cleanly sends a key-up for whatever is held (the KVM
+/// does, in `finish`). One that is killed, crashes or loses the network in
+/// the middle of a press sends nothing more -- and the key stays down on the
+/// target: Shift held forever, typing in capitals until someone notices
+/// (spec 005 records it happening on the viewer path). So the host keeps
+/// its own account and, when the input stream ends for any reason, releases
+/// what is left.
+#[derive(Default)]
+pub struct Held {
+    keys: std::collections::BTreeSet<u32>,
+    buttons: std::collections::BTreeSet<i32>,
+}
+
+impl Held {
+    /// Records an event the host is about to apply.
+    pub fn note(&mut self, e: &Event) {
+        match *e {
+            Event::Key { keycode, pressed } => {
+                if pressed {
+                    self.keys.insert(keycode);
+                } else {
+                    self.keys.remove(&keycode);
+                }
+            }
+            Event::Button { code, pressed } => {
+                if pressed {
+                    self.buttons.insert(code);
+                } else {
+                    self.buttons.remove(&code);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The events that release everything still held -- buttons first, so a
+    /// drag ends where it is -- and forgets it all.
+    pub fn release_all(&mut self) -> Vec<Event> {
+        let mut out: Vec<Event> =
+            self.buttons.iter().map(|&code| Event::Button { code, pressed: false }).collect();
+        out.extend(self.keys.iter().map(|&keycode| Event::Key { keycode, pressed: false }));
+        self.keys.clear();
+        self.buttons.clear();
+        out
+    }
+}
+
 // --- the way back by the screen edge (spec 024) ---------------------------
 
 /// The line a host sends a KVM client when its input connection opens, on
@@ -1109,6 +1160,27 @@ mod reverse_key_tests {
         // The right side is the primary's at any height.
         assert_eq!(return_point(Edge::Right, 0.3, &REF, 60), Some((2499, 432)));
         assert_eq!(return_point(Edge::Left, 0.5, &[], 60), None);
+    }
+
+    #[test]
+    fn what_is_still_held_is_released_and_nothing_else() {
+        let mut h = Held::default();
+        for e in [
+            Event::Key { keycode: 42, pressed: true },  // Shift down...
+            Event::Key { keycode: 30, pressed: true },  // A down
+            Event::Key { keycode: 30, pressed: false }, // A up
+            Event::Button { code: BTN_LEFT, pressed: true },
+            Event::MouseRel { dx: 5.0, dy: 0.0 },
+        ] {
+            h.note(&e);
+        }
+        // ...and the source vanished. Shift and the button come up; A,
+        // already up, is not sent again.
+        assert_eq!(
+            h.release_all(),
+            vec![Event::Button { code: BTN_LEFT, pressed: false }, Event::Key { keycode: 42, pressed: false }]
+        );
+        assert!(h.release_all().is_empty(), "released once, then nothing");
     }
 
     #[test]
