@@ -6,6 +6,12 @@ machine is running, not what the repository has.
 
 Format: `## <date> · <title>` and a description underneath.
 
+## 2026-11-16 · No more stuck keys when a connection drops
+If the machine sending the keyboard crashed or lost the network while a
+key was down, that key stayed pressed on the other machine -- Shift held
+forever, typing in capitals. The receiving machine now lets go of every
+key and button still held as soon as the connection ends.
+
 ## 2026-11-16 · The cursor disappears while the input is away
 While the keyboard and mouse were on the other machine, Windows' cursor sat
 still in the middle of the screen. Now it disappears, and comes back where

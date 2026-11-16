@@ -689,10 +689,12 @@ async fn receive_input(
     let mut n = 0u64;
     let mut failures = 0u64;
     let mut checked = std::collections::HashSet::new();
+    let mut held = crate::input::Held::default();
     while let Ok(Some(read)) = recv.read(&mut buf).await {
         reader.feed(&buf[..read]);
         let mut applied_now = 0u32;
         while let Some(e) = reader.next_event() {
+            held.note(&e);
             if let Err(err) = apply_event(&dbus, &rd_in, &stream_in, e, &mut checked) {
                 failures += 1;
                 // Once, then every hundred: injection at 60 Hz would turn
@@ -739,6 +741,16 @@ async fn receive_input(
         if applied_now > 0 {
             dbus.channel().flush();
         }
+    }
+    // The stream ended -- cleanly or not. Release what the client left
+    // held (`input::Held`).
+    let left = held.release_all();
+    if !left.is_empty() {
+        for e in &left {
+            let _ = apply_event(&dbus, &rd_in, &stream_in, *e, &mut checked);
+        }
+        dbus.channel().flush();
+        println!("  input: released {} key(s)/button(s) the client left held", left.len());
     }
 }
 

@@ -371,9 +371,11 @@ async fn receive_input(conn: quinn::Connection) {
     let mut reader = crate::input::Reader::default();
     let mut buf = vec![0u8; 4096];
     let mut n = 0u64;
+    let mut held = crate::input::Held::default();
     while let Ok(Some(read)) = recv.read(&mut buf).await {
         reader.feed(&buf[..read]);
         while let Some(e) = reader.next_event() {
+            held.note(&e);
             if keyboard.send(e).is_err() {
                 return; // the injection thread exited
             }
@@ -387,6 +389,15 @@ async fn receive_input(conn: quinn::Connection) {
                 println!("  {n} input events applied");
             }
         }
+    }
+    // The stream ended -- cleanly or not. Release what the client left
+    // held (`input::Held`).
+    let left = held.release_all();
+    if !left.is_empty() {
+        for e in &left {
+            let _ = keyboard.send(*e);
+        }
+        println!("  input: released {} key(s)/button(s) the client left held", left.len());
     }
 }
 
