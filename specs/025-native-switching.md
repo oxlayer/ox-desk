@@ -74,10 +74,20 @@ including the first switch after an hour idle.
   loop (`hooks.rs:584-600`): a hung loop keeps swallowing input. Ours is
   decided where the events arrive, and stays that way.
 
-**To measure first, not assume:** whether swallowing an event in the
-low-level hook also stops it reaching Raw Input. If it does, the order of
-the two is the design, and that has to be known before anything is built
-on it.
+**Measured first, not assumed (2026-11-16): swallowing an event in the
+low-level hook does not hide it from Raw Input.** `oxdesk-probe-rawinput`
+injects moves tagged with a marker, swallows only those in its hook, and
+counts the tagged ones a `RIDEV_INPUTSINK` window still receives. On the
+reference Windows machine, two runs:
+
+```
+hook OFF: injected 50, swallowed by the hook 0, seen by Raw Input 50
+hook ON : injected 50, swallowed by the hook 50, seen by Raw Input 50
+```
+
+The control (hook off) seeing all 50 is what makes the second line mean
+something. Still to confirm with a real mouse, which `SendInput` stands in
+for here: the same count while a person moves it.
 
 ## 3. Edges per monitor, driven by motion
 
