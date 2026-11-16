@@ -6,6 +6,12 @@ machine is running, not what the repository has.
 
 Format: `## <date> · <title>` and a description underneath.
 
+## 2026-11-16 · The edge follows your monitors
+With monitors of different sizes side by side, part of a screen's edge
+did not switch, and coming back could put the cursor where no screen is.
+The edge is now worked out per monitor, and the cursor comes back onto a
+real one, at the height it left at.
+
 ## 2026-11-15 · Web pages can no longer control OxDesk
 The local API answered any web page open in a browser on the same
 computer, and a page could have sent your keyboard to another machine or

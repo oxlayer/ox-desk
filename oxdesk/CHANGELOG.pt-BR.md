@@ -8,6 +8,12 @@ confere.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-16 · A borda segue os seus monitores
+Com monitores de tamanhos diferentes lado a lado, parte da borda de uma
+tela não trocava de máquina, e a volta podia pôr o cursor onde não há
+tela. Agora a borda é calculada por monitor, e o cursor volta para um
+monitor de verdade, na altura em que saiu.
+
 ## 2026-11-15 · Páginas da web não controlam mais o OxDesk
 A API local respondia a qualquer página aberta num navegador do mesmo
 computador, e uma página poderia ter mandado o seu teclado para outra

@@ -117,6 +117,27 @@ pub struct Grab {
     restore: POINT,
 }
 
+/// Every monitor, `(left, top, width, height)`, in this process's
+/// (per-monitor-aware) pixels: where the cursor may come back in
+/// (`input::return_point`).
+pub fn monitors() -> Vec<(i32, i32, i32, i32)> {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+    unsafe extern "system" fn push(_m: HMONITOR, _dc: HDC, r: *mut RECT, data: LPARAM) -> windows::core::BOOL {
+        // SAFETY: `data` is the Vec below, alive for the call; `r` is valid
+        // during the callback.
+        let (list, r) = unsafe { (&mut *(data.0 as *mut Vec<(i32, i32, i32, i32)>), &*r) };
+        list.push((r.left, r.top, r.right - r.left, r.bottom - r.top));
+        true.into()
+    }
+    let mut list: Vec<(i32, i32, i32, i32)> = Vec::new();
+    // SAFETY: the callback only writes into `list`, which outlives the call.
+    unsafe {
+        let _ = EnumDisplayMonitors(None, None, Some(push), LPARAM(&mut list as *mut _ as isize));
+    }
+    list
+}
+
 /// The virtual desktop: `(left, top, width, height)`, all monitors.
 pub fn virtual_rect() -> (i32, i32, i32, i32) {
     // SAFETY: plain metric reads.
