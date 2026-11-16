@@ -89,6 +89,29 @@ The control (hook off) seeing all 50 is what makes the second line mean
 something. Still to confirm with a real mouse, which `SendInput` stands in
 for here: the same count while a person moves it.
 
+**What was built first, and why not Raw Input yet (v0.3.7).** The visible
+problem was the cursor, not the motion: parked at the screen centre, it sat
+in the middle of the person's Windows screen for as long as the input was
+away. And Raw Input changes the feel on a GNOME target: there the source
+places the cursor with absolute positions (spec 024), so today the only
+acceleration is Windows' own, applied once, which is the feel that was
+liked. Raw Input's counts carry none; they need a curve of our own first.
+
+So the cover came first: a window over the desktop, alpha 1, non-activating,
+answering `WM_SETCURSOR` with no cursor (`grab_win::cover_desktop`).
+Measured on the reference Windows machine with `GetCursorInfo` and
+`GetForegroundWindow`, sampled every 200-250 ms through a grab:
+
+| When | Cursor | Foreground window |
+|---|---|---|
+| before | showing, a cursor set | unchanged |
+| during | not showing, no cursor | unchanged |
+| after | showing, a cursor set | unchanged |
+
+The same foreground window throughout is the part mickey pays for: its
+cover takes the foreground, which closes menus. `OXDESK_KVM_SHOW_CURSOR=1`
+turns the cover off, for diagnosing.
+
 ## 3. Edges per monitor, driven by motion
 
 **Design.** The edge is "the next pixel the cursor would reach is on no

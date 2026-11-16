@@ -6,6 +6,12 @@ machine is running, not what the repository has.
 
 Format: `## <date> · <title>` and a description underneath.
 
+## 2026-11-16 · The cursor disappears while the input is away
+While the keyboard and mouse were on the other machine, Windows' cursor sat
+still in the middle of the screen. Now it disappears, and comes back where
+the input comes home. Nothing takes the focus to do it: an open menu or a
+half-typed field is still there when you return.
+
 ## 2026-11-16 · The edge follows your monitors
 With monitors of different sizes side by side, part of a screen's edge
 did not switch, and coming back could put the cursor where no screen is.
