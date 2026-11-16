@@ -78,9 +78,23 @@ pub struct Signals {
     /// count, the video loop would end the process for idleness while
     /// someone is still typing through it -- taking the KVM down with it.
     inputs: AtomicUsize,
+    /// The captured screen's size, `width << 32 | height`; 0 until capture
+    /// has negotiated it. Announced to each input client
+    /// (`input::size_line`), so a KVM source can keep the cursor's position
+    /// and bring the input home at the edge (spec 024).
+    size: std::sync::atomic::AtomicU64,
 }
 
 impl Signals {
+    pub fn set_size(&self, w: u32, h: u32) {
+        self.size.store((u64::from(w) << 32) | u64::from(h), Ordering::SeqCst);
+    }
+
+    pub fn size(&self) -> Option<(u32, u32)> {
+        let v = self.size.load(Ordering::SeqCst);
+        (v != 0).then_some(((v >> 32) as u32, v as u32))
+    }
+
     pub fn should_exit(&self) -> bool {
         self.exit.load(Ordering::SeqCst)
     }

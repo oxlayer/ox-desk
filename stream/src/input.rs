@@ -52,6 +52,153 @@ pub fn chord_held(pressed: &std::collections::HashSet<u32>, chord: (u32, u32)) -
     pressed.contains(&chord.0) && pressed.contains(&chord.1)
 }
 
+// --- the way back by the screen edge (spec 024) ---------------------------
+
+/// The line a host sends a KVM client when its input connection opens, on
+/// a stream of its own: `oxdesk-size <width> <height>`. The size of the
+/// screen the input lands on, in the pixels absolute positions use.
+///
+/// Text and a stream of its own, not an `Event`: it goes the other way, it
+/// is sent once, and a client from before it never accepts the stream and
+/// loses nothing.
+pub fn size_line(w: u32, h: u32) -> String {
+    format!("oxdesk-size {w} {h}\n")
+}
+
+pub fn parse_size_line(s: &str) -> Option<(u32, u32)> {
+    let mut f = s.trim().split_whitespace();
+    if f.next()? != "oxdesk-size" {
+        return None;
+    }
+    let (w, h) = (f.next()?.parse::<u32>().ok()?, f.next()?.parse::<u32>().ok()?);
+    (w > 0 && h > 0 && f.next().is_none()).then_some((w, h))
+}
+
+/// A screen edge, as the layout names them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Edge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Edge {
+    pub fn parse(s: &str) -> Option<Edge> {
+        Some(match s {
+            "left" => Edge::Left,
+            "right" => Edge::Right,
+            "top" => Edge::Top,
+            "bottom" => Edge::Bottom,
+            _ => return None,
+        })
+    }
+}
+
+/// How far past the edge the mouse has to be pushed to come back, in
+/// pixels of the other screen. Not the first pixel: the scroll bar of a
+/// maximised window lives on the right edge, and reaching for it must not
+/// send the input home.
+pub const RETURN_PUSH: f64 = 40.0;
+/// How far inside the other screen the cursor appears.
+pub const ENTRY_INSET: f64 = 20.0;
+
+/// What to do with one event from the source.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Step {
+    Send(Event),
+    /// The mouse was pushed past the return edge: bring the input home.
+    /// The value is where along that edge, 0..1, so the cursor can come
+    /// back at the same height.
+    Return(f64),
+}
+
+/// The cursor on the OTHER machine, kept by the source.
+///
+/// Relative motion leaves the source blind: the other side clamps at its
+/// screen edges, and nothing comes back to say where the cursor is. So,
+/// once the other side has said its size, the source keeps the position
+/// itself and sends absolute positions -- and then it knows when the
+/// cursor is at the edge that faces home, and how hard it is being pushed.
+///
+/// Until the size arrives (or with no return edge, or a host that never
+/// sends one) it passes relative motion through unchanged: the behaviour
+/// from before.
+pub struct Pointer {
+    edge: Option<Edge>,
+    /// Where the cursor enters along the edge, 0..1 (the height it left
+    /// this machine at).
+    entry: f64,
+    size: Option<(f64, f64)>,
+    x: f64,
+    y: f64,
+    push: f64,
+}
+
+impl Pointer {
+    pub fn new(edge: Option<Edge>, entry: f64) -> Pointer {
+        Pointer { edge, entry: entry.clamp(0.0, 1.0), size: None, x: 0.0, y: 0.0, push: 0.0 }
+    }
+
+    pub fn tracking(&self) -> bool {
+        self.edge.is_some() && self.size.is_some()
+    }
+
+    /// Is a size still useful to this pointer? Without a return edge it
+    /// never is, and the caller can stop looking for one.
+    pub fn wants_size(&self) -> bool {
+        self.edge.is_some() && self.size.is_none()
+    }
+
+    /// The other screen's size arrived. Places the cursor just inside the
+    /// return edge -- the side this machine is on -- and returns the
+    /// absolute position to send so the other cursor jumps there now.
+    pub fn set_size(&mut self, w: u32, h: u32) -> Option<Event> {
+        let edge = self.edge?;
+        let (w, h) = (w as f64, h as f64);
+        self.size = Some((w, h));
+        let along = |len: f64| (self.entry * (len - 1.0)).round();
+        (self.x, self.y) = match edge {
+            Edge::Right => (w - 1.0 - ENTRY_INSET, along(h)),
+            Edge::Left => (ENTRY_INSET, along(h)),
+            Edge::Bottom => (along(w), h - 1.0 - ENTRY_INSET),
+            Edge::Top => (along(w), ENTRY_INSET),
+        };
+        Some(Event::Mouse { x: self.x, y: self.y })
+    }
+
+    pub fn map(&mut self, e: Event) -> Step {
+        let (Some(edge), Some((w, h)), Event::MouseRel { dx, dy }) = (self.edge, self.size, e) else {
+            return Step::Send(e);
+        };
+        let (nx, ny) = (self.x + dx, self.y + dy);
+        // How far past the return edge this movement tried to go.
+        let over = match edge {
+            Edge::Right => nx - (w - 1.0),
+            Edge::Left => -nx,
+            Edge::Bottom => ny - (h - 1.0),
+            Edge::Top => -ny,
+        };
+        self.x = nx.clamp(0.0, w - 1.0);
+        self.y = ny.clamp(0.0, h - 1.0);
+        if over > 0.0 {
+            self.push += over;
+            if self.push >= RETURN_PUSH {
+                self.push = 0.0;
+                let along = match edge {
+                    Edge::Left | Edge::Right => self.y / (h - 1.0).max(1.0),
+                    Edge::Top | Edge::Bottom => self.x / (w - 1.0).max(1.0),
+                };
+                return Step::Return(along);
+            }
+        } else {
+            // Moving back in, or along the edge without pushing: start over.
+            self.push = 0.0;
+        }
+        Step::Send(Event::Mouse { x: self.x, y: self.y })
+    }
+}
+
 /// Scroll pixels in one line of text -- the unit `Event::Scroll` carries.
 ///
 /// It lives here, with the protocol, because it is a **wire** unit: every
@@ -902,6 +1049,71 @@ mod point_from_pixel_tests {
 #[cfg(test)]
 mod reverse_key_tests {
     use super::*;
+
+    #[test]
+    fn the_size_line_round_trips_and_refuses_anything_else() {
+        assert_eq!(parse_size_line(&size_line(2560, 1440)), Some((2560, 1440)));
+        assert_eq!(parse_size_line("oxdesk-size 0 1440"), None);
+        assert_eq!(parse_size_line("oxdesk-size 2560"), None);
+        assert_eq!(parse_size_line("size 2560 1440"), None);
+        assert_eq!(parse_size_line("oxdesk-size 2560 1440 9"), None);
+    }
+
+    fn rel(dx: f64, dy: f64) -> Event {
+        Event::MouseRel { dx, dy }
+    }
+
+    #[test]
+    fn without_a_size_or_an_edge_motion_stays_relative() {
+        let mut p = Pointer::new(Some(Edge::Right), 0.5);
+        assert_eq!(p.map(rel(5.0, 0.0)), Step::Send(rel(5.0, 0.0)));
+        let mut p = Pointer::new(None, 0.5);
+        assert_eq!(p.set_size(100, 100), None);
+        assert_eq!(p.map(rel(5.0, 0.0)), Step::Send(rel(5.0, 0.0)));
+    }
+
+    #[test]
+    fn it_enters_just_inside_the_edge_that_faces_home() {
+        // This machine is to the RIGHT of the other one: the cursor appears
+        // at the other screen's right edge, at the height it left at.
+        let mut p = Pointer::new(Some(Edge::Right), 0.25);
+        assert_eq!(p.set_size(2560, 1441), Some(Event::Mouse { x: 2539.0, y: 360.0 }));
+        let mut p = Pointer::new(Some(Edge::Left), 1.0);
+        assert_eq!(p.set_size(1920, 1081), Some(Event::Mouse { x: 20.0, y: 1080.0 }));
+    }
+
+    #[test]
+    fn a_push_past_the_edge_brings_it_home_and_a_touch_does_not() {
+        let mut p = Pointer::new(Some(Edge::Right), 0.5);
+        p.set_size(1000, 501);
+        // Reach the edge and a little past it: a scroll bar, not a return.
+        assert!(matches!(p.map(rel(20.0, 0.0)), Step::Send(Event::Mouse { x, .. }) if x == 999.0));
+        assert!(matches!(p.map(rel(30.0, 0.0)), Step::Send(_)));
+        // Back in: the push starts over.
+        assert!(matches!(p.map(rel(-1.0, 0.0)), Step::Send(_)));
+        assert!(matches!(p.map(rel(1.0, 0.0)), Step::Send(_)));
+        assert!(matches!(p.map(rel(30.0, 0.0)), Step::Send(_)));
+        // Keep pushing: home, at the height it was at.
+        assert_eq!(p.map(rel(20.0, 0.0)), Step::Return(0.5));
+    }
+
+    #[test]
+    fn the_other_edges_do_not_bring_it_home() {
+        let mut p = Pointer::new(Some(Edge::Right), 0.5);
+        p.set_size(1000, 500);
+        for _ in 0..20 {
+            assert!(matches!(p.map(rel(-100.0, -100.0)), Step::Send(_)));
+        }
+        assert!(matches!(p.map(rel(0.0, 0.0)), Step::Send(Event::Mouse { x, y }) if x == 0.0 && y == 0.0));
+    }
+
+    #[test]
+    fn keys_and_buttons_pass_through() {
+        let mut p = Pointer::new(Some(Edge::Left), 0.5);
+        p.set_size(100, 100);
+        let k = Event::Key { keycode: 30, pressed: true };
+        assert_eq!(p.map(k), Step::Send(k));
+    }
 
     #[test]
     fn every_key_the_windows_host_types_comes_back_as_itself() {

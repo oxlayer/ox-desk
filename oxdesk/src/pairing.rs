@@ -177,6 +177,20 @@ pub fn pin_for(h: &HostCfg, host_bin: &Path) -> Result<String, String> {
     pin(h, host_bin, false)
 }
 
+/// The pinned identity if there is one, without asking the host.
+///
+/// For the LAN KVM, which used `pin_for` and so paid an SSH round trip to
+/// the host on every switch to learn a value already on disk. The stored
+/// pin is the one this machine trusts; a host whose identity changed is
+/// refused by the KVM's own check at connect. Only a host never pinned is
+/// asked, as before.
+pub fn stored_pin_or_ask(h: &HostCfg, host_bin: &Path) -> Result<String, String> {
+    match pinned(&identity_dir(), &h.name) {
+        Some(fp) => Ok(fp),
+        None => pin_for(h, host_bin),
+    }
+}
+
 /// Pin the host AND make sure it authorizes this machine, every time.
 ///
 /// For startup (`pair_peers`): the KVM and the native viewer connect without
@@ -215,8 +229,8 @@ fn pin(h: &HostCfg, host_bin: &Path, always_authorize: bool) -> Result<String, S
             Ok(reported)
         }
         Verdict::Changed { pinned } => Err(format!(
-            "a identidade de {} mudou: era {}, agora e {}. Se voce reinstalou ou apagou a config \
-             la, tire a linha de {} em {} e conecte de novo",
+            "the identity of {} changed: it was {}, it is now {}. If you reinstalled it or deleted \
+             its config, remove the line for {} in {} and connect again",
             h.name,
             short(&pinned),
             short(&reported),

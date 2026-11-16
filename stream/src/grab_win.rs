@@ -117,6 +117,19 @@ pub struct Grab {
     restore: POINT,
 }
 
+/// The virtual desktop: `(left, top, width, height)`, all monitors.
+pub fn virtual_rect() -> (i32, i32, i32, i32) {
+    // SAFETY: plain metric reads.
+    unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    }
+}
+
 /// Did the grab end because the person pressed the rescue chord?
 pub fn rescued() -> bool {
     RESCUED.load(Ordering::SeqCst)
@@ -158,6 +171,22 @@ impl Grab {
     pub fn thread(&self) -> u32 {
         self.thread_id
     }
+
+    /// Where the cursor was when the grab started, as fractions of the
+    /// virtual desktop: the height it left at is the height it enters the
+    /// other screen at.
+    pub fn entry_ratio(&self) -> (f64, f64) {
+        let (vx, vy, vw, vh) = virtual_rect();
+        let f = |p: i32, o: i32, len: i32| (f64::from(p - o) / f64::from((len - 1).max(1))).clamp(0.0, 1.0);
+        (f(self.restore.x, vx, vw), f(self.restore.y, vy, vh))
+    }
+
+    /// Where the cursor reappears when the grab ends, instead of where it
+    /// was: the input came home by an edge, so the cursor comes in by the
+    /// matching edge here. Still moved off the edge on drop.
+    pub fn restore_at(&mut self, x: i32, y: i32) {
+        self.restore = POINT { x, y };
+    }
 }
 
 /// Ends the grab whose hook thread has this id. Idempotent: posting to a
@@ -175,18 +204,7 @@ impl Drop for Grab {
         if let Some(j) = self.join.take() {
             let _ = j.join();
         }
-        let (x, y) = unsafe {
-            inset_from_edges(
-                (self.restore.x, self.restore.y),
-                (
-                    GetSystemMetrics(SM_XVIRTUALSCREEN),
-                    GetSystemMetrics(SM_YVIRTUALSCREEN),
-                    GetSystemMetrics(SM_CXVIRTUALSCREEN),
-                    GetSystemMetrics(SM_CYVIRTUALSCREEN),
-                ),
-                RESTORE_INSET,
-            )
-        };
+        let (x, y) = inset_from_edges((self.restore.x, self.restore.y), virtual_rect(), RESTORE_INSET);
         unsafe {
             let _ = SetCursorPos(x, y);
         }

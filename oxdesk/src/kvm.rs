@@ -174,8 +174,21 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     // -- and refusing is the right behavior, because grabbing the keyboard
     // with no destination would leave the person without a keyboard AND
     // without anywhere to go.
+    // Each step is timed and the total logged: a switch took ~5 s on
+    // 2026-11-15 and only the log's seconds said where -- not enough to
+    // tell the SSH calls from the name lookup.
+    let t0 = std::time::Instant::now();
+    let mut steps: Vec<(&str, u128)> = Vec::new();
+    let mut lap = {
+        let mut last = t0;
+        move |name: &'static str, steps: &mut Vec<(&str, u128)>| {
+            steps.push((name, last.elapsed().as_millis()));
+            last = std::time::Instant::now();
+        }
+    };
     crate::screen::wake_host(h, sc.port)
         .map_err(|e| format!("could not bring up {host}'s host: {e}"))?;
+    lap("host", &mut steps);
 
     // `port + 1`: the host's INPUT port, not the video one.
     //
@@ -208,6 +221,7 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     } else {
         dest.clone()
     };
+    lap("address", &mut steps);
 
     // Child output to a file, not to /dev/null.
     //
@@ -235,6 +249,22 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     if h.os.as_deref() == Some("linux") {
         cmd.arg("--no-repeat");
     }
+    // The way home by the screen edge (spec 024): the target's edge that
+    // faces this machine, from the layout, when the edge is on here. The
+    // KVM uses it only once the target says its screen size; an older
+    // host never does, and nothing changes.
+    let facing = cfg.border_edges().into_iter().find(|(_, t)| t == host).and_then(|(e, _)| {
+        match e.as_str() {
+            "left" => Some("right"),
+            "right" => Some("left"),
+            "top" => Some("bottom"),
+            "bottom" => Some("top"),
+            _ => None,
+        }
+    });
+    if let Some(edge) = facing {
+        cmd.arg("--return-edge").arg(edge);
+    }
     // The keys that bring the input back are the keys that sent it
     // (spec 023). Passed only when they are not the default, so a pair of
     // binaries from before the flag keeps working with the default.
@@ -246,12 +276,13 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     // other end is checked against its pinned identity, like the screen
     // viewer's (spec 017). Without a pin the KVM still connects and warns
     // in its log, which is how it always worked.
-    match crate::pairing::pin_for(h, &crate::screen::local_host_bin()) {
+    match crate::pairing::stored_pin_or_ask(h, &crate::screen::local_host_bin()) {
         Ok(pin) => {
             cmd.env("OXDESK_PIN", pin);
         }
         Err(e) => say!("kvm: no pinned identity for {host} ({e}); connecting unchecked"),
     }
+    lap("identity", &mut steps);
     // A pipe on Windows, held open for as long as the input is away:
     // closing it is how `release` ends the grab cleanly (see there). On
     // Linux the grab ends by signal, as before.
@@ -307,11 +338,17 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
+    lap("grab", &mut steps);
     match CURRENT.lock() {
         Ok(mut g) => *g = Some((host.to_string(), Process::Ours(child))),
         Err(_) => return Err("KVM state poisoned".into()),
     }
-    say!("kvm: input going to {host} ({dest})");
+    let detail: Vec<String> = steps.iter().map(|(n, ms)| format!("{n} {ms}")).collect();
+    say!(
+        "kvm: input going to {host} ({dest}) in {} ms ({})",
+        t0.elapsed().as_millis(),
+        detail.join(", ")
+    );
     Ok(dest)
 }
 
