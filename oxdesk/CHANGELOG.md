@@ -6,6 +6,11 @@ machine is running, not what the repository has.
 
 Format: `## <date> · <title>` and a description underneath.
 
+## 2026-11-15 · Going there is as quick as coming back
+Crossing the edge toward the other machine now takes about 50 ms instead
+of 300 to 450: the other side is woken while the mouse is still on its way
+to the edge, so reaching it has nothing left to wait for.
+
 ## 2026-11-15 · Back by the screen edge, and switching in half a second
 With the edge on, pushing the mouse past the other screen's edge that faces
 this machine now brings the keyboard and mouse back -- a firm push, so a

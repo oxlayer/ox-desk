@@ -8,6 +8,11 @@ confere.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-15 · Ir para lá é tão rápido quanto voltar
+Cruzar a borda em direção à outra máquina agora leva cerca de 50 ms em vez
+de 300 a 450: o outro lado é acordado enquanto o mouse ainda está a caminho
+da borda, então ao chegar não há mais nada a esperar.
+
 ## 2026-11-15 · De volta pela borda da tela, e troca em meio segundo
 Com a borda ligada, empurrar o mouse além da borda da outra tela que fica
 do lado desta máquina agora traz o teclado e o mouse de volta -- um empurrão

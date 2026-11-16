@@ -59,6 +59,75 @@ fn alive(p: &mut Process) -> bool {
     }
 }
 
+/// When each target's screen host was last known to be up.
+///
+/// The host ends itself 30 s after its last client leaves (or after it
+/// starts with nobody). So for 20 s after we woke it, or after a KVM
+/// session to it ended, it is up -- and asking again over SSH is the
+/// round trip that made going there slower than coming back
+/// (173-344 ms of every switch, measured 2026-11-15).
+static HOST_SEEN: Mutex<std::collections::BTreeMap<String, std::time::Instant>> =
+    Mutex::new(std::collections::BTreeMap::new());
+const HOST_FRESH: std::time::Duration = std::time::Duration::from_secs(20);
+/// Hosts being woken ahead of an edge right now.
+static WARMING: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
+
+fn host_known_up(host: &str) -> bool {
+    HOST_SEEN
+        .lock()
+        .ok()
+        .and_then(|s| s.get(host).copied())
+        .is_some_and(|t| t.elapsed() < HOST_FRESH)
+}
+
+fn note_host_up(host: &str) {
+    if let Ok(mut s) = HOST_SEEN.lock() {
+        s.insert(host.to_string(), std::time::Instant::now());
+    }
+}
+
+fn forget_host_up(host: &str) {
+    if let Ok(mut s) = HOST_SEEN.lock() {
+        s.remove(host);
+    }
+}
+
+/// Wakes `host`'s screen host in the background, so the switch that is
+/// about to happen finds it up. The edge calls this while the cursor
+/// approaches; one wake at a time per host, none while it is known up.
+pub fn prewarm(cfg: &std::sync::Arc<std::sync::RwLock<Config>>, host: &str) {
+    if host_known_up(host) || target().is_some() {
+        return;
+    }
+    // One wake at a time per host: the edge asks on every tick near it.
+    let first = WARMING.lock().map(|mut w| w.insert(host.to_string())).unwrap_or(false);
+    if !first {
+        return;
+    }
+    let snap = cfg.read().map(|g| g.clone()).ok();
+    let host = host.to_string();
+    std::thread::spawn(move || {
+        let t0 = std::time::Instant::now();
+        let woke = snap
+            .ok_or_else(|| "config lock poisoned".to_string())
+            .and_then(|c| {
+                let h = c.hosts.iter().find(|h| h.name == host).ok_or("not in the config")?;
+                let port = h.screen.as_ref().map(|s| s.port).ok_or("no [hosts.screen]")?;
+                crate::screen::wake_host(h, port)
+            });
+        match woke {
+            Ok(()) => {
+                note_host_up(&host);
+                say!("kvm: {host}'s host is up ahead of the edge ({} ms)", t0.elapsed().as_millis());
+            }
+            Err(e) => say!("kvm: could not wake {host}'s host ahead of the edge: {e}"),
+        }
+        if let Ok(mut w) = WARMING.lock() {
+            w.remove(&host);
+        }
+    });
+}
+
 /// Who the input is going to now, or `None` if it is here.
 pub fn target() -> Option<String> {
     let mut g = CURRENT.lock().ok()?;
@@ -66,8 +135,10 @@ pub fn target() -> Option<String> {
     // Ctrls, target went down, network vanished), the input has already
     // come back to this machine, and saying otherwise would leave the
     // tray lying.
-    if let Some((_, p)) = g.as_mut() {
+    if let Some((name, p)) = g.as_mut() {
         if !alive(p) {
+            // The session just ended: its host stays up for a while.
+            note_host_up(name);
             *g = None;
         }
     }
@@ -78,6 +149,7 @@ pub fn target() -> Option<String> {
 pub fn release() -> Result<(), String> {
     let mut g = CURRENT.lock().map_err(|_| "KVM state poisoned")?;
     if let Some((name, p)) = g.take() {
+        note_host_up(&name);
         match p {
             Process::Ours(mut c) => {
                 // On Windows the child ends its grab when its stdin closes
@@ -169,6 +241,29 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
         return ask_to_release(h).map(|()| format!("asked {host} to take the input back"));
     }
 
+    // A host known to be up skips the wake. If it turns out to be down
+    // after all (it can crash, or be killed), the KVM cannot connect, the
+    // short deadline below gives up fast, and the second try wakes it.
+    let warm = host_known_up(host);
+    match start_kvm(cfg, h, sc, host, warm) {
+        Err(e) if warm => {
+            forget_host_up(host);
+            say!("kvm: {host}'s host was thought up and did not answer ({e}); waking it and trying again");
+            start_kvm(cfg, h, sc, host, false)
+        }
+        r => r,
+    }
+}
+
+/// Wakes the target's screen host (unless `warm`), starts `oxdesk-kvm` and
+/// waits for it to say it grabbed.
+fn start_kvm(
+    cfg: &Config,
+    h: &crate::config::HostCfg,
+    sc: &crate::config::ScreenCfg,
+    host: &str,
+    warm: bool,
+) -> Result<String, String> {
     // Bring up the host on the other end first. It is the one receiving
     // the input stream; without it up, `oxdesk-kvm` refuses to connect
     // -- and refusing is the right behavior, because grabbing the keyboard
@@ -186,9 +281,12 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
             last = std::time::Instant::now();
         }
     };
-    crate::screen::wake_host(h, sc.port)
-        .map_err(|e| format!("could not bring up {host}'s host: {e}"))?;
-    lap("host", &mut steps);
+    if !warm {
+        crate::screen::wake_host(h, sc.port)
+            .map_err(|e| format!("could not bring up {host}'s host: {e}"))?;
+        note_host_up(host);
+    }
+    lap(if warm { "host known up" } else { "host" }, &mut steps);
 
     // `port + 1`: the host's INPUT port, not the video one.
     //
@@ -321,7 +419,10 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
             .trim()
             .to_string()
     };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    // A host thought up that does not answer is found out in 1.5 s, not 8:
+    // the caller wakes it and tries again (see `send`).
+    let limit = std::time::Duration::from_millis(if warm { 1500 } else { 8000 });
+    let deadline = std::time::Instant::now() + limit;
     loop {
         if let Ok(Some(status)) = child.try_wait() {
             return Err(format!("the KVM exited ({status}) before grabbing: {}", last_line(&log_path)));
@@ -333,9 +434,15 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!("the KVM did not grab within 8 s, so it was stopped: {}", last_line(&log_path)));
+            return Err(format!(
+                "the KVM did not grab within {} ms, so it was stopped: {}",
+                limit.as_millis(),
+                last_line(&log_path)
+            ));
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        // 10 ms, not 100: the grab itself takes tens of milliseconds, and
+        // a coarse poll added up to a tenth of a second to every switch.
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     lap("grab", &mut steps);
