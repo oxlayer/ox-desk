@@ -102,7 +102,10 @@ PR gate stays fast. A failure blocks the tag.
 1. The Ubuntu target VM, built and booting to a GNOME session: **done**
    (2026-11-16; QEMU screenshot shows the desktop logged in).
 2. OxDesk installed in it from the release, the host answering on its
-   input port, proven with `oxdesk-input-send` from the host.
+   input port, proven with `oxdesk-input-send` from the host: **done**.
+   v0.3.9's host found the VM's monitor (`Virtual-1`) on its own, ran
+   without NVENC, announced `1280x800`, applied 20 moves with no Mutter
+   refusal, and released the key a vanished client left held.
 3. The Windows source VM, after the image question is answered.
 4. The driver (QMP input) and the first full run: type, cross, come back.
 5. The safety nets as scripted cases.

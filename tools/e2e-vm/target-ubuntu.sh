@@ -30,6 +30,13 @@ NAME=target-ubuntu
 SERIES=${SERIES:-resolute}
 IMAGE_URL="https://cloud-images.ubuntu.com/$SERIES/current/$SERIES-server-cloudimg-amd64.img"
 SSH_PORT=${SSH_PORT:-2222}
+# The VM's screen host listens on 9777 (video) and 9778 (input) inside; on
+# the host they are forwarded to $SCREEN_PORT and $SCREEN_PORT+1, ports of
+# their own so a real OxDesk on the same machine is never in the way.
+SCREEN_PORT=${SCREEN_PORT:-9877}
+# 127.0.0.1 by default. A source VM on ANOTHER machine needs the LAN
+# (BIND=0.0.0.0): the VM's SSH then answers on the LAN too, key-only.
+BIND=${BIND:-127.0.0.1}
 SEED_PORT=${SEED_PORT:-8765}
 PRIVATE_IP=10.77.0.2
 MCAST=230.77.0.1:7701
@@ -99,7 +106,8 @@ boot() {
     -drive "file=$D/disk.qcow2,if=virtio,format=qcow2" \
     -device virtio-vga -display "vnc=127.0.0.1:${VNC_DISPLAY:-5}" \
     -smbios "type=1,serial=ds=nocloud;s=http://10.0.2.2:$SEED_PORT/" \
-    -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22" -device virtio-net-pci,netdev=net0 \
+    -netdev "user,id=net0,hostfwd=tcp:$BIND:$SSH_PORT-:22,hostfwd=udp:$BIND:$SCREEN_PORT-:9777,hostfwd=udp:$BIND:$((SCREEN_PORT + 1))-:9778" \
+    -device virtio-net-pci,netdev=net0 \
     -netdev "socket,id=net1,mcast=$MCAST" -device virtio-net-pci,netdev=net1,mac=52:54:00:77:00:02 \
     -qmp "unix:$D/qmp.sock,server,nowait" \
     -serial "file:$D/serial.log" \
