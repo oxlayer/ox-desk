@@ -124,6 +124,14 @@ jobs:
           # the build if this step and that declaration diverge.
           brew install ffmpeg@7 pkgconf
           echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig" >> "$GITHUB_ENV"
+          # The cache below keeps ffmpeg-sys-next's build output, and that
+          # output names the Cellar path of the ffmpeg it was built against
+          # (`.../Cellar/ffmpeg@7/7.1.5_3/lib`). When the runner's Homebrew
+          # moves to a newer revision, that path is gone and every binary
+          # fails to link with "library 'avutil' not found" -- on a pull
+          # request that touched no Mac code (2026-11-16). The installed
+          # version goes into the cache key, so a new ffmpeg is a new cache.
+          echo "LIB_KEY=ffmpeg7-$(brew list --versions ffmpeg@7 | awk '{print $2}')" >> "$GITHUB_ENV"
           /opt/homebrew/opt/ffmpeg@7/bin/ffmpeg -version | head -1
 
       - name: Rust
@@ -144,7 +152,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.target }}${{ env.LIB_KEY && format('-{0}', env.LIB_KEY) || '' }}
           workspaces: |
             oxdesk
             stream

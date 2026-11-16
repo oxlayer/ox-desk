@@ -19,6 +19,44 @@ surface, not a website. Whoever reaches the API reaches both machines.
 To open it to a phone, do not bind on `0.0.0.0`: expose it through an SSH
 tunnel or a reverse proxy with auth. The difference is intentional.
 
+### Localhost is not "only us": every web page can reach it (2026-11-15)
+
+Binding to `127.0.0.1` keeps other machines out. It does not keep out the
+web pages open in a browser on this machine, which can all send requests
+to `127.0.0.1`. Measured on the Windows machine before the fix:
+
+| Request | Answer |
+|---|---|
+| `POST` with `Origin: https://evil.example`, `text/plain` body (a browser sends it from any site without asking) | 200, and it acted |
+| `GET` with `Host: evil.example:8787` (what a DNS-rebinding page sends) | 200 |
+
+So any page could have sent the keyboard and mouse to another machine,
+killed processes, written clipboards or changed the config, and a
+rebinding page could have read the answers. Nothing showed it had
+happened. Found by reading another KVM's code, which guards its control
+channel against exactly this.
+
+`oxdesk/src/guard.rs` now runs before every route:
+
+- **The `Host` must be a loopback name** (`127.0.0.1`, `localhost`,
+  `[::1]`). This defeats rebinding, whose requests carry the attacker's
+  domain.
+- **A command (any method but `GET`/`HEAD`) that carries an `Origin` must
+  come from this daemon's own page** (`http://127.0.0.1:<port>` or
+  `localhost`). The tray (Electron's main process) and the CLI send no
+  `Origin` and pass. Browsers always send one cross-site, and `null`
+  counts as foreign.
+
+Proven by effect: the four attack shapes answer 403; the panel's origin,
+no `Origin`, reads and `oxdesk kvm-release` still work. In a real
+browser, a plain page on another port sent its command and the daemon
+refused it (`api: refused POST ... a command from a page that is not this
+panel`), while the panel's own page got 200.
+
+What this does not cover: a hostile **program** already running as the
+same user can still call the API, like it can read the config. A token
+file readable only by that user would narrow it further.
+
 ## Trust between the machines
 
 Three credential pairs, each belonging to the owning tool. **Do not
