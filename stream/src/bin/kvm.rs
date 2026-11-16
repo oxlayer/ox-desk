@@ -561,17 +561,18 @@ async fn main() -> anyhow::Result<()> {
     // the same place along it -- not where it was when it left.
     let mut grab = grab;
     if let (Some(along), Some(edge), Some(g)) = (stopped.returned, a.return_edge, grab.as_mut()) {
-        let (vx, vy, vw, vh) = grab_win::virtual_rect();
-        let at = |o: i32, len: i32| o + (along * f64::from((len - 1).max(0))).round() as i32;
-        let (x, y) = match edge {
-            // Their right edge faces us: we are to their right, so we come
-            // in by our left edge. And so on round.
-            Edge::Right => (vx, at(vy, vh)),
-            Edge::Left => (vx + vw - 1, at(vy, vh)),
-            Edge::Bottom => (at(vx, vw), vy),
-            Edge::Top => (at(vx, vw), vy + vh - 1),
+        // Their right edge faces us: we are to their right, so we come in
+        // by our left edge. And so on round. On a real monitor at that
+        // height, not on the box around them (`input::return_point`).
+        let here = match edge {
+            Edge::Right => Edge::Left,
+            Edge::Left => Edge::Right,
+            Edge::Bottom => Edge::Top,
+            Edge::Top => Edge::Bottom,
         };
-        g.restore_at(x, y);
+        if let Some((x, y)) = oxdesk_stream::input::return_point(here, along, &grab_win::monitors(), 60) {
+            g.restore_at(x, y);
+        }
     }
     // Unhook before the slow part: the person gets the keyboard back now,
     // and the key-ups for the other side go out after.

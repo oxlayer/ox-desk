@@ -138,7 +138,15 @@ fn run(cfg: Arc<RwLock<Config>>) {
 
     let (vx, vy, vw, vh) = winput::virtual_screen();
     let watching = crate::edge_state::summary(&edges);
-    say!("border: watching {watching} (area {vx},{vy} {vw}x{vh}, dwell {}ms)", hold.as_millis());
+    // The monitors, re-read every second: a monitor plugged in, unplugged
+    // or rearranged changes where the edges are.
+    let mut monitors = winput::monitors();
+    let mut monitors_at = Instant::now();
+    say!(
+        "border: watching {watching} (area {vx},{vy} {vw}x{vh}, {} monitor(s), dwell {}ms)",
+        monitors.len(),
+        hold.as_millis()
+    );
 
     let mut touching: Option<Instant> = None;
     let mut cooldown: Option<Instant> = None;
@@ -150,7 +158,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
     let mut armed = true;
     let mut was_at: Vec<bool> = edges
         .iter()
-        .map(|(e, _)| winput::cursor().map(|p| winput::at_edge(e, p)).unwrap_or(false))
+        .map(|(e, _)| winput::cursor().map(|p| on_edge(e, p, &monitors)).unwrap_or(false))
         .collect();
     if was_at.iter().any(|v| *v) {
         say!("border: cursor is already on a watched edge -- waiting for it to leave and come back");
@@ -215,7 +223,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
             // once per session, because that is a stop with no other trace.
             if !touched_while_away {
                 if let Some(p) = winput::cursor() {
-                    if edges.iter().any(|(e, _)| winput::at_edge(e, p)) {
+                    if edges.iter().any(|(e, _)| on_edge(e, p, &monitors)) {
                         touched_while_away = true;
                         gripe!("border: edge touched while the input is on {t} -- the KVM is still running");
                     }
@@ -269,20 +277,23 @@ fn run(cfg: Arc<RwLock<Config>>) {
         }
         crate::edge_state::set("watching", Some(watching.clone()));
 
+        if monitors_at.elapsed() >= Duration::from_secs(1) {
+            monitors = winput::monitors();
+            monitors_at = Instant::now();
+        }
         let Some(p) = winput::cursor() else { continue };
         // On its way to an edge: wake the other side now (`kvm::prewarm`).
         // It is a no-op while that host is known up.
         if lan_mode(&cfg) {
-            let area = winput::virtual_screen();
             for (e, t) in &edges {
-                if crate::edge_state::distance_to_edge(e, (p.x, p.y), area).is_some_and(|d| d < APPROACH) {
+                if edge_distance(e, p, &monitors).is_some_and(|d| d < APPROACH) {
                     crate::kvm::prewarm(&cfg, t);
                 }
             }
         }
         // Which edge is the cursor touching? None or one -- never two,
-        // because they are opposite sides of the same area.
-        let Some(i) = edges.iter().position(|(e, _)| winput::at_edge(e, p)) else {
+        // because they are opposite sides of a monitor.
+        let Some(i) = edges.iter().position(|(e, _)| on_edge(e, p, &monitors)) else {
             touching = None;
             was_at.iter_mut().for_each(|v| *v = false);
             continue;
@@ -322,6 +333,20 @@ fn run(cfg: Arc<RwLock<Config>>) {
         let dest = target.clone();
         switch_away(&cfg, &dest);
     }
+}
+
+/// How far the cursor is from an outer edge in that direction, per monitor
+/// (`edge_state::monitor_edge_distance`); the box around all monitors only
+/// when Windows could not list them.
+fn edge_distance(edge: &str, p: winput::Point, monitors: &[(i32, i32, i32, i32)]) -> Option<i32> {
+    if monitors.is_empty() {
+        return crate::edge_state::distance_to_edge(edge, (p.x, p.y), winput::virtual_screen());
+    }
+    crate::edge_state::monitor_edge_distance(edge, (p.x, p.y), monitors)
+}
+
+fn on_edge(edge: &str, p: winput::Point, monitors: &[(i32, i32, i32, i32)]) -> bool {
+    edge_distance(edge, p, monitors) == Some(0)
 }
 
 /// Is the input moved over the network (`[input] mode = "lan"`, the

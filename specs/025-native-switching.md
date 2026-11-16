@@ -105,6 +105,22 @@ mapped onto the monitor of the target that faces this machine.
 for: two monitors of different heights side by side, a gap, a slide along
 an edge, a push at a corner.
 
+**Built on Windows (v0.3.6).** The reference Windows machine has exactly
+the case: a 1920x1080 monitor left of the 2560x1440 primary. With the box,
+the bottom 360 px of the primary's left side were an edge nobody could
+use: the cursor stops at x = 0 there, and the box's edge is x = -1920.
+
+- `edge_state::monitor_edge_distance` decides per monitor; its tests use
+  that exact layout. The watcher re-reads the monitors every second.
+- `input::return_point` brings the cursor back onto a real monitor at that
+  height: high on the left lands on the left monitor, low on the left on
+  the primary, where the box would have put it off every screen.
+
+Measured on the machine: in the old dead zone, at (100, 1200), the
+approach woke the other side's host (`host is up ahead of the edge`); the
+control, at (100, 500) beside the left monitor, woke nothing. Still
+polled at 30 ms, not driven by motion: that comes with Raw Input.
+
 ## 4. The other machine decides the way back
 
 **Design.** The target watches its own cursor against its own monitors,

@@ -389,3 +389,42 @@ pub fn clipboard_write_files(paths: &[String]) -> Result<(), String> {
 
 /// Watching the keyboard without taking it (the shortcut on Windows).
 pub mod keys;
+
+#[repr(C)]
+struct MonitorRect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn EnumDisplayMonitors(
+        hdc: isize,
+        clip: *const MonitorRect,
+        callback: unsafe extern "system" fn(isize, isize, *mut MonitorRect, isize) -> i32,
+        data: isize,
+    ) -> i32;
+}
+
+unsafe extern "system" fn push_monitor(_m: isize, _dc: isize, r: *mut MonitorRect, data: isize) -> i32 {
+    // SAFETY: `data` is the Vec passed by `monitors`, alive for the call;
+    // `r` is the monitor's rectangle, valid during the callback.
+    let (list, r) = unsafe { (&mut *(data as *mut Vec<(i32, i32, i32, i32)>), &*r) };
+    list.push((r.left, r.top, r.right - r.left, r.bottom - r.top));
+    1
+}
+
+/// Every monitor, `(left, top, width, height)` in virtual-desktop pixels.
+///
+/// The edge is a fact about monitors, not about the box around them: two
+/// monitors of different heights leave a stretch of real edge that the
+/// box's border never reaches (spec 025 section 3). Empty if Windows
+/// cannot say, and the caller falls back to the box.
+pub fn monitors() -> Vec<(i32, i32, i32, i32)> {
+    let mut list: Vec<(i32, i32, i32, i32)> = Vec::new();
+    // SAFETY: the callback only writes into `list`, which outlives the call.
+    unsafe { EnumDisplayMonitors(0, std::ptr::null(), push_monitor, &mut list as *mut _ as isize) };
+    list
+}

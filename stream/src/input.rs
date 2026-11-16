@@ -103,6 +103,52 @@ pub const RETURN_PUSH: f64 = 40.0;
 /// How far inside the other screen the cursor appears.
 pub const ENTRY_INSET: f64 = 20.0;
 
+/// Where the cursor comes back in, by this machine's edge `edge`, at
+/// `along` (0..1) of the desktop's height (left/right) or width (top/bottom),
+/// `inset` pixels inside a real monitor.
+///
+/// Mapping onto the bounding box of all monitors put the cursor off every
+/// screen when the monitors differ in size: on the reference Windows
+/// machine, coming back low on the left landed below the 1080-high left
+/// monitor (spec 025 section 3). So: the outermost monitor that covers that
+/// height, or the nearest one when none does.
+pub fn return_point(edge: Edge, along: f64, monitors: &[(i32, i32, i32, i32)], inset: i32) -> Option<(i32, i32)> {
+    if monitors.is_empty() {
+        return None;
+    }
+    let along = along.clamp(0.0, 1.0);
+    let span = |lo: i32, hi: i32| lo + (along * f64::from((hi - lo - 1).max(0))).round() as i32;
+    let top = monitors.iter().map(|m| m.1).min()?;
+    let bottom = monitors.iter().map(|m| m.1 + m.3).max()?;
+    let left = monitors.iter().map(|m| m.0).min()?;
+    let right = monitors.iter().map(|m| m.0 + m.2).max()?;
+    // Distance from a coordinate to a monitor's span on one axis.
+    let gap = |v: i32, lo: i32, len: i32| if v < lo { lo - v } else if v >= lo + len { v - (lo + len - 1) } else { 0 };
+    let inside = |v: i32, lo: i32, len: i32| v.clamp(lo, lo + len - 1);
+    let inward = |lo: i32, len: i32, from_low: bool| {
+        let i = inset.min((len - 1) / 2).max(0);
+        if from_low { lo + i } else { lo + len - 1 - i }
+    };
+    Some(match edge {
+        Edge::Left | Edge::Right => {
+            let y = span(top, bottom);
+            let m = monitors.iter().min_by_key(|m| {
+                let outer = if edge == Edge::Left { m.0 } else { -(m.0 + m.2) };
+                (gap(y, m.1, m.3), outer)
+            })?;
+            (inward(m.0, m.2, edge == Edge::Left), inside(y, m.1, m.3))
+        }
+        Edge::Top | Edge::Bottom => {
+            let x = span(left, right);
+            let m = monitors.iter().min_by_key(|m| {
+                let outer = if edge == Edge::Top { m.1 } else { -(m.1 + m.3) };
+                (gap(x, m.0, m.2), outer)
+            })?;
+            (inside(x, m.0, m.2), inward(m.1, m.3, edge == Edge::Top))
+        }
+    })
+}
+
 /// What to do with one event from the source.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Step {
@@ -1049,6 +1095,21 @@ mod point_from_pixel_tests {
 #[cfg(test)]
 mod reverse_key_tests {
     use super::*;
+
+    /// The reference Windows machine: 1920x1080 left of the 2560x1440 primary.
+    const REF: [(i32, i32, i32, i32); 2] = [(-1920, 0, 1920, 1080), (0, 0, 2560, 1440)];
+
+    #[test]
+    fn coming_back_lands_on_a_real_monitor() {
+        // High up: the left monitor is the outermost at that height.
+        assert_eq!(return_point(Edge::Left, 0.3, &REF, 60), Some((-1860, 432)));
+        // Low down: only the primary covers it -- not the box's left edge,
+        // which is off every screen there.
+        assert_eq!(return_point(Edge::Left, 0.9, &REF, 60), Some((60, 1295)));
+        // The right side is the primary's at any height.
+        assert_eq!(return_point(Edge::Right, 0.3, &REF, 60), Some((2499, 432)));
+        assert_eq!(return_point(Edge::Left, 0.5, &[], 60), None);
+    }
 
     #[test]
     fn the_size_line_round_trips_and_refuses_anything_else() {

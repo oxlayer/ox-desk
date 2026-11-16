@@ -65,9 +65,69 @@ pub fn distance_to_edge(edge: &str, p: (i32, i32), area: (i32, i32, i32, i32)) -
     })
 }
 
+/// A monitor: `(left, top, width, height)` in virtual-desktop pixels.
+pub type Rect = (i32, i32, i32, i32);
+
+fn contains(m: &Rect, x: i32, y: i32) -> bool {
+    x >= m.0 && x < m.0 + m.2 && y >= m.1 && y < m.1 + m.3
+}
+
+/// How far `p` is from an OUTER edge in that direction, per monitor: the
+/// edge of the monitor `p` is on, when no other monitor continues past it
+/// at that height (or width). `None` when another monitor does, or when
+/// `p` is on no monitor.
+///
+/// The bounding box of all monitors is not the shape of the desktop. On
+/// the reference Windows machine a 1920x1080 monitor sits left of a
+/// 2560x1440 one: the box's left edge is x = -1920 at every height, but
+/// below y = 1080 the cursor stops at x = 0, a real edge the box never
+/// reaches -- the bottom of the primary monitor's left side switched to
+/// nothing (spec 025 section 3).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn monitor_edge_distance(edge: &str, p: (i32, i32), monitors: &[Rect]) -> Option<i32> {
+    let m = monitors.iter().find(|m| contains(m, p.0, p.1))?;
+    let (bx, by, dist) = match edge {
+        "left" => (m.0 - 1, p.1, p.0 - m.0),
+        "right" => (m.0 + m.2, p.1, m.0 + m.2 - 1 - p.0),
+        "top" => (p.0, m.1 - 1, p.1 - m.1),
+        "bottom" => (p.0, m.1 + m.3, m.1 + m.3 - 1 - p.1),
+        _ => return None,
+    };
+    if monitors.iter().any(|o| contains(o, bx, by)) {
+        return None;
+    }
+    Some(dist)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The reference Windows machine, measured: a 1920x1080 monitor left
+    /// of the 2560x1440 primary, tops aligned.
+    const REF: [Rect; 2] = [(-1920, 0, 1920, 1080), (0, 0, 2560, 1440)];
+
+    #[test]
+    fn the_left_edge_follows_the_monitors_not_the_box() {
+        assert_eq!(monitor_edge_distance("left", (-1920, 500), &REF), Some(0));
+        // Between the two monitors, the left one continues: not an edge.
+        assert_eq!(monitor_edge_distance("left", (0, 500), &REF), None);
+        // Below the left monitor's bottom, the primary's left side IS the
+        // edge -- the dead zone of the bounding box.
+        assert_eq!(monitor_edge_distance("left", (0, 1200), &REF), Some(0));
+        assert_eq!(monitor_edge_distance("left", (150, 1200), &REF), Some(150));
+    }
+
+    #[test]
+    fn the_other_sides_and_the_corners() {
+        assert_eq!(monitor_edge_distance("right", (2559, 100), &REF), Some(0));
+        assert_eq!(monitor_edge_distance("bottom", (100, 1439), &REF), Some(0));
+        assert_eq!(monitor_edge_distance("bottom", (-100, 1079), &REF), Some(0));
+        assert_eq!(monitor_edge_distance("top", (-1920, 0), &REF), Some(0));
+        // Off every monitor: no answer, not a guess.
+        assert_eq!(monitor_edge_distance("left", (-100, 1200), &REF), None);
+        assert_eq!(monitor_edge_distance("sideways", (0, 0), &REF), None);
+    }
 
     #[test]
     fn distance_is_measured_from_the_edge_that_was_named() {
