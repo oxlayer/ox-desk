@@ -123,7 +123,34 @@ fn resolve_all(addr: &str, port: u16) -> Vec<SocketAddr> {
     // what works first saves the timeout of what does not.
     all.sort_by_key(|a| !a.is_ipv4());
     all.truncate(3);
+    if let (Some(first), Ok(mut seen)) = (all.first(), LAST_RESOLVED.lock()) {
+        seen.insert(addr.to_string(), first.ip());
+    }
     all
+}
+
+/// The last address each name resolved to, refreshed by every probe.
+///
+/// mDNS on Windows flaps: on the reference Windows machine the Ubuntu
+/// machine's `.local` name stopped resolving for ~20 s every few minutes
+/// (`probe: ...:22 stopped: the name did not resolve`, then `is back`). The
+/// LAN KVM landed in one of those windows and died with "host not found"
+/// (spec 024). Remembering the last answer is not writing an IP in the
+/// config (spec 007): it lives in memory, is replaced at the next answer,
+/// and the host's pinned identity still refuses a different machine at an
+/// address that was reused.
+static LAST_RESOLVED: Mutex<std::collections::BTreeMap<String, std::net::IpAddr>> =
+    Mutex::new(std::collections::BTreeMap::new());
+
+/// Resolves a name now, or falls back to the last address it resolved to.
+/// The flag is `true` when the answer is the remembered one.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn resolve_with_memory(addr: &str, port: u16) -> Option<(SocketAddr, bool)> {
+    if let Some(sa) = resolve_all(addr, port).into_iter().next() {
+        return Some((sa, false));
+    }
+    let seen = LAST_RESOLVED.lock().ok()?;
+    seen.get(addr).map(|ip| (SocketAddr::new(*ip, port), true))
 }
 
 /// ssh/sftp options that bypass ssh's OWN resolver.

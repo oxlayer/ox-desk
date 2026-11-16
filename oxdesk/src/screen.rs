@@ -420,10 +420,10 @@ pub(crate) fn wake_host(h: &crate::config::HostCfg, port: u16) -> Result<(), Str
         // "process does not exist" from becoming an error.
         concat!(
             "if (Get-Process -Name oxdesk-host -ErrorAction SilentlyContinue) ",
-            "{ Write-Output vivo } else { schtasks /run /tn oxdesk-host | Out-Null; ",
+            "{ Write-Output alive } else { schtasks /run /tn oxdesk-host | Out-Null; ",
             "Start-Sleep -Seconds 2; ",
             "if (Get-Process -Name oxdesk-host -ErrorAction SilentlyContinue) ",
-            "{ Write-Output vivo } else { Write-Output morto } }"
+            "{ Write-Output alive } else { Write-Output dead } }"
         )
         .to_string()
     } else if h.os.as_deref() == Some("macos") {
@@ -440,7 +440,7 @@ pub(crate) fn wake_host(h: &crate::config::HostCfg, port: u16) -> Result<(), Str
         concat!(
             r#"pgrep -x oxdesk-host >/dev/null 2>&1 || "#,
             r#"launchctl kickstart "gui/$(id -u)/app.oxdesk.host" >/dev/null 2>&1; "#,
-            r#"sleep 1; pgrep -x oxdesk-host >/dev/null && echo vivo || echo morto"#
+            r#"sleep 1; pgrep -x oxdesk-host >/dev/null && echo alive || echo dead"#
         )
         .to_string()
     } else {
@@ -462,13 +462,15 @@ pub(crate) fn wake_host(h: &crate::config::HostCfg, port: u16) -> Result<(), Str
                 r#"S=; command -v setsid >/dev/null 2>&1 && S=setsid; "#,
                 r#"$S nohup "$HOME/.local/bin/oxdesk-host" {} "#,
                 r#">"$HOME/.local/state/oxdesk-host.log" 2>&1 &); "#,
-                r#"sleep 1; pgrep -x oxdesk-host >/dev/null && echo vivo || echo morto"#
+                r#"sleep 1; pgrep -x oxdesk-host >/dev/null && echo alive || echo dead"#
             ),
             port
         )
     };
     let output = crate::remote::run(h, &cmd, 12)?;
-    if output.contains("vivo") {
+    // The command above and this test are one contract, in one function:
+    // the words were `vivo`/`morto` until the English pass, and move together.
+    if output.contains("alive") {
         say!("screen: screen host up on {}", h.name);
         return Ok(());
     }

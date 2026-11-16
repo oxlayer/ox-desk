@@ -60,6 +60,112 @@ def is_prose(s):
     return True
 
 
+# What can come right before a `/` that starts a regex literal rather than
+# a division: an operator, an opening bracket, or nothing.
+REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^") | {""}
+
+
+def js_literals(js):
+    """Every string literal in a script, as written: quoted strings whole,
+    template literals with each `${...}` turned into `{}`. Nested templates
+    inside a `${...}` come out too.
+
+    A tokenizer and not a regex. The regex this replaced paired quotes
+    across a whole script, and one template literal holding another
+    (`${a ? `x` : 'y'}`) or a quote inside a regex literal (`/[&<>"]/g`)
+    shifted every pairing after it: on 2026-11-15 it was reading markup
+    attributes as strings and had stopped seeing the panel's JS sentences
+    at all, so untranslated copy passed the gate.
+    """
+    out = []
+    i, n = 0, len(js)
+    prev = ""  # last significant character outside literals and comments
+
+    def template_at(i):
+        """Reads a template literal starting after its backtick. Returns its
+        text with holes as `{}` and the index after the closing backtick."""
+        text = []
+        while i < n:
+            c = js[i]
+            if c == "\\":
+                text.append(js[i:i + 2])
+                i += 2
+            elif c == "`":
+                return "".join(text), i + 1
+            elif c == "$" and js[i + 1:i + 2] == "{":
+                text.append("{}")
+                i = code_until_brace(i + 2)
+            else:
+                text.append(c)
+                i += 1
+        return "".join(text), n
+
+    def code_until_brace(i):
+        """Skips the code of a `${...}` hole, collecting the literals inside
+        it, and returns the index after its closing brace."""
+        depth = 1
+        while i < n and depth:
+            c = js[i]
+            if c in "'\"":
+                j = quoted_end(i)
+                out.append(js[i + 1:j - 1])
+                i = j
+            elif c == "`":
+                s, i = template_at(i + 1)
+                out.append(s)
+            else:
+                depth += {"{": 1, "}": -1}.get(c, 0)
+                i += 1
+        return i
+
+    def quoted_end(i):
+        q, j = js[i], i + 1
+        while j < n and js[j] != q and js[j] != "\n":
+            j += 2 if js[j] == "\\" else 1
+        return j + 1
+
+    while i < n:
+        c = js[i]
+        if js.startswith("//", i):
+            i = js.find("\n", i)
+            i = n if i < 0 else i
+        elif js.startswith("/*", i):
+            i = js.find("*/", i + 2)
+            i = n if i < 0 else i + 2
+        elif c in "'\"":
+            j = quoted_end(i)
+            out.append(js[i + 1:j - 1])
+            i, prev = j, "a"
+        elif c == "`":
+            s, i = template_at(i + 1)
+            out.append(s)
+            prev = "a"
+        elif c == "/" and prev in REGEX_BEFORE:
+            # A regex literal: skip it whole, character classes included.
+            j, in_class = i + 1, False
+            while j < n and js[j] != "\n":
+                if js[j] == "\\":
+                    j += 2
+                    continue
+                if js[j] == "[":
+                    in_class = True
+                elif js[j] == "]":
+                    in_class = False
+                elif js[j] == "/" and not in_class:
+                    break
+                j += 1
+            i, prev = j + 1, "a"
+        else:
+            if not c.isspace():
+                prev = c if not (c.isalnum() or c in "_$") else "a"
+                # `return /x/` is a regex too: a keyword ends in a letter, so
+                # look back for it.
+                if prev == "a" and js[max(0, i - 6):i + 1].endswith("return"):
+                    prev = ""
+            i += 1
+    return out
+
+
 def html_strings(path):
     t = open(path, encoding="utf-8").read()
     out = set()
@@ -78,10 +184,8 @@ def html_strings(path):
     # Script literals: prose only. Code strings (selectors, keys, URLs)
     # rarely start with a capital letter AND contain a space.
     for sm in re.finditer(r"<script\b[^>]*>(.*?)</script>", t, flags=re.S | re.I):
-        js = re.sub(r"//[^\n]*", "", sm.group(1))
-        for lm in re.finditer(r"'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\"|`((?:[^`\\]|\\.)*)`", js):
-            raw = lm.group(1) or lm.group(2) or lm.group(3) or ""
-            if "<" in raw:  # markup in a template literal: take its text parts
+        for raw in js_literals(sm.group(1)):
+            if "<" in raw:  # markup in a literal: take its text parts
                 for part in re.findall(r">([^<>]+)<", raw):
                     part = " ".join(part.split())
                     if is_prose(part) and re.match(r"[A-Z]", part):

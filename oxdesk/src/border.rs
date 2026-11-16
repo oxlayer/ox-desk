@@ -183,31 +183,47 @@ fn open(edges: &[(String, String)]) -> Result<Session, String> {
 /// daemon down: the rest of oxdesk stays useful without detection.
 pub fn spawn(cfg: Arc<RwLock<Config>>) {
     std::thread::spawn(move || {
-        let (edges, hold_hits, hold_window) = {
-            let Ok(g) = cfg.read() else { return };
-            let b = &g.input.border;
-            let hits = if b.hold_hits == 0 { HOLD_HITS_DEFAULT } else { b.hold_hits };
-            let win = if b.hold_window_ms == 0 {
-                HOLD_WINDOW_DEFAULT
-            } else {
-                Duration::from_millis(b.hold_window_ms)
-            };
-            // Comes from the grid when there is one; otherwise from the
-            // hand-written `edge`/`target`. See `Config::border_edges`.
-            let edges = g.border_edges();
-            if edges.is_empty() {
-                return;
+        // Wait for an edge instead of quitting without one: turning the
+        // edge on from the panel has to start the watcher, not wait for the
+        // next daemon restart (see `border_win::run`, where it was found).
+        let mut said = false;
+        let (edges, hold_hits, hold_window) = loop {
+            let read = cfg.read().ok().and_then(|g| {
+                let b = &g.input.border;
+                let hits = if b.hold_hits == 0 { HOLD_HITS_DEFAULT } else { b.hold_hits };
+                let win = if b.hold_window_ms == 0 {
+                    HOLD_WINDOW_DEFAULT
+                } else {
+                    Duration::from_millis(b.hold_window_ms)
+                };
+                // Comes from the grid when there is one; otherwise from the
+                // hand-written `edge`/`target`. See `Config::border_edges`.
+                let edges = g.border_edges();
+                if edges.is_empty() {
+                    crate::edge_state::set(if b.enabled { "no-neighbor" } else { "off" }, None);
+                    return None;
+                }
+                Some((edges, hits, win))
+            });
+            if let Some(v) = read {
+                break v;
             }
-            (edges, hits, win)
+            if !said {
+                say!("border: nothing to watch yet (edge off, or no neighbor in the layout) -- it starts when there is");
+                said = true;
+            }
+            std::thread::sleep(Duration::from_secs(1));
         };
 
         let sess = match open(&edges) {
             Ok(s) => s,
             Err(e) => {
+                crate::edge_state::set("unavailable", Some("input-capture".into()));
                 gripe!("border: off -- {e}");
                 return;
             }
         };
+        let watching = crate::edge_state::summary(&edges);
 
         let last = Arc::new(RwLock::new(None::<Instant>));
         let hits = Arc::new(RwLock::new(Vec::<Instant>::new()));
@@ -315,6 +331,16 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                     return true;
                 };
                 std::thread::spawn(move || {
+                    // The route follows `[input] mode`: in LAN mode (the
+                    // default) the edge starts the LAN KVM, like the panel
+                    // and the tray do. See `border_win::switch_away`.
+                    if snap.input.mode != "hidpp" {
+                        match crate::kvm::send(&snap, &target3) {
+                            Ok(msg) => say!("border: {msg}"),
+                            Err(e) => say!("border: did NOT switch -- {e}"),
+                        }
+                        return;
+                    }
                     // The full pre-flight runs in here: a bad config must
                     // not leave you without a keyboard just because the
                     // mouse touched the edge.
@@ -417,8 +443,22 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
                 .is_none_or(|t| Instant::now() >= t);
             let just_arrived =
                 crate::hidpp::arrived_ms_ago().is_some_and(|ms| ms < GRACE);
-            let want_armed =
-                cooldown_over && !just_arrived && crate::hidpp::devices_here();
+            let here = crate::hidpp::devices_here();
+            let want_armed = cooldown_over && !just_arrived && here;
+            let enabled = cfg.read().map(|g| g.input.border.enabled).unwrap_or(false);
+            crate::edge_state::set(
+                match () {
+                    _ if !enabled => "off",
+                    _ if crate::kvm::target().is_some() => "sent",
+                    _ if !here => "away",
+                    _ if just_arrived => "arriving",
+                    _ => "watching",
+                },
+                match crate::kvm::target() {
+                    Some(t) if enabled => Some(t),
+                    _ => Some(watching.clone()),
+                },
+            );
 
             let is_armed = armed.read().map(|g| *g).unwrap_or(false);
             if want_armed != is_armed {

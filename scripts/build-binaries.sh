@@ -87,6 +87,7 @@ agent/target/$WIN/release/oxdesk-agent.exe
 stream/target/$WIN/release/oxdesk-host.exe
 stream/target/$WIN/release/oxdesk-view.exe
 stream/target/$WIN/release/oxdesk-bridge.exe
+stream/target/$WIN/release/oxdesk-kvm.exe
 ota/target/$WIN/release/oxdesk-ota.exe"
     ;;
   mac)
@@ -156,7 +157,7 @@ compilar() {
       cargo build --release --locked --target "$WIN" --manifest-path agent/Cargo.toml &&
       cargo build --release --locked --target "$WIN" --manifest-path ota/Cargo.toml &&
       cargo build --release --locked --target "$WIN" --manifest-path stream/Cargo.toml \
-        --bin oxdesk-host --bin oxdesk-view --bin oxdesk-bridge
+        --bin oxdesk-host --bin oxdesk-view --bin oxdesk-bridge --bin oxdesk-kvm
       ;;
     mac)
       cargo build --release --locked --manifest-path oxdesk/Cargo.toml &&

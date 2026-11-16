@@ -176,7 +176,7 @@ clean_leftovers() {
   { cat <<'PS1' | psrun; } 2>&1
 $d = Join-Path $env:LOCALAPPDATA 'oxdesk'
 $leftover = @()
-foreach ($n in 'oxdesk','oxdesk-agent','oxdesk-ota','oxdesk-view','oxdesk-bridge','oxdesk-host') {
+foreach ($n in 'oxdesk','oxdesk-agent','oxdesk-ota','oxdesk-view','oxdesk-bridge','oxdesk-host','oxdesk-kvm') {
   $p = Join-Path $d ($n + '.new.exe')
   if (Test-Path $p) {
     Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -424,6 +424,45 @@ PS1
     if bad "$out"; then fail "$out"; else ok; fi
   else fail "$out"; fi
   rm -f "$PTSIG"
+else fail "$out"; fi
+
+step "windows: LAN KVM source"
+# Without it, Windows cannot send its keyboard and mouse to another machine (specs/024).
+if out=$(cargo build --release --target x86_64-pc-windows-gnu \
+           --manifest-path stream/Cargo.toml --bin oxdesk-kvm 2>&1); then
+  KV=stream/target/x86_64-pc-windows-gnu/release/oxdesk-kvm.exe
+  KVSIG=$(mktemp -u /tmp/oxdesk-kvm-signed-XXXX.exe)
+  if out=$(cp "$KV" "$KVSIG" && bash scripts/sign-windows.sh "$KVSIG" 2>&1 &&
+           send "$KVSIG" oxdesk-kvm); then
+    out=$({ cat <<'PS1' | psrun; } 2>&1
+$dst = Join-Path $env:LOCALAPPDATA 'oxdesk'
+$new = Join-Path $dst 'oxdesk-kvm.new.exe'
+if (-not (Test-Path $new)) { Write-Output 'ERROR: the file did not arrive (antivirus?)'; exit 1 }
+$v = Get-AuthenticodeSignature $new
+if ($v.Status -ne 'Valid') { Write-Output ('ERROR: signature ' + $v.Status); exit 1 }
+# A running KVM holds the file: stopping it brings the input back here.
+Get-Process -Name oxdesk-kvm -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 400
+# Size BEFORE moving, compared AFTER. In PowerShell, not passed through
+# bash: a valid signature does not guarantee the file stayed (Defender
+# silently reverted the agent's write for an hour while this script said
+# "ok"), and bringing the number in from outside would need an expanding
+# heredoc -- which is how I broke this very step.
+$expected = (Get-Item $new).Length
+Copy-Item -Force $new (Join-Path $dst 'oxdesk-kvm.exe')
+Remove-Item -Force $new
+Start-Sleep -Milliseconds 500
+$got = (Get-Item (Join-Path $dst 'oxdesk-kvm.exe')).Length
+if ($got -ne $expected) {
+  Write-Output ('ERROR: written but has ' + $got + ' bytes, expected ' + $expected + ' -- antivirus reverting? check the exclusion for ' + $dst)
+  exit 1
+}
+exit 0
+PS1
+)
+    if bad "$out"; then fail "$out"; else ok; fi
+  else fail "$out"; fi
+  rm -f "$KVSIG"
 else fail "$out"; fi
 
 step "windows: screen host (oxdesk-stream)"

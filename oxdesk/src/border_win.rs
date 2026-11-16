@@ -56,33 +56,56 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
     std::thread::spawn(move || run(cfg));
 }
 
+/// The edges to watch and the dwell, or `None` while there is nothing to
+/// watch (the edge is off, or no neighbor can take the input).
+fn read_edges(cfg: &Arc<RwLock<Config>>, complain: bool) -> Option<(Vec<(String, String)>, Duration)> {
+    let g = cfg.read().ok()?;
+    let b = &g.input.border;
+    let hold = if b.hold_hits <= 1 {
+        Duration::ZERO
+    } else {
+        Duration::from_millis(if b.hold_window_ms == 0 { 300 } else { b.hold_window_ms })
+    };
+    // Comes from the grid when there is one (see `Config::border_edges`).
+    // A machine in the middle has a neighbor on both sides, so these
+    // are several edges, not one.
+    let edges: Vec<(String, String)> = g
+        .border_edges()
+        .into_iter()
+        .filter(|(e, _)| {
+            let ok = matches!(e.as_str(), "left" | "right" | "top" | "bottom");
+            if !ok && complain {
+                gripe!("border: invalid edge '{e}' -- ignored");
+            }
+            ok
+        })
+        .collect();
+    if edges.is_empty() {
+        crate::edge_state::set(if b.enabled { "no-neighbor" } else { "off" }, None);
+        return None;
+    }
+    Some((edges, hold))
+}
+
 fn run(cfg: Arc<RwLock<Config>>) {
-    let (edges, hold) = {
-        let Ok(g) = cfg.read() else { return };
-        let b = &g.input.border;
-        let hold = if b.hold_hits <= 1 {
-            Duration::ZERO
-        } else {
-            Duration::from_millis(if b.hold_window_ms == 0 { 300 } else { b.hold_window_ms })
-        };
-        // Comes from the grid when there is one (see `Config::border_edges`).
-        // A machine in the middle has a neighbor on both sides, so these
-        // are several edges, not one.
-        let edges: Vec<(String, String)> = g
-            .border_edges()
-            .into_iter()
-            .filter(|(e, _)| {
-                let ok = matches!(e.as_str(), "left" | "right" | "top" | "bottom");
-                if !ok {
-                    gripe!("border: invalid edge '{e}' -- ignored");
-                }
-                ok
-            })
-            .collect();
-        if edges.is_empty() {
-            return;
+    // Wait for an edge instead of quitting without one.
+    //
+    // This thread used to return at boot when the edge was off, and
+    // turning it on from the panel then saved the config and changed
+    // nothing: the log said "border KVM ON from the GUI" at 20:39 and
+    // "watching" only at 20:43, after a restart nobody had been told to do.
+    // The panel's note even said to restart, which is a bug asking the
+    // person to work around it.
+    let mut said = false;
+    let (edges, hold) = loop {
+        if let Some(v) = read_edges(&cfg, true) {
+            break v;
         }
-        (edges, hold)
+        if !said {
+            say!("border: nothing to watch yet (edge off, or no neighbor in the layout) -- it starts when there is");
+            said = true;
+        }
+        std::thread::sleep(Duration::from_secs(1));
     };
 
     // `GetCursorPos` and `GetLastInputInfo` are PER SESSION. In session 0
@@ -92,6 +115,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
     // daemon (API, HID++) works there, only the edge does not: that is why
     // only this thread gives up.
     if !winput::in_console_session() {
+        crate::edge_state::set("unavailable", Some("session".into()));
         gripe!(
             "border: outside the console session -- cursor and input are not \
              visible from here. The daemon keeps serving the API; the edge does not."
@@ -99,6 +123,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
         return;
     }
     if !winput::claim_single_instance("oxdesk-agent-watch-edge") {
+        crate::edge_state::set("unavailable", Some("another-watcher".into()));
         gripe!(
             "border: another watcher already exists (the daemon or the old \
              watch-edge shortcut). Two owners of the same receiver is a real \
@@ -108,12 +133,8 @@ fn run(cfg: Arc<RwLock<Config>>) {
     }
 
     let (vx, vy, vw, vh) = winput::virtual_screen();
-    let summary: Vec<String> = edges.iter().map(|(e, t)| format!("{e} -> {t}")).collect();
-    say!(
-        "border: watching {} (area {vx},{vy} {vw}x{vh}, dwell {}ms)",
-        summary.join(", "),
-        hold.as_millis()
-    );
+    let watching = crate::edge_state::summary(&edges);
+    say!("border: watching {watching} (area {vx},{vy} {vw}x{vh}, dwell {}ms)", hold.as_millis());
 
     let mut touching: Option<Instant> = None;
     let mut cooldown: Option<Instant> = None;
@@ -157,6 +178,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
 
         let enabled = cfg.read().map(|g| g.input.border.enabled).unwrap_or(false);
         if !enabled {
+            crate::edge_state::set("off", None);
             if armed || !off_announced {
                 armed = false;
                 off_announced = true;
@@ -179,9 +201,26 @@ fn run(cfg: Arc<RwLock<Config>>) {
             say!("border: cooldown over, watching again");
         }
 
+        // The input is already away (the LAN KVM is forwarding it): the
+        // grab parks the cursor, and nothing here should fire.
+        if let Some(t) = crate::kvm::target() {
+            crate::edge_state::set("sent", Some(t));
+            touching = None;
+            continue;
+        }
+
+        // The dead-man's switch belongs to the HID++ route only: it undoes
+        // a channel switch nobody answered. In LAN mode the devices never
+        // leave this receiver, so an "arrival" is a device waking up, and
+        // "giving it back" would be a channel switch to a receiver that
+        // may not exist (spec 024).
         if last_presence.elapsed() >= PRESENCE_EVERY {
             last_presence = Instant::now();
-            guard.tick(&cfg);
+            if lan_mode(&cfg) {
+                guard.disarm();
+            } else {
+                guard.tick(&cfg);
+            }
         }
 
         // An edge only makes sense on the machine that HAS the devices,
@@ -192,6 +231,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
         // when the user hit it on purpose.
         let just_arrived = crate::hidpp::arrived_ms_ago().is_some_and(|ms| ms < GRACE);
         if just_arrived || !crate::hidpp::devices_here() {
+            crate::edge_state::set(if just_arrived { "arriving" } else { "away" }, None);
             if armed {
                 armed = false;
                 say!(
@@ -209,6 +249,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
             armed = true;
             say!("border: armed -- the devices are here");
         }
+        crate::edge_state::set("watching", Some(watching.clone()));
 
         let Some(p) = winput::cursor() else { continue };
         // Which edge is the cursor touching? None or one -- never two,
@@ -251,12 +292,32 @@ fn run(cfg: Arc<RwLock<Config>>) {
     }
 }
 
+/// Is the input moved over the network (`[input] mode = "lan"`, the
+/// default) rather than by switching the devices' radio channel?
+fn lan_mode(cfg: &Arc<RwLock<Config>>) -> bool {
+    cfg.read().map(|g| g.input.mode != "hidpp").unwrap_or(true)
+}
+
 /// The switch takes seconds (pre-flight + effect-based check). Running it
 /// in the loop would stall the cursor reading; it goes to a thread.
+///
+/// The route follows `[input] mode`. In LAN mode (the default) the edge
+/// starts the LAN KVM, the same door the panel and the tray use. It used
+/// to switch the HID++ channel whatever the mode said, and with the only
+/// receiver on this machine that sends the keyboard and mouse to a
+/// channel nobody listens on: the pre-flight's dead-man's switch check was
+/// the one thing that stopped it (spec 024).
 fn switch_away(cfg: &Arc<RwLock<Config>>, target: &str) {
     let Ok(snap) = cfg.read().map(|g| g.clone()) else { return };
     let host = target.to_string();
     std::thread::spawn(move || {
+        if snap.input.mode != "hidpp" {
+            match crate::kvm::send(&snap, &host) {
+                Ok(msg) => say!("border: {msg}"),
+                Err(e) => say!("border: did NOT switch -- {e}"),
+            }
+            return;
+        }
         // The full pre-flight runs in here: a bad config must not leave
         // you without a keyboard just because the mouse touched the edge.
         let req = FocusRequest { host, route: None, confirm: true, fast: true };
@@ -313,6 +374,11 @@ impl Guard {
             );
         }
         Guard { secs, peer, present_before: false, arrived: None }
+    }
+
+    /// Forgets an arrival in progress, without acting on it.
+    fn disarm(&mut self) {
+        self.arrived = None;
     }
 
     fn tick(&mut self, cfg: &Arc<RwLock<Config>>) {

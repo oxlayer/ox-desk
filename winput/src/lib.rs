@@ -386,3 +386,6 @@ pub fn clipboard_write_files(paths: &[String]) -> Result<(), String> {
         Ok(())
     })
 }
+
+/// Watching the keyboard without taking it (the shortcut on Windows).
+pub mod keys;

@@ -188,7 +188,13 @@ fn main() -> anyhow::Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let connector = pos.get(1).map(|s| s.to_string()).unwrap_or_else(|| "DP-1".into());
+        // Named on the command line, or the primary monitor as GNOME sees
+        // it -- never a fixed name: see `host_linux::primary_connector`.
+        let connector = match pos.get(1) {
+            Some(c) => c.to_string(),
+            None => oxdesk_stream::host_linux::primary_connector().unwrap_or_default(),
+        };
+        println!("  monitor: {}", if connector.is_empty() { "none (virtual screen)" } else { &connector });
         oxdesk_stream::host_linux::run(port, &connector)
     }
 

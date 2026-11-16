@@ -20,22 +20,13 @@ on:
   # only breaks after the merge is a target nobody checked. `push` above is
   # limited to `main` and `ci/**`, so an ordinary branch does not run twice.
   #
-  # The `paths` list is repeated rather than shared: GitHub Actions does not
-  # resolve YAML anchors. Repeating it is the price of not spending a
-  # macOS runner -- billed at ten times a Linux one -- on a docs-only PR.
+  # No `paths` here, unlike `push`: `main` requires the `binaries` check
+  # (the ruleset), and a workflow a path filter never started reports
+  # nothing -- a docs-only pull request would wait for it forever. The
+  # `changes` job below makes the same decision the filter made, and the
+  # builds are skipped instead of never started.
   pull_request:
     branches: [main]
-    paths:
-      - 'oxdesk/**'
-      - 'stream/**'
-      - 'hidpp/**'
-      - 'agent/**'
-      - 'ota/**'
-      - 'winput/**'
-      - 'scripts/build-binaries.sh'
-      - 'scripts/spdx.sh'
-      - 'scripts/i18n-check.py'
-      - '.github/workflows/binaries.yml'
   workflow_dispatch:
 
 permissions:
@@ -51,8 +42,39 @@ env:
   RUST_VERSION: '1.99.1'
 
 jobs:
+  # Did this pull request change anything that is built? Same list as the
+  # `push` filter above. Any doubt -- not a pull request, a base or head we
+  # cannot read, a diff that fails -- answers "yes": building when unsure
+  # costs minutes, skipping when unsure costs a broken `main`.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          build_it() { echo "code=true" >> "$GITHUB_OUTPUT"; echo "build: yes ($1)"; exit 0; }
+          [ "$EVENT" = pull_request ] || build_it "event $EVENT"
+          [ -n "$BASE" ] && [ -n "$HEAD" ] || build_it "no base or head"
+          files=$(git diff --name-only "$BASE...$HEAD") || build_it "diff failed"
+          total=$(printf '%s\n' "$files" | grep -c . || true)
+          [ "$total" -gt 0 ] || build_it "the diff listed no files"
+          code=$(printf '%s\n' "$files" | grep -cE '^(oxdesk|stream|hidpp|agent|ota|winput)/|^scripts/(build-binaries\.sh|spdx\.sh|i18n-check\.py)$|^\.github/workflows/binaries\.yml$' || true)
+          echo "changed: $total file(s), $code of them built"
+          if [ "$code" -gt 0 ]; then build_it "$code built file(s)"; fi
+          echo "code=false" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.target }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -169,6 +191,27 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+  # The one check `main` requires for this workflow. The matrix cannot be
+  # it: skipped as a whole, it reports under an unexpanded name, and the
+  # three names it reports when it runs would each have to be required.
+  # A whitelist, not "anything but failure": `skipped` passes only when
+  # `changes` said nothing built changed.
+  binaries:
+    if: always()
+    needs: [changes, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          CODE: ${{ needs.changes.outputs.code }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          echo "code changed: ${CODE:-unknown}; builds: $BUILD"
+          case "$BUILD" in
+            success) ;;
+            skipped) [ "$CODE" = false ] || { echo "the builds were skipped, but code changed"; exit 1; } ;;
+            *) exit 1 ;;
+          esac
 
   publish:
     name: release

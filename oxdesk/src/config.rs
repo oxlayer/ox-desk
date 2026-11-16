@@ -271,15 +271,64 @@ pub struct HotkeyCfg {
     /// host; required as soon as there are two. See `hotkey::pick_target`.
     #[serde(default)]
     pub target: Option<String>,
+    /// Which pair of keys is the gesture: `both-ctrl` (default),
+    /// `both-shift` or `both-alt`. See `chord_codes`.
+    ///
+    /// The same pair is the way back: `kvm::send` passes it to
+    /// `oxdesk-kvm` as `--rescue`, so the keys that sent the input away are
+    /// the keys that bring it home ([`specs/023`](../../specs/023-shortcut.md)).
+    #[serde(default = "default_hotkey_keys")]
+    pub keys: String,
 }
 
 fn default_hotkey_mode() -> String {
     "rotate".into()
 }
 
+fn default_hotkey_keys() -> String {
+    CHORDS[0].0.into()
+}
+
+/// The gestures a person can pick, and the evdev codes of each pair.
+///
+/// The names are the wire format (config, API, panel); the codes are the
+/// kernel's (`linux/input-event-codes.h`). This table is the one place the
+/// pairs are written: the hotkey reader and the `--rescue` argument of
+/// `oxdesk-kvm` both come from here.
+///
+/// Only pairs of the same modifier, left and right. A pair like that is
+/// held by no program and typed by no text, which is why it cannot fire
+/// while someone is typing -- the reason hardware KVM switches use it too.
+/// A letter or a function key would be stolen from every application on
+/// both machines while the input is away.
+pub const CHORDS: [(&str, (u16, u16)); 3] = [
+    ("both-ctrl", (29, 97)),  // KEY_LEFTCTRL, KEY_RIGHTCTRL
+    ("both-shift", (42, 54)), // KEY_LEFTSHIFT, KEY_RIGHTSHIFT
+    ("both-alt", (56, 100)),  // KEY_LEFTALT, KEY_RIGHTALT
+];
+
+/// The evdev codes of a gesture name, or `None` for a name we do not know.
+pub fn chord_codes(keys: &str) -> Option<(u16, u16)> {
+    CHORDS.iter().find(|(n, _)| *n == keys).map(|(_, c)| *c)
+}
+
+impl HotkeyCfg {
+    /// The pair this config asks for. An unknown name falls back to both
+    /// Ctrl keys rather than to no gesture at all: a typo in the config
+    /// must not take away the way back.
+    pub fn chord(&self) -> (u16, u16) {
+        chord_codes(&self.keys).unwrap_or(CHORDS[0].1)
+    }
+}
+
 impl Default for HotkeyCfg {
     fn default() -> Self {
-        Self { enabled: true, mode: default_hotkey_mode(), target: None }
+        Self {
+            enabled: true,
+            mode: default_hotkey_mode(),
+            target: None,
+            keys: default_hotkey_keys(),
+        }
     }
 }
 
@@ -440,10 +489,16 @@ pub fn local_hostname() -> String {
 ///
 /// A key that does not exist in the section is **appended** at its end,
 /// not ignored -- `leader` may never have been written.
+///
+/// A section that does not exist is **appended** to the file, with every
+/// pair. It used to be skipped, and the save still answered success: the
+/// TOML was valid, it was just the file from before. `[input.hotkey]` is
+/// the section most configs never wrote, because its defaults were enough.
 pub fn set_in_section(toml_text: &str, section: &str, pairs: &[(&str, String)]) -> String {
     let header = format!("[{section}]");
     let mut out: Vec<String> = Vec::new();
     let mut inside = false;
+    let mut found = false;
     let mut seen: Vec<&str> = Vec::new();
 
     let missing_keys = |seen: &Vec<&str>| -> Vec<String> {
@@ -461,6 +516,7 @@ pub fn set_in_section(toml_text: &str, section: &str, pairs: &[(&str, String)]) 
                 out.extend(missing_keys(&seen));
             }
             inside = t == header;
+            found |= inside;
             seen.clear();
             out.push(line.to_string());
             continue;
@@ -480,6 +536,13 @@ pub fn set_in_section(toml_text: &str, section: &str, pairs: &[(&str, String)]) 
     if inside {
         out.extend(missing_keys(&seen));
     }
+    if !found {
+        if out.last().is_some_and(|l| !l.trim().is_empty()) {
+            out.push(String::new());
+        }
+        out.push(header);
+        out.extend(missing_keys(&Vec::new()));
+    }
 
     let mut text = out.join("\n");
     if toml_text.ends_with('\n') && !text.ends_with('\n') {
@@ -491,9 +554,35 @@ pub fn set_in_section(toml_text: &str, section: &str, pairs: &[(&str, String)]) 
 fn write_validated(after: String) -> Result<(), String> {
     // Validate BEFORE writing: a text edit that produces invalid TOML
     // would leave the daemon without a config on the next boot.
-    toml::from_str::<Config>(&after).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
+    toml::from_str::<Config>(&after).map_err(|e| format!("the edit would break the TOML: {e}"))?;
     let p = Config::path();
     std::fs::write(&p, after).map_err(|e| format!("write {p:?}: {e}"))
+}
+
+/// Saves the keyboard shortcut: on/off, which pair, and what a press does.
+///
+/// `keys` and `mode` are checked against the values the daemon knows
+/// before anything is written: a name the reader does not know would fall
+/// back to both Ctrl keys, and the panel would show a choice that is not
+/// the one in effect.
+pub fn save_hotkey(on: bool, keys: Option<&str>, mode: Option<&str>) -> Result<(), String> {
+    let mut pairs: Vec<(&str, String)> = vec![("enabled", on.to_string())];
+    if let Some(k) = keys {
+        if chord_codes(k).is_none() {
+            let known: Vec<&str> = CHORDS.iter().map(|(n, _)| *n).collect();
+            return Err(format!("unknown shortcut '{k}': use one of {}", known.join(", ")));
+        }
+        pairs.push(("keys", format!("\"{k}\"")));
+    }
+    if let Some(m) = mode {
+        if m != "rotate" && m != "ask" {
+            return Err(format!("unknown mode '{m}': use rotate or ask"));
+        }
+        pairs.push(("mode", format!("\"{m}\"")));
+    }
+    let p = Config::path();
+    let before = std::fs::read_to_string(&p).map_err(|e| format!("read {p:?}: {e}"))?;
+    write_validated(set_in_section(&before, "input.hotkey", &pairs))
 }
 
 pub fn save_border_enabled(on: bool) -> Result<(), String> {
@@ -526,7 +615,7 @@ pub fn save_layout(pos: &BTreeMap<String, Cell>) -> Result<(), String> {
     let after = apply_layout(&before, pos);
     // Validate BEFORE writing: a text edit that produces invalid TOML
     // would leave the daemon without a config on the next boot.
-    toml::from_str::<Config>(&after).map_err(|e| format!("a edicao quebrou o TOML: {e}"))?;
+    toml::from_str::<Config>(&after).map_err(|e| format!("the edit would break the TOML: {e}"))?;
     std::fs::write(&p, after).map_err(|e| format!("write {p:?}: {e}"))
 }
 

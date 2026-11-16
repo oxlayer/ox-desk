@@ -140,6 +140,7 @@ pub fn device_access() -> bool {
 /// requires an `agent` here, which only makes sense once there is a
 /// receiver.
 pub fn spawn_border(cfg: Arc<RwLock<Config>>) {
+    crate::edge_state::set("unavailable", Some("macos".into()));
     let enabled = cfg.read().map(|g| g.input.border.enabled).unwrap_or(false);
     if enabled {
         gripe!(
