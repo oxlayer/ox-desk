@@ -8,6 +8,12 @@ confere.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-16 · O cursor some enquanto o controle está na outra máquina
+Enquanto o teclado e o mouse estavam na outra máquina, o cursor do Windows
+ficava parado no meio da tela. Agora ele some, e volta onde o controle
+volta. Nada rouba o foco para isso: um menu aberto ou um campo pela metade
+continuam lá quando você volta.
+
 ## 2026-11-16 · A borda segue os seus monitores
 Com monitores de tamanhos diferentes lado a lado, parte da borda de uma
 tela não trocava de máquina, e a volta podia pôr o cursor onde não há

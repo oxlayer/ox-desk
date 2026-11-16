@@ -53,6 +53,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::core::w;
+use windows::Win32::Foundation::{COLORREF, HWND};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, RegisterClassW, SetCursor,
+    SetLayeredWindowAttributes, ShowWindow, LWA_ALPHA, SW_SHOWNOACTIVATE, WM_SETCURSOR, WNDCLASSW,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetCursorPos, GetMessageW, GetSystemMetrics, PostQuitMessage,
     PostThreadMessageW, SetCursorPos, SetWindowsHookExW, UnhookWindowsHookEx, KBDLLHOOKSTRUCT,
@@ -273,10 +280,14 @@ fn hook_thread(
                 return;
             }
         };
+        // Hide the cursor BEFORE parking it: parked at the screen centre
+        // and left visible, it sat in the middle of the person's screen for
+        // as long as the input was away (spec 025 section 2).
+        let cover = if std::env::var_os("OXDESK_KVM_SHOW_CURSOR").is_some() { None } else { cover_desktop() };
         // Park only once both hooks hold: a parked cursor with no hook
         // would just be a cursor that jumped.
         let _ = SetCursorPos(park.0, park.1);
-        (kb, mouse)
+        (kb, mouse, cover)
     };
     let _ = ready.send(Ok(unsafe { GetCurrentThreadId() }));
 
@@ -285,13 +296,77 @@ fn hook_thread(
     let mut msg = MSG::default();
     // SAFETY: standard message loop on this thread.
     unsafe {
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            DispatchMessageW(&msg);
+        }
         let _ = UnhookWindowsHookEx(hooks.0);
         let _ = UnhookWindowsHookEx(hooks.1);
+        // The cover goes before the cursor is put back (in `Drop`): the
+        // move that puts it back is what makes the window under it set the
+        // cursor again.
+        if let Some(c) = hooks.2 {
+            let _ = DestroyWindow(c);
+        }
     }
     // Dropping the state drops the sender: the forwarding loop sees the
     // channel close and knows the grab is over.
     STATE.with(|s| *s.borrow_mut() = None);
+}
+
+/// While the input is away, the cursor is hidden by covering the desktop with
+/// a window that answers `WM_SETCURSOR` with no cursor. Windows has no call
+/// that hides the cursor everywhere: the cursor is whatever the window under
+/// it says, so the window under it has to be ours.
+///
+/// - Alpha 1, not 0: a fully transparent layered window is skipped by hit
+///   testing, and then the window below decides the cursor again.
+/// - `WS_EX_NOACTIVATE` and shown with `SW_SHOWNOACTIVATE`: it never takes
+///   the foreground, so the person's open menu or text field is untouched
+///   when the input comes back. (Another KVM takes the foreground for this
+///   and closes menus on every switch; this is the measured alternative.)
+/// - Clicks never reach it: the mouse hook swallows them first.
+unsafe extern "system" fn cover_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_SETCURSOR {
+        // SAFETY: setting no cursor for the window under the pointer.
+        unsafe { SetCursor(None) };
+        return LRESULT(1);
+    }
+    unsafe { DefWindowProcW(h, msg, wp, lp) }
+}
+
+fn cover_desktop() -> Option<HWND> {
+    // SAFETY: a window created and destroyed on the hook thread.
+    unsafe {
+        let hinst = GetModuleHandleW(None).ok()?;
+        let class = w!("OxdeskGrabCover");
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(cover_proc),
+            hInstance: hinst.into(),
+            lpszClassName: class,
+            ..Default::default()
+        };
+        // 0 when the class already exists in this process: that is fine.
+        RegisterClassW(&wc);
+        let (x, y, w, h) = virtual_rect();
+        let hwnd = CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            class,
+            w!("oxdesk"),
+            WS_POPUP,
+            x,
+            y,
+            w,
+            h,
+            None,
+            None,
+            Some(hinst.into()),
+            None,
+        )
+        .ok()?;
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 1, LWA_ALPHA);
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        Some(hwnd)
+    }
 }
 
 /// Queues an event; a closed channel means the forwarder is gone, and a
