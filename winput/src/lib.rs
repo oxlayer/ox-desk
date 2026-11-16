@@ -416,6 +416,19 @@ unsafe extern "system" fn push_monitor(_m: isize, _dc: isize, r: *mut MonitorRec
     1
 }
 
+#[link(name = "user32")]
+extern "system" {
+    fn GetAsyncKeyState(vk: i32) -> i16;
+}
+
+/// Is any mouse button held right now (left, right, middle, the two side
+/// buttons)? The edge does not switch during a drag: moving a window or
+/// selecting text up to the screen edge is not a request to change machine.
+pub fn any_button_down() -> bool {
+    // SAFETY: a plain state read.
+    [0x01, 0x02, 0x04, 0x05, 0x06].iter().any(|vk| unsafe { GetAsyncKeyState(*vk) } as u16 & 0x8000 != 0)
+}
+
 /// Every monitor, `(left, top, width, height)` in virtual-desktop pixels.
 ///
 /// The edge is a fact about monitors, not about the box around them: two

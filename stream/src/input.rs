@@ -103,6 +103,50 @@ impl Held {
     }
 }
 
+// --- keys that were down when the grab started (spec 025 section 6) --------
+
+/// What the grab does with one key event, given the keys that were already
+/// down on THIS machine when it started.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LocalKey {
+    /// Not one of them: forward it, as always.
+    Forward,
+    /// Its release: let this machine have it, so the key comes up here.
+    PassThrough,
+    /// Its auto-repeat: drop it -- not sent away, not typed here.
+    Swallow,
+}
+
+/// The keys (Windows virtual keys) that were down on this machine at the
+/// instant the grab started.
+///
+/// Crossing the edge while holding Ctrl used to leave Ctrl down here: its
+/// release happened while the input was away, the hook swallowed it, and
+/// this machine never saw the key come up -- the next click at home was a
+/// Ctrl+click. So a key that went down here comes up here.
+#[derive(Default)]
+pub struct LocalHeld {
+    keys: std::collections::BTreeSet<u32>,
+}
+
+impl LocalHeld {
+    pub fn new(keys: impl IntoIterator<Item = u32>) -> LocalHeld {
+        LocalHeld { keys: keys.into_iter().collect() }
+    }
+
+    pub fn classify(&mut self, vk: u32, down: bool) -> LocalKey {
+        if !self.keys.contains(&vk) {
+            return LocalKey::Forward;
+        }
+        if down {
+            LocalKey::Swallow
+        } else {
+            self.keys.remove(&vk);
+            LocalKey::PassThrough
+        }
+    }
+}
+
 // --- the way back by the screen edge (spec 024) ---------------------------
 
 /// The line a host sends a KVM client when its input connection opens, on
@@ -1160,6 +1204,21 @@ mod reverse_key_tests {
         // The right side is the primary's at any height.
         assert_eq!(return_point(Edge::Right, 0.3, &REF, 60), Some((2499, 432)));
         assert_eq!(return_point(Edge::Left, 0.5, &[], 60), None);
+    }
+
+    #[test]
+    fn a_key_held_across_the_edge_comes_up_at_home() {
+        // Ctrl (0xA2) was down when the grab started.
+        let mut l = LocalHeld::new([0xA2]);
+        // It auto-repeats while away: dropped, not typed anywhere.
+        assert_eq!(l.classify(0xA2, true), LocalKey::Swallow);
+        // A key pressed while away is the other machine's.
+        assert_eq!(l.classify(0x41, true), LocalKey::Forward);
+        // Ctrl comes up: here, once.
+        assert_eq!(l.classify(0xA2, false), LocalKey::PassThrough);
+        // Pressed again while away, it is the other machine's like any key.
+        assert_eq!(l.classify(0xA2, true), LocalKey::Forward);
+        assert_eq!(l.classify(0xA2, false), LocalKey::Forward);
     }
 
     #[test]

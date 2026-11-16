@@ -179,8 +179,21 @@ first call of each method checked (spec 024).
 
 - **A way home no setting can remove**, independent of the chosen pair
   (for example, holding Right Shift for 3 s), read where the rescue is.
-- **The grab waits until every key is up**, so a key held during the
-  switch is not stuck down on one side and up on the other.
+- **A key held during the switch comes up where it went down.** mickey
+  makes the grab wait until every key is up; we chose not to delay the
+  switch. **Built (v0.3.9)**: the grab reads which keys and buttons are
+  down when it starts (`GetAsyncKeyState`), and their release goes to this
+  machine while their auto-repeat goes nowhere (`input::LocalHeld`).
+  Before, crossing while holding Ctrl left Ctrl down on Windows: its
+  release was swallowed and forwarded, and the next click at home was a
+  Ctrl+click. Confirmed by hand on the reference deployment, with the
+  session's own count: `1 release(s) of keys or buttons held from before
+  the grab went to this machine`, 0 keys forwarded, and Windows reporting
+  nothing held afterwards.
+- **No edge switch during a drag** (also v0.3.9): while a mouse button is
+  held, the edge does not fire, and an edge reached during the drag fires
+  only after the cursor leaves and comes back. Moving a window to the
+  screen edge is not a request to change machine. Confirmed by hand.
 - **Held keys tracked on both ends**: the target releases what it pressed
   when the link ends, whatever the reason. **Built (v0.3.8)**:
   `input::Held`, in all three hosts. Proven on the Ubuntu host with
