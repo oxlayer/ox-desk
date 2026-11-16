@@ -128,6 +128,19 @@ pub fn prewarm(cfg: &std::sync::Arc<std::sync::RwLock<Config>>, host: &str) {
     });
 }
 
+/// When the current session started, for the line that says how it ended.
+static STARTED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// The KVM's own last word on why it stopped: its last line, which every
+/// exit path prints ("home by the edge", "rescue", "the connection
+/// dropped", ...).
+fn ended_because() -> String {
+    std::fs::read_to_string(crate::sys::state_dir().join("oxdesk-kvm.log"))
+        .ok()
+        .and_then(|t| t.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()))
+        .unwrap_or_else(|| "no line in its log".into())
+}
+
 /// Who the input is going to now, or `None` if it is here.
 pub fn target() -> Option<String> {
     let mut g = CURRENT.lock().ok()?;
@@ -139,6 +152,17 @@ pub fn target() -> Option<String> {
         if !alive(p) {
             // The session just ended: its host stays up for a while.
             note_host_up(name);
+            // Said here because the KVM ends sessions on its own (by the
+            // edge, by the rescue keys, when the connection drops) and,
+            // until 2026-11-15, nothing in the daemon's log said when or
+            // why: a stop the person noticed left a gap and no evidence.
+            let secs = STARTED
+                .lock()
+                .ok()
+                .and_then(|mut s| s.take())
+                .map(|t| t.elapsed().as_secs_f64())
+                .unwrap_or(0.0);
+            say!("kvm: input back from {name} after {secs:.1} s -- {}", ended_because());
             *g = None;
         }
     }
@@ -328,6 +352,9 @@ fn start_kvm(
     // person sees it. This one opens nothing -- the only sign that it
     // failed would be the keyboard staying here, without a line saying why.
     let log_path = crate::sys::state_dir().join("oxdesk-kvm.log");
+    // The previous session's log is kept as `.1`: the session worth
+    // reading is usually the one before the switch that made someone look.
+    let _ = std::fs::rename(&log_path, log_path.with_extension("log.1"));
     let out = std::fs::File::create(&log_path)
         .map_err(|e| format!("could not open {}: {e}", log_path.display()))?;
     let err = out
@@ -449,6 +476,9 @@ fn start_kvm(
     match CURRENT.lock() {
         Ok(mut g) => *g = Some((host.to_string(), Process::Ours(child))),
         Err(_) => return Err("KVM state poisoned".into()),
+    }
+    if let Ok(mut s) = STARTED.lock() {
+        *s = Some(std::time::Instant::now());
     }
     let detail: Vec<String> = steps.iter().map(|(n, ms)| format!("{n} {ms}")).collect();
     say!(
