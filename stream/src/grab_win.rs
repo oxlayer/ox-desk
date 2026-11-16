@@ -71,9 +71,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::input::{
-    chord_held, evdev_from_windows_key, inset_from_edges, Event, BTN_EXTRA, BTN_LEFT, BTN_MIDDLE,
-    BTN_RIGHT, BTN_SIDE, SCROLL_PX_PER_LINE,
+    chord_held, evdev_from_windows_key, inset_from_edges, Event, LocalHeld, LocalKey, BTN_EXTRA,
+    BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, SCROLL_PX_PER_LINE,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
 /// `LLMHF_INJECTED`: the event came from `SendInput`, not from a device.
 const LLMHF_INJECTED: u32 = 0x01;
@@ -94,6 +95,16 @@ pub fn passed_through() -> usize {
     PASSED.load(Ordering::SeqCst)
 }
 
+/// Releases of keys and buttons that were down when the grab started, handed
+/// back to this machine (`input::LocalHeld`). Printed on exit: without it, a
+/// session that forwarded no key cannot say whether a held key came home or
+/// no key was held at all.
+static KEPT_HOME: AtomicUsize = AtomicUsize::new(0);
+
+pub fn kept_home() -> usize {
+    KEPT_HOME.load(Ordering::SeqCst)
+}
+
 /// What the callbacks need. They are plain `extern "system"` functions with
 /// no context argument, and Windows runs them on the thread that installed
 /// them, so the state lives in that thread.
@@ -105,6 +116,12 @@ struct HookState {
     repeat: bool,
     pressed: HashSet<u32>,
     park: (i32, i32),
+    /// Keys that were down here when the grab started: their release stays
+    /// here (`input::LocalHeld`).
+    local: LocalHeld,
+    /// Mouse buttons that were down here when the grab started, by the
+    /// message that releases them: same rule as `local`.
+    local_buttons: HashSet<u32>,
 }
 
 thread_local! {
@@ -245,6 +262,16 @@ fn hook_thread(
     park: (i32, i32),
     ready: std::sync::mpsc::Sender<Result<u32, String>>,
 ) {
+    // What is down here right now, read before the hooks go in: those keys
+    // and buttons went down here and must come up here.
+    let is_down = |vk: i32| unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000 != 0;
+    // 0x07 and up are keyboard keys; 0x01-0x06 are the mouse buttons.
+    let local = LocalHeld::new((0x07..=0xFEu32).filter(|vk| is_down(*vk as i32)));
+    let local_buttons: HashSet<u32> = [(0x01, WM_LBUTTONUP), (0x02, WM_RBUTTONUP), (0x04, WM_MBUTTONUP)]
+        .into_iter()
+        .filter(|(vk, _)| is_down(*vk))
+        .map(|(_, up)| up)
+        .collect();
     STATE.with(|s| {
         *s.borrow_mut() = Some(HookState {
             tx,
@@ -252,6 +279,8 @@ fn hook_thread(
             repeat: opts.repeat,
             pressed: HashSet::new(),
             park,
+            local,
+            local_buttons,
         })
     });
 
@@ -391,6 +420,17 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
     let down = k.flags.0 & LLKHF_UP.0 == 0;
+    // A key that was down here when the grab started: its release is this
+    // machine's, its auto-repeat nobody's (`input::LocalHeld`).
+    let local = STATE.with(|s| s.borrow_mut().as_mut().map(|st| st.local.classify(k.vkCode, down)));
+    match local {
+        Some(LocalKey::PassThrough) => {
+            KEPT_HOME.fetch_add(1, Ordering::SeqCst);
+            return unsafe { CallNextHookEx(None, code, wparam, lparam) };
+        }
+        Some(LocalKey::Swallow) => return LRESULT(1),
+        _ => {}
+    }
     let extended = k.flags.0 & LLKHF_EXTENDED.0 != 0;
     let Some(keycode) = evdev_from_windows_key(k.vkCode, k.scanCode, extended) else {
         // A key with no evdev equivalent (or the fake Ctrl that AltGr
@@ -430,6 +470,13 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
     let m = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
     if m.flags & LLMHF_INJECTED != 0 {
         PASSED.fetch_add(1, Ordering::SeqCst);
+        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
+    }
+    // A button that was down here when the grab started comes up here.
+    let msg = wparam.0 as u32;
+    let local_up = STATE.with(|s| s.borrow_mut().as_mut().is_some_and(|st| st.local_buttons.remove(&msg)));
+    if local_up {
+        KEPT_HOME.fetch_add(1, Ordering::SeqCst);
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
     // The high word of mouseData: wheel delta, or which X button.

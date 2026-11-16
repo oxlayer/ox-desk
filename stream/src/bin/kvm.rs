@@ -580,6 +580,7 @@ async fn main() -> anyhow::Result<()> {
     drop(grab);
     if hooked {
         println!("  hooks passed {} injected event(s) through", grab_win::passed_through());
+        println!("  {} release(s) of keys or buttons held from before the grab went to this machine", grab_win::kept_home());
     }
     finish(&mut send, &stopped).await;
     Ok(())

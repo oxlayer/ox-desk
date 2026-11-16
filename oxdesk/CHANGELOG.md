@@ -6,6 +6,12 @@ machine is running, not what the repository has.
 
 Format: `## <date> · <title>` and a description underneath.
 
+## 2026-11-16 · Crossing with a key held, and dragging to the edge
+A key held while crossing to the other machine -- Ctrl, Shift -- now comes
+up on the machine it went down on, so the next click back home is a plain
+click and not a Ctrl+click. And dragging something to the screen edge no
+longer switches machines: a drag stays where it started.
+
 ## 2026-11-16 · No more stuck keys when a connection drops
 If the machine sending the keyboard crashed or lost the network while a
 key was down, that key stayed pressed on the other machine -- Shift held

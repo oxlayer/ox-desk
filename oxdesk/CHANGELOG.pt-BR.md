@@ -8,6 +8,12 @@ confere.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-16 · Cruzar segurando uma tecla, e arrastar até a borda
+Uma tecla segurada ao cruzar para a outra máquina -- Ctrl, Shift -- agora
+é solta na máquina em que foi apertada, então o próximo clique em casa é
+um clique comum, e não um Ctrl+clique. E arrastar algo até a borda da tela
+não troca mais de máquina: o arrasto fica onde começou.
+
 ## 2026-11-16 · Fim das teclas presas quando a conexão cai
 Se a máquina que manda o teclado travava ou perdia a rede com uma tecla
 apertada, essa tecla ficava pressionada na outra máquina -- o Shift preso,

@@ -291,6 +291,16 @@ fn run(cfg: Arc<RwLock<Config>>) {
                 }
             }
         }
+        // A drag is not a request to change machine: while a mouse button is
+        // held, nothing fires, and an edge reached during the drag counts as
+        // already touched -- it fires only after leaving and coming back.
+        if winput::any_button_down() {
+            if let Some(i) = edges.iter().position(|(e, _)| on_edge(e, p, &monitors)) {
+                was_at[i] = true;
+            }
+            touching = None;
+            continue;
+        }
         // Which edge is the cursor touching? None or one -- never two,
         // because they are opposite sides of a monitor.
         let Some(i) = edges.iter().position(|(e, _)| on_edge(e, p, &monitors)) else {
