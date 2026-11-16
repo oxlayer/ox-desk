@@ -6,6 +6,13 @@ machine is running, not what the repository has.
 
 Format: `## <date> · <title>` and a description underneath.
 
+## 2026-11-15 · Back by the screen edge, and switching in half a second
+With the edge on, pushing the mouse past the other screen's edge that faces
+this machine now brings the keyboard and mouse back -- a firm push, so a
+scroll bar on that edge does not. The cursor comes in at the same height it
+left at. And a switch takes about half a second instead of five: the
+daemon no longer asks the other machine, over SSH, things it already knows.
+
 ## 2026-11-15 · Windows can send its keyboard and mouse to another machine
 With the Logitech receiver plugged into Windows, both Ctrl, the screen
 edge and "Send to" in the panel or the tray now move the keyboard and the

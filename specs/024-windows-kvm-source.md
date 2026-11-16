@@ -113,10 +113,52 @@ input stays on this machine.
 **"Ctrl+Alt+Del is not grabbed."** It cannot be: it is the secure
 attention sequence. It acts on this machine, as it should.
 
+## The way home by the other screen's edge (v0.3.3)
+
+The first version went to the other machine by the edge and came back only
+by the shortcut. The reason was structural: with relative motion the
+source is blind -- the other side clamps the cursor at its screen edges and
+nothing comes back to say where it is -- and the other machine's own edge
+watcher sees no devices there, so it is disarmed.
+
+- **The host says its screen size** when an input connection opens, on a
+  stream it opens itself: `oxdesk-size <w> <h>` (`input::size_line`). A
+  client from before it never accepts that stream and loses nothing; a
+  host from before it never sends one, and motion stays relative.
+- **The source keeps the position** once it has the size
+  (`input::Pointer`), and sends absolute positions. The cursor enters just
+  inside the edge that faces this machine, at the height it left at.
+- **A push past that edge brings the input home**: 40 px of push, not the
+  first pixel, so reaching a maximised window's scroll bar on that edge
+  does not. The cursor reappears just inside the matching edge here, at
+  the same height. The other edges clamp as before.
+- **Which edge**: from the layout, as the opposite of this machine's edge
+  toward the target (`--return-edge`), and only while the edge is on here.
+- **The LAN cooldown is 1.5 s**, not the HID++ route's 10 s: going, coming
+  back and going again within ten seconds is normal use.
+
+The side effect worth knowing: movement is now this machine's (Windows'
+pointer speed), not the target's acceleration on top of it.
+
+## Faster switching (v0.3.3)
+
+A switch took ~5 s, measured from the log on 2026-11-15. Each step is now
+timed in the log line (`in 444 ms (host 338, address 0, identity 1, grab
+105)`):
+
+| Step | Before | Now |
+|---|---|---|
+| Wake the target's host | an SSH call plus a fixed 1 s sleep, always | no sleep when it is up; when it starts, wait for its input port, polled every 0.1 s |
+| Its identity | an SSH call for a value already pinned | the stored pin; only a host never pinned is asked |
+| Its address | a live `.local` lookup | the probe's answer if under 30 s old |
+| SSH's own address | another live lookup per call | the same fresh answer |
+
+Measured after: 452 ms with the host stopped first, ~0.3-0.9 s with it up.
+
 ## Not yet
 
-- Coming back by the other machine's screen edge. Today the way back from
-  a Windows grab is the shortcut, the panel, or the tray.
+- The way home by the edge for a Linux source with a Windows target: the
+  Windows host does not announce its size yet.
 - Raw Input for movement (see above).
 
 ## See also

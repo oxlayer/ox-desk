@@ -438,15 +438,18 @@ pub(crate) fn wake_host(h: &crate::config::HostCfg, port: u16) -> Result<(), Str
         // Same boundary that forces Windows to use a scheduled task with
         // /IT instead of a service.
         concat!(
-            r#"pgrep -x oxdesk-host >/dev/null 2>&1 || "#,
+            // Already up: answer at once. The sleep is for a host just
+            // started, and it cost a full second on every switch.
+            r#"if pgrep -x oxdesk-host >/dev/null 2>&1; then echo alive; else "#,
             r#"launchctl kickstart "gui/$(id -u)/app.oxdesk.host" >/dev/null 2>&1; "#,
-            r#"sleep 1; pgrep -x oxdesk-host >/dev/null && echo alive || echo dead"#
+            r#"sleep 1; pgrep -x oxdesk-host >/dev/null && echo alive || echo dead; fi"#
         )
         .to_string()
     } else {
         format!(
             concat!(
-                r#"pgrep -x oxdesk-host >/dev/null 2>&1 || "#,
+                // Already up: answer at once (see the macOS branch).
+                r#"if pgrep -x oxdesk-host >/dev/null 2>&1; then echo alive; else "#,
                 // `setsid` when it exists, `nohup` alone when it does not.
                 //
                 // macOS does NOT have setsid, and the whole line died with
@@ -462,9 +465,16 @@ pub(crate) fn wake_host(h: &crate::config::HostCfg, port: u16) -> Result<(), Str
                 r#"S=; command -v setsid >/dev/null 2>&1 && S=setsid; "#,
                 r#"$S nohup "$HOME/.local/bin/oxdesk-host" {} "#,
                 r#">"$HOME/.local/state/oxdesk-host.log" 2>&1 &); "#,
-                r#"sleep 1; pgrep -x oxdesk-host >/dev/null && echo alive || echo dead"#
+                // Wait until the INPUT port is bound, polled every 0.1 s, up
+                // to 2 s -- not a flat second: that second was most of a
+                // switch (spec 024). Without `ss`, the old flat wait.
+                r#"if command -v ss >/dev/null 2>&1; then i=0; "#,
+                r#"while [ $i -lt 20 ] && ! ss -Hlun "sport = :{}" | grep -q .; do sleep 0.1; i=$((i+1)); done; "#,
+                r#"else sleep 1; fi; "#,
+                r#"pgrep -x oxdesk-host >/dev/null && echo alive || echo dead; fi"#
             ),
-            port
+            port,
+            port + 1
         )
     };
     let output = crate::remote::run(h, &cmd, 12)?;

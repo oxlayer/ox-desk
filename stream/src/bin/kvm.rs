@@ -49,7 +49,9 @@ use std::time::Duration;
 #[cfg(any(target_os = "linux", windows))]
 use bytes::BytesMut;
 #[cfg(any(target_os = "linux", windows))]
-use oxdesk_stream::input::{chord_held, parse_chord, Event, RESCUE_DEFAULT};
+use oxdesk_stream::input::{
+    chord_held, parse_chord, parse_size_line, Edge, Event, Pointer, Step, RESCUE_DEFAULT,
+};
 #[cfg(any(target_os = "linux", windows))]
 use oxdesk_stream::net;
 
@@ -74,6 +76,10 @@ struct Args {
     repeat: bool,
     self_test: usize,
     rescue: (u32, u32),
+    /// The other screen's edge that faces this machine (`--return-edge`):
+    /// pushing the mouse past it brings the input home. The daemon passes
+    /// it when the edge is on and the layout says where the target sits.
+    return_edge: Option<Edge>,
     #[cfg_attr(windows, allow(dead_code))]
     filters: Vec<String>,
 }
@@ -127,7 +133,7 @@ fn parse_args() -> anyhow::Result<Args> {
                 }
                 skip_next = true;
             }
-            "--self-test" | "--autoteste" | "--rescue" => skip_next = true,
+            "--self-test" | "--autoteste" | "--rescue" | "--return-edge" => skip_next = true,
             s if s.starts_with("--") => {}
             s => {
                 if target.is_none() {
@@ -142,6 +148,7 @@ fn parse_args() -> anyhow::Result<Args> {
         repeat,
         self_test,
         rescue,
+        return_edge: value("--return-edge", "--return-edge").as_deref().and_then(Edge::parse),
         filters,
     })
 }
@@ -163,6 +170,31 @@ async fn connect(target: &str) -> anyhow::Result<(quinn::Connection, quinn::Send
     println!("  connected to {target}");
     let s = c.open_uni().await?;
     Ok((c, s))
+}
+
+/// Listens for the size the host announces on a stream of its own
+/// (`input::size_line`). A host from before it never sends one, and the
+/// slot stays empty: motion then stays relative, as it always was.
+#[cfg(any(target_os = "linux", windows))]
+fn spawn_size_reader(conn: &quinn::Connection) -> std::sync::Arc<std::sync::Mutex<Option<(u32, u32)>>> {
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let (c, s) = (conn.clone(), std::sync::Arc::clone(&slot));
+    tokio::spawn(async move {
+        let Ok(Ok(mut r)) = tokio::time::timeout(Duration::from_secs(5), c.accept_uni()).await else {
+            return;
+        };
+        let Ok(bytes) = r.read_to_end(64).await else { return };
+        match parse_size_line(&String::from_utf8_lossy(&bytes)) {
+            Some((w, h)) => {
+                println!("  the other screen is {w}x{h}");
+                if let Ok(mut g) = s.lock() {
+                    *g = Some((w, h));
+                }
+            }
+            None => eprintln!("  the other side sent a size line this build does not read"),
+        }
+    });
+    slot
 }
 
 /// The movements `--self-test` pushes, from a thread, like a device would.
@@ -189,6 +221,8 @@ struct Stopped {
     /// -- nobody touched anything, or the capture saw nothing -- and only
     /// this number tells them apart.
     sent: [usize; 4],
+    /// Came home by the edge: where along it, 0..1.
+    returned: Option<f64>,
 }
 
 /// Forwards events until the source ends, the connection drops or the
@@ -204,11 +238,14 @@ async fn forward(
     send: &mut Option<quinn::SendStream>,
     observe: bool,
     rescue: (u32, u32),
+    pointer: &mut Pointer,
+    size: &std::sync::Mutex<Option<(u32, u32)>>,
     closed: impl Fn() -> String,
 ) -> Stopped {
     let mut buf = BytesMut::new();
     let mut pressed: HashSet<u32> = HashSet::new();
     let mut sent = [0usize; 4];
+    let mut returned = None;
     let reason = loop {
         let e = match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
             Ok(Some(e)) => e,
@@ -242,6 +279,30 @@ async fn forward(
             continue;
         }
 
+        // The other screen's size, once it has arrived: from then on the
+        // cursor's position is kept here and sent absolute, starting with
+        // the point it enters at (see `input::Pointer`).
+        if pointer.wants_size() {
+            if let Some((w, h)) = size.lock().ok().and_then(|g| *g) {
+                if let Some(first) = pointer.set_size(w, h) {
+                    buf.clear();
+                    first.write(&mut buf);
+                    if let Some(s) = send.as_mut() {
+                        if let Err(err) = s.write_all(&buf).await {
+                            break format!("write failed: {err}");
+                        }
+                    }
+                }
+            }
+        }
+        let e = match pointer.map(e) {
+            Step::Send(e) => e,
+            Step::Return(along) => {
+                returned = Some(along);
+                break "home by the edge: the mouse was pushed past the edge that faces this machine".into();
+            }
+        };
+
         buf.clear();
         e.write(&mut buf);
         if let Some(s) = send.as_mut() {
@@ -256,7 +317,7 @@ async fn forward(
             Event::Scroll { .. } => 3,
         }] += 1;
     };
-    Stopped { reason, pressed, sent }
+    Stopped { reason, pressed, sent, returned }
 }
 
 /// Releases on the other side whatever is still held there.
@@ -391,9 +452,22 @@ async fn main() -> anyhow::Result<()> {
     }
     drop(tx);
 
-    let stopped = forward(&mut rx, connection.as_ref(), &mut send, a.observe, a.rescue, || {
-        "the devices stopped answering".into()
-    })
+    let size = match &connection {
+        Some(c) => spawn_size_reader(c),
+        None => std::sync::Arc::new(std::sync::Mutex::new(None)),
+    };
+    // evdev does not say where the cursor is, so it enters halfway along.
+    let mut pointer = Pointer::new(a.return_edge, 0.5);
+    let stopped = forward(
+        &mut rx,
+        connection.as_ref(),
+        &mut send,
+        a.observe,
+        a.rescue,
+        &mut pointer,
+        &size,
+        || "the devices stopped answering".into(),
+    )
     .await;
     finish(&mut send, &stopped).await;
     Ok(())
@@ -455,16 +529,50 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let stopped = forward(&mut rx, Some(&connection), &mut send, false, a.rescue, || {
-        if grab_win::rescued() {
-            "rescue: the rescue keys were held together".into()
-        } else if a.self_test > 0 {
-            "self-test done".into()
-        } else {
-            "the grab ended".into()
-        }
-    })
+    let size = spawn_size_reader(&connection);
+    // The cursor enters the other screen at the height (or the place along
+    // a top/bottom edge) it left this one at.
+    let entry = match (&grab, a.return_edge) {
+        (Some(g), Some(Edge::Top | Edge::Bottom)) => g.entry_ratio().0,
+        (Some(g), Some(_)) => g.entry_ratio().1,
+        _ => 0.5,
+    };
+    let mut pointer = Pointer::new(a.return_edge, entry);
+    let stopped = forward(
+        &mut rx,
+        Some(&connection),
+        &mut send,
+        false,
+        a.rescue,
+        &mut pointer,
+        &size,
+        || {
+            if grab_win::rescued() {
+                "rescue: the rescue keys were held together".into()
+            } else if a.self_test > 0 {
+                "self-test done".into()
+            } else {
+                "the grab ended".into()
+            }
+        },
+    )
     .await;
+    // Home by the edge: the cursor comes in by the matching edge here, at
+    // the same place along it -- not where it was when it left.
+    let mut grab = grab;
+    if let (Some(along), Some(edge), Some(g)) = (stopped.returned, a.return_edge, grab.as_mut()) {
+        let (vx, vy, vw, vh) = grab_win::virtual_rect();
+        let at = |o: i32, len: i32| o + (along * f64::from((len - 1).max(0))).round() as i32;
+        let (x, y) = match edge {
+            // Their right edge faces us: we are to their right, so we come
+            // in by our left edge. And so on round.
+            Edge::Right => (vx, at(vy, vh)),
+            Edge::Left => (vx + vw - 1, at(vy, vh)),
+            Edge::Bottom => (at(vx, vw), vy),
+            Edge::Top => (at(vx, vw), vy + vh - 1),
+        };
+        g.restore_at(x, y);
+    }
     // Unhook before the slow part: the person gets the keyboard back now,
     // and the key-ups for the other side go out after.
     let hooked = grab.is_some();

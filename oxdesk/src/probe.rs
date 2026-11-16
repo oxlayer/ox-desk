@@ -124,7 +124,7 @@ fn resolve_all(addr: &str, port: u16) -> Vec<SocketAddr> {
     all.sort_by_key(|a| !a.is_ipv4());
     all.truncate(3);
     if let (Some(first), Ok(mut seen)) = (all.first(), LAST_RESOLVED.lock()) {
-        seen.insert(addr.to_string(), first.ip());
+        seen.insert(addr.to_string(), (first.ip(), Instant::now()));
     }
     all
 }
@@ -139,18 +139,28 @@ fn resolve_all(addr: &str, port: u16) -> Vec<SocketAddr> {
 /// config (spec 007): it lives in memory, is replaced at the next answer,
 /// and the host's pinned identity still refuses a different machine at an
 /// address that was reused.
-static LAST_RESOLVED: Mutex<std::collections::BTreeMap<String, std::net::IpAddr>> =
+static LAST_RESOLVED: Mutex<std::collections::BTreeMap<String, (std::net::IpAddr, Instant)>> =
     Mutex::new(std::collections::BTreeMap::new());
 
-/// Resolves a name now, or falls back to the last address it resolved to.
-/// The flag is `true` when the answer is the remembered one.
-#[cfg_attr(not(windows), allow(dead_code))]
+/// An answer this fresh is used without asking again. The probe refreshes
+/// every name every ~10 s, so on a running daemon it is nearly always there,
+/// and asking `.local` again on Windows is where a switch spent seconds
+/// when mDNS was slow to answer.
+const FRESH: Duration = Duration::from_secs(30);
+
+/// Resolves a name: a fresh answer from the probe, else now, else the last
+/// address it ever resolved to. The flag is `true` only for the last case.
 pub fn resolve_with_memory(addr: &str, port: u16) -> Option<(SocketAddr, bool)> {
+    let remembered = LAST_RESOLVED.lock().ok().and_then(|s| s.get(addr).copied());
+    if let Some((ip, at)) = remembered {
+        if at.elapsed() < FRESH {
+            return Some((SocketAddr::new(ip, port), false));
+        }
+    }
     if let Some(sa) = resolve_all(addr, port).into_iter().next() {
         return Some((sa, false));
     }
-    let seen = LAST_RESOLVED.lock().ok()?;
-    seen.get(addr).map(|ip| (SocketAddr::new(*ip, port), true))
+    remembered.map(|(ip, _)| (SocketAddr::new(ip, port), true))
 }
 
 /// ssh/sftp options that bypass ssh's OWN resolver.
@@ -193,8 +203,12 @@ pub fn ssh_addr_opts(addr: &str) -> Vec<String> {
 /// IPv6**, and the first address is `fe80::...%11`, which without the
 /// right scope leads nowhere. `None` means letting `ssh` try on its own
 /// -- better than handing over an address that does not connect.
+///
+/// Through the probe's fresh answer when there is one: every ssh the daemon
+/// starts used to resolve `.local` again, and on Windows that lookup alone
+/// was most of the half second a switch spent waking the other host.
 fn resolve_for_ssh(addr: &str, port: u16) -> Option<SocketAddr> {
-    resolve_all(addr, port).into_iter().next()
+    resolve_with_memory(addr, port).map(|(sa, _)| sa)
 }
 
 /// (open, latency_ms) -- tries each address until one connects.

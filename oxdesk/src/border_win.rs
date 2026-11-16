@@ -39,6 +39,7 @@ use std::time::{Duration, Instant};
 
 const TICK: Duration = Duration::from_millis(30);
 const COOLDOWN: Duration = Duration::from_secs(10);
+const LAN_COOLDOWN: Duration = Duration::from_millis(1500);
 /// Presence is HID++: at 33 Hz it would hammer the radio for nothing. The
 /// dead-man's switch window is tens of seconds, 1 Hz is enough.
 const PRESENCE_EVERY: Duration = Duration::from_secs(1);
@@ -285,7 +286,11 @@ fn run(cfg: Arc<RwLock<Config>>) {
             continue;
         }
         touching = None;
-        cooldown = Some(Instant::now() + COOLDOWN);
+        // The long cooldown is the HID++ route's: a channel switch takes
+        // seconds and must not ping-pong. The LAN KVM is instant both ways,
+        // and with the way home by the other screen's edge, going, coming
+        // back and going again within ten seconds is normal use.
+        cooldown = Some(Instant::now() + if lan_mode(&cfg) { LAN_COOLDOWN } else { COOLDOWN });
         say!("border: edge '{edge}' reached at ({},{}) -- switching to {target}", p.x, p.y);
         let dest = target.clone();
         switch_away(&cfg, &dest);

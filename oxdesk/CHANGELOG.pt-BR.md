@@ -8,6 +8,13 @@ confere.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-15 · De volta pela borda da tela, e troca em meio segundo
+Com a borda ligada, empurrar o mouse além da borda da outra tela que fica
+do lado desta máquina agora traz o teclado e o mouse de volta -- um empurrão
+firme, para a barra de rolagem nessa borda não disparar. O cursor entra na
+mesma altura em que saiu. E a troca leva cerca de meio segundo em vez de
+cinco: o daemon não pergunta mais à outra máquina, por SSH, o que já sabe.
+
 ## 2026-11-15 · O Windows manda o teclado e o mouse para outra máquina
 Com o receptor Logitech no Windows, os dois Ctrl, a borda da tela e
 "Mandar para" no painel ou na bandeja agora levam o teclado e o mouse para
