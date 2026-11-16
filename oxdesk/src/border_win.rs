@@ -176,6 +176,7 @@ fn run(cfg: Arc<RwLock<Config>>) {
     // undo an edge crossing when nobody showed up on the other side.
     // Without an edge, it has nothing to undo -- it only pulls.
     let mut off_announced = false;
+    let mut touched_while_away = false;
 
     loop {
         std::thread::sleep(TICK);
@@ -208,10 +209,23 @@ fn run(cfg: Arc<RwLock<Config>>) {
         // The input is already away (the LAN KVM is forwarding it): the
         // grab parks the cursor, and nothing here should fire.
         if let Some(t) = crate::kvm::target() {
+            // The input should be away, so the cursor here is parked by the
+            // grab. If it is on a watched edge anyway, the person is using
+            // this machine while the daemon believes otherwise: say so,
+            // once per session, because that is a stop with no other trace.
+            if !touched_while_away {
+                if let Some(p) = winput::cursor() {
+                    if edges.iter().any(|(e, _)| winput::at_edge(e, p)) {
+                        touched_while_away = true;
+                        gripe!("border: edge touched while the input is on {t} -- the KVM is still running");
+                    }
+                }
+            }
             crate::edge_state::set("sent", Some(t));
             touching = None;
             continue;
         }
+        touched_while_away = false;
 
         // The dead-man's switch belongs to the HID++ route only: it undoes
         // a channel switch nobody answered. In LAN mode the devices never
