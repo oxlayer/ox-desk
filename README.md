@@ -75,6 +75,28 @@ requirements are [below](#requirements).
 > [`specs/`](specs/) was measured. Outside that shape, expect rough edges,
 > and tell us about them.
 
+## Shortcuts
+
+| Do this | What happens |
+|---|---|
+| Hold **both Ctrl** keys together (left and right) | The keyboard and mouse go to the next machine. Do it again and they come back |
+| Push the mouse past the screen edge toward a machine placed beside this one in **Layout** | They go to that machine (with **Switch at the screen edge** on) |
+| On the other machine, push **firmly** past the edge that faces home | They come back, at the height they left at (an Ubuntu target, for now) |
+| Tray › **Send to *machine*** · **Bring it to *this machine*** | The same, by click |
+| Tray › **Check for updates** | Says whether this machine runs the newest release |
+
+- **The pair is yours to choose.** Both Ctrl, both Shift or both Alt, in
+  **Settings › Switching machines**. A pair of the same key, left and right,
+  is held by no program and typed by no text, so it never fires by accident.
+- **The way back never depends on the network.** The pair is read on the
+  machine your keyboard is plugged into, so it brings the input home even
+  if the other machine or the Wi-Fi is gone.
+- **"Firmly" means about 40 pixels past the edge.** A scroll bar on that
+  edge is safe to reach for.
+- **Today a Linux or Windows machine can send its keyboard and mouse; a Mac
+  can receive them.** The edge works on the machine the devices are
+  plugged into, and Settings says, in words, what it is doing right now.
+
 ## The gap it fills
 
 Almost everything here exists somewhere in open source. One thing does

@@ -8,6 +8,12 @@ confere.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-15 · Páginas da web não controlam mais o OxDesk
+A API local respondia a qualquer página aberta num navegador do mesmo
+computador, e uma página poderia ter mandado o seu teclado para outra
+máquina ou mudado as configurações. Agora ela só aceita comandos do
+próprio painel, da bandeja e da linha de comando.
+
 ## 2026-11-15 · Ir para lá é tão rápido quanto voltar
 Cruzar a borda em direção à outra máquina agora leva cerca de 50 ms em vez
 de 300 a 450: o outro lado é acordado enquanto o mouse ainda está a caminho

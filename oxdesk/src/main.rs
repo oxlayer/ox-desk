@@ -34,6 +34,7 @@ mod border_win;
 mod config;
 mod edge_state;
 mod files;
+mod guard;
 mod focus;
 mod follow;
 mod hidpp;
@@ -327,6 +328,7 @@ fn main() -> std::process::ExitCode {
     };
 
     let addr = format!("127.0.0.1:{}", cfg.port);
+    let _ = API_PORT.set(cfg.port);
     let server = match Server::http(&addr) {
         Ok(s) => s,
         Err(e) => {
@@ -1062,9 +1064,27 @@ fn post_setup_repair(mut req: Request, cfg: &RwLock<Config>) {
     }
 }
 
+/// A request header's value, case-insensitively by name.
+fn header(req: &Request, name: &'static str) -> Option<String> {
+    req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string())
+}
+
+/// The port this daemon serves on, for `guard::check`: our own panel's
+/// origin is `http://127.0.0.1:<this port>`.
+static API_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
 fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
     let method = req.method().as_str().to_string();
+
+    // Before any route: no web page gets to drive this API, and none gets
+    // to read it through a rebound name (see `guard`).
+    let port = API_PORT.get().copied().unwrap_or(8787);
+    let (host, origin) = (header(&req, "Host"), header(&req, "Origin"));
+    if let Err(why) = guard::check(&method, host.as_deref(), origin.as_deref(), port) {
+        say!("api: refused {method} {path} -- {why}");
+        return err_json(req, 403, why);
+    }
 
     if path == "/api/config" && method == "PATCH" {
         return patch_config(req, cfg, cache);

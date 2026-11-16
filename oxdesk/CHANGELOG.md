@@ -6,6 +6,12 @@ machine is running, not what the repository has.
 
 Format: `## <date> · <title>` and a description underneath.
 
+## 2026-11-15 · Web pages can no longer control OxDesk
+The local API answered any web page open in a browser on the same
+computer, and a page could have sent your keyboard to another machine or
+changed settings. It now accepts commands only from its own panel, the
+tray and the command line.
+
 ## 2026-11-15 · Going there is as quick as coming back
 Crossing the edge toward the other machine now takes about 50 ms instead
 of 300 to 450: the other side is woken while the mouse is still on its way
