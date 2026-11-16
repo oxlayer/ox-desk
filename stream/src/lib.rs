@@ -28,6 +28,8 @@ pub mod cursor_win;
 pub mod decode;
 pub mod decode_nv;
 pub mod encode;
+// Empty off Windows: the file carries its own `#![cfg(windows)]`.
+pub mod grab_win;
 pub mod host_linux;
 pub mod host_mac;
 pub mod host_win;

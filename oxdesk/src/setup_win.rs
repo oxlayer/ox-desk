@@ -26,12 +26,13 @@ use crate::setup::{State, Check};
 use crate::setup_common::run_timed;
 use std::path::PathBuf;
 
-const BINS: [&str; 6] = [
+const BINS: [&str; 7] = [
     "oxdesk.exe",
     "oxdesk-agent.exe",
     "oxdesk-host.exe",
     "oxdesk-view.exe",
     "oxdesk-bridge.exe",
+    "oxdesk-kvm.exe",
     "oxdesk-ota.exe",
 ];
 

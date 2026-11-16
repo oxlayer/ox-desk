@@ -6,6 +6,30 @@ machine is running, not what the repository has.
 
 Format: `## <date> · <title>` and a description underneath.
 
+## 2026-11-15 · Windows can send its keyboard and mouse to another machine
+With the Logitech receiver plugged into Windows, both Ctrl, the screen
+edge and "Send to" in the panel or the tray now move the keyboard and the
+mouse to the other machine over the network, the way Linux always did.
+Both Ctrl bring them back, even if the network is down. Before this, the
+only way out of Windows was the device's own Easy-Switch button.
+
+## 2026-11-15 · Choose the keys of the shortcut
+Settings › Switching machines: both Ctrl, both Shift or both Alt. The same
+keys send the keyboard and mouse away and bring them back, and a tip on the
+Overview says which ones are in use, so the gesture is no longer a secret.
+
+## 2026-11-15 · The edge turns on without a restart, and says what it is doing
+Turning the edge on in the panel used to need a daemon restart nobody was
+told about. It now starts within a second, and Settings shows its state in
+words: watching, waiting because the keyboard and mouse are on another
+machine, or why it cannot run here.
+
+## 2026-11-15 · Ubuntu's remote screen follows the monitor you use
+The Ubuntu host recorded a fixed monitor connector. When the monitor moved
+to another port it recorded an invisible virtual screen instead, and the
+mouse sent from another machine moved there. It now asks GNOME which
+monitor is the primary one.
+
 ## 2026-11-04 · The picture no longer freezes until you move the mouse
 The window loop blocked waiting for a system event, and the network thread
 filled the slot with the new frame without waking anyone up, so the

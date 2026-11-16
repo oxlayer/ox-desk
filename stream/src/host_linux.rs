@@ -68,6 +68,11 @@ fn record(
     sp: &dbus::blocking::Proxy<'_, &Connection>,
     connector: &str,
 ) -> anyhow::Result<(Path<'static>, bool)> {
+    // No connector at all: Mutter knows of no monitor (see
+    // `primary_connector`), so there is nothing real to ask for.
+    if connector.is_empty() {
+        eprintln!("no monitor reported by Mutter: using virtual screen {VIRTUAL_W}x{VIRTUAL_H}");
+    }
     let props = || {
         let mut p = dbus::arg::PropMap::new();
         p.insert(
@@ -76,8 +81,11 @@ fn record(
         );
         p
     };
-    let request: Result<(Path,), dbus::Error> =
-        sp.method_call(SESSION, "RecordMonitor", (connector, props()));
+    let request: Result<(Path,), dbus::Error> = if connector.is_empty() {
+        Err(dbus::Error::new_custom("org.oxdesk.NoMonitor", "Unknown monitor"))
+    } else {
+        sp.method_call(SESSION, "RecordMonitor", (connector, props()))
+    };
     match request {
         Ok((path,)) => Ok((path.into_static(), false)),
         Err(e) if monitor_missing(e.message()) => {
@@ -88,6 +96,76 @@ fn record(
         Err(e) => Err(e.into()),
     }
 }
+/// The connector of the screen the person looks at: the primary monitor,
+/// as Mutter reports it (`DisplayConfig.GetCurrentState`).
+///
+/// It used to be a fixed `DP-1` when no connector was passed, and the
+/// daemon never passes one. That was the reference Ubuntu machine's
+/// connector -- until its monitor moved to `DP-3`. From then on the host
+/// found no `DP-1`, recorded an invisible virtual screen, and tied the
+/// input session to it: the Windows KVM forwarded 635 mouse moves, the host
+/// logged "500 input events applied", and the cursor the person was
+/// looking at never moved (spec 024). A connector name is a fact about one
+/// machine's cabling, so it is asked, not assumed.
+///
+/// `None` when Mutter cannot be asked or reports no monitor: the caller
+/// records a virtual screen, which is the right answer for a machine with
+/// nothing plugged in.
+pub fn primary_connector() -> Option<String> {
+    type Spec = (String, String, String, String);
+    type Mode = (String, i32, i32, f64, f64, Vec<f64>, dbus::arg::PropMap);
+    type Monitor = (Spec, Vec<Mode>, dbus::arg::PropMap);
+    type Logical = (i32, i32, f64, u32, bool, Vec<Spec>, dbus::arg::PropMap);
+    const DC: &str = "org.gnome.Mutter.DisplayConfig";
+    let conn = Connection::new_session().ok()?;
+    let p = conn.with_proxy(DC, "/org/gnome/Mutter/DisplayConfig", T);
+    let (_serial, _monitors, logical, _props): (u32, Vec<Monitor>, Vec<Logical>, dbus::arg::PropMap) =
+        match p.method_call(DC, "GetCurrentState", ()) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("could not ask Mutter for the monitors: {e}");
+                return None;
+            }
+        };
+    let view: Vec<(bool, Vec<String>)> =
+        logical.into_iter().map(|l| (l.4, l.5.into_iter().map(|s| s.0).collect())).collect();
+    pick_primary(&view)
+}
+
+/// The primary logical monitor's first connector, else the first one's.
+/// A logical monitor can mirror several connectors; any of them shows the
+/// same picture.
+pub fn pick_primary(logical: &[(bool, Vec<String>)]) -> Option<String> {
+    logical
+        .iter()
+        .find(|(primary, _)| *primary)
+        .or_else(|| logical.first())
+        .and_then(|(_, c)| c.first().cloned())
+}
+
+#[cfg(test)]
+mod monitor_tests {
+    use super::*;
+
+    #[test]
+    fn the_primary_wins_wherever_it_is() {
+        let l = vec![(false, vec!["HDMI-1".to_string()]), (true, vec!["DP-3".to_string()])];
+        assert_eq!(pick_primary(&l).as_deref(), Some("DP-3"));
+    }
+
+    #[test]
+    fn without_a_primary_the_first_one() {
+        let l = vec![(false, vec!["DP-2".to_string()]), (false, vec!["DP-3".to_string()])];
+        assert_eq!(pick_primary(&l).as_deref(), Some("DP-2"));
+    }
+
+    #[test]
+    fn no_monitor_means_no_connector() {
+        assert_eq!(pick_primary(&[]), None);
+        assert_eq!(pick_primary(&[(true, vec![])]), None);
+    }
+}
+
 /// Two frames of slack. More than that would be a queue of stale stuff.
 const CAPACITY: usize = 2;
 
@@ -419,31 +497,64 @@ pub fn run(port: u16, connector: &str) -> anyhow::Result<()> {
 /// `NO_REPLY_EXPECTED` the call becomes a socket write and there is no
 /// more round trip on the hot path.
 ///
-/// The price is real and accepted: injection errors stop being visible per
-/// event. What remains is the WRITE error, which is what signals a dead
-/// session -- the case that matters.
-fn apply_event(conn: &Connection, rd: &Path, stream: &str, e: Event) -> Result<(), String> {
+/// The price turned out higher than it looked: "errors stop being visible"
+/// hid a method that did not exist. Relative motion was sent as
+/// `NotifyPointerMotion`; Mutter's method is `NotifyPointerMotionRelative`
+/// (`busctl --user introspect` on a live session lists it). Every mouse move
+/// from a KVM source was refused without a line anywhere, while keys and
+/// scrolls went through -- "the mouse really does not work" (spec 024). So
+/// the FIRST call of each method in a connection waits for Mutter's reply
+/// and reports a refusal; after that, no reply, as before. One round trip
+/// per method per connection costs nothing on the hot path, and a wrong
+/// name or signature now says so the first time it is used.
+fn apply_event(
+    conn: &Connection,
+    rd: &Path,
+    stream: &str,
+    e: Event,
+    checked: &mut std::collections::HashSet<&'static str>,
+) -> Result<(), String> {
     use crate::input::Event as E;
     let m = |member: &str| {
         dbus::Message::new_method_call(RD, rd.clone(), RD_SESSION, member)
     };
-    let msg = match e {
-        E::Mouse { x, y } => m("NotifyPointerMotionAbsolute").map(|z| z.append3(stream, x, y)),
+    let (member, msg): (&'static str, _) = match e {
+        E::Mouse { x, y } => (
+            "NotifyPointerMotionAbsolute",
+            m("NotifyPointerMotionAbsolute").map(|z| z.append3(stream, x, y)),
+        ),
         // Relative has its own method in Mutter, and is not the absolute one
-        // with the math done: `NotifyPointerMotion` honors acceleration and
-        // the screen bounds on this side, which is what the KVM wants.
-        E::MouseRel { dx, dy } => m("NotifyPointerMotion").map(|z| z.append2(dx, dy)),
-        E::Button { code, pressed } => {
-            m("NotifyPointerButton").map(|z| z.append2(code, pressed))
-        }
+        // with the math done: it honors acceleration and the screen bounds
+        // on this side, which is what the KVM wants.
+        E::MouseRel { dx, dy } => (
+            "NotifyPointerMotionRelative",
+            m("NotifyPointerMotionRelative").map(|z| z.append2(dx, dy)),
+        ),
+        E::Button { code, pressed } => (
+            "NotifyPointerButton",
+            m("NotifyPointerButton").map(|z| z.append2(code, pressed)),
+        ),
         // flags 0 = continuous scroll. `AxisDiscrete` would be for a wheel
         // with clicks, but the Mac trackpad has no steps.
-        E::Scroll { dx, dy } => m("NotifyPointerAxis").map(|z| z.append3(dx, dy, 0u32)),
-        E::Key { keycode, pressed } => {
-            m("NotifyKeyboardKeycode").map(|z| z.append2(keycode, pressed))
-        }
+        E::Scroll { dx, dy } => (
+            "NotifyPointerAxis",
+            m("NotifyPointerAxis").map(|z| z.append3(dx, dy, 0u32)),
+        ),
+        E::Key { keycode, pressed } => (
+            "NotifyKeyboardKeycode",
+            m("NotifyKeyboardKeycode").map(|z| z.append2(keycode, pressed)),
+        ),
     };
     let mut msg = msg.map_err(|e| format!("build message: {e}"))?;
+    if checked.insert(member) {
+        // The first of its kind in this connection: wait, and say what
+        // Mutter answered.
+        return conn
+            .channel()
+            .send_with_reply_and_block(msg, std::time::Duration::from_millis(500))
+            .map(|_| ())
+            .map_err(|e| format!("Mutter refused {member}: {e}"));
+    }
     msg.set_no_reply(true);
     conn.channel().send(msg).map_err(|_| "D-Bus queue full".to_string())?;
     Ok(())
@@ -545,11 +656,12 @@ async fn receive_input(
     let mut buf = vec![0u8; 4096];
     let mut n = 0u64;
     let mut failures = 0u64;
+    let mut checked = std::collections::HashSet::new();
     while let Ok(Some(read)) = recv.read(&mut buf).await {
         reader.feed(&buf[..read]);
         let mut applied_now = 0u32;
         while let Some(e) = reader.next_event() {
-            if let Err(err) = apply_event(&dbus, &rd_in, &stream_in, e) {
+            if let Err(err) = apply_event(&dbus, &rd_in, &stream_in, e, &mut checked) {
                 failures += 1;
                 // Once, then every hundred: injection at 60 Hz would turn
                 // the log into noise, and the number that matters is

@@ -8,6 +8,31 @@ confere.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-15 · O Windows manda o teclado e o mouse para outra máquina
+Com o receptor Logitech no Windows, os dois Ctrl, a borda da tela e
+"Mandar para" no painel ou na bandeja agora levam o teclado e o mouse para
+a outra máquina pela rede, como o Linux sempre fez. Os dois Ctrl trazem
+de volta, mesmo com a rede fora. Antes disso, a única saída do Windows
+era o botão Easy-Switch do próprio dispositivo.
+
+## 2026-11-15 · Escolha as teclas do atalho
+Configurações › Troca de máquina: os dois Ctrl, os dois Shift ou os dois
+Alt. As mesmas teclas mandam o teclado e o mouse e os trazem de volta, e
+uma dica na Visão geral diz quais estão em uso: o gesto deixou de ser
+segredo.
+
+## 2026-11-15 · A borda liga sem reiniciar, e diz o que está fazendo
+Ligar a borda no painel exigia reiniciar o daemon, e ninguém era avisado.
+Agora ela começa em até um segundo, e as Configurações mostram o estado em
+palavras: observando, aguardando porque o teclado e o mouse estão em outra
+máquina, ou por que ela não pode rodar aqui.
+
+## 2026-11-15 · A tela remota do Ubuntu segue o monitor que você usa
+O host do Ubuntu gravava um conector de monitor fixo. Quando o monitor
+mudou de porta, ele passou a gravar uma tela virtual invisível, e o mouse
+mandado de outra máquina andava lá. Agora ele pergunta ao GNOME qual é o
+monitor principal.
+
 ## 2026-11-04 · A imagem não congela mais até você mexer o mouse
 O laço da janela bloqueava esperando evento do sistema, e a thread de
 rede enchia o slot com o quadro novo sem acordar ninguém — então a

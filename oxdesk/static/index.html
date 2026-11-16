@@ -63,7 +63,10 @@
     background:var(--card)}
   .sub{color:var(--faint);font-size:12px;margin:0 0 22px}
 
-  .grid{display:grid;gap:18px;align-items:start;
+  /* Stretch: the cards of one row share a height, and "Details" sits at the
+     same line in each (`.more` has margin-top:auto). They differed because
+     a remote machine has a Connect block and this one does not. */
+  .grid{display:grid;gap:18px;align-items:stretch;
     grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
     padding:0 18px 12px;box-shadow:var(--shadow);overflow:hidden;
@@ -79,7 +82,7 @@
   .hero svg{width:82px;height:82px;display:block}
   .estado{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--down)}
   .estado.on{color:var(--up)}
-  .more{border-top:1px solid var(--line);margin:0 -18px -12px;padding:0 18px}
+  .more{border-top:1px solid var(--line);margin:auto -18px -12px;padding:0 18px}
   .more summary{cursor:pointer;padding:10px 0;font-size:12.5px;color:var(--dim);
     list-style-position:inside;user-select:none}
   .more summary:hover{color:var(--fg)}
@@ -123,6 +126,21 @@
   /* Amber for KVM ON, not green: here "on" is the state that moves your
      keyboard to another machine by itself -- worth noticing, not celebrating. */
   .u.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,var(--line))}
+
+  /* Status, not controls: plain text with a dot. They were pills, and a
+     pill reads as a toggle you can click. The switches live in Settings. */
+  .facts{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;
+    font-size:12px;align-items:baseline}
+  .facts dt{color:var(--faint)}
+  .facts dd{margin:0;color:var(--dim);display:flex;flex-wrap:wrap;gap:4px 12px}
+  .facts .st::before{content:"";display:inline-block;width:7px;height:7px;
+    border-radius:50%;margin-right:6px;background:var(--faint);vertical-align:1px}
+  .facts .st.active::before{background:var(--up)}
+  .facts .st.bad::before{background:var(--down)}
+  .facts .st.warn::before{background:var(--warn)}
+  .tip{margin:-12px 0 20px;font-size:12.5px;color:var(--dim)}
+  .golink{color:var(--accent);cursor:pointer;font-size:11.5px;text-decoration:none}
+  .golink:hover{text-decoration:underline}
 
   .det{display:flex;flex-wrap:wrap;gap:4px 16px;color:var(--dim);font-size:12px;
     padding-top:2px;border-top:1px solid var(--line)}
@@ -342,6 +360,26 @@
   .setk{display:flex;flex-direction:column;gap:3px;font-size:13px}
   .setk span{color:var(--faint);font-size:11.5px}
   .langpick{display:flex;gap:6px;flex:none}
+  .setgroup{margin:0;padding:18px 16px 2px;border-top:1px solid var(--line);font-size:11px;
+    font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+  .setgroup + .setrow{border-top:0}
+  .setctl{display:flex;align-items:center;gap:10px;flex:none}
+  .setctl select{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;
+    border:1px solid var(--line);background:var(--inset);color:var(--fg)}
+  .setk .setstate{color:var(--fg);font-size:12px}
+  .setmeta{padding:6px 16px 14px;color:var(--faint);font-size:11.5px;font-family:var(--mono);
+    min-height:1.2em}
+  /* A switch that looks like one: these ARE the toggles. */
+  .switch{position:relative;display:inline-block;width:38px;height:22px;flex:none;cursor:pointer}
+  .switch input{position:absolute;opacity:0;width:0;height:0}
+  .switch span{position:absolute;inset:0;border-radius:999px;background:var(--inset);
+    border:1px solid var(--line);transition:background .15s,border-color .15s}
+  .switch span::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;
+    border-radius:50%;background:var(--dim);transition:transform .15s,background .15s}
+  .switch input:checked + span{background:var(--accent);border-color:var(--accent)}
+  .switch input:checked + span::after{transform:translateX(16px);background:#fff}
+  .switch input:focus-visible + span{outline:2px solid var(--accent);outline-offset:2px}
+  .switch input:disabled + span{opacity:.45;cursor:default}
   .langpick button{font:inherit;font-size:12.5px;padding:6px 12px;border-radius:999px;
     border:1px solid var(--line);background:var(--inset);color:var(--fg);cursor:pointer}
   .langpick button[aria-current]{background:var(--accent);border-color:var(--accent);
@@ -519,6 +557,7 @@
 </header>
 <section class="sec" data-sec="geral">
 <p class="sub">Ports read directly, with no remote agent</p>
+<p class="tip" id="hktip" hidden></p>
 <div class="grid" id="grid"></div>
 </section>
 
@@ -541,11 +580,7 @@
 <div class="lywrap">
   <div class="lyhead">
     <h2>Layout</h2>
-    <label class="opt" id="lykvm" title="turn off to stop the edge switching machines">
-      <input type="checkbox" id="lykvmon"> KVM by edge</label>
-    <label class="opt" title="the other devices follow this one when it changes machine">
-      <input type="checkbox" id="lyfollowon"> follow
-      <select id="lyleader"></select></label>
+    <a class="golink" id="lysettings">Edge and shortcut settings</a>
     <span class="meta" id="lymeta"></span>
   </div>
   <div class="lynote" id="pausewrap">
@@ -615,6 +650,35 @@
       <button type="button" data-lang="pt-BR">Português</button>
     </div>
   </div>
+  <h3 class="setgroup">Switching machines</h3>
+  <div class="setrow">
+    <div class="setk"><b>Switch at the screen edge</b>
+      <span>Push the mouse past the edge of the screen toward a machine placed next to this one in Layout, and the keyboard and mouse go there.</span>
+      <span class="setstate" id="edgestate"></span></div>
+    <label class="switch"><input type="checkbox" id="lykvmon" aria-label="Switch at the screen edge"><span></span></label>
+  </div>
+  <div class="setrow">
+    <div class="setk"><b>Keyboard shortcut</b>
+      <span id="hkhelp">Hold both keys of the pair together to send the keyboard and mouse to the next machine. The same pair brings them back.</span>
+      <span class="setstate" id="hkstate"></span></div>
+    <div class="setctl">
+      <select id="hkkeys" aria-label="Keys">
+        <option value="both-ctrl">Both Ctrl</option>
+        <option value="both-shift">Both Shift</option>
+        <option value="both-alt">Both Alt</option>
+      </select>
+      <label class="switch"><input type="checkbox" id="hkon" aria-label="Keyboard shortcut"><span></span></label>
+    </div>
+  </div>
+  <div class="setrow">
+    <div class="setk"><b>Devices follow the leader</b>
+      <span>When the leader changes machine, the other devices go with it. Pick the mouse if you switch by the edge, the keyboard if you use its Easy-Switch button.</span></div>
+    <div class="setctl">
+      <select id="lyleader" aria-label="Leader" data-no-i18n></select>
+      <label class="switch"><input type="checkbox" id="lyfollowon" aria-label="Devices follow the leader"><span></span></label>
+    </div>
+  </div>
+  <div class="setmeta" id="setmeta"></div>
 </div>
 </section>
 
@@ -645,7 +709,7 @@ const esc = t => String(t).replace(/[&<>"]/g, c =>
 
 function svcRow(s){
   let cls = '', txt;
-  if (s.expect === 'down')     { cls = s.up ? 'wa' : 'ok'; txt = s.up ? 'aberta' : 'fechada'; }
+  if (s.expect === 'down')     { cls = s.up ? 'wa' : 'ok'; txt = s.up ? 'open' : 'closed'; }
   else if (s.expect === 'any') { txt = s.up ? s.ms + ' ms' : 'off'; }
   else { cls = s.up ? 'ok' : 'no';
          txt = s.up ? (s.ms != null ? s.ms + ' ms' : 'ok') : 'down'; }
@@ -655,27 +719,37 @@ function svcRow(s){
 }
 
 function card(h){
-  const units = h.units.map(u => {
-    const c = u.state === 'active' ? 'active' : (u.state === 'unknown' ? '' : 'bad');
-    return `<span class="u ${c}">${esc(u.unit.replace('.service',''))} &middot; ${esc(u.state)}</span>`;
-  }).join('');
+  // Status as text, with a colored dot -- never shaped like a control: the
+  // pills that were here read as toggles nobody could flip. The switches
+  // are in Settings, on each machine's own panel.
+  const facts = [];
+  if (h.units.length){
+    const units = h.units.map(u => {
+      const c = u.state === 'active' ? 'active' : (u.state === 'unknown' ? '' : 'bad');
+      return `<span class="st ${c}" title="${esc(u.state)}" data-no-i18n>${esc(u.unit.replace('.service',''))}</span>`;
+    }).join('');
+    facts.push(`<dt>Services</dt><dd>${units}</dd>`);
+  }
 
-  // Border and reconciler of THAT host. The border is pair behavior:
-  // the Windows one pointed here sent everything back on every touch
-  // while this panel said, correctly, that the one here was off.
-  // Seeing a single host's state was not enough to understand what happened.
-  const k = h.kvm || {}, kvm = [];
+  // Edge and reconciler of THAT host. The edge is pair behavior: the
+  // Windows one pointed here sent everything back on every touch while
+  // this panel said, correctly, that the one here was off. Seeing a single
+  // host's state was not enough to understand what happened.
+  const k = h.kvm || {};
+  const offText = '<span class="st">off</span>';
   if (k.error){
-    kvm.push(`<span class="u" title="${esc(k.error)}">KVM &middot; unknown</span>`);
+    facts.push(`<dt>Switching</dt><dd><span class="st" title="${esc(k.error)}">unknown</span></dd>`);
   } else {
     if (k.border != null){
-      const t = k.border ? (k.edges && k.edges.length ? k.edges.join(', ') : 'on')
-                         : 'off';
-      kvm.push(`<span class="u ${k.border ? 'warn' : ''}">edge &middot; ${esc(t)}</span>`);
+      const t = k.edges && k.edges.length ? k.edges.join(', ') : '';
+      facts.push(`<dt>Edge</dt><dd>${k.border
+        ? (t ? `<span class="st warn" data-no-i18n>${esc(t)}</span>` : '<span class="st warn">on</span>')
+        : offText}</dd>`);
     }
     if (k.follow != null){
-      const t = k.follow ? ('follows ' + (k.leader || '?')) : 'off';
-      kvm.push(`<span class="u ${k.follow ? 'warn' : ''}">reconciler &middot; ${esc(t)}</span>`);
+      facts.push(`<dt>Devices follow</dt><dd>${k.follow
+        ? `<span class="st warn" data-no-i18n>${esc(k.leader || '?')}</span>`
+        : offText}</dd>`);
     }
   }
 
@@ -728,8 +802,7 @@ function card(h){
       <div class="corpo">
         <div class="end" data-no-i18n>${esc(h.addr)}</div>
         <div class="svc"><table>${h.services.map(svcRow).join('')}</table></div>
-        ${units ? `<div class="units">${units}</div>` : ''}
-        ${kvm.length ? `<div class="units">${kvm.join('')}</div>` : ''}
+        ${facts.length ? `<dl class="facts">${facts.join('')}</dl>` : ''}
         ${det.length ? `<div class="det">${det.join('')}</div>` : ''}
       </div>
     </details>
@@ -1431,24 +1504,108 @@ async function layout(){
     }
     lyRender();
     lyEdges(d.edges, d.border_enabled);
-    document.getElementById('lykvmon').checked = !!d.border_enabled;
-    // Who leads depends on HOW you switch: by the border it is the mouse
-    // that crosses; by the keyboard's Easy-Switch it has to be the keyboard
-    // -- otherwise the reconciler undoes what you just did.
-    const sel = document.getElementById('lyleader');
-    const names = d.devices || [];
-    if (sel.dataset.names !== names.join('|')){
-      sel.dataset.names = names.join('|');
-      sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
-    }
-    if (d.follow_leader) sel.value = d.follow_leader;
-    document.getElementById('lyfollowon').checked = !!d.follow_enabled;
-    PAUSED_S = d.hidpp_paused_s ?? null;
-    paintPause();
+    paintSwitching(d);
   }catch(e){
-    document.getElementById('lymeta').textContent = 'inacessivel: ' + e.message;
+    document.getElementById('lymeta').textContent = `Unreachable: ${e.message}`;
   }
 }
+
+// --- Settings: switching machines -------------------------------------
+// What the edge watcher is DOING, which the config alone cannot say: on
+// 2026-11-15 the edge read "on" while the watcher had quit at boot, and
+// again while it was on and disarmed because the devices were elsewhere.
+const EDGE_STATES = {
+  'starting':    () => 'Starting...',
+  'off':         () => 'Off.',
+  'no-neighbor': () => 'On, but no machine that can take the keyboard and mouse sits next to this one in Layout.',
+  'watching':    d => `Watching: ${d}`,
+  'away':        () => 'Waiting: the keyboard and mouse are on another machine. The edge works on the machine that holds them.',
+  'arriving':    () => 'The keyboard and mouse just arrived; the edge arms in a few seconds.',
+  'sent':        d => `The keyboard and mouse are on ${d} now.`,
+};
+const EDGE_UNAVAILABLE = {
+  'macos':           'Not available on macOS yet: the Mac cannot send its keyboard and mouse to another machine.',
+  'session':         'Not available: the daemon is running outside the desktop session.',
+  'another-watcher': 'Not available: another edge watcher is already running on this machine.',
+  'input-capture':   'Not available: GNOME refused the edge barriers. The log says why.',
+};
+// One whole sentence per pair, so each translates as a sentence.
+const HK_TIP = {
+  'both-ctrl':  'Tip: hold both Ctrl keys together to send the keyboard and mouse to the next machine, and again to bring them back.',
+  'both-shift': 'Tip: hold both Shift keys together to send the keyboard and mouse to the next machine, and again to bring them back.',
+  'both-alt':   'Tip: hold both Alt keys together to send the keyboard and mouse to the next machine, and again to bring them back.',
+};
+
+function paintSwitching(d){
+  const kvm = document.getElementById('lykvmon');
+  if (document.activeElement !== kvm) kvm.checked = !!d.border_enabled;
+  const st = d.border_state || {};
+  const text = st.state === 'unavailable'
+    ? (EDGE_UNAVAILABLE[st.detail] || 'Not available on this machine.')
+    : (EDGE_STATES[st.state] || EDGE_STATES.starting)(st.detail || '');
+  document.getElementById('edgestate').textContent = text;
+  kvm.disabled = st.state === 'unavailable';
+
+  const hk = d.hotkey || {};
+  const on = document.getElementById('hkon'), keys = document.getElementById('hkkeys');
+  if (document.activeElement !== on) on.checked = !!hk.enabled;
+  if (document.activeElement !== keys && hk.keys) keys.value = hk.keys;
+  on.disabled = keys.disabled = !hk.available;
+  document.getElementById('hkstate').textContent = !hk.available
+    ? 'Not available on macOS yet: use the edge or the tray of the machine that has the keyboard and mouse.'
+    : (d.kvm_target ? `The keyboard and mouse are on ${d.kvm_target} now.` : '');
+  const tip = document.getElementById('hktip');
+  tip.hidden = !(hk.available && hk.enabled && HK_TIP[hk.keys]);
+  if (!tip.hidden) tip.textContent = HK_TIP[hk.keys];
+
+  // Who leads depends on HOW you switch: by the edge it is the mouse that
+  // crosses; by the keyboard's Easy-Switch it has to be the keyboard --
+  // otherwise the reconciler undoes what you just did.
+  const sel = document.getElementById('lyleader');
+  const names = d.devices || [];
+  if (sel.dataset.names !== names.join('|')){
+    sel.dataset.names = names.join('|');
+    sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  }
+  if (d.follow_leader && document.activeElement !== sel) sel.value = d.follow_leader;
+  const fol = document.getElementById('lyfollowon');
+  if (document.activeElement !== fol) fol.checked = !!d.follow_enabled;
+  PAUSED_S = d.hidpp_paused_s ?? null;
+  paintPause();
+}
+
+// Settings refresh on their own cadence, without redrawing the Layout grid
+// (which would drop a tile being dragged).
+async function switching(){
+  try{
+    const r = await fetch('/api/layout', {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    paintSwitching(await r.json());
+  }catch(e){
+    document.getElementById('setmeta').textContent = `Unreachable: ${e.message}`;
+  }
+}
+
+document.getElementById('lysettings').addEventListener('click', () => showSec('settings'));
+
+async function saveHotkey(){
+  const meta = document.getElementById('setmeta');
+  try{
+    const r = await fetch('/api/hotkey', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        enabled: document.getElementById('hkon').checked,
+        keys: document.getElementById('hkkeys').value,
+      })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    meta.textContent = 'Saved';
+  }catch(e){ meta.textContent = `Not saved: ${e.message}`; }
+  switching();
+}
+document.getElementById('hkon').addEventListener('change', saveHotkey);
+document.getElementById('hkkeys').addEventListener('change', saveHotkey);
 
 async function lySave(){
   const positions = {};
@@ -1461,16 +1618,16 @@ async function lySave(){
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
     lyEdges(d.edges, true);
-    document.getElementById('lymeta').textContent = 'salvo';
+    document.getElementById('lymeta').textContent = 'Saved';
   }catch(e){
-    document.getElementById('lymeta').textContent = 'not saved: ' + e.message;
+    document.getElementById('lymeta').textContent = `Not saved: ${e.message}`;
   }
 }
 
 document.getElementById('lykvmon').addEventListener('change', async ev => {
   const on = ev.target.checked;
-  const meta = document.getElementById('lymeta');
-  meta.textContent = on ? 'ligando...' : 'desligando...';
+  const meta = document.getElementById('setmeta');
+  meta.textContent = on ? 'Turning on...' : 'Turning off...';
   try{
     const r = await fetch('/api/border', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -1478,8 +1635,10 @@ document.getElementById('lykvmon').addEventListener('change', async ev => {
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-    meta.textContent = d.note;
+    meta.textContent = on ? 'On' : 'Off';
     layout();
+    // The watcher reports within a second; read again to show it.
+    setTimeout(switching, 1500);
   }catch(e){
     meta.textContent = e.message;
     ev.target.checked = !on;
@@ -1487,7 +1646,7 @@ document.getElementById('lykvmon').addEventListener('change', async ev => {
 });
 
 async function saveFollow(){
-  const meta = document.getElementById('lymeta');
+  const meta = document.getElementById('setmeta');
   try{
     const r = await fetch('/api/follow', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -1498,7 +1657,7 @@ async function saveFollow(){
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-    meta.textContent = d.note;
+    meta.textContent = 'Saved';
   }catch(e){ meta.textContent = e.message; }
 }
 document.getElementById('lyfollowon').addEventListener('change', saveFollow);
@@ -1877,6 +2036,7 @@ tick(); setInterval(tick, RS*1000);
 files();
 tasks();
 layout();
+switching(); setInterval(switching, RS*1000);
 whatsNew();
 setInterval(() => { if (TK.pending === null) tasks(); }, 10000);
 logs(); setInterval(logs, RS*1000);

@@ -32,12 +32,14 @@ mod border;
 #[cfg(windows)]
 mod border_win;
 mod config;
+mod edge_state;
 mod files;
 mod focus;
 mod follow;
 mod hidpp;
-#[cfg(target_os = "linux")]
 mod hotkey;
+#[cfg(windows)]
+mod hotkey_win;
 mod i18n;
 mod clip;
 mod clip_files;
@@ -373,12 +375,15 @@ fn main() -> std::process::ExitCode {
     #[cfg(target_os = "linux")]
     tray::start_when_drawable(Arc::clone(&cfg));
 
-    // Both Ctrl keys, with the input here, send it to the other machine.
-    // The other half of the gesture -- bringing it back -- lives in
-    // `oxdesk-kvm`, and the two cannot both see a press: whoever holds the
-    // grab gets the events alone. See `hotkey`.
+    // The shortcut (both Ctrl keys by default), with the input here, sends
+    // it to the other machine. The other half of the gesture -- bringing it
+    // back -- lives in `oxdesk-kvm`, and the two cannot both see a press:
+    // whoever holds the grab gets the events alone. See `hotkey`. The Mac
+    // cannot be the source, so it has no reader.
     #[cfg(target_os = "linux")]
     hotkey::start(Arc::clone(&cfg), Arc::clone(&cache));
+    #[cfg(windows)]
+    hotkey_win::start(Arc::clone(&cfg), Arc::clone(&cache));
 
     // Spec 017: pair with the peers once at startup, so phase C can refuse
     // strangers without refusing our own machines.
@@ -758,9 +763,9 @@ fn post_hidpp_pause(mut req: Request) {
         req,
         serde_json::json!({ "ok": true, "paused_s": remaining,
             "note": if remaining.is_some() {
-                "a sondagem parou; trocar de canal continua funcionando"
+                "polling paused; switching channel still works"
             } else {
-                "sondagem retomada"
+                "polling resumed"
             } })
         .to_string(),
     )
@@ -806,6 +811,46 @@ fn post_follow(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     }
 }
 
+/// POST /api/hotkey {"enabled": bool, "keys"?: "both-ctrl"|"both-shift"|"both-alt",
+/// "mode"?: "rotate"|"ask"} -- the keyboard shortcut (spec 023).
+///
+/// The readers take a new pair on their next key, without a restart, and
+/// the next KVM started gets it as its rescue.
+fn post_hotkey(mut req: Request, cfg: &RwLock<Config>) {
+    let mut body = String::new();
+    if req.as_reader().read_to_string(&mut body).is_err() {
+        return err_json(req, 400, "unreadable body");
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let current = cfg.read().map(|g| g.input.hotkey.enabled).unwrap_or(true);
+    let on = v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(current);
+    let keys = v.get("keys").and_then(|x| x.as_str());
+    let mode = v.get("mode").and_then(|x| x.as_str());
+    if let Err(e) = config::save_hotkey(on, keys, mode) {
+        return err_json(req, 400, &e);
+    }
+    match Config::load() {
+        Ok(reloaded) => {
+            let h = reloaded.input.hotkey.clone();
+            // Read back from the file, not echoed from the request: the
+            // response says what the daemon will actually use.
+            if keys.is_some_and(|k| k != h.keys) || mode.is_some_and(|m| m != h.mode) || h.enabled != on {
+                return err_json(req, 500, "written, but the file does not say what was asked");
+            }
+            if let Ok(mut g) = cfg.write() {
+                *g = reloaded;
+            }
+            say!("hotkey: {} with keys {} ({})", if on { "ON" } else { "off" }, h.keys, h.mode);
+            ok_json(
+                req,
+                serde_json::json!({ "ok": true, "enabled": h.enabled, "keys": h.keys, "mode": h.mode })
+                    .to_string(),
+            )
+        }
+        Err(e) => err_json(req, 500, &format!("written but not reloaded: {e}")),
+    }
+}
+
 /// POST /api/border {"enabled": bool} -- turns the border KVM on/off.
 fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     let mut body = String::new();
@@ -832,7 +877,7 @@ fn post_border(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 req,
                 serde_json::json!({ "ok": true, "enabled": on,
                     "note": if on {
-                        "on; if the daemon started without edge detection, restart it to create the barriers"
+                        "on now; the edge watcher picks it up within a second"
                     } else {
                         "off now -- the next touch of the edge will not switch"
                     } })
@@ -889,7 +934,7 @@ fn post_layout(mut req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
             ok_json(
                 req,
                 serde_json::json!({ "ok": true, "edges": edges,
-                    "note": "a grade vale agora; barreiras novas exigem reiniciar o daemon" })
+                    "note": "layout saved; an edge watcher already running keeps its edges until the daemon restarts" })
                 .to_string(),
             )
         }
@@ -1070,6 +1115,9 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
     if path == "/api/border" && method == "POST" {
         return post_border(req, cfg, cache);
     }
+    if path == "/api/hotkey" && method == "POST" {
+        return post_hotkey(req, cfg);
+    }
     if path == "/api/follow" && method == "POST" {
         return post_follow(req, cfg, cache);
     }
@@ -1247,6 +1295,23 @@ fn handle(req: Request, cfg: &RwLock<Config>, cache: &Mutex<Cache>) {
                 "hosts": hosts,
                 "edges": edges,
                 "border_enabled": snap.input.border.enabled,
+                // What the watcher is doing, not what the config asks for:
+                // see `edge_state`.
+                "border_state": {
+                    "state": edge_state::get().0,
+                    "detail": edge_state::get().1,
+                },
+                "input_mode": snap.input.mode,
+                "kvm_target": kvm::target(),
+                "hotkey": {
+                    "enabled": snap.input.hotkey.enabled,
+                    "keys": snap.input.hotkey.keys,
+                    "mode": snap.input.hotkey.mode,
+                    // The Mac cannot be the KVM's source, so it has no reader.
+                    "available": cfg!(any(target_os = "linux", windows)),
+                    "choices": config::CHORDS.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+                },
+                "os": std::env::consts::OS,
                 "follow_enabled": snap.input.follow.enabled,
                 "follow_leader": snap.input.follow.leader,
                 "hidpp_paused_s": hidpp::pause_remaining_s(),

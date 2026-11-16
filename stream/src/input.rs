@@ -24,6 +24,33 @@ use bytes::{Buf, BufMut, BytesMut};
 pub const BTN_LEFT: i32 = 0x110;
 pub const BTN_RIGHT: i32 = 0x111;
 pub const BTN_MIDDLE: i32 = 0x112;
+/// The two side buttons ("back" and "forward"). Windows calls them
+/// `XBUTTON1` and `XBUTTON2`; Mutter takes the evdev codes.
+pub const BTN_SIDE: i32 = 0x113;
+pub const BTN_EXTRA: i32 = 0x114;
+
+/// The way back from a grab: two keys held together, as evdev codes.
+///
+/// Both Ctrl keys unless the person picked another pair in the panel
+/// (`[input.hotkey] keys`, spec 023). The daemon passes the pair to
+/// `oxdesk-kvm` as `--rescue <a>,<b>`, and it is the same pair that sends
+/// the input away, so the keys that took it are the keys that bring it home.
+pub const RESCUE_DEFAULT: (u32, u32) = (29, 97); // KEY_LEFTCTRL, KEY_RIGHTCTRL
+
+/// Reads `--rescue`'s value, `"<a>,<b>"`. `None` for anything else: a
+/// typo must not become a rescue nobody can press.
+pub fn parse_chord(s: &str) -> Option<(u32, u32)> {
+    let (a, b) = s.split_once(',')?;
+    let (a, b) = (a.trim().parse::<u32>().ok()?, b.trim().parse::<u32>().ok()?);
+    // Two different keys, both inside the keyboard range: a chord of one
+    // key would fire on every press of it.
+    (a != b && (1..=255).contains(&a) && (1..=255).contains(&b)).then_some((a, b))
+}
+
+/// Are both keys of the chord held?
+pub fn chord_held(pressed: &std::collections::HashSet<u32>, chord: (u32, u32)) -> bool {
+    pressed.contains(&chord.0) && pressed.contains(&chord.1)
+}
 
 /// Scroll pixels in one line of text -- the unit `Event::Scroll` carries.
 ///
@@ -461,6 +488,57 @@ pub fn scancode_from_evdev(keycode: u32) -> Option<(u16, bool)> {
     })
 }
 
+/// The inverse of `scancode_from_evdev`: what a Windows keyboard hook
+/// reports, as the evdev code the protocol carries.
+///
+/// Derived from the table above rather than written a second time, so the
+/// two directions cannot drift apart: a key the Windows host knows how to
+/// type is, by construction, a key the Windows KVM source knows how to send.
+///
+/// The two keys Set 1 cannot tell apart by scancode (Pause and NumLock
+/// both end in `45`) are told apart by the caller, by virtual key.
+pub fn evdev_from_scancode(scan: u16, extended: bool) -> Option<u32> {
+    (1..=127u32).find(|k| scancode_from_evdev(*k) == Some((scan, extended)))
+}
+
+/// What a Windows low-level keyboard hook reports (`vkCode`, `scanCode`,
+/// the extended flag), as an evdev code.
+///
+/// Pure, and here rather than in `grab_win.rs`, so its tests run on every
+/// machine (see `scancode_from_evdev`).
+///
+/// - Pause and NumLock share scancode `45`; the virtual key tells them apart.
+/// - `scanCode` is taken whole, never cut to a byte: the Ctrl that Windows
+///   fakes in front of AltGr arrives as `0x21D`, and cut to `0x1D` it would
+///   become a real left Ctrl on the other machine -- and half of the rescue
+///   chord.
+pub fn evdev_from_windows_key(vk: u32, scan: u32, extended: bool) -> Option<u32> {
+    match vk {
+        0x13 => return Some(119), // VK_PAUSE -> KEY_PAUSE
+        0x90 => return Some(69),  // VK_NUMLOCK -> KEY_NUMLOCK
+        _ => {}
+    }
+    let scan = u16::try_from(scan).ok()?;
+    if scan > 0xFF {
+        return None;
+    }
+    evdev_from_scancode(scan, extended)
+}
+
+/// Moves a point at least `inset` pixels inside a rectangle
+/// `(left, top, width, height)`.
+///
+/// For the cursor coming back from a grab: put back exactly where it left,
+/// it would sit on the screen edge that sent the input away, and the edge
+/// watcher would read that as a new arrival and send it away again.
+pub fn inset_from_edges(p: (i32, i32), rect: (i32, i32, i32, i32), inset: i32) -> (i32, i32) {
+    let (left, top, w, h) = rect;
+    if w <= 2 * inset || h <= 2 * inset {
+        return p;
+    }
+    (p.0.clamp(left + inset, left + w - 1 - inset), p.1.clamp(top + inset, top + h - 1 - inset))
+}
+
 #[cfg(all(test, feature = "winit-keys"))]
 mod key_tests {
     use super::*;
@@ -818,5 +896,77 @@ mod point_from_pixel_tests {
         // Retina, but it is predictable and does not break a normal screen.
         assert_eq!(point_from_pixel(100.0, 200.0, 0.0), (100.0, 200.0));
         assert_eq!(point_from_pixel(100.0, 200.0, -2.0), (100.0, 200.0));
+    }
+}
+
+#[cfg(test)]
+mod reverse_key_tests {
+    use super::*;
+
+    #[test]
+    fn every_key_the_windows_host_types_comes_back_as_itself() {
+        let mut n = 0;
+        for k in 1..=127u32 {
+            if let Some((scan, ext)) = scancode_from_evdev(k) {
+                assert_eq!(evdev_from_scancode(scan, ext), Some(k), "scancode {scan:#x} ext={ext}");
+                n += 1;
+            }
+        }
+        // A loop over an empty table passes too: the count is the check.
+        assert!(n > 100, "only {n} keys in the table");
+    }
+
+    #[test]
+    fn the_extended_flag_decides_between_the_two_halves_of_the_keyboard() {
+        assert_eq!(evdev_from_scancode(0x1D, false), Some(29)); // left Ctrl
+        assert_eq!(evdev_from_scancode(0x1D, true), Some(97)); // right Ctrl
+        assert_eq!(evdev_from_scancode(0x48, false), Some(72)); // keypad 8
+        assert_eq!(evdev_from_scancode(0x48, true), Some(103)); // arrow up
+        // A scancode no table entry produces is dropped, not guessed.
+        assert_eq!(evdev_from_scancode(0x2A, true), None);
+    }
+
+    #[test]
+    fn the_hook_codes_that_need_more_than_the_table() {
+        // Pause and NumLock: same scancode, the virtual key decides.
+        assert_eq!(evdev_from_windows_key(0x13, 0x45, false), Some(119));
+        assert_eq!(evdev_from_windows_key(0x90, 0x45, true), Some(69));
+        // The fake Ctrl in front of AltGr is dropped, not turned into a
+        // left Ctrl (which is half of the default rescue chord).
+        assert_eq!(evdev_from_windows_key(0xA2, 0x21D, false), None);
+        // The ordinary path goes through the table.
+        assert_eq!(evdev_from_windows_key(0xA3, 0x1D, true), Some(97)); // right Ctrl
+        assert_eq!(evdev_from_windows_key(0x41, 0x1E, false), Some(30)); // A
+    }
+
+    #[test]
+    fn a_cursor_put_back_on_an_edge_is_moved_off_it() {
+        // Virtual desktop of two monitors, the left one at negative x.
+        let rect = (-1920, 0, 4480, 1440);
+        assert_eq!(inset_from_edges((-1920, 400), rect, 60), (-1860, 400));
+        assert_eq!(inset_from_edges((2559, 1439), rect, 60), (2499, 1379));
+        // Away from every edge it does not move.
+        assert_eq!(inset_from_edges((100, 700), rect, 60), (100, 700));
+        // A rectangle too small to inset leaves the point alone.
+        assert_eq!(inset_from_edges((5, 5), (0, 0, 100, 100), 60), (5, 5));
+    }
+
+    #[test]
+    fn a_rescue_needs_two_different_keys() {
+        assert_eq!(parse_chord("29,97"), Some((29, 97)));
+        assert_eq!(parse_chord(" 42 , 54 "), Some((42, 54)));
+        assert_eq!(parse_chord("29,29"), None);
+        assert_eq!(parse_chord("29"), None);
+        assert_eq!(parse_chord("ctrl,ctrl"), None);
+        assert_eq!(parse_chord("0,97"), None);
+    }
+
+    #[test]
+    fn the_chord_fires_on_both_keys_and_not_on_one() {
+        let set = |k: &[u32]| k.iter().copied().collect::<std::collections::HashSet<u32>>();
+        assert!(chord_held(&set(&[42, 54]), (42, 54)));
+        assert!(chord_held(&set(&[42, 54, 30]), (42, 54)));
+        assert!(!chord_held(&set(&[42]), (42, 54)));
+        assert!(!chord_held(&set(&[29, 97]), (42, 54)));
     }
 }

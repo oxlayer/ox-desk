@@ -80,6 +80,20 @@ pub fn release() -> Result<(), String> {
     if let Some((name, p)) = g.take() {
         match p {
             Process::Ours(mut c) => {
+                // On Windows the child ends its grab when its stdin closes
+                // (`oxdesk-kvm`'s Windows `main`), and that path releases
+                // the keys still held on the other machine. Killing skips
+                // it. So: close, give it a moment, and kill only if it did
+                // not go.
+                if c.stdin.take().is_some() {
+                    let t0 = std::time::Instant::now();
+                    while t0.elapsed() < std::time::Duration::from_millis(1500) {
+                        if matches!(c.try_wait(), Ok(Some(_))) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                }
                 let _ = c.kill();
                 let _ = c.wait();
             }
@@ -137,18 +151,21 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
 
     release()?;
 
-    // Can this machine capture?
+    // Can this machine be the source?
     //
-    // Only Linux has capture (`EVIOCGRAB`). On a Windows or Mac, clicking
-    // "Mandar para linux-pc" cannot mean "become the source" -- it
-    // means "I want the input THERE", and whoever has to act is whoever is
-    // holding the keyboard now: the source.
+    // Linux captures with `EVIOCGRAB`, and Windows with low-level hooks
+    // (spec 024). On Windows that only means something when the devices
+    // are on THIS machine's receiver: otherwise the keyboard in front of
+    // the person is being forwarded here by another machine, and "send it
+    // to X" means "whoever holds it, let go" -- the source has to act.
     //
-    // Without this the click failed silently and the only way back was the
-    // two-Ctrl rescue. That is how it was reported: a click on the Windows
-    // tray to send the keyboard to the Linux machine did nothing, and only
-    // the double Ctrl brought it back.
-    if !cfg!(target_os = "linux") {
+    // Before spec 024 Windows always took the second branch. With the
+    // only dongle plugged into Windows, the click asked the Linux machine
+    // to release a grab that did not exist, and nothing moved.
+    //
+    // The Mac still cannot capture; it always asks.
+    let can_capture = cfg!(target_os = "linux") || (cfg!(windows) && crate::hidpp::devices_here());
+    if !can_capture {
         return ask_to_release(h).map(|()| format!("asked {host} to take the input back"));
     }
 
@@ -169,6 +186,28 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     // also keep the target machine from encoding video for a client that
     // never draws anything.
     let dest = format!("{}:{}", h.addr, sc.port + 1);
+    // On Windows the address is resolved HERE and handed over ready, like
+    // `probe::ssh_addr_opts` does for ssh, with the last known address when
+    // mDNS flaps: a child resolving `.local` on its own died with "host not
+    // found" (os error 11001) in one of those windows. Linux keeps passing
+    // the name -- `adopt` reads it back from the command line.
+    let connect_to = if cfg!(windows) {
+        match crate::probe::resolve_with_memory(&h.addr, sc.port + 1) {
+            Some((sa, false)) => sa.to_string(),
+            Some((sa, true)) => {
+                say!("kvm: {} did not resolve right now; using its last address {}", h.addr, sa.ip());
+                sa.to_string()
+            }
+            None => {
+                return Err(format!(
+                    "'{}' does not resolve, and no earlier address is known. Nothing was grabbed.",
+                    h.addr
+                ))
+            }
+        }
+    } else {
+        dest.clone()
+    };
 
     // Child output to a file, not to /dev/null.
     //
@@ -192,12 +231,33 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     // freshly booted machine. See `sys::own_bin`.
     let kvm_bin = crate::sys::own_bin("oxdesk-kvm");
     let mut cmd = crate::sys::child(&kvm_bin.to_string_lossy());
-    cmd.arg(&dest);
+    cmd.arg(&connect_to);
     if h.os.as_deref() == Some("linux") {
         cmd.arg("--no-repeat");
     }
+    // The keys that bring the input back are the keys that sent it
+    // (spec 023). Passed only when they are not the default, so a pair of
+    // binaries from before the flag keeps working with the default.
+    let chord = cfg.input.hotkey.chord();
+    if chord != crate::config::CHORDS[0].1 {
+        cmd.arg("--rescue").arg(format!("{},{}", chord.0, chord.1));
+    }
+    // Every keystroke goes through this connection, so the host on the
+    // other end is checked against its pinned identity, like the screen
+    // viewer's (spec 017). Without a pin the KVM still connects and warns
+    // in its log, which is how it always worked.
+    match crate::pairing::pin_for(h, &crate::screen::local_host_bin()) {
+        Ok(pin) => {
+            cmd.env("OXDESK_PIN", pin);
+        }
+        Err(e) => say!("kvm: no pinned identity for {host} ({e}); connecting unchecked"),
+    }
+    // A pipe on Windows, held open for as long as the input is away:
+    // closing it is how `release` ends the grab cleanly (see there). On
+    // Linux the grab ends by signal, as before.
+    let stdin = if cfg!(windows) { Stdio::piped() } else { Stdio::null() };
     let mut child = cmd
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err))
         .spawn()
@@ -213,18 +273,38 @@ pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
     // user would already have read the lie and be waiting for the keyboard
     // to change machines.
     //
-    // 500 ms covers connect + grab on a LAN; the happy path does not feel
-    // it, and the sad path gets the real error message.
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    if let Ok(Some(status)) = child.try_wait() {
-        let reason = std::fs::read_to_string(&log_path)
+    // It used to be a fixed 500 ms, read as "connect + grab on a LAN".
+    // Name resolution alone took longer than that on Windows, the child
+    // died AFTER the check, and the panel said "input going to ..." about
+    // a keyboard that never left (spec 024). So the child's own word
+    // decides: it prints "grabbed" only after the hooks or the grab hold.
+    // Exited first: its last line is the reason. Neither within the
+    // deadline: it is killed, because a grab that lands after we answered
+    // "failed" would take the keyboard from someone who was told it stayed.
+    let last_line = |path: &std::path::Path| {
+        std::fs::read_to_string(path)
             .unwrap_or_default()
             .lines()
             .last()
             .unwrap_or("no detail in the log")
             .trim()
-            .to_string();
-        return Err(format!("the KVM exited ({status}) before grabbing: {reason}"));
+            .to_string()
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(format!("the KVM exited ({status}) before grabbing: {}", last_line(&log_path)));
+        }
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        if log.lines().any(|l| l.trim_start().starts_with("grabbed")) {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("the KVM did not grab within 8 s, so it was stopped: {}", last_line(&log_path)));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     match CURRENT.lock() {
