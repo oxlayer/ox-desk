@@ -40,6 +40,9 @@ use std::time::{Duration, Instant};
 const TICK: Duration = Duration::from_millis(30);
 const COOLDOWN: Duration = Duration::from_secs(10);
 const LAN_COOLDOWN: Duration = Duration::from_millis(1500);
+/// How close to an edge the cursor gets before the other side's screen
+/// host is woken, so that reaching the edge costs no round trip.
+const APPROACH: i32 = 150;
 /// Presence is HID++: at 33 Hz it would hammer the radio for nothing. The
 /// dead-man's switch window is tens of seconds, 1 Hz is enough.
 const PRESENCE_EVERY: Duration = Duration::from_secs(1);
@@ -253,6 +256,16 @@ fn run(cfg: Arc<RwLock<Config>>) {
         crate::edge_state::set("watching", Some(watching.clone()));
 
         let Some(p) = winput::cursor() else { continue };
+        // On its way to an edge: wake the other side now (`kvm::prewarm`).
+        // It is a no-op while that host is known up.
+        if lan_mode(&cfg) {
+            let area = winput::virtual_screen();
+            for (e, t) in &edges {
+                if crate::edge_state::distance_to_edge(e, (p.x, p.y), area).is_some_and(|d| d < APPROACH) {
+                    crate::kvm::prewarm(&cfg, t);
+                }
+            }
+        }
         // Which edge is the cursor touching? None or one -- never two,
         // because they are opposite sides of the same area.
         let Some(i) = edges.iter().position(|(e, _)| winput::at_edge(e, p)) else {

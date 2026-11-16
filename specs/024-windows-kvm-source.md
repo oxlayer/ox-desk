@@ -155,6 +155,25 @@ timed in the log line (`in 444 ms (host 338, address 0, identity 1, grab
 
 Measured after: 452 ms with the host stopped first, ~0.3-0.9 s with it up.
 
+## Going there as fast as coming back (v0.3.4)
+
+Coming back felt instant and going did not, and the log said why: coming
+back is local (the hook lets go), while going still spent 173-344 ms on an
+SSH call to make sure the other screen host was up, and up to 100 ms on the
+daemon's own poll for the KVM's `grabbed` line.
+
+- **The host is woken while the cursor approaches the edge** (150 px), in
+  the background (`kvm::prewarm`), so reaching the edge finds it up.
+- **A host known to be up is not asked again.** It lives 30 s after its
+  last client and after it starts; for 20 s after a wake or a session, the
+  switch skips the SSH call. If it is down after all, the KVM cannot
+  connect, a 1.5 s deadline gives up, and the second try wakes it.
+- **The grab is polled every 10 ms**, not 100.
+
+Measured: with the host stopped first, the approach woke it in 338 ms, and
+the switch at the edge took **48 ms** (`host known up 0, grab 47`), against
+276-451 ms before.
+
 ## Not yet
 
 - The way home by the edge for a Linux source with a Windows target: the
