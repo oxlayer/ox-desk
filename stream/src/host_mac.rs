@@ -171,6 +171,10 @@ pub fn run(port: u16, index: &str) -> anyhow::Result<()> {
 
     let (tx, rx) = tokio::sync::mpsc::channel::<EncodedFrame>(CAPACITY);
     let signals = Arc::new(Signals::default());
+    // In capture pixels, the space `Event::Mouse` travels in: the host turns
+    // them into pointer points (`input::point_from_pixel`). A KVM source
+    // needs it to come home by the edge (`serve::announce_size`).
+    signals.set_size(w, h);
     let origin = Arc::new(Mutex::new((0i32, 0i32)));
 
     let network = {
@@ -342,8 +346,10 @@ fn run_network(
         {
             let signals_in = Arc::clone(&signals);
             tokio::spawn(async move {
+                let signals_size = Arc::clone(&signals_in);
                 serve::serve_input(&ep_in, Arc::clone(&signals_in), |conn| {
                     let conn = conn.clone();
+                    tokio::spawn(serve::announce_size(conn.clone(), Arc::clone(&signals_size)));
                     tokio::spawn(async move { receive_input(conn).await })
                 })
                 .await;

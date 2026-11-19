@@ -621,7 +621,7 @@ fn run_network(
                     let dbus = Rc::clone(&dbus_in);
                     let rd = rd_i.clone();
                     let st = st_i.clone();
-                    tokio::task::spawn_local(announce_size(
+                    tokio::task::spawn_local(serve::announce_size(
                         conn.clone(),
                         std::sync::Arc::clone(&signals_size),
                     ));
@@ -644,31 +644,6 @@ fn run_network(
         })
         .await
     })
-}
-
-/// Tells a KVM client the size of the screen its input lands on.
-///
-/// On a stream of its own, opened by us, so a client from before it simply
-/// never accepts it. Waits up to 3 s for capture to have negotiated the
-/// size -- a host woken for this very connection is still starting.
-async fn announce_size(conn: quinn::Connection, signals: std::sync::Arc<Signals>) {
-    let mut size = None;
-    for _ in 0..30 {
-        size = signals.size();
-        if size.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let Some((w, h)) = size else {
-        eprintln!("  input: no screen size to announce yet");
-        return;
-    };
-    let Ok(mut s) = conn.open_uni().await else { return };
-    if s.write_all(crate::input::size_line(w, h).as_bytes()).await.is_ok() {
-        let _ = s.finish();
-        println!("  input: announced the screen size, {w}x{h}");
-    }
 }
 
 /// Reads a connection's input stream and injects until it closes.
