@@ -151,6 +151,14 @@
     margin-top:3px;width:100%}
   .bar i{display:block;height:100%;background:var(--up);border-radius:2px;
     transition:width .5s ease}
+  .det .disk.lvl-low b,.lowdisk{color:var(--warn)}
+  .det .disk.lvl-low .bar i{background:var(--warn)}
+  .det .disk.lvl-critical b{color:var(--down)}
+  .det .disk.lvl-critical .bar i{background:var(--down)}
+  .diskalert{margin:8px 0 0;padding:5px 9px;border-radius:8px;font-size:12px;font-weight:600}
+  .diskalert b{font-family:var(--mono);font-weight:600;margin-left:4px}
+  .diskalert.lvl-low{color:var(--warn);background:color-mix(in srgb,var(--warn) 13%,transparent)}
+  .diskalert.lvl-critical{color:var(--down);background:color-mix(in srgb,var(--down) 13%,transparent)}
 
   .ctlwrap{margin-top:22px;background:var(--card);border:1px solid var(--line);
     border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
@@ -785,6 +793,30 @@ function card(h){
   } else {
     det.push(`<span>CPU <b>&mdash;</b></span>`);
   }
+  // The system drive (specs/027). Free space, not used: what runs out is
+  // what a person has to act on. The level comes from the daemon
+  // (`disk::level`), so this card, the summary line and the log agree.
+  if (d.disk_total_gb){
+    const free = d.disk_free_gb || 0;
+    const pct = Math.round((d.disk_total_gb - free) / d.disk_total_gb * 100);
+    const lvl = d.disk_level || 'ok';
+    const why = lvl === 'critical' ? 'the system drive is almost full: things start failing on this machine'
+      : lvl === 'low' ? 'the system drive is running low: clean up before it fills'
+      : 'free space on the system drive';
+    det.push(`<span class="disk lvl-${lvl}" title="${esc(why)}">Disk
+              <b>${free < 10 ? free.toFixed(1) : Math.round(free)} GB free</b>
+              <span class="bar"><i style="width:${pct}%"></i></span></span>`);
+  } else {
+    det.push(`<span title="${esc(h.online ? 'the host answered, but reading the disk failed'
+      : 'host offline: nothing to read')}">Disk <b>&mdash;</b></span>`);
+  }
+  // The detail line above lives inside "Details", closed by default. A drive
+  // running out is the one detail that must not wait for a click.
+  const lvl = d.disk_level;
+  const alert = (lvl === 'low' || lvl === 'critical') ? `<div class="diskalert lvl-${lvl}"
+      title="${esc(lvl === 'critical' ? 'the system drive is almost full: things start failing on this machine'
+        : 'the system drive is running low: clean up before it fills')}">${lvl === 'critical'
+      ? 'Disk almost full' : 'Disk running low'} <b>${(d.disk_free_gb || 0).toFixed(1)} GB free</b></div>` : '';
 
   return `<div class="card${h.online ? '' : ' off'}">
     <div class="hero">${machineSvg(h)}</div>
@@ -796,6 +828,7 @@ function card(h){
       </div>
       <span class="estado ${h.online ? 'on' : ''}">${h.online ? 'online' : 'offline'}</span>
     </div>
+    ${alert}
     <div class="scr" data-scr="${esc(h.name)}"></div>
     <details class="more" data-more="${esc(h.name)}"${OPEN_DETAILS.has(h.name) ? ' open' : ''}>
       <summary>Details</summary>
@@ -944,9 +977,14 @@ async function tick(){
     screens();
     const on = d.hosts.filter(h => h.online).length;
     const bad = d.hosts.reduce((n,h) => n + h.services.filter(s => !s.ok).length, 0);
-    document.getElementById('sum').innerHTML = bad
-      ? `<b>${on}/${d.hosts.length}</b> online &middot; <b>${bad}</b> service(s) with a problem`
-      : `<b>${on}/${d.hosts.length}</b> online &middot; tudo certo`;
+    // A drive running out is said here too, at the top, and not only on the
+    // card: on 2026-11-18 one reached 5 MB with nothing on screen saying so.
+    const full = d.hosts.filter(h => ['low', 'critical'].includes((h.detail || {}).disk_level)).length;
+    let sum = `<b>${on}/${d.hosts.length}</b> online`;
+    if (bad) sum += ` &middot; <b>${bad}</b> service(s) with a problem`;
+    if (full) sum += ` &middot; <b class="lowdisk">${full}</b> machine(s) low on disk space`;
+    if (!bad && !full) sum += ' &middot; all good';
+    document.getElementById('sum').innerHTML = sum;
     document.getElementById('stamp').textContent = d.generated;
   }catch(e){
     grid.innerHTML = `<div class="err">painel inacessivel: ${esc(e.message)}</div>`;

@@ -318,5 +318,15 @@
   "open": "aberta",
   "closed": "fechada",
   "Keys": "Teclas",
-  "Leader": "Líder"
+  "Leader": "Líder",
+  "Disk": "Disco",
+  "{} GB free": "{} GB livres",
+  "free space on the system drive": "espaço livre no disco do sistema",
+  "the system drive is running low: clean up before it fills": "o disco do sistema está ficando sem espaço: faça uma limpeza antes que encha",
+  "the system drive is almost full: things start failing on this machine": "o disco do sistema está quase cheio: as coisas começam a falhar nesta máquina",
+  "the host answered, but reading the disk failed": "o host respondeu, mas a leitura do disco falhou",
+  "machine(s) low on disk space": "máquina(s) com pouco espaço em disco",
+  "online · all good": "online · tudo certo",
+  "Disk almost full": "Disco quase cheio",
+  "Disk running low": "Disco ficando sem espaço"
 }

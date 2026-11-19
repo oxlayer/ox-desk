@@ -32,6 +32,7 @@ mod border;
 #[cfg(windows)]
 mod border_win;
 mod config;
+mod disk;
 mod edge_state;
 mod files;
 mod guard;
