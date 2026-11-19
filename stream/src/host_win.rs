@@ -117,6 +117,10 @@ pub fn run(port: u16, monitor: u32) -> anyhow::Result<()> {
 
     let (tx, rx) = tokio::sync::mpsc::channel::<EncodedFrame>(CAPACITY);
     let signals = Arc::new(Signals::default());
+    // Known before the first frame: the monitor said it when it opened.
+    // A KVM source needs it to keep the cursor's position and come home by
+    // the edge (`serve::announce_size`).
+    signals.set_size(w, h);
 
     let network = {
         let signals = Arc::clone(&signals);
@@ -211,6 +215,7 @@ pub fn run(port: u16, monitor: u32) -> anyhow::Result<()> {
                         }
                         if changed {
                             let (w, h) = screen.size();
+                            signals.set_size(w, h);
                             enc = NvencEncoder::new(w, h)?;
                             println!("  NVENC rebuilt for {w}x{h}");
                         }
@@ -303,9 +308,11 @@ fn run_network(
             let signals_in = Arc::clone(&signals);
             let origin_in = Arc::clone(&origin);
             tokio::spawn(async move {
+                let signals_size = Arc::clone(&signals_in);
                 serve::serve_input(&ep_in, Arc::clone(&signals_in), |conn| {
                     let conn = conn.clone();
                     let origin = Arc::clone(&origin_in);
+                    tokio::spawn(serve::announce_size(conn.clone(), Arc::clone(&signals_size)));
                     tokio::spawn(async move { receive_input(conn, origin).await })
                 })
                 .await;
