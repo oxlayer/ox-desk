@@ -51,6 +51,17 @@ pub struct Detail {
     /// question the card asks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_pct: Option<f64>,
+    /// Space on the system drive, in GB: free (what this user can still
+    /// write) and total. The system drive is `C:` (`$env:SystemDrive`) on
+    /// Windows and `/` elsewhere. See `disk`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_free_gb: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_total_gb: Option<f64>,
+    /// What those two mean (`disk::level`), decided here so the card, the
+    /// summary and the log agree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_level: Option<crate::disk::Level>,
 }
 
 /// KVM state of **that** host: border and reconciler.
@@ -265,7 +276,9 @@ fn note_failure(addr: &str, port: u16, reason: Option<String>) {
 /// nothing saying why.
 ///
 /// Output contract, the same on all three:
-/// `<minutes>|<free_gb>|<total_gb>`.
+/// `<minutes>|<ram_free_gb>|<ram_total_gb>|<cpu_pct>|<disk_free_gb>|<disk_total_gb>`.
+/// Fields are only ever added at the end, so a reader of a shorter line
+/// keeps the ones it has (`host_detail`).
 fn detail_cmd(os: HostOs) -> Option<&'static str> {
     Some(match os {
         HostOs::Windows => concat!(
@@ -276,7 +289,13 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
             "$tot=[math]::Round($c.TotalPhysicalMemory/1GB,1);",
             "$cpu=[int](Get-CimInstance Win32_Processor | ",
             "Measure-Object -Property LoadPercentage -Average).Average;",
-            "\"$up|$free|$tot|$cpu\""
+            // The system drive by its own variable, not "C": it is C: on
+            // nearly every machine, and the one where it is not is the one
+            // a hardcoded letter would misreport.
+            "$sd=Get-PSDrive -Name ($env:SystemDrive.Substring(0,1));",
+            "$df=[math]::Round($sd.Free/1GB,2);",
+            "$dt=[math]::Round(($sd.Used+$sd.Free)/1GB,1);",
+            "\"$up|$free|$tot|$cpu|$df|$dt\""
         ),
         // MemAvailable and not MemFree: the kernel uses free RAM as cache,
         // and MemFree on a healthy Linux is almost zero -- showing it would
@@ -300,7 +319,11 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
             "s() { awk '/^cpu /{t=0;for(i=2;i<=NF;i++)t+=$i;print t\" \"($5+$6)}' /proc/stat; }; ",
             "a=$(s); sleep 0.2; b=$(s); ",
             "echo \"$a $b\" | awk '{d=$3-$1; i=$4-$2; ",
-            "if(d>0) printf \"%.0f\", (d-i)*100/d; else printf \"0\"}'"
+            "if(d>0) printf \"%.0f\", (d-i)*100/d; else printf \"0\"}'; ",
+            // `-P` keeps each filesystem on one line, whatever the device
+            // name's length. Available ($4), not free: root's reserved
+            // blocks are space this user cannot write.
+            "df -Pk / | awk 'NR==2{printf \"|%.2f|%.1f\", $4/1048576, $2/1048576}'"
         ),
         // macOS has no /proc. `kern.boottime` gives the boot epoch, and
         // the free pages come from vm_stat (free + inactive, which is what
@@ -324,7 +347,11 @@ fn detail_cmd(os: HostOs) -> Option<&'static str> {
             "n=$(sysctl -n hw.ncpu); ",
             "cpu=$(ps -A -o %cpu | awk -v n=$n 'NR>1{s+=$1} ",
             "END{v=s/n; if(v>100)v=100; printf \"%.0f\", v}'); ",
-            "echo \"$up|$fr|$tot|$cpu\""
+            // On APFS `/` is the sealed system volume, and its "available"
+            // is the container's free space, shared with the data volume:
+            // the number that runs out.
+            "d=$(df -Pk / | awk 'NR==2{printf \"%.2f|%.1f\", $4/1048576, $2/1048576}'); ",
+            "echo \"$up|$fr|$tot|$cpu|$d\""
         ),
         HostOs::Unknown => return None,
     })
@@ -362,14 +389,16 @@ pub fn host_detail(h: &HostCfg) -> Detail {
     if parts.len() < 3 {
         return Detail::default();
     }
+    let field = |i: usize| parts.get(i).and_then(|v| v.trim().parse::<f64>().ok());
+    let (disk_free_gb, disk_total_gb) = (field(4), field(5));
     Detail {
         uptime_min: parts[0].trim().parse::<f64>().ok().map(|v| v as u64),
         ram_free_gb: parts[1].trim().parse().ok(),
         ram_total_gb: parts[2].trim().parse().ok(),
-        cpu_pct: parts
-            .get(3)
-            .and_then(|v| v.trim().parse::<f64>().ok())
-            .map(|v| v.clamp(0.0, 100.0)),
+        cpu_pct: field(3).map(|v| v.clamp(0.0, 100.0)),
+        disk_free_gb,
+        disk_total_gb,
+        disk_level: crate::disk::note(&h.name, disk_free_gb, disk_total_gb),
     }
 }
 
