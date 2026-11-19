@@ -65,6 +65,28 @@ neither a seed ISO nor `cloud-image-utils` is needed. State lives in
 - **TPM:** the unattended install bypasses the check (`LabConfig`), so no
   `swtpm` and no root are needed.
 
+`tools/e2e-vm/source-windows.ps1` builds and runs it, on the Windows host,
+with QEMU and the Windows Hypervisor Platform. Two things found while
+writing it, both measured:
+
+- **The answer file goes on a CD of its own.** Windows Setup reads
+  `autounattend.xml` only from removable media, so a second SATA disk
+  would be ignored. A USB stick would be read, but it could be numbered
+  disk 0, which is the disk the answer file wipes. A CD is never a target
+  of the wipe. Windows writes the CD itself (IMAPI2FS), so no ISO tool is
+  needed; checked by the long names inside the image, with a name that is
+  not there as the control.
+- **"QEMU is still running" does not prove the hypervisor.** The first
+  probe started QEMU with `-accel whpx`, saw it alive after 4 s and would
+  have passed, on a machine where QEMU had refused the accelerator
+  (`WHPX: No accelerator found`). The probe now passes only when the QEMU
+  that asked for WHPX answers on QMP, and it was seen failing on that
+  machine before the feature was enabled.
+
+The test account's password is generated at build time and kept next to
+the disk, readable only by the person who built it: no credential lives in
+the repository, not even a throwaway one.
+
 ## How input gets in
 
 QEMU's QMP `input-send-event`: key and pointer events delivered through
@@ -106,7 +128,12 @@ PR gate stays fast. A failure blocks the tag.
    v0.3.9's host found the VM's monitor (`Virtual-1`) on its own, ran
    without NVENC, announced `1280x800`, applied 20 moves with no Mutter
    refusal, and released the key a vanished client left held.
-3. The Windows source VM, after the image question is answered.
+3. The Windows source VM: **script ready, install pending**
+   (2026-11-18). The answer CD, the first-logon script and QEMU's device
+   list are proven: under software emulation the installer boots from
+   the ISO with exactly the devices a real run uses. The unattended install
+   itself waits for the hypervisor to be enabled on the Windows host;
+   under emulation it would take hours.
 4. The driver (QMP input) and the first full run: type, cross, come back.
 5. The safety nets as scripted cases.
 
