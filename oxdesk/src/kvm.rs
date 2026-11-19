@@ -210,13 +210,71 @@ pub fn release() -> Result<(), String> {
     Ok(())
 }
 
+/// Held for the whole of a switch (`one_switch_at_a_time`).
+static SWITCHING: Mutex<()> = Mutex::new(());
+
+/// Runs `switch` with no other switch in flight.
+///
+/// A switch takes seconds (waking the other host, then waiting for the
+/// grab), and the process is recorded only at the end. On 2026-11-18 the
+/// edge and the tray asked for the same machine in the same second: both
+/// found nothing to release, both started a KVM, both reported success, and
+/// the one recorded last overwrote the other's handle. That one kept running
+/// untracked, forwarded on its own, and ended as a zombie. They also shared
+/// one log file, so one caller read the other's "grabbed".
+///
+/// A call that had to wait, and then finds the input already going to
+/// `host`, was that same request twice: it returns `None` and does nothing.
+/// A call that did not wait keeps the old meaning of asking again (release,
+/// then send), which is how a person restarts a session that feels stuck.
+fn one_switch_at_a_time<T>(
+    gate: &Mutex<()>,
+    host: &str,
+    current: impl Fn() -> Option<String>,
+    switch: impl FnOnce() -> T,
+) -> Option<T> {
+    let (_held, waited) = match gate.try_lock() {
+        Ok(g) => (g, false),
+        Err(std::sync::TryLockError::WouldBlock) => {
+            (gate.lock().unwrap_or_else(std::sync::PoisonError::into_inner), true)
+        }
+        // A switch that panicked leaves nothing in flight: carry on.
+        Err(std::sync::TryLockError::Poisoned(p)) => (p.into_inner(), false),
+    };
+    if waited && current().as_deref() == Some(host) {
+        return None;
+    }
+    Some(switch())
+}
+
 /// Sends the input to `host`. Releases the previous target, if any.
+///
+/// One switch at a time (`one_switch_at_a_time`), including a switch back
+/// to this machine: a "bring it here" that ran while a send was still
+/// starting would find nothing to release, and the send would then take the
+/// keyboard away from the person who had just asked for it.
+pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
+    match one_switch_at_a_time(&SWITCHING, host, target, || send_now(cfg, host)) {
+        Some(r) => r,
+        None => {
+            say!("kvm: a switch to {host} finished while this request waited; the input is already there");
+            Ok(cfg
+                .hosts
+                .iter()
+                .find(|h| h.name == host)
+                .and_then(|h| h.screen.as_ref().map(|s| format!("{}:{}", h.addr, s.port + 1)))
+                .unwrap_or_else(|| host.to_string()))
+        }
+    }
+}
+
+/// `send`, with the switch gate already held.
 ///
 /// Order matters: we release the previous one BEFORE trying the new one.
 /// Two `EVIOCGRAB` on the same device do not coexist, and the second would
 /// fail with "Device or resource busy" -- leaving the input stuck on the
 /// old destination and the error message talking about something else.
-pub fn send(cfg: &Config, host: &str) -> Result<String, String> {
+fn send_now(cfg: &Config, host: &str) -> Result<String, String> {
     let h = cfg
         .hosts
         .iter()
@@ -474,7 +532,20 @@ fn start_kvm(
 
     lap("grab", &mut steps);
     match CURRENT.lock() {
-        Ok(mut g) => *g = Some((host.to_string(), Process::Ours(child))),
+        Ok(mut g) => {
+            // With the switch gate this slot is empty here (`send_now`
+            // released it). If it ever is not, the old child is stopped and
+            // reaped, never just dropped: dropping a `Child` neither kills
+            // nor waits, so it would go on forwarding untracked and end as a
+            // zombie, which is what happened on 2026-11-18.
+            if let Some((old, Process::Ours(mut c))) =
+                g.replace((host.to_string(), Process::Ours(child)))
+            {
+                say!("kvm: a KVM to {old} was still recorded when a new one started; stopping it");
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+        }
         Err(_) => return Err("KVM state poisoned".into()),
     }
     if let Ok(mut s) = STARTED.lock() {
@@ -611,6 +682,98 @@ pub fn adopt(cfg: &Config) {
 /// On the other systems there is no capture, so nothing to adopt.
 #[cfg(not(target_os = "linux"))]
 pub fn adopt(_cfg: &Config) {}
+
+#[cfg(test)]
+mod switch_gate_tests {
+    use super::one_switch_at_a_time;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+
+    /// A fake switch: counts how many run at once, takes a while, and
+    /// leaves the input at `to`, like a real one records the child.
+    struct World {
+        gate: Mutex<()>,
+        current: Mutex<Option<String>>,
+        in_flight: AtomicUsize,
+        most_at_once: AtomicUsize,
+        runs: AtomicUsize,
+    }
+
+    impl World {
+        fn new() -> Arc<World> {
+            Arc::new(World {
+                gate: Mutex::new(()),
+                current: Mutex::new(None),
+                in_flight: AtomicUsize::new(0),
+                most_at_once: AtomicUsize::new(0),
+                runs: AtomicUsize::new(0),
+            })
+        }
+
+        /// One request; `entered` is told once the switch is running.
+        fn ask(&self, to: &str, entered: Option<mpsc::Sender<()>>) -> Option<()> {
+            one_switch_at_a_time(&self.gate, to, || self.current.lock().unwrap().clone(), || {
+                let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                self.most_at_once.fetch_max(now, Ordering::SeqCst);
+                if let Some(tx) = entered {
+                    let _ = tx.send(());
+                }
+                std::thread::sleep(Duration::from_millis(150));
+                *self.current.lock().unwrap() = Some(to.to_string());
+                self.runs.fetch_add(1, Ordering::SeqCst);
+                self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            })
+        }
+    }
+
+    /// Starts one request and returns once its switch is running, so the
+    /// second one is sure to arrive mid-switch.
+    fn first_in_flight(w: &Arc<World>, to: &'static str) -> std::thread::JoinHandle<Option<()>> {
+        let (tx, rx) = mpsc::channel();
+        let w = Arc::clone(w);
+        let h = std::thread::spawn(move || w.ask(to, Some(tx)));
+        rx.recv_timeout(Duration::from_secs(5)).expect("the first switch never started");
+        h
+    }
+
+    /// The incident of 2026-11-18: the edge and the tray, same machine,
+    /// same second. One KVM, not two.
+    #[test]
+    fn the_same_request_twice_runs_once() {
+        let w = World::new();
+        let a = first_in_flight(&w, "other");
+        let second = w.ask("other", None);
+        assert_eq!(a.join().unwrap(), Some(()));
+        assert_eq!(second, None, "the duplicate must do nothing");
+        assert_eq!(w.runs.load(Ordering::SeqCst), 1);
+        assert_eq!(w.most_at_once.load(Ordering::SeqCst), 1);
+    }
+
+    /// Waiting is not a reason to drop a request for somewhere else: it
+    /// runs after the first one, never beside it.
+    #[test]
+    fn a_request_for_another_machine_runs_after_never_beside() {
+        let w = World::new();
+        let a = first_in_flight(&w, "one");
+        let second = w.ask("two", None);
+        a.join().unwrap();
+        assert_eq!(second, Some(()));
+        assert_eq!(w.runs.load(Ordering::SeqCst), 2);
+        assert_eq!(w.most_at_once.load(Ordering::SeqCst), 1);
+        assert_eq!(w.current.lock().unwrap().as_deref(), Some("two"));
+    }
+
+    /// Asking again for where the input already is, with nothing in
+    /// flight, still runs: it is how a stuck session gets restarted.
+    #[test]
+    fn asking_again_with_nothing_in_flight_still_runs() {
+        let w = World::new();
+        assert_eq!(w.ask("other", None), Some(()));
+        assert_eq!(w.ask("other", None), Some(()));
+        assert_eq!(w.runs.load(Ordering::SeqCst), 2);
+    }
+}
 
 #[cfg(test)]
 mod release_cmd_tests {
