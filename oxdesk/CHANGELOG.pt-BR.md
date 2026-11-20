@@ -8,6 +8,14 @@ confere.
 
 Formato: `## <data> · <título>` e uma linha de descrição.
 
+## 2026-11-20 · Enviar pela bandeja não volta mais sozinho
+Enviar o teclado e o mouse para outra máquina pela bandeja ou pelo atalho
+deixava o cursor colado na borda que leva de volta, e um leve desvio do
+mouse trazia tudo de volta. Agora o caminho de volta pela borda só abre
+depois que o cursor entra na outra tela. E a borda da tela volta a
+funcionar depois de reiniciar, mesmo quando o oxdesk sobe antes da área
+de trabalho estar pronta.
+
 ## 2026-11-16 · Cruzar segurando uma tecla, e arrastar até a borda
 Uma tecla segurada ao cruzar para a outra máquina -- Ctrl, Shift -- agora
 é solta na máquina em que foi apertada, então o próximo clique em casa é

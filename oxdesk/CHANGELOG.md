@@ -6,6 +6,13 @@ machine is running, not what the repository has.
 
 Format: `## <date> · <title>` and a description underneath.
 
+## 2026-11-20 · Sending from the tray no longer bounces back
+Sending the input to another machine from the tray or the hotkey put the
+cursor right next to the edge that leads home, and a small drift of the
+mouse sent it straight back. The way home by the edge now opens only after
+the cursor has moved into the other screen. And the screen edge works
+again after a restart, even when oxdesk starts before the desktop is ready.
+
 ## 2026-11-16 · Crossing with a key held, and dragging to the edge
 A key held while crossing to the other machine -- Ctrl, Shift -- now comes
 up on the machine it went down on, so the next click back home is a plain
