@@ -215,12 +215,28 @@ pub fn spawn(cfg: Arc<RwLock<Config>>) {
             std::thread::sleep(Duration::from_secs(1));
         };
 
-        let sess = match open(&edges) {
-            Ok(s) => s,
-            Err(e) => {
-                crate::edge_state::set("unavailable", Some("input-capture".into()));
-                gripe!("border: off -- {e}");
-                return;
+        // Ask again instead of giving up. A daemon started at login can
+        // come up before gnome-shell has put InputCapture on the bus, and
+        // giving up on the first "not provided by any .service files" left
+        // the edge dead until someone restarted the daemon by hand (20/11).
+        // Same pattern as the clipboard: `crate::wait::retry_delay`.
+        let mut attempt = 0u32;
+        let sess = loop {
+            match open(&edges) {
+                Ok(s) => {
+                    if attempt > 0 {
+                        say!("border: InputCapture answered after {attempt} retry(ies)");
+                    }
+                    break s;
+                }
+                Err(e) => {
+                    crate::edge_state::set("unavailable", Some("input-capture".into()));
+                    if attempt == 0 {
+                        gripe!("border: not watching yet -- {e}; asking again while the daemon lives");
+                    }
+                    std::thread::sleep(crate::wait::retry_delay(attempt));
+                    attempt = attempt.saturating_add(1);
+                }
             }
         };
         let watching = crate::edge_state::summary(&edges);

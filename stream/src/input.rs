@@ -197,6 +197,16 @@ impl Edge {
 pub const RETURN_PUSH: f64 = 40.0;
 /// How far inside the other screen the cursor appears.
 pub const ENTRY_INSET: f64 = 20.0;
+/// How far from the return edge the cursor has to get before pushing past
+/// it counts, in pixels of the other screen.
+///
+/// The cursor enters `ENTRY_INSET` from that edge, so without this a push
+/// of `ENTRY_INSET + RETURN_PUSH` sent the input straight back -- 60 raw
+/// counts, under two millimetres of an unaccelerated 1000 DPI mouse. A
+/// switch from the tray or the hotkey bounced home within seconds: after
+/// clicking the tray at the top right, the hand drifts left, and on a
+/// target to the right the edge that faces home is its left one.
+pub const RETURN_ARM: f64 = 100.0;
 
 /// Where the cursor comes back in, by this machine's edge `edge`, at
 /// `along` (0..1) of the desktop's height (left/right) or width (top/bottom),
@@ -274,11 +284,14 @@ pub struct Pointer {
     x: f64,
     y: f64,
     push: f64,
+    /// Has the cursor been `RETURN_ARM` away from the return edge yet?
+    /// Until it has, pushing past that edge only clamps there.
+    armed: bool,
 }
 
 impl Pointer {
     pub fn new(edge: Option<Edge>, entry: f64) -> Pointer {
-        Pointer { edge, entry: entry.clamp(0.0, 1.0), size: None, x: 0.0, y: 0.0, push: 0.0 }
+        Pointer { edge, entry: entry.clamp(0.0, 1.0), size: None, x: 0.0, y: 0.0, push: 0.0, armed: false }
     }
 
     pub fn tracking(&self) -> bool {
@@ -322,7 +335,16 @@ impl Pointer {
         };
         self.x = nx.clamp(0.0, w - 1.0);
         self.y = ny.clamp(0.0, h - 1.0);
-        if over > 0.0 {
+        if !self.armed {
+            let away = match edge {
+                Edge::Right => (w - 1.0) - self.x,
+                Edge::Left => self.x,
+                Edge::Bottom => (h - 1.0) - self.y,
+                Edge::Top => self.y,
+            };
+            self.armed = away >= RETURN_ARM;
+        }
+        if over > 0.0 && self.armed {
             self.push += over;
             if self.push >= RETURN_PUSH {
                 self.push = 0.0;
@@ -1278,6 +1300,9 @@ mod reverse_key_tests {
     fn a_push_past_the_edge_brings_it_home_and_a_touch_does_not() {
         let mut p = Pointer::new(Some(Edge::Right), 0.5);
         p.set_size(1000, 501);
+        // Into the screen first, far enough to arm the way home.
+        assert!(matches!(p.map(rel(-RETURN_ARM, 0.0)), Step::Send(_)));
+        assert!(matches!(p.map(rel(RETURN_ARM, 0.0)), Step::Send(_)));
         // Reach the edge and a little past it: a scroll bar, not a return.
         assert!(matches!(p.map(rel(20.0, 0.0)), Step::Send(Event::Mouse { x, .. }) if x == 999.0));
         assert!(matches!(p.map(rel(30.0, 0.0)), Step::Send(_)));
@@ -1287,6 +1312,25 @@ mod reverse_key_tests {
         assert!(matches!(p.map(rel(30.0, 0.0)), Step::Send(_)));
         // Keep pushing: home, at the height it was at.
         assert_eq!(p.map(rel(20.0, 0.0)), Step::Return(0.5));
+    }
+
+    #[test]
+    fn a_push_right_after_entering_does_not_bounce_it_home() {
+        // The tray case: the target is to the right, the cursor enters by
+        // its left edge, and the hand drifts left. Measured on 20/11: 9 to
+        // 18 moves were enough to send it back.
+        let mut p = Pointer::new(Some(Edge::Left), 0.5);
+        p.set_size(1920, 1080);
+        for _ in 0..50 {
+            assert!(matches!(p.map(rel(-10.0, 0.0)), Step::Send(_)));
+        }
+        // It sits clamped on the edge, still here.
+        assert!(matches!(p.map(rel(0.0, 0.0)), Step::Send(Event::Mouse { x, .. }) if x == 0.0));
+        // Once it has been well inside, the edge takes it home as before.
+        assert!(matches!(p.map(rel(RETURN_ARM, 0.0)), Step::Send(_)));
+        assert!(matches!(p.map(rel(-RETURN_ARM, 0.0)), Step::Send(_)));
+        assert!(matches!(p.map(rel(-RETURN_PUSH / 2.0, 0.0)), Step::Send(_)));
+        assert!(matches!(p.map(rel(-RETURN_PUSH / 2.0, 0.0)), Step::Return(_)));
     }
 
     #[test]
